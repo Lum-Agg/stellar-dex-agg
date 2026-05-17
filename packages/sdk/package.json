@@ -1,0 +1,15 @@
+{
+  "name": "@stellar-dex-aggregator/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for Stellar DEX Aggregator",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}
