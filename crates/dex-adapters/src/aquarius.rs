@@ -28,12 +28,20 @@ const STABLE_ASSETS: &[&str] = &[
 ];
 
 /// Default amplification factor for stable pools
-const DEFAULT_STABLE_AMP: u128 = 1500;
+const DEFAULT_STABLE_AMP: u128 = 100;
 
 #[derive(Debug, Clone)]
 struct PoolMeta {
     is_stable: bool,
     fee_bps: u32,
+    /// Number of tokens in the pool (2 or 3)
+    n_tokens: usize,
+    /// All token addresses in order (for multi-token pools)
+    all_tokens: Vec<String>,
+    /// All reserves in order (for multi-token pools)
+    all_reserves: Vec<u128>,
+    /// Amplification coefficient
+    amp: u128,
 }
 
 pub struct AquariusAdapter {
@@ -63,30 +71,29 @@ impl AquariusAdapter {
         numerator / denominator
     }
 
-    /// Curve stable swap quote.
-    pub fn stable_swap_quote(amount_in: u128, reserve_in: u128, reserve_out: u128, fee_bps: u32) -> u128 {
-        if reserve_in == 0 || reserve_out == 0 || amount_in == 0 {
+    /// Curve stable swap quote using stable_math module.
+    pub fn stable_swap_quote_multi(
+        reserves: &[u128],
+        in_idx: usize,
+        out_idx: usize,
+        amount_in: u128,
+        fee_bps: u32,
+        amp: u128,
+    ) -> u128 {
+        use crate::stable_math::StablePool;
+
+        if reserves.is_empty() || in_idx >= reserves.len() || out_idx >= reserves.len() {
             return 0;
         }
 
-        let ann = DEFAULT_STABLE_AMP * 4;
-        let xp = [reserve_in, reserve_out];
+        let pool = StablePool {
+            reserves: reserves.to_vec(),
+            decimals: vec![7; reserves.len()], // All Stellar tokens are 7 decimals
+            amp,
+            fee_bps,
+        };
 
-        let d = compute_d(xp, ann);
-        if d == 0 {
-            return 0;
-        }
-
-        let x_new = reserve_in + amount_in;
-        let y_new = compute_y(x_new, ann, d);
-
-        if y_new >= reserve_out {
-            return 0;
-        }
-
-        let dy = reserve_out - y_new - 1;
-        let fee = dy * fee_bps as u128 / 10_000;
-        dy.saturating_sub(fee)
+        pool.get_dy(in_idx, out_idx, amount_in)
     }
 
     /// Fetch all pools from the Aquarius Router contract.
@@ -195,7 +202,30 @@ impl AquariusAdapter {
         // Filter out pools with no reserves
         all_pools.retain(|(pair, _)| pair.reserve_a.unwrap_or(0) > 0 || pair.reserve_b.unwrap_or(0) > 0);
 
-        info!("Aquarius: fetched {} pools with reserves", all_pools.len());
+        // For multi-token pools, fetch full reserves via get_reserves()
+        let mut multi_token_pools: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for (pair, meta) in &all_pools {
+            if meta.n_tokens > 2 && !multi_token_pools.contains(&pair.pool_address) {
+                multi_token_pools.insert(pair.pool_address.clone());
+            }
+        }
+
+        for pool_addr in &multi_token_pools {
+            match self.rpc.call_no_args(pool_addr, "get_reserves").await {
+                Ok(xdr::ScVal::Vec(Some(vec))) => {
+                    let reserves: Vec<u128> = vec.0.iter()
+                        .filter_map(|v| scval_to_u128(v).ok())
+                        .collect();
+                    // Update all_reserves in meta for all pairs from this pool
+                    for (_, meta) in all_pools.iter_mut().filter(|(p, _)| &p.pool_address == pool_addr) {
+                        meta.all_reserves = reserves.clone();
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        info!("Aquarius: fetched {} pools with reserves ({} multi-token)", all_pools.len(), multi_token_pools.len());
         Ok(all_pools)
     }
 
@@ -252,19 +282,15 @@ impl AquariusAdapter {
                     _ => continue,
                 };
 
-                // Skip 3+ token pools (not supported by our 2-token AMM math)
-                if token_addresses.len() > 2 {
-                    continue;
-                }
-
-                let token_a_addr = &token_addresses[0];
-                let token_b_addr = &token_addresses[1];
-
-                // Use contract address directly (no name() RPC call)
-                let token_a = TokenId::Contract { address: token_a_addr.clone() };
-                let token_b = TokenId::Contract { address: token_b_addr.clone() };
-
-                let is_stable = is_stable_pair(&token_a, &token_b);
+                let n_tokens = token_addresses.len();
+                let is_stable = if n_tokens == 2 {
+                    is_stable_pair(
+                        &TokenId::Contract { address: token_addresses[0].clone() },
+                        &TokenId::Contract { address: token_addresses[1].clone() },
+                    )
+                } else {
+                    true // 3+ token pools are always stable
+                };
 
                 // Parse pools map
                 if let xdr::ScVal::Map(Some(map)) = &pair.0[1] {
@@ -272,20 +298,29 @@ impl AquariusAdapter {
                         if let Ok(pool_address) = scval_to_address(&map_entry.val) {
                             let meta = PoolMeta {
                                 is_stable,
-                                fee_bps: 30, // Default, will be fetched later
+                                fee_bps: 30,
+                                n_tokens,
+                                all_tokens: token_addresses.clone(),
+                                all_reserves: vec![0; n_tokens],
+                                amp: DEFAULT_STABLE_AMP,
                             };
 
-                            pools.push((
-                                AdapterTradingPair {
-                                    token_a: token_a.clone(),
-                                    token_b: token_b.clone(),
-                                    pool_address,
-                                    fee_bps: 30,
-                                    reserve_a: None,
-                                    reserve_b: None,
-                                },
-                                meta,
-                            ));
+                            // Register all pair combinations from this pool
+                            for i in 0..n_tokens {
+                                for j in (i+1)..n_tokens {
+                                    pools.push((
+                                        AdapterTradingPair {
+                                            token_a: TokenId::Contract { address: token_addresses[i].clone() },
+                                            token_b: TokenId::Contract { address: token_addresses[j].clone() },
+                                            pool_address: pool_address.clone(),
+                                            fee_bps: 30,
+                                            reserve_a: None,
+                                            reserve_b: None,
+                                        },
+                                        meta.clone(),
+                                    ));
+                                }
+                            }
                         }
                     }
                 }
@@ -373,7 +408,37 @@ impl DexAdapter for AquariusAdapter {
         let meta = meta_map.get(pool_address).cloned().unwrap_or(PoolMeta {
             is_stable: false,
             fee_bps: 30,
+            n_tokens: 2,
+            all_tokens: vec![],
+            all_reserves: vec![],
+            amp: DEFAULT_STABLE_AMP,
         });
+
+        // For multi-token stable pools, use stable_math
+        if meta.n_tokens > 2 && meta.is_stable {
+            let token_in_addr = token_in.canonical();
+            let token_out_addr = token_out.canonical();
+
+            // Find indices in the pool's token list
+            let in_idx = meta.all_tokens.iter().position(|t| t == &token_in_addr);
+            let out_idx = meta.all_tokens.iter().position(|t| t == &token_out_addr);
+
+            if let (Some(i), Some(j)) = (in_idx, out_idx) {
+                if meta.all_reserves.iter().any(|&r| r > 0) {
+                    let amount_out = Self::stable_swap_quote_multi(
+                        &meta.all_reserves, i, j, amount_in, meta.fee_bps, meta.amp,
+                    );
+                    if amount_out > 0 {
+                        let reserve_in = meta.all_reserves[i];
+                        let price_impact_bps = if reserve_in > 0 {
+                            (amount_in * 10_000 / (2 * reserve_in)).min(10_000) as u32
+                        } else { 0 };
+                        return Ok(Some(AdapterQuote { amount_out, fee_bps: meta.fee_bps, price_impact_bps }));
+                    }
+                }
+            }
+            return Ok(None);
+        }
 
         let (reserve_in, reserve_out) = if token_in.canonical() == pair.token_a.canonical() {
             (pair.reserve_a, pair.reserve_b)
@@ -393,7 +458,9 @@ impl DexAdapter for AquariusAdapter {
         };
 
         let amount_out = if meta.is_stable {
-            Self::stable_swap_quote(amount_in, reserve_in, reserve_out, meta.fee_bps)
+            Self::stable_swap_quote_multi(
+                &[reserve_in, reserve_out], 0, 1, amount_in, meta.fee_bps, meta.amp,
+            )
         } else {
             Self::constant_product_quote(amount_in, reserve_in, reserve_out, meta.fee_bps)
         };
