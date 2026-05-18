@@ -30,7 +30,7 @@ pub struct SplitConfig {
 impl Default for SplitConfig {
     fn default() -> Self {
         Self {
-            split_threshold_bps: 100, // 1%
+            split_threshold_bps: 50, // 0.5% - split when impact exceeds this
             max_splits: 5,
             tolerance: 0.0001, // 0.01% precision
             max_iterations: 50,

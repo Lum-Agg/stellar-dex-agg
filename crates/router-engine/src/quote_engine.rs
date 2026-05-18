@@ -200,6 +200,7 @@ impl QuoteEngine {
     ) -> Option<Quote> {
         let mut current_amount = amount_in;
         let mut total_fee_bps: u32 = 0;
+        let mut max_impact_bps: u32 = 0;
         let cached_pools = self.cached_pools.read().await;
 
         for (i, source) in path.sources.iter().enumerate() {
@@ -225,12 +226,14 @@ impl QuoteEngine {
                 Some(hop_quote) => {
                     current_amount = hop_quote.amount_out;
                     total_fee_bps += hop_quote.fee_bps;
+                    // Track the maximum per-hop impact (dominates the overall impact)
+                    if hop_quote.price_impact_bps > max_impact_bps {
+                        max_impact_bps = hop_quote.price_impact_bps;
+                    }
                 }
                 None => return None,
             }
         }
-
-        let price_impact_bps = estimate_price_impact(amount_in, current_amount, total_fee_bps);
 
         Some(Quote {
             source: path.sources.join("+"),
@@ -239,7 +242,7 @@ impl QuoteEngine {
             token_out: path.tokens.last()?.clone(),
             amount_in,
             amount_out: current_amount,
-            price_impact_bps,
+            price_impact_bps: max_impact_bps,
             fee_bps: total_fee_bps,
             path: path.tokens[1..path.tokens.len() - 1].to_vec(),
             timestamp_ms: chrono::Utc::now().timestamp_millis() as u64,
