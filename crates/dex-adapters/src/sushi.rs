@@ -239,25 +239,24 @@ impl SushiAdapter {
     /// Discover pools by scanning Factory contract events for pool creation.
     /// Falls back to brute-force token pair enumeration if events fail.
     async fn discover_pools(&self) -> Result<Vec<AdapterTradingPair>> {
-        // Brute-force first (fast for known tokens)
-        let pools = self.discover_pools_brute_force().await?;
+        // Primary: check hardcoded known pool addresses (fastest, most reliable)
+        let pools = self.check_known_pools().await;
         if !pools.is_empty() {
-            info!("Sushi: discovered {} pools via brute-force", pools.len());
+            info!("Sushi: found {} pools from known addresses", pools.len());
             return Ok(pools);
         }
 
-        // Comprehensive: read factory storage via stellar.expert API
+        // Fallback 1: stellar.expert API
         match self.discover_pools_from_factory_storage().await {
             Ok(pools) if !pools.is_empty() => {
                 info!("Sushi: discovered {} pools from factory storage", pools.len());
-                Ok(pools)
+                return Ok(pools);
             }
-            Ok(_) => Ok(vec![]),
-            Err(e) => {
-                warn!("Sushi: factory storage discovery failed: {}", e);
-                Ok(vec![])
-            }
+            _ => {}
         }
+
+        // Fallback 2: brute-force
+        self.discover_pools_brute_force().await
     }
 
     /// Discover all pools by reading the Factory's contract storage.
@@ -358,6 +357,13 @@ impl SushiAdapter {
 
     /// Fallback: brute-force discovery by trying known token pairs.
     async fn discover_pools_brute_force(&self) -> Result<Vec<AdapterTradingPair>> {
+        // First try hardcoded pool addresses (fastest, always works)
+        let known_pools = self.check_known_pools().await;
+        if !known_pools.is_empty() {
+            return Ok(known_pools);
+        }
+
+        // Then try token pair enumeration
         let tokens = vec![
             "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA", // XLM
             "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75", // USDC
@@ -370,7 +376,6 @@ impl SushiAdapter {
         ];
 
         let mut pools = Vec::new();
-
         for i in 0..tokens.len() {
             for j in (i + 1)..tokens.len() {
                 for &fee in FEE_TIERS {
@@ -394,6 +399,74 @@ impl SushiAdapter {
 
         info!("Sushi: discovered {} pools via brute-force", pools.len());
         Ok(pools)
+    }
+
+    /// Check hardcoded pool addresses (from factory storage dump).
+    /// This is the fastest discovery method — just verify each pool has liquidity.
+    async fn check_known_pools(&self) -> Vec<AdapterTradingPair> {
+        // All known Sushi pool addresses from factory storage
+        const KNOWN_POOL_ADDRS: &[&str] = &[
+            "CCR2CH4GQVCZHG7CHFVMNANCK45CU5DVKXZIIITDZQAU3CEJZ7RQH2MQ",
+            "CAKWXQDEVVUF2ABUEM3M2G7QJGJNDZNNVXJZYG4Z4QP6K54QTWV4DW2S",
+            "CAWWOFOEGWPPNP6QKVHTJYB7UHRXC6W6EAFMUPGHMJL7K46E6UCOSNDM",
+            "CAXJ2FDV6S3L46EFEFRXUBLQ5U5CZLZOG35RPCJRNQVLM5MH2HCK5I7J",
+            "CABMZD6BYKKLHRJNS5MURYOBX77NPAH767AI7EVFGWV3WZV55QFN5YNE",
+            "CAFLJXGUAURAMBA3AIHC7ZJOAQKGZ7WEFFGMH5XRC35IMNU7PWIBXVTP",
+            "CALM7JTAJC7AJ7ZGTQKXZNNILJUCD2AZNN7QA7FVM3YYIJBCJGUABEDH",
+            "CAMUA6N6SLCMSIQRICXIQBRYYG3SCEPILS2HJTBXGMCOBCRWQUHAS2OJ",
+            "CAOGXY6DW2KWUVOWCGGPLW7MIJNP7XCMXY736LNLOKYEQA3CBKXVIDEA",
+            "CAPT5THGW7WOCX47TICCB5JZZK4Y24CHQIBSM57Y472WFFV6FGTRKJQD",
+            "CAPUAZDFH4VBQTC7PYL7UM2KSXER2ZY3D462WW6DCE2HGUSO646S4F2X",
+            "CAUBW4ARD42U2UEIA7GDUB5LNKTRTVYJHXKL3CV27YZRDFADDGKLZWFD",
+            "CAWN3BM2ADBMA4CQZLIHTBXA3BQHV4VAPK42LWT5ONAKZW6PH2BBCKLS",
+            "CA5MIPAAG3UULVAHK7U3U6VBBM52YIHMCZOOSHNTPUSLYR7NKNHVD6WK",
+            "CA5R5L7QE7WC2M4YAPSBITV7M2R6LX5366UURH3REHQMOJV6R5QWTH2K",
+            "CA6LYAEDN7XHOKD5TNRFBM3IDFD22VRVVXTGPGK77FZFC7X2OYUQ7BAZ",
+            "CA75VVHLWSM7W6ULNQI7ZJYDFOMQCCPKIDDDHBAL5KOKHWWKWQ5S7MHO",
+            "CBVKO35SAF2ZT75FCLCGLYQG3S6B32YZTOJ2G5F7M746UGBRAWZ5BNZ6",
+            "CCRKQ2RHBWB5ZCHOSBSYEC2QNVSU3MGVUF56BWWKJMJIJ3ZF2A6W7KEC",
+            "CDGIQQBPGXATIEXWTFN5O6J7LM5IMQLMVIQ47Q4H44VIMMOBZ4N6KRVZ",
+        ];
+
+        let mut pools = Vec::new();
+
+        // Check pools concurrently in batches of 10
+        for chunk in KNOWN_POOL_ADDRS.chunks(10) {
+            let futures: Vec<_> = chunk.iter().map(|&addr| {
+                let rpc = self.rpc.clone();
+                let addr = addr.to_string();
+                async move {
+                    let (t0, t1, fee_res, liq) = tokio::join!(
+                        rpc.call_no_args(&addr, "token0"),
+                        rpc.call_no_args(&addr, "token1"),
+                        rpc.call_no_args(&addr, "fee"),
+                        rpc.call_no_args(&addr, "liquidity"),
+                    );
+                    let token0 = t0.ok().and_then(|v| scval_to_address(&v).ok())?;
+                    let token1 = t1.ok().and_then(|v| scval_to_address(&v).ok())?;
+                    let fee = match fee_res.ok()? { xdr::ScVal::U32(f) => f, _ => return None };
+                    let liquidity = liq.ok().and_then(|v| scval_to_u128(&v).ok()).unwrap_or(0);
+                    if liquidity > 0 {
+                        Some(AdapterTradingPair {
+                            token_a: TokenId::Contract { address: token0 },
+                            token_b: TokenId::Contract { address: token1 },
+                            pool_address: addr,
+                            fee_bps: fee,
+                            reserve_a: None,
+                            reserve_b: None,
+                        })
+                    } else {
+                        None
+                    }
+                }
+            }).collect();
+
+            let results = futures::future::join_all(futures).await;
+            for r in results { if let Some(p) = r { pools.push(p); } }
+        }
+
+        info!("Sushi: {} pools with liquidity from known addresses", pools.len());
+        pools
     }
 
     /// Query factory for a pool address given token pair and fee.
