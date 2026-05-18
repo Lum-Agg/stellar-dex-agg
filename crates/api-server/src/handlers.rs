@@ -410,3 +410,188 @@ pub async fn health_check(State(_state): State<AppState>) -> impl IntoResponse {
         adapters: vec![],
     })
 }
+
+// ============================================================
+// POST /api/v1/build_tx
+// ============================================================
+
+/// Build an unsigned transaction from one or more quote results.
+/// User calls quote() one or more times, then sends the results here
+/// to get a single atomic transaction (e.g., for arbitrage: leg1 + leg2).
+#[derive(Deserialize)]
+pub struct BuildTxRequest {
+    /// User's Stellar public key (G...)
+    pub user_public_key: String,
+    /// List of swap legs (each from a quote result)
+    pub legs: Vec<BuildTxLeg>,
+}
+
+#[derive(Deserialize)]
+pub struct BuildTxLeg {
+    /// Input token contract address
+    pub token_in: String,
+    /// Output token contract address
+    pub token_out: String,
+    /// Input amount in stroops
+    pub amount_in: String,
+    /// Minimum output (from quote's minimum_output)
+    pub min_amount_out: String,
+}
+
+#[derive(Serialize)]
+pub struct BuildTxResponse {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<BuildTxData>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct BuildTxData {
+    /// Unsigned transaction envelope XDR (base64)
+    pub unsigned_tx_xdr: String,
+    /// Number of operations in the transaction
+    pub num_operations: usize,
+    /// Estimated fee in stroops
+    pub fee: String,
+}
+
+pub async fn build_tx(
+    State(_state): State<AppState>,
+    Json(body): Json<BuildTxRequest>,
+) -> impl IntoResponse {
+    use stellar_xdr::curr as xdr;
+    use stellar_xdr::curr::{Limits, WriteXdr};
+
+    if body.legs.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(BuildTxResponse {
+            success: false, data: None,
+            error: Some("At least one leg is required".to_string()),
+        }));
+    }
+
+    if body.legs.len() > 10 {
+        return (StatusCode::BAD_REQUEST, Json(BuildTxResponse {
+            success: false, data: None,
+            error: Some("Maximum 10 legs per transaction".to_string()),
+        }));
+    }
+
+    let user_key = match stellar_strkey::ed25519::PublicKey::from_string(&body.user_public_key) {
+        Ok(k) => k,
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, Json(BuildTxResponse {
+                success: false, data: None,
+                error: Some(format!("Invalid public key: {:?}", e)),
+            }));
+        }
+    };
+
+    // Build one PathPaymentStrictSend operation per leg
+    let mut operations = Vec::new();
+
+    for leg in &body.legs {
+        let send_amount: i64 = match leg.amount_in.parse() {
+            Ok(v) => v,
+            Err(_) => {
+                return (StatusCode::BAD_REQUEST, Json(BuildTxResponse {
+                    success: false, data: None,
+                    error: Some(format!("Invalid amount_in: {}", leg.amount_in)),
+                }));
+            }
+        };
+
+        let dest_min: i64 = match leg.min_amount_out.parse() {
+            Ok(v) => v,
+            Err(_) => {
+                return (StatusCode::BAD_REQUEST, Json(BuildTxResponse {
+                    success: false, data: None,
+                    error: Some(format!("Invalid min_amount_out: {}", leg.min_amount_out)),
+                }));
+            }
+        };
+
+        let send_asset = match parse_asset_xdr(&leg.token_in) {
+            Ok(a) => a,
+            Err(e) => {
+                return (StatusCode::BAD_REQUEST, Json(BuildTxResponse {
+                    success: false, data: None,
+                    error: Some(format!("Invalid token_in {}: {}", leg.token_in, e)),
+                }));
+            }
+        };
+
+        let dest_asset = match parse_asset_xdr(&leg.token_out) {
+            Ok(a) => a,
+            Err(e) => {
+                return (StatusCode::BAD_REQUEST, Json(BuildTxResponse {
+                    success: false, data: None,
+                    error: Some(format!("Invalid token_out {}: {}", leg.token_out, e)),
+                }));
+            }
+        };
+
+        let op = xdr::Operation {
+            source_account: None,
+            body: xdr::OperationBody::PathPaymentStrictSend(xdr::PathPaymentStrictSendOp {
+                send_asset,
+                send_amount,
+                destination: xdr::MuxedAccount::Ed25519(xdr::Uint256(user_key.0)),
+                dest_asset,
+                dest_min,
+                path: xdr::VecM::default(), // Let Stellar Core find the best path
+            }),
+        };
+
+        operations.push(op);
+    }
+
+    let num_ops = operations.len();
+    let fee = (num_ops as u32) * 10000; // 0.001 XLM per op
+
+    let source_account = xdr::MuxedAccount::Ed25519(xdr::Uint256(user_key.0));
+
+    let tx = xdr::Transaction {
+        source_account,
+        fee,
+        seq_num: xdr::SequenceNumber(0), // Client must set this before signing
+        cond: xdr::Preconditions::None,
+        memo: xdr::Memo::None,
+        operations: match operations.try_into() {
+            Ok(ops) => ops,
+            Err(_) => {
+                return (StatusCode::INTERNAL_SERVER_ERROR, Json(BuildTxResponse {
+                    success: false, data: None,
+                    error: Some("Failed to build operations".to_string()),
+                }));
+            }
+        },
+        ext: xdr::TransactionExt::V0,
+    };
+
+    let envelope = xdr::TransactionEnvelope::Tx(xdr::TransactionV1Envelope {
+        tx,
+        signatures: xdr::VecM::default(),
+    });
+
+    match envelope.to_xdr_base64(Limits::none()) {
+        Ok(xdr_b64) => {
+            (StatusCode::OK, Json(BuildTxResponse {
+                success: true,
+                data: Some(BuildTxData {
+                    unsigned_tx_xdr: xdr_b64,
+                    num_operations: num_ops,
+                    fee: fee.to_string(),
+                }),
+                error: None,
+            }))
+        }
+        Err(e) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(BuildTxResponse {
+                success: false, data: None,
+                error: Some(format!("XDR encode error: {:?}", e)),
+            }))
+        }
+    }
+}

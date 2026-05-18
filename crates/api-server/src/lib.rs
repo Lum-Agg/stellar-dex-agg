@@ -20,6 +20,7 @@ pub async fn run_server() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/api/v1/quote", get(handlers::get_quote))
         .route("/api/v1/swap", post(handlers::build_swap))
+        .route("/api/v1/build_tx", post(handlers::build_tx))
         .route("/api/v1/tokens", get(handlers::list_tokens))
         .route("/api/v1/health", get(handlers::health_check))
         .layer(CorsLayer::permissive())

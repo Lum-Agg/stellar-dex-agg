@@ -35,9 +35,6 @@ export default function RootLayout({
                   <a href="/docs" className="hover:text-white transition-colors">
                     API Docs
                   </a>
-                  <a href="https://github.com/ligulfzhou/stellar-dex-agg" target="_blank" rel="noopener" className="hover:text-white transition-colors">
-                    GitHub
-                  </a>
                 </nav>
                 <HeaderWallet />
               </div>
@@ -50,7 +47,7 @@ export default function RootLayout({
 
           <footer className="relative border-t border-white/5 mt-20">
             <div className="max-w-5xl mx-auto px-6 py-6 text-center text-xs text-gray-500">
-              Aggregating liquidity across Soroswap, Aquarius, Phoenix, Sushi V3, Comet & Stellar Classic DEX
+              Aggregating liquidity across Aquarius, Phoenix, Soroswap, Sushi V3, Comet & Stellar Classic DEX
             </div>
           </footer>
         </Providers>

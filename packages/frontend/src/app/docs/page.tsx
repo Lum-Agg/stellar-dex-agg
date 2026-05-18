@@ -15,7 +15,7 @@ export default function DocsPage() {
     <div className="max-w-4xl mx-auto">
       <h1 className="text-3xl font-bold mb-2">API Documentation</h1>
       <p className="text-gray-400 mb-8">
-        LumAgg aggregates liquidity across Soroswap, Aquarius, Phoenix, Sushi V3, and Stellar Classic DEX.
+        LumAgg aggregates liquidity across Soroswap, Aquarius, Phoenix, Sushi V3, Comet and Stellar Classic DEX.
       </p>
 
       <div className="mb-6 p-4 rounded-lg bg-white/5 border border-white/10">
@@ -71,6 +71,19 @@ export default function DocsPage() {
           description="Check API health and adapter status."
           params={[]}
           tryIt={<HealthTryIt />}
+        />
+
+        <EndpointSection
+          method="POST"
+          path="/api/v1/build_tx"
+          description="Build an unsigned transaction from one or more quote results. Use for arbitrage: call quote() twice (A→B, B→A), then send both legs here to get a single atomic tx."
+          params={[
+            { name: 'user_public_key', type: 'string', required: true, desc: 'User Stellar public key (G...)' },
+            { name: 'legs', type: 'array', required: true, desc: 'Array of swap legs (each with token_in, token_out, amount_in, min_amount_out)' },
+          ]}
+          tryIt={<BuildTxTryIt />}
+        />]}
+          tryIt={<ArbTryIt />}
         />
       </div>
 
@@ -245,6 +258,106 @@ function HealthTryIt() {
       </button>
       {result && (
         <pre className="mt-3 bg-black/60 rounded p-3 text-xs text-green-300 overflow-x-auto">{result}</pre>
+      )}
+    </div>
+  );
+}
+
+function BuildTxTryIt() {
+  const [tokenIn, setTokenIn] = useState('XLM');
+  const [tokenOut, setTokenOut] = useState('USDC');
+  const [amount, setAmount] = useState('100');
+  const [pubKey, setPubKey] = useState('GA6RKSBPI2TSP52OW2IJTPK7LRMX24DF42KF3FBGBNMBYCV6NPDMOCBY');
+  const [result, setResult] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const run = async () => {
+    setLoading(true);
+    setResult(null);
+    const amountStroops = (parseFloat(amount) * 10_000_000).toFixed(0);
+
+    try {
+      // Step 1: Quote leg1 (token → intermediate)
+      const q1Url = `${API_URL}/api/v1/quote?token_in=${TOKENS[tokenIn]}&token_out=${TOKENS[tokenOut]}&amount_in=${amountStroops}`;
+      const q1Resp = await fetch(q1Url);
+      const q1 = await q1Resp.json();
+
+      if (!q1.success || !q1.data) {
+        setResult(JSON.stringify({ error: 'Leg 1 quote failed', details: q1 }, null, 2));
+        setLoading(false);
+        return;
+      }
+
+      // Step 2: Quote leg2 (intermediate → token)
+      const q2Url = `${API_URL}/api/v1/quote?token_in=${TOKENS[tokenOut]}&token_out=${TOKENS[tokenIn]}&amount_in=${q1.data.expected_output}`;
+      const q2Resp = await fetch(q2Url);
+      const q2 = await q2Resp.json();
+
+      if (!q2.success || !q2.data) {
+        setResult(JSON.stringify({ error: 'Leg 2 quote failed', details: q2 }, null, 2));
+        setLoading(false);
+        return;
+      }
+
+      // Calculate profit
+      const finalAmount = parseInt(q2.data.expected_output);
+      const startAmount = parseInt(amountStroops);
+      const profit = finalAmount - startAmount;
+      const profitPct = ((profit / startAmount) * 100).toFixed(4);
+
+      // Step 3: Build tx with both legs
+      const buildResp = await fetch(`${API_URL}/api/v1/build_tx`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_public_key: pubKey,
+          legs: [
+            { token_in: TOKENS[tokenIn], token_out: TOKENS[tokenOut], amount_in: amountStroops, min_amount_out: q1.data.minimum_output },
+            { token_in: TOKENS[tokenOut], token_out: TOKENS[tokenIn], amount_in: q1.data.expected_output, min_amount_out: String(startAmount) },
+          ],
+        }),
+      });
+      const buildResult = await buildResp.json();
+
+      setResult(JSON.stringify({
+        leg1: { route: q1.data.sub_routes, output: q1.data.expected_output },
+        leg2: { route: q2.data.sub_routes, output: q2.data.expected_output },
+        profit: { amount: profit, pct: `${profitPct}%`, profitable: profit > 0 },
+        tx: buildResult.data,
+      }, null, 2));
+    } catch (e: any) {
+      setResult(`Error: ${e.message}`);
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div className="mt-4 pt-4 border-t border-white/10">
+      <h4 className="text-xs font-bold text-gray-500 uppercase mb-2">Try it — Arb Example (quote + quote + build_tx)</h4>
+      <p className="text-xs text-gray-500 mb-3">Calls quote twice (A→B, B→A) then builds atomic tx</p>
+      <div className="flex flex-wrap gap-2 items-end mb-3">
+        <div>
+          <label className="text-xs text-gray-500 block mb-1">Token A</label>
+          <select value={tokenIn} onChange={(e) => setTokenIn(e.target.value)} className="bg-black/40 border border-white/10 rounded px-2 py-1 text-sm">
+            {Object.keys(TOKENS).map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs text-gray-500 block mb-1">Token B</label>
+          <select value={tokenOut} onChange={(e) => setTokenOut(e.target.value)} className="bg-black/40 border border-white/10 rounded px-2 py-1 text-sm">
+            {Object.keys(TOKENS).map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs text-gray-500 block mb-1">Amount</label>
+          <input value={amount} onChange={(e) => setAmount(e.target.value)} className="bg-black/40 border border-white/10 rounded px-2 py-1 text-sm w-24" />
+        </div>
+        <button onClick={run} disabled={loading} className="px-3 py-1 bg-purple-600 hover:bg-purple-500 rounded text-sm font-medium disabled:opacity-50">
+          {loading ? '...' : 'Find Arb'}
+        </button>
+      </div>
+      {result && (
+        <pre className="bg-black/60 rounded p-3 text-xs text-green-300 overflow-x-auto max-h-80 overflow-y-auto">{result}</pre>
       )}
     </div>
   );
