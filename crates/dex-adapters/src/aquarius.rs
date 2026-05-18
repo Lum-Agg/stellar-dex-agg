@@ -252,6 +252,11 @@ impl AquariusAdapter {
                     _ => continue,
                 };
 
+                // Skip 3+ token pools (not supported by our 2-token AMM math)
+                if token_addresses.len() > 2 {
+                    continue;
+                }
+
                 let token_a_addr = &token_addresses[0];
                 let token_b_addr = &token_addresses[1];
 
