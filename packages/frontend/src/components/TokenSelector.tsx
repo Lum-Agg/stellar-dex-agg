@@ -8,6 +8,7 @@ export interface Token {
   name: string;
   decimals: number;
   color: string;
+  logo?: string;
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
@@ -23,12 +24,12 @@ function getColor(symbol: string): string {
   return TOKEN_COLORS[symbol[0]] || '#6B7280';
 }
 
-// Well-known tokens (always shown at top)
+// Well-known tokens (always shown at top) with logo URLs
 const PRIORITY_TOKENS: Token[] = [
-  { id: 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA', symbol: 'XLM', name: 'Stellar Lumens', decimals: 7, color: '#14B8A6' },
-  { id: 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75', symbol: 'USDC', name: 'USD Coin', decimals: 7, color: '#2775CA' },
-  { id: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC', symbol: 'EURC', name: 'Euro Coin', decimals: 7, color: '#2B6CB0' },
-  { id: 'CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV', symbol: 'AQUA', name: 'Aquarius', decimals: 7, color: '#06B6D4' },
+  { id: 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA', symbol: 'XLM', name: 'Stellar Lumens', decimals: 7, color: '#14B8A6', logo: 'https://stellar.expert/explorer/public/asset/native/icon' },
+  { id: 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75', symbol: 'USDC', name: 'USD Coin', decimals: 7, color: '#2775CA', logo: 'https://stellar.expert/explorer/public/asset/USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN-1/icon' },
+  { id: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC', symbol: 'EURC', name: 'Euro Coin', decimals: 7, color: '#2B6CB0', logo: 'https://stellar.expert/explorer/public/asset/EURC-GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2-1/icon' },
+  { id: 'CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV', symbol: 'AQUA', name: 'Aquarius', decimals: 7, color: '#06B6D4', logo: 'https://stellar.expert/explorer/public/asset/AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA-1/icon' },
 ];
 
 // Export for SwapCard default
@@ -67,6 +68,17 @@ export function useTokenList() {
 }
 
 function TokenIcon({ token, size = 28 }: { token: Token; size?: number }) {
+  if (token.logo) {
+    return (
+      <img
+        src={token.logo}
+        alt={token.symbol}
+        className="rounded-full"
+        style={{ width: size, height: size }}
+        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+      />
+    );
+  }
   return (
     <div
       className="rounded-full flex items-center justify-center text-white font-bold"
