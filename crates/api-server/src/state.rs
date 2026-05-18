@@ -9,6 +9,7 @@ use dex_adapters::{
     rpc::SorobanRpc,
     soroswap::SoroswapAdapter,
     sushi::SushiAdapter,
+    token_metadata::TokenMetadataStore,
     AdapterTradingPair, DexAdapter,
 };
 use router_engine::{
@@ -27,6 +28,7 @@ use crate::config::AppConfig;
 pub struct AppState {
     pub engine: Arc<QuoteEngine>,
     pub config: AppConfig,
+    pub token_metadata: Arc<TokenMetadataStore>,
 }
 
 impl AppState {
@@ -38,6 +40,9 @@ impl AppState {
 
         // Create shared RPC client
         let rpc = Arc::new(SorobanRpc::new(&config.rpc_url, &config.network_passphrase));
+
+        // Token metadata store (loads from file cache)
+        let token_metadata = Arc::new(TokenMetadataStore::new(rpc.clone()));
 
         // Try to load cached pool data for instant startup
         let cache_path = default_cache_path();
@@ -73,6 +78,7 @@ impl AppState {
         // Spawn background task to fetch fresh data from chain
         let engine_clone = engine.clone();
         let rpc_clone = rpc.clone();
+        let token_metadata_clone = token_metadata.clone();
         let refresh_interval = config.refresh_interval_secs;
 
         tokio::spawn(async move {
@@ -115,6 +121,10 @@ impl AppState {
 
             info!("Background: initial load complete. Starting refresh loop ({}s interval).", refresh_interval);
 
+            // Resolve token metadata for all discovered tokens
+            let all_tokens = engine_clone.get_all_tokens().await;
+            token_metadata_clone.resolve_unknown(all_tokens).await;
+
             // Periodic refresh — use batch getLedgerEntries for fast reserves update
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(refresh_interval)).await;
@@ -151,6 +161,6 @@ impl AppState {
             }
         });
 
-        Ok(Self { engine, config })
+        Ok(Self { engine, config, token_metadata })
     }
 }

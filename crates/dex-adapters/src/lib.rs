@@ -23,6 +23,7 @@ pub mod traits;
 pub mod rpc;
 pub mod cache;
 pub mod token_registry;
+pub mod token_metadata;
 pub mod batch_refresh;
 pub mod soroswap;
 pub mod aquarius;

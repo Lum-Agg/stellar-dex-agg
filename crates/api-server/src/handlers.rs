@@ -380,35 +380,21 @@ pub struct TokenInfo {
 }
 
 pub async fn list_tokens(State(state): State<AppState>) -> impl IntoResponse {
-    // Get all unique tokens from the quote engine's cached pools
+    // Get all unique tokens from the quote engine
     let all_tokens = state.engine.get_all_tokens().await;
+    // Get cached metadata
+    let metadata = state.token_metadata.get_all().await;
 
-    let tokens: Vec<TokenInfo> = all_tokens.into_iter().map(|canonical| {
-        // Map well-known addresses to symbols
-        let (symbol, name): (&str, &str) = match canonical.as_str() {
-            "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA" => ("XLM", "Stellar Lumens"),
-            "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75" => ("USDC", "USD Coin"),
-            "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC" => ("EURC", "Euro Coin"),
-            "CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV" => ("AQUA", "Aquarius"),
-            "CBZVSNVB55ANF3LBFTU2LKGD3BJKFMHIGISKND7LBSPHYY3MAQH4AMPR" => ("yXLM", "Yield XLM"),
-            "CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM" => ("BLND", "Blend"),
-            "CAP5AMC2OHNVREO66DFIN6DHJMPOBAJ2KCDDIMFBR7WWJH5RZBFM3UEI" => ("AQUA2", "Aquarius v2"),
-            "CAUIKL3IYGMERDRUN6YSCLWVAKIFG5Q4YJHUKM4S4MZLQO346H4GQ2O2" => ("FIDR", "Fidr"),
-            "CCGIMRMF6XGCXBPFY3OIAFAHD24HO5MBNHPFMHBHCNDS2AIMYQCL7PSI" => ("SHX", "Stronghold"),
-            "CA4VTJFKCIXVH3G2MEYAGA4U5A7IBWFFDODTSR3KUAQ4KZMI37J75CYX" => ("ARST", "ARS Token"),
-            "CBEM2CAIYLM3HBOPQXLM3BSGSYIKMQHCJDNLXMBWHOVHFWI6DUFPWPUI" => ("CETES", "CETES"),
-            "CCXRRORTOXXP53HEKJ6RCG7CDRWZAJHIS4N7PDL32PUNMNN7VWPJVQWS" => ("PYUSD", "PayPal USD"),
-            "CDVBYETOFG7UYJAD6CMOAQZXBHEK3PD5ZDZKWMWIY5OXIWATPX4VGMY2" => ("USDY", "Ondo USDY"),
-            "CA6GAFOJCW4MGQQBUCQUSA3CLIH25G4SNKB2JHYKZCVWZTNW5VXMSC4O" => ("USDGLO", "Glo Dollar"),
-            "CA53URIS7E2LIWASEH7IACBU6FB3EBUYPNW5IRKZBHALRNXLZ3DE7XTP" => ("NUNA", "Nuna"),
-            "CA62YIEXFHXNLIDW5TN5YVB6ILB5OM3HPGZIBFQ25QPIAUBVOBZ2CVFI" => ("RIO", "Realio"),
-            _ => ("", ""),
-        };
-        if symbol.is_empty() {
-            let short = if canonical.len() > 6 { canonical[..6].to_string() } else { canonical.clone() };
-            TokenInfo { id: canonical, symbol: short, name: "Unknown".to_string() }
+    let tokens: Vec<TokenInfo> = all_tokens.into_iter().map(|addr| {
+        if let Some(meta) = metadata.get(&addr) {
+            TokenInfo {
+                id: addr,
+                symbol: meta.symbol.clone(),
+                name: meta.name.clone(),
+            }
         } else {
-            TokenInfo { id: canonical, symbol: symbol.to_string(), name: name.to_string() }
+            let short = if addr.len() > 6 { addr[..6].to_string() } else { addr.clone() };
+            TokenInfo { id: addr, symbol: short, name: "Unknown".to_string() }
         }
     }).collect();
 
