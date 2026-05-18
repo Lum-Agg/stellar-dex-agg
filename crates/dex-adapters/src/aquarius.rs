@@ -27,6 +27,11 @@ const STABLE_ASSETS: &[&str] = &[
     "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC", // EURC SAC
 ];
 
+/// Known 3-token pools to skip (their reserves don't work with 2-token math)
+const BLACKLISTED_POOLS: &[&str] = &[
+    "CBBMQBNHB2FYVZYV7VNHOJHUMTFJLR4PUMRVQYNW6RHIKZO2NQMIBUCV", // XLM/USDC/AQUA 3-token
+];
+
 /// Default amplification factor for stable pools
 const DEFAULT_STABLE_AMP: u128 = 100;
 
@@ -211,14 +216,25 @@ impl AquariusAdapter {
         }
 
         for pool_addr in &multi_token_pools {
+            // Fetch reserves
             match self.rpc.call_no_args(pool_addr, "get_reserves").await {
                 Ok(xdr::ScVal::Vec(Some(vec))) => {
                     let reserves: Vec<u128> = vec.0.iter()
                         .filter_map(|v| scval_to_u128(v).ok())
                         .collect();
-                    // Update all_reserves in meta for all pairs from this pool
                     for (_, meta) in all_pools.iter_mut().filter(|(p, _)| &p.pool_address == pool_addr) {
                         meta.all_reserves = reserves.clone();
+                    }
+                }
+                _ => {}
+            }
+            // Fetch amplification coefficient
+            match self.rpc.call_no_args(pool_addr, "a").await {
+                Ok(val) => {
+                    if let Ok(amp) = scval_to_u128(&val) {
+                        for (_, meta) in all_pools.iter_mut().filter(|(p, _)| &p.pool_address == pool_addr) {
+                            meta.amp = amp;
+                        }
                     }
                 }
                 _ => {}
@@ -283,19 +299,26 @@ impl AquariusAdapter {
                 };
 
                 let n_tokens = token_addresses.len();
-                let is_stable = if n_tokens == 2 {
-                    is_stable_pair(
-                        &TokenId::Contract { address: token_addresses[0].clone() },
-                        &TokenId::Contract { address: token_addresses[1].clone() },
-                    )
-                } else {
-                    true // 3+ token pools are always stable
-                };
+
+                // Skip 3+ token pools for now (stable math needs calibration)
+                // TODO: properly support multi-token pools with verified amp + reserves
+                if n_tokens > 2 {
+                    continue;
+                }
+
+                let is_stable = is_stable_pair(
+                    &TokenId::Contract { address: token_addresses[0].clone() },
+                    &TokenId::Contract { address: token_addresses[1].clone() },
+                );
 
                 // Parse pools map
                 if let xdr::ScVal::Map(Some(map)) = &pair.0[1] {
                     for map_entry in map.0.iter() {
                         if let Ok(pool_address) = scval_to_address(&map_entry.val) {
+                            // Skip blacklisted pools (3-token pools that break 2-token math)
+                            if BLACKLISTED_POOLS.contains(&pool_address.as_str()) {
+                                continue;
+                            }
                             let meta = PoolMeta {
                                 is_stable,
                                 fee_bps: 30,
