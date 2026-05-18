@@ -13,7 +13,7 @@
 //! directly back to the user — all in one atomic invocation.
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, token, Address, Env, Symbol, Vec, Val,
+    contract, contractimpl, contracttype, token, Address, BytesN, Env, Symbol, Vec, Val,
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
     IntoVal,
 };
@@ -27,6 +27,13 @@ pub enum DexType {
     Phoenix,
     Sushi,
     CometDex,
+}
+
+/// Storage keys
+#[contracttype]
+#[derive(Clone)]
+pub enum DataKey {
+    Admin,
 }
 
 /// A single swap step in the aggregation path
@@ -61,6 +68,29 @@ pub struct AggregatorContract;
 
 #[contractimpl]
 impl AggregatorContract {
+    /// Initialize the contract with an admin address.
+    /// Must be called once after deployment.
+    pub fn initialize(env: Env, admin: Address) {
+        if env.storage().instance().has(&DataKey::Admin) {
+            panic!("Already initialized");
+        }
+        env.storage().instance().set(&DataKey::Admin, &admin);
+    }
+
+    /// Upgrade the contract WASM code. Only admin can call.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin)
+            .expect("Not initialized");
+        admin.require_auth();
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+    }
+
+    /// Get the admin address.
+    pub fn admin(env: Env) -> Address {
+        env.storage().instance().get(&DataKey::Admin)
+            .expect("Not initialized")
+    }
+
     /// Execute a single-path multi-hop swap atomically.
     ///
     /// Use this when the optimal route is a single path (no splitting needed).
