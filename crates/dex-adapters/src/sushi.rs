@@ -422,23 +422,33 @@ impl SushiAdapter {
             "CALM7JTAJC7AJ7ZGTQKXZNNILJUCD2AZNN7QA7FVM3YYIJBCJGUABEDH", // MBC/XLM 0.3%
         ];
 
+        info!("Sushi: checking {} known pool addresses...", KNOWN_POOL_ADDRS.len());
         let mut pools = Vec::new();
 
-        // Check pools sequentially (more reliable than concurrent on rate-limited RPC)
+        // Use public RPC for discovery (server's local RPC may have issues with some contracts)
+        let discovery_rpc = SorobanRpc::new(
+            "https://soroban-rpc.mainnet.stellar.gateway.fm",
+            "Public Global Stellar Network ; September 2015",
+        );
+
+        // Check pools sequentially
         for &addr in KNOWN_POOL_ADDRS {
-            let token0 = match self.rpc.call_no_args(addr, "token0").await {
+            let token0 = match discovery_rpc.call_no_args(addr, "token0").await {
+                Ok(v) => match scval_to_address(&v) { Ok(a) => a, Err(_) => continue },
+                Err(e) => {
+                    debug!("Sushi: pool {} token0 failed: {}", &addr[..12], e);
+                    continue;
+                }
+            };
+            let token1 = match discovery_rpc.call_no_args(addr, "token1").await {
                 Ok(v) => match scval_to_address(&v) { Ok(a) => a, Err(_) => continue },
                 Err(_) => continue,
             };
-            let token1 = match self.rpc.call_no_args(addr, "token1").await {
-                Ok(v) => match scval_to_address(&v) { Ok(a) => a, Err(_) => continue },
-                Err(_) => continue,
-            };
-            let fee = match self.rpc.call_no_args(addr, "fee").await {
+            let fee = match discovery_rpc.call_no_args(addr, "fee").await {
                 Ok(xdr::ScVal::U32(f)) => f,
                 _ => continue,
             };
-            let liquidity = match self.rpc.call_no_args(addr, "liquidity").await {
+            let liquidity = match discovery_rpc.call_no_args(addr, "liquidity").await {
                 Ok(v) => scval_to_u128(&v).unwrap_or(0),
                 Err(_) => continue,
             };
