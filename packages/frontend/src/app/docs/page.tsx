@@ -31,6 +31,22 @@ export default function DocsPage() {
 
       {/* Endpoints */}
       <div className="space-y-8">
+         <EndpointSection
+          method="GET"
+          path="/api/v1/health"
+          description="Check API health and adapter status."
+          params={[]}
+          tryIt={<HealthTryIt />}
+        />
+
+         <EndpointSection
+          method="GET"
+          path="/api/v1/tokens"
+          description="List supported tokens with their contract addresses."
+          params={[]}
+          tryIt={<TokensTryIt />}
+        />
+
         <EndpointSection
           method="GET"
           path="/api/v1/quote"
@@ -43,43 +59,18 @@ export default function DocsPage() {
           ]}
           tryIt={<QuoteTryIt />}
         />
-
-        <EndpointSection
-          method="POST"
-          path="/api/v1/swap"
-          description="Build an unsigned swap transaction for the user to sign."
-          params={[
-            { name: 'token_in', type: 'string', required: true, desc: 'Input token contract address' },
-            { name: 'token_out', type: 'string', required: true, desc: 'Output token contract address' },
-            { name: 'amount_in', type: 'string', required: true, desc: 'Input amount in stroops' },
-            { name: 'slippage', type: 'number', required: true, desc: 'Slippage tolerance (e.g. 0.5)' },
-            { name: 'user_public_key', type: 'string', required: true, desc: 'User Stellar public key (G...)' },
-          ]}
-        />
-
-        <EndpointSection
-          method="GET"
-          path="/api/v1/tokens"
-          description="List supported tokens with their contract addresses."
-          params={[]}
-          tryIt={<TokensTryIt />}
-        />
-
-        <EndpointSection
-          method="GET"
-          path="/api/v1/health"
-          description="Check API health and adapter status."
-          params={[]}
-          tryIt={<HealthTryIt />}
-        />
-
+       
         <EndpointSection
           method="POST"
           path="/api/v1/build_tx"
-          description="Build an unsigned transaction from one or more quote results. Use for arbitrage: call quote() twice (A→B, B→A), then send both legs here to get a single atomic tx."
+          description="Build an unsigned transaction that calls the aggregator contract. User specifies exactly which DEX/pool to use for each swap step."
           params={[
             { name: 'user_public_key', type: 'string', required: true, desc: 'User Stellar public key (G...)' },
-            { name: 'legs', type: 'array', required: true, desc: 'Array of swap legs (each with token_in, token_out, amount_in, min_amount_out)' },
+            { name: 'token_in', type: 'string', required: true, desc: 'Input token contract address' },
+            { name: 'token_out', type: 'string', required: true, desc: 'Final output token contract address' },
+            { name: 'amount_in', type: 'string', required: true, desc: 'Input amount in stroops' },
+            { name: 'min_amount_out', type: 'string', required: true, desc: 'Minimum acceptable output' },
+            { name: 'steps', type: 'array', required: true, desc: 'Swap steps: [{dex_type, pool_address, token_in, token_out, a2b}]' },
           ]}
           tryIt={<BuildTxTryIt />}
         />
@@ -267,10 +258,20 @@ function HealthTryIt() {
 }
 
 function BuildTxTryIt() {
-  const [legsJson, setLegsJson] = useState(JSON.stringify([
-    { token_in: "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA", token_out: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75", amount_in: "1000000000", min_amount_out: "140000000" }
-  ], null, 2));
-  const [pubKey, setPubKey] = useState('GA6RKSBPI2TSP52OW2IJTPK7LRMX24DF42KF3FBGBNMBYCV6NPDMOCBY');
+  const [reqJson, setReqJson] = useState(JSON.stringify({
+    user_public_key: "GA6RKSBPI2TSP52OW2IJTPK7LRMX24DF42KF3FBGBNMBYCV6NPDMOCBY",
+    token_in: "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+    token_out: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+    amount_in: "1000000000",
+    min_amount_out: "140000000",
+    steps: [{
+      dex_type: "aquarius",
+      pool_address: "CDKVJYMN34ZIEXSLNFYHVAFF6M6FM5E2U6OHXOTBKH2WLBULXOE53YDP",
+      token_in: "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+      token_out: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+      a2b: true
+    }]
+  }, null, 2));
   const [result, setResult] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -278,11 +279,11 @@ function BuildTxTryIt() {
     setLoading(true);
     setResult(null);
     try {
-      const legs = JSON.parse(legsJson);
+      const body = JSON.parse(reqJson);
       const resp = await fetch(`${API_URL}/api/v1/build_tx`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_public_key: pubKey, legs }),
+        body: JSON.stringify(body),
       });
       const data = await resp.json();
       setResult(JSON.stringify(data, null, 2));
@@ -297,12 +298,8 @@ function BuildTxTryIt() {
       <h4 className="text-xs font-bold text-gray-500 uppercase mb-3">Try it</h4>
       <div className="space-y-2 mb-3">
         <div>
-          <label className="text-xs text-gray-500 block mb-1">Public Key</label>
-          <input value={pubKey} onChange={(e) => setPubKey(e.target.value)} className="bg-black/40 border border-white/10 rounded px-2 py-1 text-sm w-full font-mono text-xs" />
-        </div>
-        <div>
-          <label className="text-xs text-gray-500 block mb-1">Legs (JSON array)</label>
-          <textarea value={legsJson} onChange={(e) => setLegsJson(e.target.value)} rows={4} className="bg-black/40 border border-white/10 rounded px-2 py-1 text-xs w-full font-mono" />
+          <label className="text-xs text-gray-500 block mb-1">Request Body (JSON)</label>
+          <textarea value={reqJson} onChange={(e) => setReqJson(e.target.value)} rows={12} className="bg-black/40 border border-white/10 rounded px-2 py-1 text-xs w-full font-mono" />
         </div>
         <button onClick={run} disabled={loading} className="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded text-sm font-medium disabled:opacity-50">
           {loading ? '...' : 'Build TX'}
