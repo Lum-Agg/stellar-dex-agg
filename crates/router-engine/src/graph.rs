@@ -134,6 +134,11 @@ impl TokenGraph {
                 break;
             }
 
+            // Limit queue size to prevent combinatorial explosion
+            if queue.len() > 10_000 {
+                break;
+            }
+
             if pool_path.len() >= max_hops {
                 continue;
             }

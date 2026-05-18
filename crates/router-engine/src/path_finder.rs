@@ -22,8 +22,8 @@ pub struct PathFinderConfig {
 impl Default for PathFinderConfig {
     fn default() -> Self {
         Self {
-            max_hops: 4,
-            max_paths: 20,
+            max_hops: 3,
+            max_paths: 10,
             bridge_tokens: vec![
                 TokenId::Native, // XLM
                 TokenId::Classic {
