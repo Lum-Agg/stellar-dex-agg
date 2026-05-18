@@ -44,6 +44,10 @@ pub struct QuoteData {
 pub struct SubRouteData {
     pub source: String,
     pub path: Vec<String>,
+    /// Pool addresses for each hop (same length as path - 1)
+    pub pool_addresses: Vec<String>,
+    /// DEX types for each hop: "aquarius", "soroswap", "phoenix", "sushi", "comet"
+    pub dex_types: Vec<String>,
     pub amount_in: String,
     pub amount_out: String,
     pub percentage: f64,
@@ -100,6 +104,8 @@ pub async fn get_quote(
         .map(|so| SubRouteData {
             source: so.path.sources.join(" → "),
             path: so.path.tokens.iter().map(|t| t.canonical()).collect(),
+            pool_addresses: so.path.pool_addresses.clone(),
+            dex_types: so.path.sources.clone(),
             amount_in: so.amount_in.to_string(),
             amount_out: so.expected_amount_out.to_string(),
             percentage: so.fraction * 100.0,
@@ -208,6 +214,8 @@ pub async fn build_swap(
             let sub_routes: Vec<SubRouteData> = route.sub_orders.iter().map(|so| SubRouteData {
                 source: so.path.sources.join(" → "),
                 path: so.path.tokens.iter().map(|t| t.canonical()).collect(),
+                pool_addresses: so.path.pool_addresses.clone(),
+                dex_types: so.path.sources.clone(),
                 amount_in: so.amount_in.to_string(),
                 amount_out: so.expected_amount_out.to_string(),
                 percentage: so.fraction * 100.0,
