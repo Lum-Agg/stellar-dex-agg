@@ -117,59 +117,77 @@ export function TokenSelector({
 
       {open && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => { setOpen(false); setSearch(''); }} />
-          <div className="absolute right-0 top-full mt-2 z-50 bg-[#1a1b23] border border-white/10 rounded-xl shadow-xl overflow-hidden min-w-[220px]">
-            {/* Search */}
-            <div className="p-2 border-b border-white/5">
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search token or paste address..."
-                className="w-full bg-[#12131a] border border-white/10 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-blue-500/50 placeholder-gray-600"
-                autoFocus
-              />
-            </div>
-            {/* Token list */}
-            <div className="max-h-[300px] overflow-y-auto">
-              {filtered.slice(0, 50).map(token => (
-                <button
-                  key={token.id}
-                  onClick={() => { onSelect(token); setOpen(false); setSearch(''); }}
-                  className={`w-full flex items-center gap-3 px-4 py-2.5 hover:bg-white/5 transition-colors ${
-                    token.id === selected.id ? 'bg-white/5' : ''
-                  }`}
-                >
-                  <TokenIcon token={token} size={24} />
-                  <div className="text-left min-w-0">
-                    <div className="text-sm font-medium">{token.symbol}</div>
-                    <div className="text-[10px] text-gray-500 truncate">{token.name}</div>
-                  </div>
+          {/* Full-screen modal overlay */}
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => { setOpen(false); setSearch(''); }}>
+            <div className="bg-[#1a1b23] border border-white/10 rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+              {/* Header */}
+              <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
+                <h3 className="text-base font-semibold">Select a token</h3>
+                <button onClick={() => { setOpen(false); setSearch(''); }} className="text-gray-400 hover:text-white">
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
                 </button>
-              ))}
-              {filtered.length > 50 && (
-                <div className="px-4 py-2 text-xs text-gray-500 text-center">
-                  {filtered.length - 50} more — type to search
-                </div>
-              )}
-              {filtered.length === 0 && (
-                <div className="px-4 py-3 text-xs text-gray-500 text-center">
-                  {search.startsWith('C') && search.length > 40 ? (
-                    <button
-                      onClick={() => {
-                        onSelect({ id: search, symbol: search.slice(0, 6), name: 'Custom Token', decimals: 7, color: '#6B7280' });
-                        setOpen(false);
-                        setSearch('');
-                      }}
-                      className="text-blue-400 hover:text-blue-300"
-                    >
-                      Use {search.slice(0, 8)}... as custom token
-                    </button>
-                  ) : (
-                    'No tokens found'
-                  )}
-                </div>
-              )}
+              </div>
+
+              {/* Search */}
+              <div className="px-5 py-3">
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search name or paste address"
+                  className="w-full bg-[#12131a] border border-white/10 rounded-xl px-4 py-3 text-sm outline-none focus:border-blue-500/50 placeholder-gray-500"
+                  autoFocus
+                />
+              </div>
+
+              {/* Token list */}
+              <div className="max-h-[400px] overflow-y-auto px-2 pb-4">
+                {filtered.slice(0, 50).map(token => (
+                  <button
+                    key={token.id}
+                    onClick={() => { onSelect(token); setOpen(false); setSearch(''); }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 transition-colors ${
+                      token.id === selected.id ? 'bg-blue-500/10 border border-blue-500/20' : ''
+                    }`}
+                  >
+                    <TokenIcon token={token} size={36} />
+                    <div className="text-left min-w-0 flex-1">
+                      <div className="text-sm font-semibold">{token.symbol}</div>
+                      <div className="text-xs text-gray-500 truncate">{token.name}</div>
+                    </div>
+                    {token.id === selected.id && (
+                      <svg className="w-4 h-4 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                      </svg>
+                    )}
+                  </button>
+                ))}
+                {filtered.length > 50 && (
+                  <div className="px-4 py-3 text-xs text-gray-500 text-center">
+                    {filtered.length - 50} more tokens — type to search
+                  </div>
+                )}
+                {filtered.length === 0 && (
+                  <div className="px-4 py-6 text-center">
+                    {search.startsWith('C') && search.length > 40 ? (
+                      <button
+                        onClick={() => {
+                          onSelect({ id: search, symbol: search.slice(0, 6), name: 'Custom Token', decimals: 7, color: '#6B7280' });
+                          setOpen(false);
+                          setSearch('');
+                        }}
+                        className="text-blue-400 hover:text-blue-300 text-sm"
+                      >
+                        Use {search.slice(0, 12)}... as custom token
+                      </button>
+                    ) : (
+                      <span className="text-gray-500 text-sm">No tokens found</span>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </>
