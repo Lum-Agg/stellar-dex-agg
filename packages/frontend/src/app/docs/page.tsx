@@ -82,8 +82,6 @@ export default function DocsPage() {
             { name: 'legs', type: 'array', required: true, desc: 'Array of swap legs (each with token_in, token_out, amount_in, min_amount_out)' },
           ]}
           tryIt={<BuildTxTryIt />}
-        />]}
-          tryIt={<ArbTryIt />}
         />
       </div>
 
