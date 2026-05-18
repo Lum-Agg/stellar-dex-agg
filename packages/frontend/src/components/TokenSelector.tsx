@@ -44,14 +44,16 @@ export function useTokenList() {
       .then(r => r.json())
       .then(data => {
         if (data.tokens) {
-          const apiTokens: Token[] = data.tokens.map((t: any) => ({
-            id: t.id,
-            symbol: t.symbol,
-            name: t.name,
-            decimals: 7,
-            color: getColor(t.symbol),
-          }));
-          // Priority tokens first, then the rest (deduplicated)
+          // Only show tokens that have a real name (not "Unknown")
+          const apiTokens: Token[] = data.tokens
+            .filter((t: any) => t.name !== 'Unknown')
+            .map((t: any) => ({
+              id: t.id,
+              symbol: t.symbol,
+              name: t.name,
+              decimals: 7,
+              color: getColor(t.symbol),
+            }));
           const priorityIds = new Set(PRIORITY_TOKENS.map(t => t.id));
           const others = apiTokens.filter(t => !priorityIds.has(t.id));
           setTokens([...PRIORITY_TOKENS, ...others]);
@@ -151,7 +153,22 @@ export function TokenSelector({
                 </div>
               )}
               {filtered.length === 0 && (
-                <div className="px-4 py-3 text-xs text-gray-500 text-center">No tokens found</div>
+                <div className="px-4 py-3 text-xs text-gray-500 text-center">
+                  {search.startsWith('C') && search.length > 40 ? (
+                    <button
+                      onClick={() => {
+                        onSelect({ id: search, symbol: search.slice(0, 6), name: 'Custom Token', decimals: 7, color: '#6B7280' });
+                        setOpen(false);
+                        setSearch('');
+                      }}
+                      className="text-blue-400 hover:text-blue-300"
+                    >
+                      Use {search.slice(0, 8)}... as custom token
+                    </button>
+                  ) : (
+                    'No tokens found'
+                  )}
+                </div>
               )}
             </div>
           </div>
