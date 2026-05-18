@@ -77,7 +77,7 @@ export function SwapCard() {
   }, [walletAddress, quote]);
 
   return (
-    <div className="w-full max-w-[420px] space-y-3">
+    <div className="w-full max-w-[480px] space-y-3">
       {/* Main Card */}
       <div className="bg-[#12131a] rounded-2xl border border-white/5 p-5 shadow-2xl shadow-black/50">
         {/* Header */}
