@@ -137,8 +137,95 @@ impl AquariusAdapter {
             }
         }
 
-        info!("Aquarius: fetched {} pools", all_pools.len());
+        // 3. Batch-fetch reserves using getLedgerEntries (fast, 1 RPC call per 200 pools)
+        info!("Aquarius: batch-fetching reserves for {} pools...", all_pools.len());
+        let pool_addresses: Vec<String> = all_pools.iter().map(|(p, _)| p.pool_address.clone()).collect();
+        let batch_results = crate::batch_refresh::batch_refresh_soroswap_reserves(&self.rpc, &pool_addresses).await;
+
+        match batch_results {
+            Ok(results) => {
+                let found = results.iter().filter(|(_, r)| r.is_some()).count();
+                if found > 0 {
+                    for (addr, reserves) in &results {
+                        if let Some((r0, r1)) = reserves {
+                            if let Some((pair, _)) = all_pools.iter_mut().find(|(p, _)| &p.pool_address == addr) {
+                                pair.reserve_a = Some(*r0);
+                                pair.reserve_b = Some(*r1);
+                            }
+                        }
+                    }
+                    info!("Aquarius: batch got reserves for {} pools", found);
+                } else {
+                    // Batch didn't work (different storage layout), use concurrent simulate
+                    info!("Aquarius: batch returned 0, using concurrent simulate...");
+                    let batch_size = 50;
+                    for chunk in all_pools.chunks_mut(batch_size) {
+                        let futures: Vec<_> = chunk.iter().map(|(pair, _)| {
+                            self.fetch_pool_reserves(&pair.pool_address)
+                        }).collect();
+                        let results = futures::future::join_all(futures).await;
+                        for (i, result) in results.into_iter().enumerate() {
+                            if let Ok((r0, r1)) = result {
+                                chunk[i].0.reserve_a = Some(r0);
+                                chunk[i].0.reserve_b = Some(r1);
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Aquarius batch reserves failed: {}", e);
+                // Fallback: concurrent individual calls
+                let batch_size = 50;
+                for chunk in all_pools.chunks_mut(batch_size) {
+                    let futures: Vec<_> = chunk.iter().map(|(pair, _)| {
+                        self.fetch_pool_reserves(&pair.pool_address)
+                    }).collect();
+                    let results = futures::future::join_all(futures).await;
+                    for (i, result) in results.into_iter().enumerate() {
+                        if let Ok((r0, r1)) = result {
+                            chunk[i].0.reserve_a = Some(r0);
+                            chunk[i].0.reserve_b = Some(r1);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Filter out pools with no reserves
+        all_pools.retain(|(pair, _)| pair.reserve_a.unwrap_or(0) > 0 || pair.reserve_b.unwrap_or(0) > 0);
+
+        info!("Aquarius: fetched {} pools with reserves", all_pools.len());
         Ok(all_pools)
+    }
+
+    /// Fetch reserves for a single Aquarius pool by calling get_reserves on the pool contract.
+    async fn fetch_pool_reserves(&self, pool_address: &str) -> Result<(u128, u128)> {
+        // Aquarius pools have a get_reserves() function that returns Vec<u128>
+        let result = self.rpc.call_no_args(pool_address, "get_reserves").await?;
+
+        if let xdr::ScVal::Vec(Some(vec)) = &result {
+            if vec.0.len() >= 2 {
+                let r0 = scval_to_u128(&vec.0[0]).unwrap_or(0);
+                let r1 = scval_to_u128(&vec.0[1]).unwrap_or(0);
+                return Ok((r0, r1));
+            }
+        }
+
+        // Try Map format
+        if let xdr::ScVal::Map(Some(map)) = &result {
+            let mut reserves = Vec::new();
+            for entry in map.0.iter() {
+                if let Ok(v) = scval_to_u128(&entry.val) {
+                    reserves.push(v);
+                }
+            }
+            if reserves.len() >= 2 {
+                return Ok((reserves[0], reserves[1]));
+            }
+        }
+
+        Err(anyhow::anyhow!("Could not parse reserves for pool {}", pool_address))
     }
 
     /// Parse the result of get_pools_for_tokens_range.
@@ -336,6 +423,32 @@ impl DexAdapter for AquariusAdapter {
 
     async fn health_check(&self) -> bool {
         self.rpc.call_no_args(AQUARIUS_ROUTER, "get_tokens_sets_count").await.is_ok()
+    }
+
+    async fn refresh_reserves(&self) -> Result<usize> {
+        // Use batch getLedgerEntries to refresh all Aquarius pool reserves
+        let pairs = self.pairs.read().await;
+        if pairs.is_empty() { return Ok(0); }
+
+        let pool_addresses: Vec<String> = pairs.iter().map(|p| p.pool_address.clone()).collect();
+        drop(pairs);
+
+        // Reuse the same batch refresh as Soroswap (same instance storage layout)
+        let results = crate::batch_refresh::batch_refresh_soroswap_reserves(&self.rpc, &pool_addresses).await?;
+
+        let mut updated = 0;
+        let mut pairs = self.pairs.write().await;
+        for (addr, reserves) in &results {
+            if let Some((r0, r1)) = reserves {
+                if let Some(pair) = pairs.iter_mut().find(|p| &p.pool_address == addr) {
+                    pair.reserve_a = Some(*r0);
+                    pair.reserve_b = Some(*r1);
+                    updated += 1;
+                }
+            }
+        }
+
+        Ok(updated)
     }
 }
 

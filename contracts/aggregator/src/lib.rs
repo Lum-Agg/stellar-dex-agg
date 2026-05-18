@@ -25,6 +25,8 @@ pub enum DexType {
     Aquarius,
     SoroswapPair,
     Phoenix,
+    Sushi,
+    CometDex,
 }
 
 /// A single swap step in the aggregation path
@@ -295,6 +297,114 @@ impl AggregatorContract {
                     none_val,
                 ];
                 let _: Val = env.invoke_contract(&step.dex_id, &Symbol::new(env, "swap"), args);
+
+                let balance_after = token_out_client.balance(my_address);
+                balance_after - balance_before
+            }
+
+            DexType::Sushi => {
+                // Sushi V3: swap(sender, recipient, zero_for_one, amount_specified, sqrt_price_limit_x96, hints)
+                // The pool pulls tokens from sender and sends output to recipient.
+                // We need to pre-authorize the token transfer.
+                let zero_for_one = step.a2b;
+
+                // Pre-authorize token transfer (Sushi pool pulls from sender)
+                env.authorize_as_current_contract(soroban_sdk::vec![
+                    env,
+                    InvokerContractAuthEntry::Contract(SubContractInvocation {
+                        context: ContractContext {
+                            contract: step.token_in.clone(),
+                            fn_name: Symbol::new(env, "transfer"),
+                            args: soroban_sdk::vec![
+                                env,
+                                my_address.into_val(env),
+                                step.dex_id.into_val(env),
+                                amount_in.into_val(env),
+                            ],
+                        },
+                        sub_invocations: soroban_sdk::vec![env],
+                    })
+                ]);
+
+                // sqrt_price_limit: MIN_SQRT_RATIO+1 for zero_for_one, MAX_SQRT_RATIO-1 otherwise
+                // Use U256 type (4 x u64)
+                let price_limit: soroban_sdk::U256 = if zero_for_one {
+                    soroban_sdk::U256::from_u128(env, 4_295_128_740u128)
+                } else {
+                    // MAX_SQRT_RATIO - 1 ≈ 0xfffd8963efd1fc6a506488495d951d5263988d25
+                    let max_minus_1 = soroban_sdk::U256::from_be_bytes(env, &soroban_sdk::Bytes::from_array(env, &[
+                        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                        0x00, 0x00, 0x00, 0x00,
+                        0xff, 0xfd, 0x89, 0x63, 0xef, 0xd1, 0xfc, 0x6a,
+                        0x50, 0x64, 0x88, 0x49, 0x5d, 0x95, 0x1d, 0x52,
+                        0x63, 0x98, 0x8d, 0x25,
+                    ]));
+                    max_minus_1
+                };
+
+                // OracleHints: {checkpoint: 0, checkpoint_min: 0, slot: 0}
+                // In production, these should be fetched from get_oracle_hints()
+                // For now use zeros (works for simulation, may need adjustment for execution)
+
+                // Use balance diff approach (most reliable)
+                let token_out_client = token::Client::new(env, &step.token_out);
+                let balance_before = token_out_client.balance(my_address);
+
+                let args = soroban_sdk::vec![
+                    env,
+                    my_address.into_val(env),       // sender
+                    my_address.into_val(env),       // recipient
+                    zero_for_one.into_val(env),     // zero_for_one
+                    amount_in.into_val(env),        // amount_specified (positive = exact input)
+                    price_limit.into_val(env),      // sqrt_price_limit_x96
+                ];
+                let _: Val = env.invoke_contract(&step.dex_id, &Symbol::new(env, "swap"), args);
+
+                let balance_after = token_out_client.balance(my_address);
+                balance_after - balance_before
+            }
+
+            DexType::CometDex => {
+                // Comet (Balancer V1 weighted pool): swap_exact_amount_in(token_in, amount_in, token_out, min_out, max_price)
+                // The pool pulls token_in from sender and sends token_out to sender.
+
+                // Pre-authorize token transfer
+                env.authorize_as_current_contract(soroban_sdk::vec![
+                    env,
+                    InvokerContractAuthEntry::Contract(SubContractInvocation {
+                        context: ContractContext {
+                            contract: step.token_in.clone(),
+                            fn_name: Symbol::new(env, "transfer"),
+                            args: soroban_sdk::vec![
+                                env,
+                                my_address.into_val(env),
+                                step.dex_id.into_val(env),
+                                amount_in.into_val(env),
+                            ],
+                        },
+                        sub_invocations: soroban_sdk::vec![env],
+                    })
+                ]);
+
+                // Use balance diff approach
+                let token_out_client = token::Client::new(env, &step.token_out);
+                let balance_before = token_out_client.balance(my_address);
+
+                // swap_exact_amount_in(token_in, token_amount_in, token_out, min_amount_out, max_price)
+                let max_price = i128::MAX; // No price limit
+                let args = soroban_sdk::vec![
+                    env,
+                    step.token_in.into_val(env),
+                    amount_in.into_val(env),
+                    step.token_out.into_val(env),
+                    0i128.into_val(env),            // min_amount_out = 0 (checked at end)
+                    max_price.into_val(env),        // max_price
+                ];
+                let _: Val = env.invoke_contract(
+                    &step.dex_id,
+                    &Symbol::new(env, "swap_exact_amount_in"),
+                    args,
+                );
 
                 let balance_after = token_out_client.balance(my_address);
                 balance_after - balance_before

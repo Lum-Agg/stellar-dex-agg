@@ -162,7 +162,7 @@ impl SoroswapAdapter {
             Err(_) => (None, None),
         };
 
-        // Skip pools with zero liquidity
+        // Skip pools with zero liquidity (but keep pools where reserves couldn't be read)
         if reserve_a == Some(0) && reserve_b == Some(0) {
             return Ok(None);
         }
@@ -281,6 +281,10 @@ impl DexAdapter for SoroswapAdapter {
 
     async fn refresh_reserves(&self) -> Result<usize> {
         self.refresh_all_reserves().await
+    }
+
+    async fn get_cached_pairs(&self) -> Vec<AdapterTradingPair> {
+        self.pairs.read().await.clone()
     }
 }
 

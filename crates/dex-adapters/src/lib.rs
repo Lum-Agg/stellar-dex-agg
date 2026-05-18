@@ -26,8 +26,12 @@ pub mod token_registry;
 pub mod batch_refresh;
 pub mod soroswap;
 pub mod aquarius;
+pub mod aquarius_clmm;
 pub mod phoenix;
 pub mod sushi;
+pub mod comet;
+pub mod comet_math;
+pub mod clmm_math;
 pub mod classic_dex;
 pub mod utils;
 

@@ -139,8 +139,13 @@ pub trait DexAdapter: Send + Sync {
 
     /// Fast batch refresh of pool reserves (if supported).
     /// Returns the number of pools updated.
-    /// Default implementation does nothing (adapters that support batch refresh override this).
     async fn refresh_reserves(&self) -> Result<usize> {
         Ok(0)
+    }
+
+    /// Get the currently cached pairs without re-fetching from chain.
+    /// Used after refresh_reserves() to update the quote engine's local cache.
+    async fn get_cached_pairs(&self) -> Vec<AdapterTradingPair> {
+        vec![]
     }
 }

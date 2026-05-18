@@ -1,8 +1,10 @@
 use anyhow::Result;
 use dex_adapters::{
     aquarius::AquariusAdapter,
+    aquarius_clmm::AquariusClmmAdapter,
     cache::{PoolCache, default_cache_path},
     classic_dex::ClassicDexAdapter,
+    comet::CometAdapter,
     phoenix::PhoenixAdapter,
     rpc::SorobanRpc,
     soroswap::SoroswapAdapter,
@@ -77,8 +79,10 @@ impl AppState {
             let adapters: Vec<Arc<dyn DexAdapter>> = vec![
                 Arc::new(SoroswapAdapter::new(rpc_clone.clone())),
                 Arc::new(AquariusAdapter::new(rpc_clone.clone())),
+                Arc::new(AquariusClmmAdapter::new(rpc_clone.clone())),
                 Arc::new(PhoenixAdapter::new(rpc_clone.clone())),
                 Arc::new(SushiAdapter::new(rpc_clone.clone())),
+                Arc::new(CometAdapter::new(rpc_clone.clone())),
                 Arc::new(ClassicDexAdapter::new(None)), // Uses public Horizon API
             ];
 
@@ -119,6 +123,23 @@ impl AppState {
                     match adapter.refresh_reserves().await {
                         Ok(n) if n > 0 => {
                             info!("Refreshed {} {} pools", n, adapter.id());
+                            // Update cached_pools in the engine with fresh reserves
+                            let pairs = adapter.get_cached_pairs().await;
+                            if !pairs.is_empty() {
+                                let trading_pairs: Vec<router_engine::TradingPair> = pairs
+                                    .iter()
+                                    .map(|p| router_engine::TradingPair {
+                                        token_a: p.token_a.clone(),
+                                        token_b: p.token_b.clone(),
+                                        source: adapter.id().to_string(),
+                                        pool_address: p.pool_address.clone(),
+                                        fee_bps: p.fee_bps,
+                                        reserve_a: p.reserve_a,
+                                        reserve_b: p.reserve_b,
+                                    })
+                                    .collect();
+                                engine_clone.update_pairs_from_cache(adapter.id(), &trading_pairs).await;
+                            }
                         }
                         Ok(_) => {}
                         Err(e) => {
@@ -126,9 +147,6 @@ impl AppState {
                         }
                     }
                 }
-
-                // Update path finder graph with new reserves
-                engine_clone.refresh_pairs().await;
             }
         });
 
