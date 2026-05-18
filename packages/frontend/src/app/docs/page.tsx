@@ -156,6 +156,7 @@ function QuoteTryIt() {
   const [tokenIn, setTokenIn] = useState('XLM');
   const [tokenOut, setTokenOut] = useState('USDC');
   const [amount, setAmount] = useState('100');
+  const [slippage, setSlippage] = useState('0.5');
   const [result, setResult] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -163,7 +164,7 @@ function QuoteTryIt() {
     setLoading(true);
     setResult(null);
     const amountStroops = (parseFloat(amount) * 10_000_000).toFixed(0);
-    const url = `${API_URL}/api/v1/quote?token_in=${TOKENS[tokenIn]}&token_out=${TOKENS[tokenOut]}&amount_in=${amountStroops}`;
+    const url = `${API_URL}/api/v1/quote?token_in=${TOKENS[tokenIn]}&token_out=${TOKENS[tokenOut]}&amount_in=${amountStroops}&slippage=${slippage}`;
     try {
       const resp = await fetch(url);
       const data = await resp.json();
@@ -193,6 +194,10 @@ function QuoteTryIt() {
         <div>
           <label className="text-xs text-gray-500 block mb-1">Amount</label>
           <input value={amount} onChange={(e) => setAmount(e.target.value)} className="bg-black/40 border border-white/10 rounded px-2 py-1 text-sm w-24" />
+        </div>
+        <div>
+          <label className="text-xs text-gray-500 block mb-1">Slippage %</label>
+          <input value={slippage} onChange={(e) => setSlippage(e.target.value)} className="bg-black/40 border border-white/10 rounded px-2 py-1 text-sm w-16" />
         </div>
         <button onClick={run} disabled={loading} className="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded text-sm font-medium disabled:opacity-50">
           {loading ? '...' : 'Send'}
