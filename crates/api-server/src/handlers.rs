@@ -372,18 +372,28 @@ pub struct TokenInfo {
 }
 
 pub async fn list_tokens(State(state): State<AppState>) -> impl IntoResponse {
-    // Return well-known tokens + tokens discovered from pool graph
-    // For now, return a curated list of popular Stellar tokens with their SAC addresses
-    let tokens = vec![
-        TokenInfo { id: "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA".to_string(), symbol: "XLM".to_string(), name: "Stellar Lumens".to_string() },
-        TokenInfo { id: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75".to_string(), symbol: "USDC".to_string(), name: "USD Coin".to_string() },
-        TokenInfo { id: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC".to_string(), symbol: "EURC".to_string(), name: "Euro Coin".to_string() },
-        TokenInfo { id: "CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV".to_string(), symbol: "AQUA".to_string(), name: "Aquarius".to_string() },
-        TokenInfo { id: "CBZVSNVB55ANF3QVVZJGD6EBOCTT3BKYZXFHPBHA7DCJZ5CUNFPZRSR3".to_string(), symbol: "yXLM".to_string(), name: "Yield XLM".to_string() },
-        TokenInfo { id: "CAAP2HKDLH7C2GCEGJGKYADET2MUTPBXBFGFYLU7JKDZ7IAFNWPXQ".to_string(), symbol: "BTC".to_string(), name: "Bitcoin (wrapped)".to_string() },
-        TokenInfo { id: "CAZAQB3D7KSLSNOSQKYD2V4JP5V2Y3B4RDJZRLBFCCIXDCTE3WHSY3UE".to_string(), symbol: "ETH".to_string(), name: "Ethereum (wrapped)".to_string() },
-        TokenInfo { id: "CCGIMRMF6MFQFGSXORCPUQPJLMCUNZYW5LXNHZGBRT3TYHKV4BALBHP3".to_string(), symbol: "FIDR".to_string(), name: "Fidr Token".to_string() },
-    ];
+    // Get all unique tokens from the quote engine's cached pools
+    let all_tokens = state.engine.get_all_tokens().await;
+
+    let tokens: Vec<TokenInfo> = all_tokens.into_iter().map(|canonical| {
+        // Map well-known addresses to symbols
+        let (symbol, name): (&str, &str) = match canonical.as_str() {
+            "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA" => ("XLM", "Stellar Lumens"),
+            "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75" => ("USDC", "USD Coin"),
+            "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC" => ("EURC", "Euro Coin"),
+            "CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV" => ("AQUA", "Aquarius"),
+            "CBZVSNVB55ANF3LBFTU2LKGD3BJKFMHIGISKND7LBSPHYY3MAQH4AMPR" => ("yXLM", "Yield XLM"),
+            "CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM" => ("BLND", "Blend"),
+            "CAP5AMC2OHNVREO66DFIN6DHJMPOBAJ2KCDDIMFBR7WWJH5RZBFM3UEI" => ("AQUA2", "Aquarius"),
+            _ => ("", ""),
+        };
+        if symbol.is_empty() {
+            let short = if canonical.len() > 6 { canonical[..6].to_string() } else { canonical.clone() };
+            TokenInfo { id: canonical, symbol: short, name: "Unknown".to_string() }
+        } else {
+            TokenInfo { id: canonical, symbol: symbol.to_string(), name: name.to_string() }
+        }
+    }).collect();
 
     Json(TokensResponse { tokens })
 }

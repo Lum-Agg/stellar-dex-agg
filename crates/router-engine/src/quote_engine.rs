@@ -101,6 +101,19 @@ impl QuoteEngine {
         pf.clear_cache();
     }
 
+    /// Get all unique token addresses known to the engine.
+    pub async fn get_all_tokens(&self) -> Vec<String> {
+        let pools = self.cached_pools.read().await;
+        let mut tokens: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for pair in pools.values() {
+            tokens.insert(pair.token_a.canonical());
+            tokens.insert(pair.token_b.canonical());
+        }
+        let mut result: Vec<String> = tokens.into_iter().collect();
+        result.sort();
+        result
+    }
+
     /// Get the optimal route for a trade.
     pub async fn get_route(&self, request: &RouteRequest) -> OptimalRoute {
         let start = std::time::Instant::now();
