@@ -404,65 +404,55 @@ impl SushiAdapter {
     /// Check hardcoded pool addresses (from factory storage dump).
     /// This is the fastest discovery method — just verify each pool has liquidity.
     async fn check_known_pools(&self) -> Vec<AdapterTradingPair> {
-        // All known Sushi pool addresses from factory storage
+        // Pool addresses with known liquidity (from sushi.com/stellar/explore/pools)
+        // Only include pools that had TVL > $40 on the website
         const KNOWN_POOL_ADDRS: &[&str] = &[
-            "CCR2CH4GQVCZHG7CHFVMNANCK45CU5DVKXZIIITDZQAU3CEJZ7RQH2MQ",
-            "CAKWXQDEVVUF2ABUEM3M2G7QJGJNDZNNVXJZYG4Z4QP6K54QTWV4DW2S",
-            "CAWWOFOEGWPPNP6QKVHTJYB7UHRXC6W6EAFMUPGHMJL7K46E6UCOSNDM",
-            "CAXJ2FDV6S3L46EFEFRXUBLQ5U5CZLZOG35RPCJRNQVLM5MH2HCK5I7J",
-            "CABMZD6BYKKLHRJNS5MURYOBX77NPAH767AI7EVFGWV3WZV55QFN5YNE",
-            "CAFLJXGUAURAMBA3AIHC7ZJOAQKGZ7WEFFGMH5XRC35IMNU7PWIBXVTP",
-            "CALM7JTAJC7AJ7ZGTQKXZNNILJUCD2AZNN7QA7FVM3YYIJBCJGUABEDH",
-            "CAMUA6N6SLCMSIQRICXIQBRYYG3SCEPILS2HJTBXGMCOBCRWQUHAS2OJ",
-            "CAOGXY6DW2KWUVOWCGGPLW7MIJNP7XCMXY736LNLOKYEQA3CBKXVIDEA",
-            "CAPT5THGW7WOCX47TICCB5JZZK4Y24CHQIBSM57Y472WFFV6FGTRKJQD",
-            "CAPUAZDFH4VBQTC7PYL7UM2KSXER2ZY3D462WW6DCE2HGUSO646S4F2X",
-            "CAUBW4ARD42U2UEIA7GDUB5LNKTRTVYJHXKL3CV27YZRDFADDGKLZWFD",
-            "CAWN3BM2ADBMA4CQZLIHTBXA3BQHV4VAPK42LWT5ONAKZW6PH2BBCKLS",
-            "CA5MIPAAG3UULVAHK7U3U6VBBM52YIHMCZOOSHNTPUSLYR7NKNHVD6WK",
-            "CA5R5L7QE7WC2M4YAPSBITV7M2R6LX5366UURH3REHQMOJV6R5QWTH2K",
-            "CA6LYAEDN7XHOKD5TNRFBM3IDFD22VRVVXTGPGK77FZFC7X2OYUQ7BAZ",
-            "CA75VVHLWSM7W6ULNQI7ZJYDFOMQCCPKIDDDHBAL5KOKHWWKWQ5S7MHO",
-            "CBVKO35SAF2ZT75FCLCGLYQG3S6B32YZTOJ2G5F7M746UGBRAWZ5BNZ6",
-            "CCRKQ2RHBWB5ZCHOSBSYEC2QNVSU3MGVUF56BWWKJMJIJ3ZF2A6W7KEC",
-            "CDGIQQBPGXATIEXWTFN5O6J7LM5IMQLMVIQ47Q4H44VIMMOBZ4N6KRVZ",
+            "CCR2CH4GQVCZHG7CHFVMNANCK45CU5DVKXZIIITDZQAU3CEJZ7RQH2MQ", // XLM/USDC 0.3% - $660k TVL
+            "CAKWXQDEVVUF2ABUEM3M2G7QJGJNDZNNVXJZYG4Z4QP6K54QTWV4DW2S", // CETES/USDC 0.05%
+            "CAWWOFOEGWPPNP6QKVHTJYB7UHRXC6W6EAFMUPGHMJL7K46E6UCOSNDM", // PYUSD/USDC 0.05%
+            "CAXJ2FDV6S3L46EFEFRXUBLQ5U5CZLZOG35RPCJRNQVLM5MH2HCK5I7J", // USDY/USDC 0.05%
+            "CABMZD6BYKKLHRJNS5MURYOBX77NPAH767AI7EVFGWV3WZV55QFN5YNE", // TESOURO/USDC 0.05%
+            "CAFLJXGUAURAMBA3AIHC7ZJOAQKGZ7WEFFGMH5XRC35IMNU7PWIBXVTP", // USDGLO/USDC 0.05%
+            "CA75VVHLWSM7W6ULNQI7ZJYDFOMQCCPKIDDDHBAL5KOKHWWKWQ5S7MHO", // DAWG/XLM 1%
+            "CAUBW4ARD42U2UEIA7GDUB5LNKTRTVYJHXKL3CV27YZRDFADDGKLZWFD", // LIBRE/XLM 0.05%
+            "CCRKQ2RHBWB5ZCHOSBSYEC2QNVSU3MGVUF56BWWKJMJIJ3ZF2A6W7KEC", // ACT/XLM 0.3%
+            "CBVKO35SAF2ZT75FCLCGLYQG3S6B32YZTOJ2G5F7M746UGBRAWZ5BNZ6", // ACT/MBC 0.3%
+            "CAPT5THGW7WOCX47TICCB5JZZK4Y24CHQIBSM57Y472WFFV6FGTRKJQD", // Apay/XLM 0.3%
+            "CAWN3BM2ADBMA4CQZLIHTBXA3BQHV4VAPK42LWT5ONAKZW6PH2BBCKLS", // LIBRE/USDC 1%
+            "CALM7JTAJC7AJ7ZGTQKXZNNILJUCD2AZNN7QA7FVM3YYIJBCJGUABEDH", // MBC/XLM 0.3%
         ];
 
         let mut pools = Vec::new();
 
-        // Check pools concurrently in batches of 10
-        for chunk in KNOWN_POOL_ADDRS.chunks(10) {
-            let futures: Vec<_> = chunk.iter().map(|&addr| {
-                let rpc = self.rpc.clone();
-                let addr = addr.to_string();
-                async move {
-                    let (t0, t1, fee_res, liq) = tokio::join!(
-                        rpc.call_no_args(&addr, "token0"),
-                        rpc.call_no_args(&addr, "token1"),
-                        rpc.call_no_args(&addr, "fee"),
-                        rpc.call_no_args(&addr, "liquidity"),
-                    );
-                    let token0 = t0.ok().and_then(|v| scval_to_address(&v).ok())?;
-                    let token1 = t1.ok().and_then(|v| scval_to_address(&v).ok())?;
-                    let fee = match fee_res.ok()? { xdr::ScVal::U32(f) => f, _ => return None };
-                    let liquidity = liq.ok().and_then(|v| scval_to_u128(&v).ok()).unwrap_or(0);
-                    if liquidity > 0 {
-                        Some(AdapterTradingPair {
-                            token_a: TokenId::Contract { address: token0 },
-                            token_b: TokenId::Contract { address: token1 },
-                            pool_address: addr,
-                            fee_bps: fee,
-                            reserve_a: None,
-                            reserve_b: None,
-                        })
-                    } else {
-                        None
-                    }
-                }
-            }).collect();
+        // Check pools sequentially (more reliable than concurrent on rate-limited RPC)
+        for &addr in KNOWN_POOL_ADDRS {
+            let token0 = match self.rpc.call_no_args(addr, "token0").await {
+                Ok(v) => match scval_to_address(&v) { Ok(a) => a, Err(_) => continue },
+                Err(_) => continue,
+            };
+            let token1 = match self.rpc.call_no_args(addr, "token1").await {
+                Ok(v) => match scval_to_address(&v) { Ok(a) => a, Err(_) => continue },
+                Err(_) => continue,
+            };
+            let fee = match self.rpc.call_no_args(addr, "fee").await {
+                Ok(xdr::ScVal::U32(f)) => f,
+                _ => continue,
+            };
+            let liquidity = match self.rpc.call_no_args(addr, "liquidity").await {
+                Ok(v) => scval_to_u128(&v).unwrap_or(0),
+                Err(_) => continue,
+            };
 
-            let results = futures::future::join_all(futures).await;
-            for r in results { if let Some(p) = r { pools.push(p); } }
+            if liquidity > 0 {
+                pools.push(AdapterTradingPair {
+                    token_a: TokenId::Contract { address: token0 },
+                    token_b: TokenId::Contract { address: token1 },
+                    pool_address: addr.to_string(),
+                    fee_bps: fee,
+                    reserve_a: None,
+                    reserve_b: None,
+                });
+            }
         }
 
         info!("Sushi: {} pools with liquidity from known addresses", pools.len());
