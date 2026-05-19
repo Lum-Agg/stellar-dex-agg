@@ -6,6 +6,8 @@ use axum::{
 };
 use router_engine::types::{RouteRequest, TokenId};
 use serde::{Deserialize, Serialize};
+use stellar_xdr::curr as xdr;
+use stellar_xdr::curr::{Limits, WriteXdr, ReadXdr};
 
 use crate::state::AppState;
 
@@ -503,7 +505,7 @@ pub async fn build_tx(
     Json(body): Json<BuildTxRequest>,
 ) -> impl IntoResponse {
     use stellar_xdr::curr as xdr;
-    use stellar_xdr::curr::{Limits, WriteXdr};
+    use stellar_xdr::curr::{Limits, WriteXdr, ReadXdr};
 
     if body.steps.is_empty() {
         return (StatusCode::BAD_REQUEST, Json(BuildTxResponse {
@@ -682,12 +684,22 @@ pub async fn build_tx(
     };
 
     let source_account = xdr::MuxedAccount::Ed25519(xdr::Uint256(user_key.0));
-    let fee = 10_000_000u32; // 1 XLM (Soroban txs need higher fees)
+
+    // 1. Fetch sequence number from Horizon
+    let seq_num = match fetch_sequence_number(&body.user_public_key).await {
+        Ok(seq) => seq,
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, Json(BuildTxResponse {
+                success: false, data: None,
+                error: Some(format!("Failed to fetch sequence number: {}", e)),
+            }));
+        }
+    };
 
     let tx = xdr::Transaction {
-        source_account,
-        fee,
-        seq_num: xdr::SequenceNumber(0), // Client must set this
+        source_account: source_account.clone(),
+        fee: 10_000_000, // Will be updated after simulate
+        seq_num: xdr::SequenceNumber(seq_num + 1),
         cond: xdr::Preconditions::None,
         memo: xdr::Memo::None,
         operations: vec![op].try_into().unwrap(),
@@ -699,24 +711,138 @@ pub async fn build_tx(
         signatures: xdr::VecM::default(),
     });
 
-    match envelope.to_xdr_base64(Limits::none()) {
-        Ok(xdr_b64) => {
+    let tx_xdr = match envelope.to_xdr_base64(Limits::none()) {
+        Ok(x) => x,
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(BuildTxResponse {
+                success: false, data: None,
+                error: Some(format!("XDR encode error: {:?}", e)),
+            }));
+        }
+    };
+
+    // 2. Simulate transaction to get footprint + auth + fees
+    let rpc_url = std::env::var("RPC_URL").unwrap_or_else(|_| "https://soroban-rpc.mainnet.stellar.gateway.fm".to_string());
+    match simulate_and_assemble(&rpc_url, &tx_xdr).await {
+        Ok(assembled_xdr) => {
             (StatusCode::OK, Json(BuildTxResponse {
                 success: true,
                 data: Some(BuildTxData {
-                    unsigned_tx_xdr: xdr_b64,
+                    unsigned_tx_xdr: assembled_xdr,
                     num_operations: 1,
-                    fee: fee.to_string(),
+                    fee: "10000000".to_string(),
                     contract: AGGREGATOR_CONTRACT.to_string(),
                 }),
                 error: None,
             }))
         }
         Err(e) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(BuildTxResponse {
-                success: false, data: None,
-                error: Some(format!("XDR encode error: {:?}", e)),
+            // If simulate fails, return the raw tx anyway (user can try submitting)
+            (StatusCode::OK, Json(BuildTxResponse {
+                success: true,
+                data: Some(BuildTxData {
+                    unsigned_tx_xdr: tx_xdr,
+                    num_operations: 1,
+                    fee: "10000000".to_string(),
+                    contract: AGGREGATOR_CONTRACT.to_string(),
+                }),
+                error: Some(format!("Simulate warning: {}", e)),
             }))
         }
+    }
+}
+
+/// Fetch account sequence number from Horizon.
+async fn fetch_sequence_number(public_key: &str) -> Result<i64, String> {
+    let url = format!("https://horizon.stellar.org/accounts/{}", public_key);
+    let client = reqwest::Client::new();
+    let resp = client.get(&url).send().await
+        .map_err(|e| format!("Horizon request failed: {}", e))?;
+    let data: serde_json::Value = resp.json().await
+        .map_err(|e| format!("Horizon response parse failed: {}", e))?;
+    let seq_str = data.get("sequence").and_then(|s| s.as_str())
+        .ok_or_else(|| "No sequence in response".to_string())?;
+    seq_str.parse::<i64>().map_err(|e| format!("Invalid sequence: {}", e))
+}
+
+/// Simulate transaction and assemble with footprint + auth.
+async fn simulate_and_assemble(rpc_url: &str, tx_xdr: &str) -> Result<String, String> {
+    let client = reqwest::Client::new();
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "simulateTransaction",
+        "params": {
+            "transaction": tx_xdr
+        }
+    });
+
+    let resp = client.post(rpc_url).json(&body).send().await
+        .map_err(|e| format!("RPC request failed: {}", e))?;
+    let resp_json: serde_json::Value = resp.json().await
+        .map_err(|e| format!("RPC response parse failed: {}", e))?;
+
+    let result = resp_json.get("result")
+        .ok_or_else(|| "No result in simulate response".to_string())?;
+
+    // Check for simulation error
+    if let Some(error) = result.get("error") {
+        return Err(format!("Simulation failed: {}", error));
+    }
+
+    // Get the assembled transaction from transactionData
+    // The RPC returns the transaction data needed to assemble the final tx
+    // For simplicity, we use the "restorePreamble" or rebuild from results
+    // Actually, the Stellar SDK's assembleTransaction does this, but we need to do it manually
+
+    // The simplest approach: if simulate succeeds, the transaction is valid
+    // We need to add the sorobanData (resource footprint) to the transaction
+    if let Some(transaction_data) = result.get("transactionData").and_then(|t| t.as_str()) {
+        // Parse the original tx, add sorobanData, return
+        use stellar_xdr::curr::ReadXdr;
+
+        let mut envelope = xdr::TransactionEnvelope::from_xdr_base64(tx_xdr, Limits::none())
+            .map_err(|e| format!("Failed to parse tx: {:?}", e))?;
+
+        if let xdr::TransactionEnvelope::Tx(ref mut v1) = envelope {
+            // Set the transaction ext to include soroban data
+            let soroban_data = xdr::SorobanTransactionData::from_xdr_base64(transaction_data, Limits::none())
+                .map_err(|e| format!("Failed to parse soroban data: {:?}", e))?;
+            v1.tx.ext = xdr::TransactionExt::V1(soroban_data);
+
+            // Update fee from simulate result
+            if let Some(min_fee) = result.get("minResourceFee").and_then(|f| f.as_str()).and_then(|f| f.parse::<u32>().ok()) {
+                v1.tx.fee = v1.tx.fee.max(min_fee + 100_000); // Add buffer
+            }
+
+            // Add auth from simulate results
+            if let Some(results_arr) = result.get("results").and_then(|r| r.as_array()) {
+                if let Some(first) = results_arr.first() {
+                    if let Some(auth_arr) = first.get("auth").and_then(|a| a.as_array()) {
+                        let mut ops_vec: Vec<xdr::Operation> = v1.tx.operations.to_vec();
+                        if let xdr::OperationBody::InvokeHostFunction(ref mut ihf) = ops_vec[0].body {
+                            let mut auth_entries = Vec::new();
+                            for auth_xdr in auth_arr {
+                                if let Some(auth_str) = auth_xdr.as_str() {
+                                    if let Ok(entry) = xdr::SorobanAuthorizationEntry::from_xdr_base64(auth_str, Limits::none()) {
+                                        auth_entries.push(entry);
+                                    }
+                                }
+                            }
+                            if !auth_entries.is_empty() {
+                                ihf.auth = auth_entries.try_into().unwrap_or_default();
+                            }
+                        }
+                        v1.tx.operations = ops_vec.try_into().unwrap_or_default();
+                    }
+                }
+            }
+        }
+
+        let assembled = envelope.to_xdr_base64(Limits::none())
+            .map_err(|e| format!("Failed to encode assembled tx: {:?}", e))?;
+        Ok(assembled)
+    } else {
+        Err("No transactionData in simulate response".to_string())
     }
 }
