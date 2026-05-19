@@ -386,14 +386,28 @@ pub async fn list_tokens(State(state): State<AppState>) -> impl IntoResponse {
     let metadata = state.token_metadata.get_all().await;
 
     let tokens: Vec<TokenInfo> = all_tokens.into_iter().map(|addr| {
+        // Check metadata store first
         if let Some(meta) = metadata.get(&addr) {
-            TokenInfo {
-                id: addr,
-                symbol: meta.symbol.clone(),
-                name: meta.name.clone(),
+            if meta.name != "Unknown" {
+                return TokenInfo {
+                    id: addr,
+                    symbol: meta.symbol.clone(),
+                    name: meta.name.clone(),
+                };
             }
+        }
+
+        // Handle classic asset format "CODE:ISSUER" and "native"
+        if addr == "native" {
+            TokenInfo { id: addr, symbol: "XLM".to_string(), name: "Stellar Lumens".to_string() }
+        } else if addr.contains(':') {
+            let code = addr.split(':').next().unwrap_or(&addr).to_string();
+            TokenInfo { id: addr, symbol: code.clone(), name: code }
+        } else if let Some(meta) = metadata.get(&addr) {
+            // Use metadata even if "Unknown" (at least has the short symbol)
+            TokenInfo { id: addr, symbol: meta.symbol.clone(), name: meta.name.clone() }
         } else {
-            let short = if addr.len() > 6 { addr[..6].to_string() } else { addr.clone() };
+            let short = if addr.len() > 8 { addr[..8].to_string() } else { addr.clone() };
             TokenInfo { id: addr, symbol: short, name: "Unknown".to_string() }
         }
     }).collect();
