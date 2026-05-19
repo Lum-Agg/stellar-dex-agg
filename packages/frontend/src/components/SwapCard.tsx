@@ -16,7 +16,7 @@ export function SwapCard() {
   const [quote, setQuote] = useState<QuoteData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { address: walletAddress } = useWallet();
+  const { address: walletAddress, signTx } = useWallet();
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
   // Auto-fetch quote when amount changes (debounced)
@@ -70,11 +70,69 @@ export function SwapCard() {
     return val.toFixed(7);
   };
 
+  const [swapping, setSwapping] = useState(false);
+  const [txResult, setTxResult] = useState<{ success: boolean; hash?: string; error?: string } | null>(null);
+
   const handleSwap = useCallback(async () => {
     if (!walletAddress || !quote) return;
-    // TODO: implement swap execution
-    alert('Swap execution coming soon!');
-  }, [walletAddress, quote]);
+    setSwapping(true);
+    setTxResult(null);
+
+    try {
+      // 1. Build transaction via our API
+      const route = quote.sub_routes[0];
+      const steps = route.pool_addresses.map((pool: string, i: number) => ({
+        dex_type: route.dex_types[i],
+        pool_address: pool,
+        token_in: route.path[i],
+        token_out: route.path[i + 1],
+        a2b: true, // TODO: determine from token order
+      }));
+
+      const buildResp = await fetch(`${API_URL}/api/v1/build_tx`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_public_key: walletAddress,
+          token_in: tokenIn.id,
+          token_out: tokenOut.id,
+          amount_in: Math.floor(parseFloat(amountIn) * 10 ** tokenIn.decimals).toString(),
+          min_amount_out: quote.minimum_output,
+          steps,
+        }),
+      });
+      const buildData = await buildResp.json();
+
+      if (!buildData.success) {
+        setTxResult({ success: false, error: buildData.error || 'Failed to build transaction' });
+        return;
+      }
+
+      // 2. Sign with wallet
+      const signedXdr = await signTx(buildData.data.unsigned_tx_xdr);
+
+      // 3. Submit to Horizon
+      const submitResp = await fetch('https://horizon.stellar.org/transactions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `tx=${encodeURIComponent(signedXdr)}`,
+      });
+      const submitData = await submitResp.json();
+
+      if (submitData.successful || submitData.hash) {
+        setTxResult({ success: true, hash: submitData.hash });
+        setAmountIn('');
+        setQuote(null);
+      } else {
+        const errMsg = submitData.extras?.result_codes?.operations?.[0] || submitData.title || 'Transaction failed';
+        setTxResult({ success: false, error: errMsg });
+      }
+    } catch (err: any) {
+      setTxResult({ success: false, error: err.message || 'Swap failed' });
+    } finally {
+      setSwapping(false);
+    }
+  }, [walletAddress, quote, tokenIn, tokenOut, amountIn, signTx]);
 
   return (
     <div className="w-full max-w-[480px] space-y-3">
@@ -179,12 +237,28 @@ export function SwapCard() {
         <div className="mt-4">
           <button
             onClick={handleSwap}
-            disabled={!walletAddress || !quote || loading}
+            disabled={!walletAddress || !quote || loading || swapping}
             className="w-full py-3.5 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 disabled:from-gray-700 disabled:to-gray-700 disabled:text-gray-500 rounded-xl font-medium transition-all"
           >
-            {loading ? 'Finding route...' : !amountIn ? 'Enter amount' : !walletAddress ? 'Connect wallet to swap' : !quote ? 'No route' : 'Swap'}
+            {swapping ? 'Swapping...' : loading ? 'Finding route...' : !amountIn ? 'Enter amount' : !walletAddress ? 'Connect wallet to swap' : !quote ? 'No route' : 'Swap'}
           </button>
         </div>
+
+        {/* Transaction Result */}
+        {txResult && (
+          <div className={`mt-3 p-3 rounded-lg text-xs ${txResult.success ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+            {txResult.success ? (
+              <div>
+                ✅ Swap successful!{' '}
+                <a href={`https://stellar.expert/explorer/public/tx/${txResult.hash}`} target="_blank" rel="noopener" className="underline">
+                  View tx
+                </a>
+              </div>
+            ) : (
+              <div>❌ {txResult.error}</div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Route Details */}

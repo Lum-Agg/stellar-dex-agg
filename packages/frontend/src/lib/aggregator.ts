@@ -7,6 +7,8 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
 export interface SubRoute {
   source: string;
   path: string[];
+  pool_addresses: string[];
+  dex_types: string[];
   amount_in: string;
   amount_out: string;
   percentage: number;
