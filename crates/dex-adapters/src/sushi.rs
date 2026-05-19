@@ -603,10 +603,14 @@ impl DexAdapter for SushiAdapter {
         // Try local CLMM quote first
         if let Some(pool) = cache.get(pool_address) {
             if let Some(amount_out) = self.local_quote(pool, &token_in.canonical(), amount_in) {
+                // Estimate price impact from liquidity
+                let impact_bps = if pool.liquidity > 0 {
+                    ((amount_in as f64 / pool.liquidity as f64) * 10_000.0).min(10_000.0) as u32
+                } else { 0 };
                 return Ok(Some(AdapterQuote {
                     amount_out,
                     fee_bps: pool.fee_bps,
-                    price_impact_bps: 0,
+                    price_impact_bps: impact_bps,
                 }));
             }
         }

@@ -257,7 +257,9 @@ impl DexAdapter for ClassicDexAdapter {
                 Ok(Some(AdapterQuote {
                     amount_out,
                     fee_bps: 0, // fees are baked into the output
-                    price_impact_bps: 0, // unknown from Horizon
+                    // Estimate impact: assume ~$1M total liquidity for XLM/USDC on classic DEX
+                    // impact ≈ amount_in / (2 * total_liquidity_in_stroops)
+                    price_impact_bps: (amount_in / 2_000_000_0000000).min(10_000) as u32,
                 }))
             }
             Ok(None) => Ok(None),
