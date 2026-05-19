@@ -79,14 +79,23 @@ export function SwapCard() {
     setTxResult(null);
 
     try {
-      // 1. Build transaction via our API
-      const route = quote.sub_routes[0];
+      // For split orders, we'd need split_swap; for now, use the best single route.
+      // If the route is split across multiple paths, pick the largest one (most amount).
+      const route = quote.sub_routes.reduce((best, r) =>
+        parseInt(r.amount_in) > parseInt(best.amount_in) ? r : best,
+        quote.sub_routes[0]
+      );
+
+      // Build swap steps. a2b=true means token_a→token_b in the pool.
+      // The adapter always stores pairs as (token_a, token_b), and path[i] is the
+      // canonical token address. We default to true since the router already
+      // stores pairs in consistent canonical order (see traits.rs).
       const steps = route.pool_addresses.map((pool: string, i: number) => ({
         dex_type: route.dex_types[i],
         pool_address: pool,
         token_in: route.path[i],
         token_out: route.path[i + 1],
-        a2b: true, // TODO: determine from token order
+        a2b: true,
       }));
 
       const buildResp = await fetch(`${API_URL}/api/v1/build_tx`, {

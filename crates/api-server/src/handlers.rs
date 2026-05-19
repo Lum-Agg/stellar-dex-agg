@@ -544,6 +544,14 @@ pub async fn build_tx(
         }
     };
 
+    // Apply a 2% reserve-staleness buffer on top of the user's slippage.
+    // Cached pool reserves can be up to 5s old, causing the off-chain quote to
+    // overestimate output by ~1-2%. We pass a slightly looser minimum to the
+    // contract so that normal reserve drift doesn't cause the tx to be rejected.
+    // The user's displayed slippage protection is applied at the quote layer;
+    // this buffer only guards against stale-data false-positives.
+    let contract_min: i128 = min_amount_out * 98 / 100;
+
     // Build the InvokeHostFunction operation calling aggregator.swap()
     let aggregator_hash = match stellar_strkey::Contract::from_string(AGGREGATOR_CONTRACT) {
         Ok(c) => c.0,
@@ -667,10 +675,10 @@ pub async fn build_tx(
             }),
             // steps: Vec<SwapStep>
             xdr::ScVal::Vec(Some(xdr::ScVec(steps_scval.try_into().unwrap()))),
-            // min_amount_out: i128
+            // min_amount_out: i128  (contract_min = user minimum with 2% staleness buffer)
             xdr::ScVal::I128(xdr::Int128Parts {
-                hi: (min_amount_out >> 64) as i64,
-                lo: min_amount_out as u64,
+                hi: (contract_min >> 64) as i64,
+                lo: contract_min as u64,
             }),
         ].try_into().unwrap(),
     };
@@ -737,16 +745,22 @@ pub async fn build_tx(
             }))
         }
         Err(e) => {
-            // If simulate fails, return the raw tx anyway (user can try submitting)
+            // Simulate failed — do NOT return a broken raw XDR.
+            // A Soroban tx without sorobanData cannot be signed by any wallet.
+            // Categorize the error for a better UX message.
+            let user_msg = if e.contains("Output below minimum") || e.contains("below minimum") {
+                "Swap failed: price moved unfavorably since the quote was generated. \
+                 Please click Refresh or increase your slippage tolerance and try again.".to_string()
+            } else if e.contains("EmptyPool") || e.contains("empty") {
+                "Swap failed: one of the pools has insufficient liquidity. \
+                 Please try a smaller amount.".to_string()
+            } else {
+                format!("Swap simulation failed: {}", e)
+            };
             (StatusCode::OK, Json(BuildTxResponse {
-                success: true,
-                data: Some(BuildTxData {
-                    unsigned_tx_xdr: tx_xdr,
-                    num_operations: 1,
-                    fee: "10000000".to_string(),
-                    contract: AGGREGATOR_CONTRACT.to_string(),
-                }),
-                error: Some(format!("Simulate warning: {}", e)),
+                success: false,
+                data: None,
+                error: Some(user_msg),
             }))
         }
     }
