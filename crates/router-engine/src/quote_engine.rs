@@ -309,7 +309,14 @@ impl QuoteEngine {
             return None;
         }
 
-        let price_impact_bps = (amount_in * 10_000 / (2 * reserve_in)).min(10_000) as u32;
+        // Price impact = 1 - actual_out / ideal_out
+        // ideal_out = amount_in * reserve_out / reserve_in (spot price, no slippage)
+        let ideal_out = amount_in * reserve_out / reserve_in;
+        let price_impact_bps = if ideal_out > 0 && amount_out < ideal_out {
+            ((ideal_out - amount_out) * 10_000 / ideal_out) as u32
+        } else {
+            0
+        };
 
         Some(dex_adapters::AdapterQuote {
             amount_out,
