@@ -22,16 +22,19 @@ export default function RootLayout({
 
           <header className="relative border-b border-white/5 backdrop-blur-sm">
             <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
-              <div className="flex items-center gap-2">
+              <a href="/" className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-sm font-bold">
                   L
                 </div>
                 <span className="text-lg font-semibold tracking-tight">
                   Lum<span className="text-blue-400">Agg</span>
                 </span>
-              </div>
+              </a>
               <div className="flex items-center gap-4">
                 <nav className="hidden sm:flex items-center gap-6 text-sm text-gray-400">
+                  <a href="/" className="hover:text-white transition-colors">
+                    Swap
+                  </a>
                   <a href="/docs" className="hover:text-white transition-colors">
                     API Docs
                   </a>
