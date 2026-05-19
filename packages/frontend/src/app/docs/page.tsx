@@ -70,7 +70,7 @@ export default function DocsPage() {
             { name: 'token_out', type: 'string', required: true, desc: 'Final output token contract address' },
             { name: 'amount_in', type: 'string', required: true, desc: 'Input amount in stroops' },
             { name: 'min_amount_out', type: 'string', required: true, desc: 'Minimum acceptable output' },
-            { name: 'steps', type: 'array', required: true, desc: 'Swap steps: [{dex_type, pool_address, token_in, token_out, a2b}]' },
+            { name: 'steps', type: 'array', required: true, desc: 'Swap steps: [{dex_type, pool_address, token_in, token_out, in_idx, out_idx}]' },
           ]}
           tryIt={<BuildTxTryIt />}
         />
@@ -269,7 +269,7 @@ function BuildTxTryIt() {
       pool_address: "CDKVJYMN34ZIEXSLNFYHVAFF6M6FM5E2U6OHXOTBKH2WLBULXOE53YDP",
       token_in: "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
       token_out: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
-      a2b: true
+      in_idx: 0, out_idx: 1
     }]
   }, null, 2));
   const [result, setResult] = useState<string | null>(null);

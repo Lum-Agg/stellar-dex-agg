@@ -325,6 +325,29 @@ impl QuoteEngine {
         })
     }
 
+    /// Get the (in_idx, out_idx) for a pool and swap tokens.
+    /// Returns Some((0, 1)) if token_in == token_a && token_out == token_b,
+    /// Some((1, 0)) if token_in == token_b && token_out == token_a,
+    /// None if pool is unknown or tokens don't match.
+    pub async fn get_pool_indices(
+        &self,
+        pool_address: &str,
+        token_in: &TokenId,
+        token_out: &TokenId,
+    ) -> Option<(u32, u32)> {
+        let pools = self.cached_pools.read().await;
+        let pair = pools.get(pool_address)?;
+        let in_key = token_in.canonical();
+        let out_key = token_out.canonical();
+        if in_key == pair.token_a.canonical() && out_key == pair.token_b.canonical() {
+            Some((0, 1))
+        } else if in_key == pair.token_b.canonical() && out_key == pair.token_a.canonical() {
+            Some((1, 0))
+        } else {
+            None
+        }
+    }
+
     /// Refresh trading pairs from all adapters.
     pub async fn refresh_pairs(&self) {
         let adapters = self.adapters.read().await;

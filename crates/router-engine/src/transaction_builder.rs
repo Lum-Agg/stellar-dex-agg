@@ -169,7 +169,8 @@ impl TransactionBuilder {
         let user_val = self.address_to_scval(user_address)?;
         let token_in_val = self.token_to_scval(token_in)?;
         let amount_in_val = self.i128_to_scval(sub_order.amount_in as i128);
-        let steps_val = self.build_steps_scval(&sub_order.path)?;
+        let indices_default: Vec<(u32, u32)> = std::iter::repeat((0, 1)).take(sub_order.path.hops).collect();
+        let steps_val = self.build_steps_scval(&sub_order.path, &indices_default)?;
         let min_out_val = self.i128_to_scval(min_output as i128);
 
         Ok(vec![user_val, token_in_val, amount_in_val, steps_val, min_out_val])
@@ -210,9 +211,10 @@ impl TransactionBuilder {
             val: self.i128_to_scval(sub_order.amount_in as i128),
         };
 
+        let indices_default: Vec<(u32, u32)> = std::iter::repeat((0, 1)).take(sub_order.path.hops).collect();
         let steps_entry = xdr::ScMapEntry {
             key: xdr::ScVal::Symbol("steps".try_into().unwrap()),
-            val: self.build_steps_scval(&sub_order.path)?,
+            val: self.build_steps_scval(&sub_order.path, &indices_default)?,
         };
 
         Ok(xdr::ScVal::Map(Some(xdr::ScMap(
@@ -221,7 +223,8 @@ impl TransactionBuilder {
     }
 
     /// Build Vec<SwapStep> as ScVal from a Path
-    fn build_steps_scval(&self, path: &crate::types::Path) -> Result<xdr::ScVal> {
+    /// `indices` specifies (in_idx, out_idx) for each hop
+    fn build_steps_scval(&self, path: &crate::types::Path, indices: &[(u32, u32)]) -> Result<xdr::ScVal> {
         let mut steps = Vec::new();
 
         for i in 0..path.sources.len() {
@@ -230,28 +233,25 @@ impl TransactionBuilder {
             let pool_address = &path.pool_addresses[i];
             let source = &path.sources[i];
 
-            // Determine DexType from source name
+            let (in_idx, out_idx) = indices.get(i).copied().unwrap_or((0, 1));
+
             let dex_type_val = match source.as_str() {
-                "soroswap" => xdr::ScVal::Vec(Some(xdr::ScVec(
-                    vec![xdr::ScVal::Symbol("SoroswapPair".try_into().unwrap())]
-                        .try_into().unwrap()
-                ))),
-                "aquarius" => xdr::ScVal::Vec(Some(xdr::ScVec(
-                    vec![xdr::ScVal::Symbol("Aquarius".try_into().unwrap())]
-                        .try_into().unwrap()
-                ))),
-                "phoenix" => xdr::ScVal::Vec(Some(xdr::ScVec(
-                    vec![xdr::ScVal::Symbol("Phoenix".try_into().unwrap())]
-                        .try_into().unwrap()
-                ))),
+                "soroswap" => xdr::ScVal::Symbol("SoroswapPair".try_into().unwrap()),
+                "aquarius" => xdr::ScVal::Symbol("Aquarius".try_into().unwrap()),
+                "phoenix" => xdr::ScVal::Symbol("Phoenix".try_into().unwrap()),
+                "sushi" => xdr::ScVal::Symbol("Sushi".try_into().unwrap()),
+                "comet" => xdr::ScVal::Symbol("CometDex".try_into().unwrap()),
                 _ => return Err(anyhow!("Unknown DEX source: {}", source)),
             };
 
-            // Build SwapStep map
             let mut entries = Vec::new();
             entries.push(xdr::ScMapEntry {
-                key: xdr::ScVal::Symbol("a2b".try_into().unwrap()),
-                val: xdr::ScVal::Bool(true), // TODO: determine from token order in pool
+                key: xdr::ScVal::Symbol("in_idx".try_into().unwrap()),
+                val: xdr::ScVal::U32(in_idx),
+            });
+            entries.push(xdr::ScMapEntry {
+                key: xdr::ScVal::Symbol("out_idx".try_into().unwrap()),
+                val: xdr::ScVal::U32(out_idx),
             });
             entries.push(xdr::ScMapEntry {
                 key: xdr::ScVal::Symbol("dex_id".try_into().unwrap()),

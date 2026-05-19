@@ -9,6 +9,8 @@ export interface SubRoute {
   path: string[];
   pool_addresses: string[];
   dex_types: string[];
+  in_indices: number[];
+  out_indices: number[];
   amount_in: string;
   amount_out: string;
   percentage: number;

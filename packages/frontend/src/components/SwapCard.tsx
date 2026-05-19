@@ -86,16 +86,15 @@ export function SwapCard() {
         quote.sub_routes[0]
       );
 
-      // Build swap steps. a2b=true means token_a→token_b in the pool.
-      // The adapter always stores pairs as (token_a, token_b), and path[i] is the
-      // canonical token address. We default to true since the router already
-      // stores pairs in consistent canonical order (see traits.rs).
+      // Build swap steps. The api-server provides in_indices/out_indices
+      // for each pool to specify input/output token positions.
       const steps = route.pool_addresses.map((pool: string, i: number) => ({
         dex_type: route.dex_types[i],
         pool_address: pool,
         token_in: route.path[i],
         token_out: route.path[i + 1],
-        a2b: true,
+        in_idx: route.in_indices[i],
+        out_idx: route.out_indices[i],
       }));
 
       const buildResp = await fetch(`${API_URL}/api/v1/build_tx`, {

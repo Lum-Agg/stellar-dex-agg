@@ -50,6 +50,10 @@ pub struct SubRouteData {
     pub pool_addresses: Vec<String>,
     /// DEX types for each hop: "aquarius", "soroswap", "phoenix", "sushi", "comet"
     pub dex_types: Vec<String>,
+    /// Input token index for each hop (0 = token_a, 1 = token_b, etc.)
+    pub in_indices: Vec<u32>,
+    /// Output token index for each hop
+    pub out_indices: Vec<u32>,
     pub amount_in: String,
     pub amount_out: String,
     pub percentage: f64,
@@ -100,19 +104,31 @@ pub async fn get_quote(
         );
     }
 
-    let sub_routes: Vec<SubRouteData> = route
-        .sub_orders
-        .iter()
-        .map(|so| SubRouteData {
+    let mut sub_routes = Vec::new();
+    for so in &route.sub_orders {
+        let mut in_indices = Vec::new();
+        let mut out_indices = Vec::new();
+        for i in 0..so.path.hops {
+            let token_in = &so.path.tokens[i];
+            let token_out = &so.path.tokens[i + 1];
+            let pool = &so.path.pool_addresses[i];
+            let indices = state.engine.get_pool_indices(pool, token_in, token_out).await;
+            let (in_idx, out_idx) = indices.unwrap_or((0, 1));
+            in_indices.push(in_idx);
+            out_indices.push(out_idx);
+        }
+        sub_routes.push(SubRouteData {
             source: so.path.sources.join(" → "),
             path: so.path.tokens.iter().map(|t| t.canonical()).collect(),
             pool_addresses: so.path.pool_addresses.clone(),
             dex_types: so.path.sources.clone(),
+            in_indices,
+            out_indices,
             amount_in: so.amount_in.to_string(),
             amount_out: so.expected_amount_out.to_string(),
             percentage: so.fraction * 100.0,
-        })
-        .collect();
+        });
+    }
 
     (
         StatusCode::OK,
@@ -213,15 +229,31 @@ pub async fn build_swap(
 
     match tx_result {
         Ok((xdr_b64, sim)) => {
-            let sub_routes: Vec<SubRouteData> = route.sub_orders.iter().map(|so| SubRouteData {
-                source: so.path.sources.join(" → "),
-                path: so.path.tokens.iter().map(|t| t.canonical()).collect(),
-                pool_addresses: so.path.pool_addresses.clone(),
-                dex_types: so.path.sources.clone(),
-                amount_in: so.amount_in.to_string(),
-                amount_out: so.expected_amount_out.to_string(),
-                percentage: so.fraction * 100.0,
-            }).collect();
+            let mut sub_routes = Vec::new();
+            for so in &route.sub_orders {
+                let mut in_indices = Vec::new();
+                let mut out_indices = Vec::new();
+                for i in 0..so.path.hops {
+                    let token_in = &so.path.tokens[i];
+                    let token_out = &so.path.tokens[i + 1];
+                    let pool = &so.path.pool_addresses[i];
+                    let indices = state.engine.get_pool_indices(pool, token_in, token_out).await;
+                    let (in_idx, out_idx) = indices.unwrap_or((0, 1));
+                    in_indices.push(in_idx);
+                    out_indices.push(out_idx);
+                }
+                sub_routes.push(SubRouteData {
+                    source: so.path.sources.join(" → "),
+                    path: so.path.tokens.iter().map(|t| t.canonical()).collect(),
+                    pool_addresses: so.path.pool_addresses.clone(),
+                    dex_types: so.path.sources.clone(),
+                    in_indices,
+                    out_indices,
+                    amount_in: so.amount_in.to_string(),
+                    amount_out: so.expected_amount_out.to_string(),
+                    percentage: so.fraction * 100.0,
+                });
+            }
 
             (StatusCode::OK, Json(SwapResponse {
                 success: true,
@@ -475,8 +507,10 @@ pub struct BuildTxStep {
     pub token_in: String,
     /// Output token for this step
     pub token_out: String,
-    /// Direction: true = token_a -> token_b (token0 -> token1)
-    pub a2b: bool,
+    /// Input token index in the pool's token list (0-based)
+    pub in_idx: u32,
+    /// Output token index in the pool's token list (0-based)
+    pub out_idx: u32,
 }
 
 #[derive(Serialize)]
@@ -568,21 +602,11 @@ pub async fn build_tx(
     let mut steps_scval = Vec::new();
     for step in &body.steps {
         let dex_type_val = match step.dex_type.as_str() {
-            "aquarius" => xdr::ScVal::Vec(Some(xdr::ScVec(vec![
-                xdr::ScVal::Symbol(xdr::ScSymbol("Aquarius".try_into().unwrap()))
-            ].try_into().unwrap()))),
-            "soroswap" => xdr::ScVal::Vec(Some(xdr::ScVec(vec![
-                xdr::ScVal::Symbol(xdr::ScSymbol("SoroswapPair".try_into().unwrap()))
-            ].try_into().unwrap()))),
-            "phoenix" => xdr::ScVal::Vec(Some(xdr::ScVec(vec![
-                xdr::ScVal::Symbol(xdr::ScSymbol("Phoenix".try_into().unwrap()))
-            ].try_into().unwrap()))),
-            "sushi" => xdr::ScVal::Vec(Some(xdr::ScVec(vec![
-                xdr::ScVal::Symbol(xdr::ScSymbol("Sushi".try_into().unwrap()))
-            ].try_into().unwrap()))),
-            "comet" => xdr::ScVal::Vec(Some(xdr::ScVec(vec![
-                xdr::ScVal::Symbol(xdr::ScSymbol("CometDex".try_into().unwrap()))
-            ].try_into().unwrap()))),
+            "aquarius" => xdr::ScVal::Symbol(xdr::ScSymbol("Aquarius".try_into().unwrap())),
+            "soroswap" => xdr::ScVal::Symbol(xdr::ScSymbol("SoroswapPair".try_into().unwrap())),
+            "phoenix" => xdr::ScVal::Symbol(xdr::ScSymbol("Phoenix".try_into().unwrap())),
+            "sushi" => xdr::ScVal::Symbol(xdr::ScSymbol("Sushi".try_into().unwrap())),
+            "comet" => xdr::ScVal::Symbol(xdr::ScSymbol("CometDex".try_into().unwrap())),
             other => {
                 return (StatusCode::BAD_REQUEST, Json(BuildTxResponse {
                     success: false, data: None,
@@ -622,8 +646,12 @@ pub async fn build_tx(
         // SwapStep struct as ScVal::Map
         let step_val = xdr::ScVal::Map(Some(xdr::ScMap(vec![
             xdr::ScMapEntry {
-                key: xdr::ScVal::Symbol(xdr::ScSymbol("a2b".try_into().unwrap())),
-                val: xdr::ScVal::Bool(step.a2b),
+                key: xdr::ScVal::Symbol(xdr::ScSymbol("in_idx".try_into().unwrap())),
+                val: xdr::ScVal::U32(step.in_idx),
+            },
+            xdr::ScMapEntry {
+                key: xdr::ScVal::Symbol(xdr::ScSymbol("out_idx".try_into().unwrap())),
+                val: xdr::ScVal::U32(step.out_idx),
             },
             xdr::ScMapEntry {
                 key: xdr::ScVal::Symbol(xdr::ScSymbol("dex_id".try_into().unwrap())),

@@ -300,12 +300,6 @@ impl AquariusAdapter {
 
                 let n_tokens = token_addresses.len();
 
-                // Skip 3+ token pools for now (stable math needs calibration)
-                // TODO: properly support multi-token pools with verified amp + reserves
-                if n_tokens > 2 {
-                    continue;
-                }
-
                 let is_stable = is_stable_pair(
                     &TokenId::Contract { address: token_addresses[0].clone() },
                     &TokenId::Contract { address: token_addresses[1].clone() },
