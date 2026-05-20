@@ -7,7 +7,7 @@ use axum::{
 use router_engine::types::{RouteRequest, TokenId};
 use serde::{Deserialize, Serialize};
 use stellar_xdr::curr as xdr;
-use stellar_xdr::curr::{Limits, ReadXdr, WriteXdr};
+use stellar_xdr::curr::{Limits, WriteXdr};
 
 use crate::state::AppState;
 
@@ -869,7 +869,7 @@ pub async fn build_tx(
     Json(body): Json<BuildTxRequest>,
 ) -> impl IntoResponse {
     use stellar_xdr::curr as xdr;
-    use stellar_xdr::curr::{Limits, ReadXdr, WriteXdr};
+    use stellar_xdr::curr::{Limits, WriteXdr};
 
     if body.sub_routes.is_empty() {
         return (

@@ -13,8 +13,9 @@ pub struct AppConfig {
     /// Aggregator contract address (optional, for on-chain execution)
     pub aggregator_contract: Option<String>,
     /// Pool reserve refresh interval (seconds). Keep short so quotes track live reserves.
-    /// Path finding uses a read lock, so refresh no longer blocks `/api/v1/quote`.
     pub refresh_interval_secs: u64,
+    /// Full pool discovery interval (seconds): re-run `get_trading_pairs` and replace the graph.
+    pub discovery_interval_secs: u64,
 }
 
 impl Default for AppConfig {
@@ -25,6 +26,7 @@ impl Default for AppConfig {
             listen_addr: "0.0.0.0:3100".to_string(),
             aggregator_contract: None,
             refresh_interval_secs: 5,
+            discovery_interval_secs: 600,
         }
     }
 }
@@ -43,6 +45,10 @@ impl AppConfig {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(5),
+            discovery_interval_secs: std::env::var("DISCOVERY_INTERVAL_SECS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(600),
         }
     }
 }

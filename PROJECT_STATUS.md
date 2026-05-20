@@ -86,6 +86,17 @@
 
 ---
 
+## 后台任务
+
+| 任务 | 间隔 | 环境变量 | 说明 |
+|------|------|----------|------|
+| Reserve refresh | 5s（默认） | `REFRESH_INTERVAL_SECS` | `refresh_reserves()`，更新已有池 reserve |
+| Pool discovery | 600s（默认） | `DISCOVERY_INTERVAL_SECS` | `get_trading_pairs()` 全量替换图 + 写 `pool_cache.json` |
+
+启动：先读磁盘 cache → 注册 adapter → 立即一轮 discovery → 并行 refresh / discovery 循环。
+
+---
+
 ## 已知问题 / 待修复 🔧
 
 ### 高优先级
@@ -101,7 +112,7 @@
 | 问题 | 描述 |
 |------|------|
 | Aquarius CLMM 加载慢 | 需要对 321 个 pool 调用 pool_type() 过滤 concentrated，启动时间长 |
-| Comet adapter | 可能因 RPC 问题未正确加载 |
+| **Comet：全量 pool 发现（TODO）** | 见下方 Comet 待办；当前 `comet.rs` 仅硬编码 1 个池，与 `thirdparty/comet-contracts-v1` 的 Factory（`new_c_pool` / `is_c_pool` / `NEW_POOL` 事件）不一致 |
 | Token metadata | 框架搭好了（token_metadata.rs），但服务器上 resolve_unknown 没有执行成功 |
 | 前端 swap 执行 | build_tx 返回的交易可能因 pool 问题导致 simulate 失败 |
 
@@ -118,6 +129,19 @@
 | 问题 | 描述 |
 |------|------|
 | clmm不会load所有的ticks | 目前只load固定的几个，如果交易量大，就不够了 |
+
+### Comet 待办（pool discovery）
+
+> 现状：主网 Factory 地址未知。唯一池 `CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM` 来自在 [stellar.expert](https://stellar.expert) 上偶然发现，非 Factory 枚举。  
+> 线索（同一合约页）：creator `GDJEHTBE6ZHUXSWFI642DCGLUOECLHPF3KSXHPXTSTJ7E3JF6MQ5EZYY`，pool WASM `8abc28913035c07411ed5d134e6bfeab4723d97ddd4d1a22a0605d35c94d1a36`。
+
+- [ ] **确认主网 Comet Factory 合约地址**（`thirdparty/comet-contracts-v1/factory`，仓库内仅有 futurenet 部署脚本）
+- [ ] **枚举所有已登记池**：Factory persistent `IsCpool(addr)` 和/或扫 `NEW_POOL` 事件；用 `is_c_pool` 校验
+- [ ] **替换 `COMET_POOLS` 硬编码**：discovery 10min 全量替换；每池 `get_tokens()` 建图（2～8 token 加权池，非仅一条 BLND/USDC 边）
+- [ ] **核对读接口名**：链上为 `get_normalized_weight`，adapter 现用 `get_denorm_weight`（需与主网 WASM 对齐）
+- [ ] **产品决策**：Comet 生态基本停更时，是否在路由中默认降权或仅保留有流动性的池
+
+参考实现：`crates/dex-adapters/src/comet.rs`、`thirdparty/comet-contracts-v1/factory/src/call_logic/factory.rs`
 
 ---
 
