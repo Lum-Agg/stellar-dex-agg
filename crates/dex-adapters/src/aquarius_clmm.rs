@@ -564,7 +564,7 @@ impl DexAdapter for AquariusClmmAdapter {
     async fn get_quote(
         &self,
         token_in: &TokenId,
-        token_out: &TokenId,
+        _token_out: &TokenId,
         amount_in: u128,
         pool_address: &str,
     ) -> Result<Option<AdapterQuote>> {

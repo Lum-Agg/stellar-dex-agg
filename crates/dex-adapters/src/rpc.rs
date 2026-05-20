@@ -5,10 +5,8 @@
 
 use anyhow::{anyhow, Result};
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use stellar_xdr::curr as xdr;
-use tracing::{debug, warn};
 
 /// Lightweight Soroban RPC client focused on what DEX adapters need:
 /// - simulateTransaction (for read-only contract calls)

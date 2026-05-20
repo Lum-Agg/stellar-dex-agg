@@ -3,6 +3,10 @@ name = "api-server"
 version.workspace = true
 edition.workspace = true
 
+[[bin]]
+name = "api-server"
+path = "src/main.rs"
+
 [dependencies]
 router-engine = { path = "../router-engine" }
 dex-adapters = { path = "../dex-adapters" }

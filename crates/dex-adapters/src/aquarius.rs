@@ -7,7 +7,7 @@
 //! - Stable pools use Curve invariant with amplification factor
 //! - Pool discovery via get_tokens_sets_count() + get_pools_for_tokens_range()
 
-use crate::rpc::{scval_to_address, scval_to_string, scval_to_u128, scval_to_u32, SorobanRpc};
+use crate::rpc::{scval_to_address, scval_to_string, scval_to_u128, SorobanRpc};
 use crate::traits::*;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use stellar_xdr::curr as xdr;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 /// Aquarius Router contract address (Mainnet)
 pub const AQUARIUS_ROUTER: &str = "CBQDHNBFBZYE4MKPWBSJOPIYLW4SFSXAXUTSXJN76GNKYVYPCKWC6QUK";

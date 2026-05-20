@@ -13,8 +13,7 @@
 
 use soroban_sdk::{
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
-    contract, contractimpl, contracttype, token, Address, BytesN, Env, IntoVal, Symbol, Val,
-    Vec,
+    contract, contractimpl, contracttype, token, Address, BytesN, Env, IntoVal, Symbol, Val, Vec,
 };
 
 /// Supported DEX protocol types
@@ -294,15 +293,7 @@ impl AggregatorContract {
                     sub_invocations: soroban_sdk::vec![env],
                 });
 
-                #[cfg(test)]
-                {
-                    env.authorize_as_current_contract(soroban_sdk::vec![env, transfer_auth]);
-                }
-
-                #[cfg(not(test))]
-                {
-                    env.authorize_as_current_contract(soroban_sdk::vec![env, transfer_auth]);
-                }
+                env.authorize_as_current_contract(soroban_sdk::vec![env, transfer_auth]);
 
                 token_in_client.transfer(my_address, &step.dex_id, &amount_in);
 

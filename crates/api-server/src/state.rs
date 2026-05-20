@@ -10,11 +10,10 @@ use dex_adapters::{
     soroswap::SoroswapAdapter,
     sushi::SushiAdapter,
     token_metadata::TokenMetadataStore,
-    AdapterTradingPair, DexAdapter,
+    DexAdapter,
 };
 use router_engine::{path_finder::PathFinderConfig, split_optimizer::SplitConfig, QuoteEngine};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use crate::config::AppConfig;

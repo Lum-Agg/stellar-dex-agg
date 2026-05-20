@@ -10,9 +10,8 @@
 use crate::traits::AdapterTradingPair;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::Path;
-use tracing::{info, warn};
+use tracing::info;
 
 /// Cache entry for a single DEX source.
 #[derive(Debug, Clone, Serialize, Deserialize)]

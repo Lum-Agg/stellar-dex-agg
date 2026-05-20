@@ -398,16 +398,16 @@ impl QuoteEngine {
     }
 }
 
-/// Rough price impact estimation.
-/// Real implementation would use reserve data from each pool.
-fn estimate_price_impact(amount_in: u128, amount_out: u128, fee_bps: u32) -> u32 {
-    if amount_in == 0 || amount_out == 0 {
-        return 0;
-    }
-    // Remove fee effect to isolate pure price impact
-    let amount_out_no_fee = amount_out * 10_000 / (10_000 - fee_bps as u128);
-    // If output equals input (1:1 price), impact is 0
-    // Impact grows as output decreases relative to "fair" price
-    // This is a placeholder; real implementation needs pool reserve data
-    0
-}
+// /// Rough price impact estimation.
+// /// Real implementation would use reserve data from each pool.
+// fn estimate_price_impact(amount_in: u128, amount_out: u128, fee_bps: u32) -> u32 {
+//     if amount_in == 0 || amount_out == 0 {
+//         return 0;
+//     }
+//     // Remove fee effect to isolate pure price impact
+//     let amount_out_no_fee = amount_out * 10_000 / (10_000 - fee_bps as u128);
+//     // If output equals input (1:1 price), impact is 0
+//     // Impact grows as output decreases relative to "fair" price
+//     // This is a placeholder; real implementation needs pool reserve data
+//     0
+// }

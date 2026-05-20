@@ -11,13 +11,12 @@
 //! Soroban contract calls (Stellar supports mixed Classic + Soroban ops).
 
 use crate::traits::*;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
-use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Default public Horizon endpoint
 const DEFAULT_HORIZON_URL: &str = "https://horizon.stellar.org";

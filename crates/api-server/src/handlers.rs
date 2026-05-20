@@ -208,9 +208,6 @@ pub async fn build_swap(
     State(state): State<AppState>,
     Json(body): Json<SwapRequest>,
 ) -> impl IntoResponse {
-    use stellar_xdr::curr as xdr;
-    use stellar_xdr::curr::{Limits, WriteXdr};
-
     let amount_in: u128 = match body.amount_in.parse() {
         Ok(v) => v,
         Err(_) => {
@@ -325,7 +322,7 @@ pub async fn build_swap(
 fn build_classic_dex_tx(
     body: &SwapRequest,
     route: &router_engine::types::OptimalRoute,
-    slippage_bps: u32,
+    _slippage_bps: u32,
 ) -> Result<(String, SimulationData), String> {
     use stellar_xdr::curr as xdr;
     use stellar_xdr::curr::{Limits, WriteXdr};
@@ -389,20 +386,6 @@ fn build_classic_dex_tx(
             error: None,
         },
     ))
-}
-
-/// Build a Soroban DEX transaction (calls aggregator contract).
-fn build_soroban_dex_tx(
-    body: &SwapRequest,
-    route: &router_engine::types::OptimalRoute,
-    slippage_bps: u32,
-) -> Result<(String, SimulationData), String> {
-    // TODO: Build InvokeHostFunction calling the aggregator contract
-    // For now, return an error indicating this needs the aggregator contract
-    Err(
-        "Soroban DEX swap requires aggregator contract (not yet deployed). Use Classic DEX route."
-            .to_string(),
-    )
 }
 
 /// Parse a token identifier to XDR Asset.

@@ -13,7 +13,6 @@ use dex_adapters::rpc::SorobanRpc;
 use sha2::Digest;
 use std::sync::Arc;
 use stellar_xdr::curr as xdr;
-use tracing::{debug, info};
 
 /// Configuration for transaction building.
 #[derive(Debug, Clone)]
@@ -54,7 +53,7 @@ impl TransactionBuilder {
         &self,
         route: &OptimalRoute,
         user_address: &str,
-        slippage_bps: u32,
+        _slippage_bps: u32,
     ) -> Result<UnsignedTransaction> {
         if route.sub_orders.is_empty() {
             return Err(anyhow!("Cannot build transaction for empty route"));

@@ -4,7 +4,6 @@
 use crate::rpc::{scval_to_string, SorobanRpc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
