@@ -7,5 +7,4 @@ data/pool_cache.json
 packages/frontend/node_modules/
 packages/frontend/.next/
 packages/frontend/out/
-contracts/aggregator/test_snapshots/
 justfile

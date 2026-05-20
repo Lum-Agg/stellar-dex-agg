@@ -138,10 +138,7 @@
                   "address": "CDLDVFKHEZ2RVB3NG4UQA4VPD3TSHV6XMHXMHP2BSGCJ2IIWVTOHGDSG"
                 },
                 {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 1000
-                  }
+                  "address": "CDS3FDGQ4JA2V3F26Y4BMWWJEC5TT26RJBN7KIQKUMVO2MAOCMDTSZ7A"
                 },
                 {
                   "vec": [
@@ -149,54 +146,78 @@
                       "map": [
                         {
                           "key": {
-                            "symbol": "dex_id"
+                            "symbol": "amount_in"
                           },
                           "val": {
-                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5"
+                            "i128": {
+                              "hi": 0,
+                              "lo": 1000
+                            }
                           }
                         },
                         {
                           "key": {
-                            "symbol": "dex_type"
+                            "symbol": "steps"
                           },
                           "val": {
                             "vec": [
                               {
-                                "symbol": "SoroswapPair"
+                                "map": [
+                                  {
+                                    "key": {
+                                      "symbol": "dex_id"
+                                    },
+                                    "val": {
+                                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5"
+                                    }
+                                  },
+                                  {
+                                    "key": {
+                                      "symbol": "dex_type"
+                                    },
+                                    "val": {
+                                      "vec": [
+                                        {
+                                          "symbol": "SoroswapPair"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  {
+                                    "key": {
+                                      "symbol": "in_idx"
+                                    },
+                                    "val": {
+                                      "u32": 0
+                                    }
+                                  },
+                                  {
+                                    "key": {
+                                      "symbol": "out_idx"
+                                    },
+                                    "val": {
+                                      "u32": 1
+                                    }
+                                  },
+                                  {
+                                    "key": {
+                                      "symbol": "token_in"
+                                    },
+                                    "val": {
+                                      "address": "CDLDVFKHEZ2RVB3NG4UQA4VPD3TSHV6XMHXMHP2BSGCJ2IIWVTOHGDSG"
+                                    }
+                                  },
+                                  {
+                                    "key": {
+                                      "symbol": "token_out"
+                                    },
+                                    "val": {
+                                      "address": "CDS3FDGQ4JA2V3F26Y4BMWWJEC5TT26RJBN7KIQKUMVO2MAOCMDTSZ7A"
+                                    }
+                                  }
+                                ]
                               }
                             ]
-                          }
-                        },
-                        {
-                          "key": {
-                            "symbol": "in_idx"
-                          },
-                          "val": {
-                            "u32": 0
-                          }
-                        },
-                        {
-                          "key": {
-                            "symbol": "out_idx"
-                          },
-                          "val": {
-                            "u32": 1
-                          }
-                        },
-                        {
-                          "key": {
-                            "symbol": "token_in"
-                          },
-                          "val": {
-                            "address": "CDLDVFKHEZ2RVB3NG4UQA4VPD3TSHV6XMHXMHP2BSGCJ2IIWVTOHGDSG"
-                          }
-                        },
-                        {
-                          "key": {
-                            "symbol": "token_out"
-                          },
-                          "val": {
-                            "address": "CDS3FDGQ4JA2V3F26Y4BMWWJEC5TT26RJBN7KIQKUMVO2MAOCMDTSZ7A"
                           }
                         }
                       ]
