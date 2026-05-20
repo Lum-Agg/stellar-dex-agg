@@ -204,6 +204,69 @@ pub struct SimulationData {
     pub error: Option<String>,
 }
 
+async fn route_to_sub_routes(
+    state: &AppState,
+    route: &router_engine::types::OptimalRoute,
+) -> Result<(Vec<SubRouteData>, Vec<BuildTxSubRoute>), String> {
+    let mut sub_routes = Vec::new();
+    let mut build_sub_routes = Vec::new();
+
+    for so in &route.sub_orders {
+        let mut in_indices = Vec::new();
+        let mut out_indices = Vec::new();
+        let mut build_steps = Vec::new();
+
+        for i in 0..so.path.hops {
+            let token_in = &so.path.tokens[i];
+            let token_out = &so.path.tokens[i + 1];
+            let pool = &so.path.pool_addresses[i];
+            let dex_type = so.path.sources[i].clone();
+
+            let (in_idx, out_idx) = state
+                .engine
+                .get_pool_indices(pool, token_in, token_out)
+                .await
+                .ok_or_else(|| {
+                    format!(
+                        "Cannot resolve pool token indices for {} → {} on {}",
+                        token_in.canonical(),
+                        token_out.canonical(),
+                        pool
+                    )
+                })?;
+
+            in_indices.push(in_idx);
+            out_indices.push(out_idx);
+            build_steps.push(BuildTxStep {
+                dex_type,
+                pool_address: pool.clone(),
+                token_in: token_in.canonical(),
+                token_out: token_out.canonical(),
+                in_idx,
+                out_idx,
+            });
+        }
+
+        sub_routes.push(SubRouteData {
+            source: so.path.sources.join(" → "),
+            path: so.path.tokens.iter().map(|t| t.canonical()).collect(),
+            pool_addresses: so.path.pool_addresses.clone(),
+            dex_types: so.path.sources.clone(),
+            in_indices,
+            out_indices,
+            amount_in: so.amount_in.to_string(),
+            amount_out: so.expected_amount_out.to_string(),
+            percentage: so.fraction * 100.0,
+        });
+        build_sub_routes.push(BuildTxSubRoute {
+            amount_in: so.amount_in.to_string(),
+            steps: build_steps,
+        });
+    }
+
+    Ok((sub_routes, build_sub_routes))
+}
+
 pub async fn build_swap(
     State(state): State<AppState>,
     Json(body): Json<SwapRequest>,
@@ -247,66 +310,55 @@ pub async fn build_swap(
         );
     }
 
-    // 2. Build transaction — always use PathPaymentStrictSend
-    // Stellar Core will automatically route through the best path
-    // (including Soroban AMM pools via their SAC interfaces)
-    let tx_result = build_classic_dex_tx(&body, &route, slippage_bps);
-
-    match tx_result {
-        Ok((xdr_b64, sim)) => {
-            let mut sub_routes = Vec::new();
-            for so in &route.sub_orders {
-                let mut in_indices = Vec::new();
-                let mut out_indices = Vec::new();
-                for i in 0..so.path.hops {
-                    let token_in = &so.path.tokens[i];
-                    let token_out = &so.path.tokens[i + 1];
-                    let pool = &so.path.pool_addresses[i];
-                    let (in_idx, out_idx) = match state
-                        .engine
-                        .get_pool_indices(pool, token_in, token_out)
-                        .await
-                    {
-                        Some(v) => v,
-                        None => (0, 1),
-                    };
-                    in_indices.push(in_idx);
-                    out_indices.push(out_idx);
-                }
-                sub_routes.push(SubRouteData {
-                    source: so.path.sources.join(" → "),
-                    path: so.path.tokens.iter().map(|t| t.canonical()).collect(),
-                    pool_addresses: so.path.pool_addresses.clone(),
-                    dex_types: so.path.sources.clone(),
-                    in_indices,
-                    out_indices,
-                    amount_in: so.amount_in.to_string(),
-                    amount_out: so.expected_amount_out.to_string(),
-                    percentage: so.fraction * 100.0,
-                });
-            }
-
-            (
+    let (sub_routes, build_sub_routes) = match route_to_sub_routes(&state, &route).await {
+        Ok(v) => v,
+        Err(e) => {
+            return (
                 StatusCode::OK,
                 Json(SwapResponse {
-                    success: true,
-                    data: Some(SwapData {
-                        unsigned_tx_xdr: xdr_b64,
-                        simulation: sim,
-                        route: QuoteData {
-                            amount_in: route.total_amount_in.to_string(),
-                            expected_output: route.total_expected_out.to_string(),
-                            minimum_output: route.minimum_out.to_string(),
-                            price_impact: route.price_impact_bps as f64 / 100.0,
-                            is_split: route.is_split,
-                            sub_routes,
-                            compute_time_ms: route.compute_time_ms,
-                        },
-                    }),
-                    error: None,
+                    success: false,
+                    data: None,
+                    error: Some(e),
                 }),
-            )
+            );
         }
+    };
+
+    let build_req = BuildTxRequest {
+        user_public_key: body.user_public_key.clone(),
+        amount_in: route.total_amount_in.to_string(),
+        token_in: body.token_in.clone(),
+        token_out: body.token_out.clone(),
+        min_amount_out: route.minimum_out.to_string(),
+        sub_routes: build_sub_routes,
+    };
+
+    match build_tx_impl(&build_req).await {
+        Ok(tx) => (
+            StatusCode::OK,
+            Json(SwapResponse {
+                success: true,
+                data: Some(SwapData {
+                    unsigned_tx_xdr: tx.unsigned_tx_xdr,
+                    simulation: SimulationData {
+                        success: true,
+                        actual_output: Some(route.total_expected_out.to_string()),
+                        fee: Some(tx.fee),
+                        error: None,
+                    },
+                    route: QuoteData {
+                        amount_in: route.total_amount_in.to_string(),
+                        expected_output: route.total_expected_out.to_string(),
+                        minimum_output: route.minimum_out.to_string(),
+                        price_impact: route.price_impact_bps as f64 / 100.0,
+                        is_split: route.is_split,
+                        sub_routes,
+                        compute_time_ms: route.compute_time_ms,
+                    },
+                }),
+                error: None,
+            }),
+        ),
         Err(e) => (
             StatusCode::OK,
             Json(SwapResponse {
@@ -318,53 +370,101 @@ pub async fn build_swap(
     }
 }
 
-/// Build a Classic DEX PathPaymentStrictSend transaction.
-fn build_classic_dex_tx(
-    body: &SwapRequest,
-    route: &router_engine::types::OptimalRoute,
-    _slippage_bps: u32,
-) -> Result<(String, SimulationData), String> {
+async fn build_tx_impl(body: &BuildTxRequest) -> Result<BuildTxData, String> {
     use stellar_xdr::curr as xdr;
     use stellar_xdr::curr::{Limits, WriteXdr};
 
     let user_key = stellar_strkey::ed25519::PublicKey::from_string(&body.user_public_key)
         .map_err(|e| format!("Invalid public key: {:?}", e))?;
+    let amount_in: i128 = body
+        .amount_in
+        .parse()
+        .map_err(|_| "Invalid amount_in".to_string())?;
+    let min_amount_out: i128 = body
+        .min_amount_out
+        .parse()
+        .map_err(|_| "Invalid min_amount_out".to_string())?;
 
-    // Parse assets
-    let send_asset =
-        parse_asset_xdr(&body.token_in).map_err(|e| format!("Invalid token_in: {}", e))?;
-    let dest_asset =
-        parse_asset_xdr(&body.token_out).map_err(|e| format!("Invalid token_out: {}", e))?;
+    let mut sub_routes_total: i128 = 0;
+    let mut classic_subs: Vec<&BuildTxSubRoute> = Vec::new();
+    let mut soroban_subs: Vec<&BuildTxSubRoute> = Vec::new();
 
-    let send_amount = route.total_amount_in as i64;
-    // Per-leg min is 0; slippage is enforced off-chain via quote.minimum_output, not in PathPayment.
-    let dest_min = 0i64;
+    for sub in &body.sub_routes {
+        let leg_amount: i128 = sub
+            .amount_in
+            .parse()
+            .map_err(|_| format!("Invalid sub-route amount_in: {}", sub.amount_in))?;
+        sub_routes_total += leg_amount;
 
-    // Build PathPaymentStrictSend operation
-    let path_payment = xdr::OperationBody::PathPaymentStrictSend(xdr::PathPaymentStrictSendOp {
-        send_asset,
-        send_amount,
-        destination: xdr::MuxedAccount::Ed25519(xdr::Uint256(user_key.0)),
-        dest_asset,
-        dest_min,
-        path: xdr::VecM::default(), // Let Stellar Core find the best path
-    });
+        if sub_route_is_classic(sub) {
+            classic_subs.push(sub);
+        } else if sub_route_is_soroban(sub) {
+            soroban_subs.push(sub);
+        } else {
+            return Err(
+                "Each sub-route must be all classic_dex or all Soroban hops (no mixing within one leg)"
+                    .to_string(),
+            );
+        }
+    }
 
-    let op = xdr::Operation {
-        source_account: None,
-        body: path_payment,
+    if sub_routes_total != amount_in {
+        return Err(format!(
+            "sub_routes amount_in sum ({}) does not match amount_in ({})",
+            sub_routes_total, amount_in
+        ));
+    }
+
+    let execution = if !classic_subs.is_empty() && !soroban_subs.is_empty() {
+        "hybrid"
+    } else if !classic_subs.is_empty() {
+        "classic"
+    } else {
+        "soroban"
     };
 
-    // Build transaction
+    let contract_label = if soroban_subs.is_empty() {
+        DEX_CLASSIC.to_string()
+    } else {
+        AGGREGATOR_CONTRACT.to_string()
+    };
+
+    let mut ops: Vec<xdr::Operation> = Vec::new();
+    for sub in &classic_subs {
+        ops.push(build_path_payment_op(sub, &user_key, 0)?);
+    }
+
+    if !soroban_subs.is_empty() {
+        let contract_min = if execution == "soroban" {
+            min_amount_out
+        } else {
+            0
+        };
+        let soroban_subs_owned: Vec<BuildTxSubRoute> =
+            soroban_subs.iter().map(|s| (*s).clone()).collect();
+        ops.push(build_aggregator_invoke_op(
+            body,
+            &user_key,
+            &soroban_subs_owned,
+            contract_min,
+        )?);
+    }
+
+    let num_ops = ops.len();
     let source_account = xdr::MuxedAccount::Ed25519(xdr::Uint256(user_key.0));
+    let seq_num = fetch_sequence_number(&body.user_public_key).await?;
+    let base_fee = 100_000u32.saturating_mul(num_ops as u32);
+    let operations = ops
+        .try_into()
+        .map_err(|_| "Too many operations in one transaction".to_string())?;
 
     let tx = xdr::Transaction {
-        source_account,
-        fee: 10000,                      // 0.001 XLM
-        seq_num: xdr::SequenceNumber(0), // Client will set this
+        source_account: source_account.clone(),
+        fee: base_fee.max(10_000),
+        seq_num: xdr::SequenceNumber(seq_num + 1),
         cond: xdr::Preconditions::None,
         memo: xdr::Memo::None,
-        operations: vec![op].try_into().map_err(|_| "ops error".to_string())?,
+        operations,
         ext: xdr::TransactionExt::V0,
     };
 
@@ -373,60 +473,21 @@ fn build_classic_dex_tx(
         signatures: xdr::VecM::default(),
     });
 
-    let xdr_b64 = envelope
+    let tx_xdr = envelope
         .to_xdr_base64(Limits::none())
         .map_err(|e| format!("XDR encode error: {:?}", e))?;
 
-    Ok((
-        xdr_b64,
-        SimulationData {
-            success: true,
-            actual_output: Some(route.total_expected_out.to_string()),
-            fee: Some("10000".to_string()),
-            error: None,
-        },
-    ))
-}
+    let rpc_url = std::env::var("RPC_URL")
+        .unwrap_or_else(|_| "https://soroban-rpc.mainnet.stellar.gateway.fm".to_string());
+    let assembled_xdr = simulate_and_assemble(&rpc_url, &tx_xdr).await?;
 
-/// Parse a token identifier to XDR Asset.
-/// Handles: "native", contract addresses (maps to native for XLM SAC)
-fn parse_asset_xdr(token: &str) -> Result<stellar_xdr::curr::Asset, String> {
-    use stellar_xdr::curr as xdr;
-
-    // XLM SAC address
-    if token == "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA" || token == "native" {
-        return Ok(xdr::Asset::Native);
-    }
-
-    // USDC SAC
-    if token == "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75" {
-        let issuer = stellar_strkey::ed25519::PublicKey::from_string(
-            "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-        )
-        .map_err(|e| format!("{:?}", e))?;
-        let mut code = [0u8; 4];
-        code[..4].copy_from_slice(b"USDC");
-        return Ok(xdr::Asset::CreditAlphanum4(xdr::AlphaNum4 {
-            asset_code: xdr::AssetCode4(code),
-            issuer: xdr::AccountId(xdr::PublicKey::PublicKeyTypeEd25519(xdr::Uint256(issuer.0))),
-        }));
-    }
-
-    // EURC SAC
-    if token == "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC" {
-        let issuer = stellar_strkey::ed25519::PublicKey::from_string(
-            "GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2",
-        )
-        .map_err(|e| format!("{:?}", e))?;
-        let mut code = [0u8; 4];
-        code[..4].copy_from_slice(b"EURC");
-        return Ok(xdr::Asset::CreditAlphanum4(xdr::AlphaNum4 {
-            asset_code: xdr::AssetCode4(code),
-            issuer: xdr::AccountId(xdr::PublicKey::PublicKeyTypeEd25519(xdr::Uint256(issuer.0))),
-        }));
-    }
-
-    Err(format!("Cannot convert contract {} to Classic asset (only XLM/USDC/EURC supported for Classic DEX)", token))
+    Ok(BuildTxData {
+        unsigned_tx_xdr: assembled_xdr,
+        num_operations: num_ops,
+        fee: base_fee.max(10_000).to_string(),
+        contract: contract_label,
+        execution: execution.to_string(),
+    })
 }
 
 // ============================================================
@@ -807,6 +868,47 @@ fn build_path_payment_op(
     })
 }
 
+/// Parse a token identifier to XDR Asset.
+/// Handles: "native", contract addresses (maps to native for XLM SAC)
+fn parse_asset_xdr(token: &str) -> Result<stellar_xdr::curr::Asset, String> {
+    use stellar_xdr::curr as xdr;
+
+    if token == "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA" || token == "native" {
+        return Ok(xdr::Asset::Native);
+    }
+
+    if token == "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75" {
+        let issuer = stellar_strkey::ed25519::PublicKey::from_string(
+            "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        )
+        .map_err(|e| format!("{:?}", e))?;
+        let mut code = [0u8; 4];
+        code[..4].copy_from_slice(b"USDC");
+        return Ok(xdr::Asset::CreditAlphanum4(xdr::AlphaNum4 {
+            asset_code: xdr::AssetCode4(code),
+            issuer: xdr::AccountId(xdr::PublicKey::PublicKeyTypeEd25519(xdr::Uint256(issuer.0))),
+        }));
+    }
+
+    if token == "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC" {
+        let issuer = stellar_strkey::ed25519::PublicKey::from_string(
+            "GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2",
+        )
+        .map_err(|e| format!("{:?}", e))?;
+        let mut code = [0u8; 4];
+        code[..4].copy_from_slice(b"EURC");
+        return Ok(xdr::Asset::CreditAlphanum4(xdr::AlphaNum4 {
+            asset_code: xdr::AssetCode4(code),
+            issuer: xdr::AccountId(xdr::PublicKey::PublicKeyTypeEd25519(xdr::Uint256(issuer.0))),
+        }));
+    }
+
+    Err(format!(
+        "Cannot convert contract {} to Classic asset (only XLM/USDC/EURC supported for Classic DEX)",
+        token
+    ))
+}
+
 fn build_aggregator_invoke_op(
     body: &BuildTxRequest,
     user_key: &stellar_strkey::ed25519::PublicKey,
@@ -864,13 +966,7 @@ fn build_aggregator_invoke_op(
     })
 }
 
-pub async fn build_tx(
-    State(_state): State<AppState>,
-    Json(body): Json<BuildTxRequest>,
-) -> impl IntoResponse {
-    use stellar_xdr::curr as xdr;
-    use stellar_xdr::curr::{Limits, WriteXdr};
-
+pub async fn build_tx(State(_state): State<AppState>, Json(body): Json<BuildTxRequest>) -> impl IntoResponse {
     if body.sub_routes.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
@@ -882,246 +978,12 @@ pub async fn build_tx(
         );
     }
 
-    let user_key = match stellar_strkey::ed25519::PublicKey::from_string(&body.user_public_key) {
-        Ok(k) => k,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(BuildTxResponse {
-                    success: false,
-                    data: None,
-                    error: Some(format!("Invalid public key: {:?}", e)),
-                }),
-            );
-        }
-    };
-
-    let amount_in: i128 = match body.amount_in.parse() {
-        Ok(v) => v,
-        Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(BuildTxResponse {
-                    success: false,
-                    data: None,
-                    error: Some("Invalid amount_in".to_string()),
-                }),
-            );
-        }
-    };
-
-    let min_amount_out: i128 = match body.min_amount_out.parse() {
-        Ok(v) => v,
-        Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(BuildTxResponse {
-                    success: false,
-                    data: None,
-                    error: Some("Invalid min_amount_out".to_string()),
-                }),
-            );
-        }
-    };
-
-    let mut sub_routes_total: i128 = 0;
-    let mut classic_subs: Vec<&BuildTxSubRoute> = Vec::new();
-    let mut soroban_subs: Vec<&BuildTxSubRoute> = Vec::new();
-
-    for sub in &body.sub_routes {
-        let leg_amount: i128 = match sub.amount_in.parse() {
-            Ok(v) => v,
-            Err(_) => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(BuildTxResponse {
-                        success: false,
-                        data: None,
-                        error: Some(format!("Invalid sub-route amount_in: {}", sub.amount_in)),
-                    }),
-                );
-            }
-        };
-        sub_routes_total += leg_amount;
-
-        if sub_route_is_classic(sub) {
-            classic_subs.push(sub);
-        } else if sub_route_is_soroban(sub) {
-            soroban_subs.push(sub);
-        } else {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(BuildTxResponse {
-                    success: false,
-                    data: None,
-                    error: Some(
-                        "Each sub-route must be all classic_dex or all Soroban hops (no mixing within one leg)"
-                            .to_string(),
-                    ),
-                }),
-            );
-        }
-    }
-
-    if sub_routes_total != amount_in {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(BuildTxResponse {
-                success: false,
-                data: None,
-                error: Some(format!(
-                    "sub_routes amount_in sum ({}) does not match amount_in ({})",
-                    sub_routes_total, amount_in
-                )),
-            }),
-        );
-    }
-
-    if classic_subs.is_empty() && soroban_subs.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(BuildTxResponse {
-                success: false,
-                data: None,
-                error: Some("No executable sub-routes".to_string()),
-            }),
-        );
-    }
-
-    let execution = if !classic_subs.is_empty() && !soroban_subs.is_empty() {
-        "hybrid"
-    } else if !classic_subs.is_empty() {
-        "classic"
-    } else {
-        "soroban"
-    };
-
-    let contract_label = if soroban_subs.is_empty() {
-        DEX_CLASSIC.to_string()
-    } else {
-        AGGREGATOR_CONTRACT.to_string()
-    };
-
-    let mut ops: Vec<xdr::Operation> = Vec::new();
-
-    for sub in &classic_subs {
-        // Classic PathPayment: dest_min=0 per leg; hybrid txs cannot apply one on-chain min.
-        match build_path_payment_op(sub, &user_key, 0) {
-            Ok(op) => ops.push(op),
-            Err(e) => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(BuildTxResponse {
-                        success: false,
-                        data: None,
-                        error: Some(e),
-                    }),
-                );
-            }
-        }
-    }
-
-    if !soroban_subs.is_empty() {
-        // Slippage only at aggregator.swap exit: full min_amount_out when entire tx is Soroban-only.
-        // Hybrid (Classic + Soroban ops): per-leg mins are 0; total slippage is not enforced atomically on-chain.
-        let contract_min = if execution == "soroban" {
-            min_amount_out
-        } else {
-            0
-        };
-        let soroban_subs_owned: Vec<BuildTxSubRoute> =
-            soroban_subs.iter().map(|s| (*s).clone()).collect();
-        match build_aggregator_invoke_op(&body, &user_key, &soroban_subs_owned, contract_min) {
-            Ok(op) => ops.push(op),
-            Err(e) => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(BuildTxResponse {
-                        success: false,
-                        data: None,
-                        error: Some(e),
-                    }),
-                );
-            }
-        }
-    }
-
-    let num_ops = ops.len();
-    let source_account = xdr::MuxedAccount::Ed25519(xdr::Uint256(user_key.0));
-
-    // 1. Fetch sequence number from Horizon
-    let seq_num = match fetch_sequence_number(&body.user_public_key).await {
-        Ok(seq) => seq,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(BuildTxResponse {
-                    success: false,
-                    data: None,
-                    error: Some(format!("Failed to fetch sequence number: {}", e)),
-                }),
-            );
-        }
-    };
-
-    let base_fee = 100_000u32.saturating_mul(num_ops as u32);
-    let operations = match ops.try_into() {
-        Ok(v) => v,
-        Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(BuildTxResponse {
-                    success: false,
-                    data: None,
-                    error: Some("Too many operations in one transaction".to_string()),
-                }),
-            );
-        }
-    };
-    let tx = xdr::Transaction {
-        source_account: source_account.clone(),
-        fee: base_fee.max(10_000), // updated after simulate when Soroban is present
-        seq_num: xdr::SequenceNumber(seq_num + 1),
-        cond: xdr::Preconditions::None,
-        memo: xdr::Memo::None,
-        operations,
-        ext: xdr::TransactionExt::V0,
-    };
-
-    let envelope = xdr::TransactionEnvelope::Tx(xdr::TransactionV1Envelope {
-        tx,
-        signatures: xdr::VecM::default(),
-    });
-
-    let tx_xdr = match envelope.to_xdr_base64(Limits::none()) {
-        Ok(x) => x,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(BuildTxResponse {
-                    success: false,
-                    data: None,
-                    error: Some(format!("XDR encode error: {:?}", e)),
-                }),
-            );
-        }
-    };
-
-    // 2. Simulate transaction to get footprint + auth + fees
-    let rpc_url = std::env::var("RPC_URL")
-        .unwrap_or_else(|_| "https://soroban-rpc.mainnet.stellar.gateway.fm".to_string());
-    match simulate_and_assemble(&rpc_url, &tx_xdr).await {
-        Ok(assembled_xdr) => (
+    match build_tx_impl(&body).await {
+        Ok(data) => (
             StatusCode::OK,
             Json(BuildTxResponse {
                 success: true,
-                data: Some(BuildTxData {
-                    unsigned_tx_xdr: assembled_xdr,
-                    num_operations: num_ops,
-                    fee: base_fee.max(10_000).to_string(),
-                    contract: contract_label.clone(),
-                    execution: execution.to_string(),
-                }),
+                data: Some(data),
                 error: None,
             }),
         ),
@@ -1249,7 +1111,10 @@ async fn rpc_simulate_transaction(
         "id": 1,
         "method": "simulateTransaction",
         "params": {
-            "transaction": tx_xdr
+            "transaction": tx_xdr,
+            "resourceConfig": {
+                "instructionLeeway": 3_000_000
+            }
         }
     });
 

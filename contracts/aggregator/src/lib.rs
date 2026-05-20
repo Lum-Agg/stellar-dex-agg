@@ -250,7 +250,8 @@ impl AggregatorContract {
             }
 
             DexType::SoroswapPair => {
-                // Soroswap: transfer input to pair, then swap() with library get_amount_out math.
+                // Soroswap flash-swap: transfer in, then pair.swap(out0, out1, to).
+                // Same flow as stellar-arb (transfer then pair.swap; pair sends output to aggregator).
                 let reserves: (i128, i128) = env.invoke_contract(
                     &step.dex_id,
                     &Symbol::new(env, "get_reserves"),
@@ -264,14 +265,8 @@ impl AggregatorContract {
                     (reserves.1, reserves.0)
                 };
 
-                let amount_out = soroswap_get_amount_out(amount_in, reserve_in, reserve_out);
-                if amount_out <= 0 {
-                    return 0;
-                }
-                // Defensive: pair K-check uses post-transfer balances; shave 1 stroop only
-                // for edge cases (stale reserves / rounding). Irrelevant at 1 XLM scale.
-                let safe_out = amount_out.saturating_sub(1);
-                if safe_out <= 0 {
+                let expected_out = soroswap_get_amount_out(amount_in, reserve_in, reserve_out);
+                if expected_out <= 0 {
                     return 0;
                 }
 
@@ -279,34 +274,22 @@ impl AggregatorContract {
                 let token_out_client = token::Client::new(env, &step.token_out);
                 let balance_before = token_out_client.balance(my_address);
 
-                let transfer_auth = InvokerContractAuthEntry::Contract(SubContractInvocation {
-                    context: ContractContext {
-                        contract: step.token_in.clone(),
-                        fn_name: Symbol::new(env, "transfer"),
-                        args: soroban_sdk::vec![
-                            env,
-                            my_address.into_val(env),
-                            step.dex_id.into_val(env),
-                            amount_in.into_val(env),
-                        ],
-                    },
-                    sub_invocations: soroban_sdk::vec![env],
-                });
-
-                env.authorize_as_current_contract(soroban_sdk::vec![env, transfer_auth]);
-
                 token_in_client.transfer(my_address, &step.dex_id, &amount_in);
 
-                let (amount0_out, amount1_out): (i128, i128) =
-                    if a2b { (0, safe_out) } else { (safe_out, 0) };
+                let (amount0_out, amount1_out): (i128, i128) = if a2b {
+                    (0, expected_out)
+                } else {
+                    (expected_out, 0)
+                };
 
-                let args = soroban_sdk::vec![
+                let swap_args = soroban_sdk::vec![
                     env,
                     amount0_out.into_val(env),
                     amount1_out.into_val(env),
                     my_address.into_val(env),
                 ];
-                let _: Val = env.invoke_contract(&step.dex_id, &Symbol::new(env, "swap"), args);
+                let _: Val =
+                    env.invoke_contract(&step.dex_id, &Symbol::new(env, "swap"), swap_args);
 
                 let balance_after = token_out_client.balance(my_address);
                 balance_after - balance_before
@@ -472,30 +455,6 @@ impl AggregatorContract {
                 #[cfg(not(test))]
                 {
                     let approval_ledger = Self::comet_approval_ledger(env);
-
-                    env.authorize_as_current_contract(soroban_sdk::vec![
-                        env,
-                        InvokerContractAuthEntry::Contract(SubContractInvocation {
-                            context: ContractContext {
-                                contract: step.token_in.clone(),
-                                fn_name: Symbol::new(env, "approve"),
-                                args: soroban_sdk::vec![
-                                    env,
-                                    my_address.into_val(env),
-                                    step.dex_id.into_val(env),
-                                    amount_in.into_val(env),
-                                    approval_ledger.into_val(env),
-                                ],
-                            },
-                            sub_invocations: soroban_sdk::vec![env],
-                        }),
-                    ]);
-                    token::Client::new(env, &step.token_in).approve(
-                        my_address,
-                        &step.dex_id,
-                        &amount_in,
-                        &approval_ledger,
-                    );
 
                     env.authorize_as_current_contract(soroban_sdk::vec![
                         env,

@@ -27,6 +27,28 @@ pub struct AppState {
     pub token_metadata: Arc<TokenMetadataStore>,
 }
 
+fn sanitize_cached_pairs(
+    source: &str,
+    pairs: Vec<router_engine::TradingPair>,
+) -> Vec<router_engine::TradingPair> {
+    if source != "aquarius" {
+        return pairs;
+    }
+
+    let mut by_pool: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for pair in &pairs {
+        *by_pool.entry(pair.pool_address.clone()).or_insert(0) += 1;
+    }
+
+    // Aquarius multi-token pools are represented as multiple edges sharing one pool address.
+    // Those routes are not executable by the current on-chain aggregator, so never hydrate
+    // them from disk cache during startup.
+    pairs
+        .into_iter()
+        .filter(|pair| by_pool.get(&pair.pool_address).copied().unwrap_or(0) == 1)
+        .collect()
+}
+
 fn pairs_to_trading(pairs: &[AdapterTradingPair], source: &str) -> Vec<router_engine::TradingPair> {
     pairs
         .iter()
@@ -52,11 +74,7 @@ async fn run_discovery(
         info!("Discovery: fetching {} pools...", adapter.id());
         match adapter.get_trading_pairs().await {
             Ok(pairs) => {
-                info!(
-                    "Discovery: {} returned {} pairs",
-                    adapter.id(),
-                    pairs.len()
-                );
+                info!("Discovery: {} returned {} pairs", adapter.id(), pairs.len());
                 cache.update_source(adapter.id(), pairs.clone());
                 let trading_pairs = pairs_to_trading(&pairs, adapter.id());
                 engine
@@ -126,6 +144,7 @@ impl AppState {
                             reserve_b: p.reserve_b,
                         })
                         .collect();
+                    let trading_pairs = sanitize_cached_pairs(&source.source, trading_pairs);
 
                     engine
                         .update_pairs_from_cache(&source.source, &trading_pairs)

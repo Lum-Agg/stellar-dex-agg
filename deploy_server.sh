@@ -21,7 +21,7 @@ rsync -az --delete \
   "${SERVER}:${REMOTE_SRC}/"
 
 echo "=== Building on server ==="
-ssh -o StrictHostKeyChecking=no $SERVER "source ~/.cargo/env && cd ${REMOTE_SRC} && cargo build --release -p api-server 2>&1 | tail -5"
+ssh -o StrictHostKeyChecking=no $SERVER "source ~/.cargo/env && cd ${REMOTE_SRC} && cargo build --release -p api-server --bin api-server 2>&1 | tail -5"
 
 echo "=== Deploying ==="
 ssh -o StrictHostKeyChecking=no $SERVER "systemctl stop lumagg-api; cp ${REMOTE_SRC}/target/release/api-server ${REMOTE_BIN}; systemctl start lumagg-api"

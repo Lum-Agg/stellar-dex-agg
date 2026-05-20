@@ -162,6 +162,25 @@ impl AquariusAdapter {
             }
         }
 
+        // Drop concentrated pools (quoted/routed via aquarius_clmm, not constant-product math).
+        let unique_addrs: std::collections::HashSet<String> = all_pools
+            .iter()
+            .map(|(p, _)| p.pool_address.clone())
+            .collect();
+        let mut volatile_addrs = std::collections::HashSet::new();
+        for addr in unique_addrs {
+            if self.is_volatile_pool(&addr).await {
+                volatile_addrs.insert(addr);
+            }
+        }
+        let before = all_pools.len();
+        all_pools.retain(|(p, _)| volatile_addrs.contains(&p.pool_address));
+        info!(
+            "Aquarius: kept {} volatile pool edges (dropped {} concentrated)",
+            all_pools.len(),
+            before.saturating_sub(all_pools.len())
+        );
+
         // 3. Batch-fetch reserves using getLedgerEntries (fast, 1 RPC call per 200 pools)
         info!(
             "Aquarius: batch-fetching reserves for {} pools...",
@@ -338,6 +357,13 @@ impl AquariusAdapter {
 
                 let n_tokens = token_addresses.len();
 
+                // Multi-token Aquarius pools need real token index + amp calibration at
+                // execution time. Until that path is implemented end-to-end, do not expose
+                // them to routing or we will build swaps with incorrect in/out indices.
+                if n_tokens > 2 {
+                    continue;
+                }
+
                 let is_stable = is_stable_pair(
                     &TokenId::Contract {
                         address: token_addresses[0].clone(),
@@ -404,6 +430,17 @@ impl AquariusAdapter {
             None
         } else {
             Some(addrs)
+        }
+    }
+
+    /// Constant-product / stableswap pools only; concentrated pools use `aquarius_clmm`.
+    async fn is_volatile_pool(&self, pool_address: &str) -> bool {
+        match self.rpc.call_no_args(pool_address, "pool_type").await {
+            Ok(xdr::ScVal::Symbol(s)) => {
+                let name = String::from_utf8(s.0.to_vec()).unwrap_or_default();
+                name != "concentrated"
+            }
+            _ => true,
         }
     }
 
