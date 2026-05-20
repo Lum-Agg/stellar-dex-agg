@@ -11,7 +11,7 @@
 //!
 //! Reference: Jupiter's Iris engine uses Golden-section + Brent's method.
 
-use crate::types::{OptimalRoute, Path, Quote, SubOrder};
+use crate::types::{OptimalRoute, Path, Quote, RouteDebug, SubOrder};
 use tracing::debug;
 
 /// Configuration for split optimization.
@@ -19,6 +19,8 @@ use tracing::debug;
 pub struct SplitConfig {
     /// Price impact threshold (bps) above which splitting is considered.
     pub split_threshold_bps: u32,
+    /// If the second-best path is within this delta of the best path, still attempt split.
+    pub split_competitive_delta_bps: u32,
     /// Maximum number of splits.
     pub max_splits: usize,
     /// Brent's method tolerance (fraction, e.g., 0.0001 = 0.01%)
@@ -30,7 +32,8 @@ pub struct SplitConfig {
 impl Default for SplitConfig {
     fn default() -> Self {
         Self {
-            split_threshold_bps: 10, // 0.1% - split when impact exceeds this
+            split_threshold_bps: 5,          // 0.05% - split when impact exceeds this
+            split_competitive_delta_bps: 50, // 0.5% output gap still worth checking
             max_splits: 5,
             tolerance: 0.0001, // 0.01% precision
             max_iterations: 50,
@@ -54,6 +57,10 @@ impl SplitOptimizer {
         Self { config }
     }
 
+    pub fn config(&self) -> &SplitConfig {
+        &self.config
+    }
+
     /// Determine optimal split and compute the best route.
     ///
     /// `quoted_paths`: paths with quotes at the full input amount (used to rank them).
@@ -63,6 +70,7 @@ impl SplitOptimizer {
         quoted_paths: &[QuotedPath],
         total_amount: u128,
         slippage_bps: u32,
+        max_splits_override: Option<usize>,
         quote_fn: F,
     ) -> OptimalRoute
     where
@@ -82,9 +90,20 @@ impl SplitOptimizer {
         let best_single = sorted[0];
         let best_single_out = best_single.quote.amount_out;
         let best_single_impact = best_single.quote.price_impact_bps;
+        let second_best_out = sorted.get(1).map(|p| p.quote.amount_out);
+        let competitive_delta_bps = self.config.split_competitive_delta_bps;
+        let competitive_enough = second_best_out
+            .map(|second| {
+                let gap_bps = if best_single_out == 0 {
+                    u32::MAX
+                } else {
+                    (((best_single_out.saturating_sub(second)) * 10_000) / best_single_out) as u32
+                };
+                gap_bps <= competitive_delta_bps
+            })
+            .unwrap_or(false);
 
-        // If price impact is below threshold or only 1 path, no split needed
-        if best_single_impact < self.config.split_threshold_bps || sorted.len() < 2 {
+        if sorted.len() < 2 {
             let minimum_out = apply_slippage(best_single_out, slippage_bps);
             return OptimalRoute {
                 sub_orders: vec![SubOrder {
@@ -100,11 +119,55 @@ impl SplitOptimizer {
                 improvement_bps: 0,
                 minimum_out,
                 compute_time_ms: start.elapsed().as_millis() as u64,
+                debug: Some(RouteDebug {
+                    quoted_paths_count: quoted_paths.len(),
+                    candidate_paths_count: 1,
+                    best_single_out,
+                    second_best_out,
+                    best_single_impact_bps: best_single_impact,
+                    split_threshold_bps: self.config.split_threshold_bps,
+                    competitive_delta_bps,
+                    split_attempted: false,
+                    split_rejected_reason: Some("not_enough_paths".to_string()),
+                }),
             };
         }
 
-        let candidates: Vec<&QuotedPath> =
-            sorted.into_iter().take(self.config.max_splits).collect();
+        if best_single_impact < self.config.split_threshold_bps && !competitive_enough {
+            let minimum_out = apply_slippage(best_single_out, slippage_bps);
+            return OptimalRoute {
+                sub_orders: vec![SubOrder {
+                    path: best_single.path.clone(),
+                    amount_in: total_amount,
+                    expected_amount_out: best_single_out,
+                    fraction: 1.0,
+                }],
+                total_amount_in: total_amount,
+                total_expected_out: best_single_out,
+                price_impact_bps: best_single_impact,
+                is_split: false,
+                improvement_bps: 0,
+                minimum_out,
+                compute_time_ms: start.elapsed().as_millis() as u64,
+                debug: Some(RouteDebug {
+                    quoted_paths_count: quoted_paths.len(),
+                    candidate_paths_count: sorted.len(),
+                    best_single_out,
+                    second_best_out,
+                    best_single_impact_bps: best_single_impact,
+                    split_threshold_bps: self.config.split_threshold_bps,
+                    competitive_delta_bps,
+                    split_attempted: false,
+                    split_rejected_reason: Some("below_threshold_and_not_competitive".to_string()),
+                }),
+            };
+        }
+
+        let candidates: Vec<&QuotedPath> = sorted
+            .into_iter()
+            .take(max_splits_override.unwrap_or(self.config.max_splits).max(2))
+            .collect();
+        let candidate_paths_count = candidates.len();
 
         // Optimize split using recursive pairwise Brent's method
         let split_result = self
@@ -130,6 +193,17 @@ impl SplitOptimizer {
                 improvement_bps: 0,
                 minimum_out,
                 compute_time_ms: start.elapsed().as_millis() as u64,
+                debug: Some(RouteDebug {
+                    quoted_paths_count: quoted_paths.len(),
+                    candidate_paths_count,
+                    best_single_out,
+                    second_best_out,
+                    best_single_impact_bps: best_single_impact,
+                    split_threshold_bps: self.config.split_threshold_bps,
+                    competitive_delta_bps,
+                    split_attempted: true,
+                    split_rejected_reason: Some("no_improvement".to_string()),
+                }),
             };
         }
 
@@ -168,6 +242,17 @@ impl SplitOptimizer {
             improvement_bps,
             minimum_out,
             compute_time_ms,
+            debug: Some(RouteDebug {
+                quoted_paths_count: quoted_paths.len(),
+                candidate_paths_count,
+                best_single_out,
+                second_best_out,
+                best_single_impact_bps: best_single_impact,
+                split_threshold_bps: self.config.split_threshold_bps,
+                competitive_delta_bps,
+                split_attempted: true,
+                split_rejected_reason: None,
+            }),
         }
     }
 
@@ -440,12 +525,45 @@ fn empty_route(total_amount: u128, compute_time_ms: u64) -> OptimalRoute {
         improvement_bps: 0,
         minimum_out: 0,
         compute_time_ms,
+        debug: None,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::TokenId;
+
+    fn test_path(name: &str) -> Path {
+        Path {
+            tokens: vec![
+                TokenId::Contract {
+                    address: "token-in".to_string(),
+                },
+                TokenId::Contract {
+                    address: "token-out".to_string(),
+                },
+            ],
+            sources: vec![name.to_string()],
+            pool_addresses: vec![format!("pool-{name}")],
+            hops: 1,
+        }
+    }
+
+    fn test_quote(path: &Path, amount_in: u128, amount_out: u128, price_impact_bps: u32) -> Quote {
+        Quote {
+            source: path.sources[0].clone(),
+            pool_address: path.pool_addresses[0].clone(),
+            token_in: path.tokens[0].clone(),
+            token_out: path.tokens[1].clone(),
+            amount_in,
+            amount_out,
+            price_impact_bps,
+            fee_bps: 30,
+            path: vec![],
+            timestamp_ms: 0,
+        }
+    }
 
     /// Test Brent's method on a simple quadratic (maximum at x=0.6)
     #[tokio::test]
@@ -516,5 +634,156 @@ mod tests {
 
         // Should put everything in Pool A
         assert!(result > 0.99, "Expected ~1.0, got {}", result);
+    }
+
+    #[tokio::test]
+    async fn test_no_split_when_only_one_path_exists() {
+        let optimizer = SplitOptimizer::new(SplitConfig::default());
+        let path = test_path("solo");
+        let quoted_paths = vec![QuotedPath {
+            path: path.clone(),
+            quote: test_quote(&path, 1_000, 990, 30),
+        }];
+
+        let route = optimizer
+            .optimize(&quoted_paths, 1_000, 50, None, |_path, amount| {
+                let path = path.clone();
+                async move { Some(test_quote(&path, amount, amount.saturating_sub(10), 30)) }
+            })
+            .await;
+
+        assert!(!route.is_split);
+        assert_eq!(route.sub_orders.len(), 1);
+        assert_eq!(
+            route
+                .debug
+                .as_ref()
+                .and_then(|d| d.split_rejected_reason.as_deref()),
+            Some("not_enough_paths")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_split_attempt_triggered_by_competitive_second_path() {
+        let config = SplitConfig {
+            split_threshold_bps: 100,
+            split_competitive_delta_bps: 50,
+            ..SplitConfig::default()
+        };
+        let optimizer = SplitOptimizer::new(config);
+        let path_a = test_path("a");
+        let path_b = test_path("b");
+        let quoted_paths = vec![
+            QuotedPath {
+                path: path_a.clone(),
+                quote: test_quote(&path_a, 1_000, 800, 10),
+            },
+            QuotedPath {
+                path: path_b.clone(),
+                quote: test_quote(&path_b, 1_000, 798, 10),
+            },
+        ];
+
+        let route = optimizer
+            .optimize(&quoted_paths, 1_000, 50, None, |path, amount| {
+                let path = path.clone();
+                let path_name = path.sources[0].clone();
+                async move {
+                    let out = if path_name == "a" && amount <= 500 {
+                        amount
+                    } else if path_name == "b" && amount <= 500 {
+                        amount.saturating_sub(1)
+                    } else {
+                        amount.saturating_sub(200)
+                    };
+                    Some(test_quote(&path, amount, out, 10))
+                }
+            })
+            .await;
+
+        assert!(
+            route.debug.as_ref().is_some_and(|d| d.split_attempted),
+            "expected competitive path trigger to attempt split"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_split_attempt_triggered_by_high_impact() {
+        let config = SplitConfig {
+            split_threshold_bps: 5,
+            split_competitive_delta_bps: 0,
+            ..SplitConfig::default()
+        };
+        let optimizer = SplitOptimizer::new(config);
+        let path_a = test_path("a");
+        let path_b = test_path("b");
+        let quoted_paths = vec![
+            QuotedPath {
+                path: path_a.clone(),
+                quote: test_quote(&path_a, 1_000, 1_000, 25),
+            },
+            QuotedPath {
+                path: path_b.clone(),
+                quote: test_quote(&path_b, 1_000, 980, 8),
+            },
+        ];
+
+        let route = optimizer
+            .optimize(&quoted_paths, 1_000, 50, None, |path, amount| {
+                let path = path.clone();
+                async move { Some(test_quote(&path, amount, amount.saturating_sub(10), 25)) }
+            })
+            .await;
+
+        assert!(
+            route.debug.as_ref().is_some_and(|d| d.split_attempted),
+            "expected high impact to attempt split"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fallback_to_single_when_split_has_no_improvement() {
+        let config = SplitConfig {
+            split_threshold_bps: 1,
+            split_competitive_delta_bps: 1,
+            ..SplitConfig::default()
+        };
+        let optimizer = SplitOptimizer::new(config);
+        let path_a = test_path("a");
+        let path_b = test_path("b");
+        let quoted_paths = vec![
+            QuotedPath {
+                path: path_a.clone(),
+                quote: test_quote(&path_a, 1_000, 1_000, 20),
+            },
+            QuotedPath {
+                path: path_b.clone(),
+                quote: test_quote(&path_b, 1_000, 999, 19),
+            },
+        ];
+
+        let route = optimizer
+            .optimize(&quoted_paths, 1_000, 50, None, |path, amount| {
+                let path = path.clone();
+                async move {
+                    let out = if path.sources[0] == "a" {
+                        amount
+                    } else {
+                        amount.saturating_sub(1)
+                    };
+                    Some(test_quote(&path, amount, out, 20))
+                }
+            })
+            .await;
+
+        assert!(!route.is_split);
+        assert_eq!(route.total_expected_out, 1_000);
+        assert_eq!(
+            route
+                .debug
+                .as_ref()
+                .and_then(|d| d.split_rejected_reason.as_deref()),
+            Some("no_improvement")
+        );
     }
 }

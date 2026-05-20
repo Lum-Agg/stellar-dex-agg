@@ -16,6 +16,12 @@ pub struct AppConfig {
     pub refresh_interval_secs: u64,
     /// Full pool discovery interval (seconds): re-run `get_trading_pairs` and replace the graph.
     pub discovery_interval_secs: u64,
+    /// Price impact threshold (bps) above which split optimization is attempted.
+    pub split_threshold_bps: u32,
+    /// Also try split when the second-best path is within this delta (bps) of the best path.
+    pub split_competitive_delta_bps: u32,
+    /// Maximum number of candidate paths to consider for split optimization.
+    pub max_splits: usize,
 }
 
 impl Default for AppConfig {
@@ -27,6 +33,9 @@ impl Default for AppConfig {
             aggregator_contract: None,
             refresh_interval_secs: 5,
             discovery_interval_secs: 600,
+            split_threshold_bps: 5,
+            split_competitive_delta_bps: 50,
+            max_splits: 5,
         }
     }
 }
@@ -49,6 +58,18 @@ impl AppConfig {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(600),
+            split_threshold_bps: std::env::var("SPLIT_THRESHOLD_BPS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(Self::default().split_threshold_bps),
+            split_competitive_delta_bps: std::env::var("SPLIT_COMPETITIVE_DELTA_BPS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(Self::default().split_competitive_delta_bps),
+            max_splits: std::env::var("MAX_SPLITS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(Self::default().max_splits),
         }
     }
 }

@@ -92,32 +92,57 @@ impl PathFinder {
 
     /// Find all valid paths from token_in to token_out.
     pub fn find_paths(&self, token_in: &TokenId, token_out: &TokenId) -> Vec<Path> {
-        let cache_key = (token_in.canonical(), token_out.canonical());
-        let now = chrono::Utc::now().timestamp_millis() as u64;
-
-        if let Ok(cache) = self.cache.lock() {
-            if let Some(cached) = cache.get(&cache_key) {
-                if now - cached.cached_at_ms < CACHE_TTL_MS {
-                    return cached.paths.clone();
-                }
-            }
-        }
-
-        let paths = self.graph.find_paths(
+        self.find_paths_with_limits(
             token_in,
             token_out,
             self.config.max_hops,
             self.config.max_paths,
-        );
+        )
+    }
 
-        if let Ok(mut cache) = self.cache.lock() {
-            cache.insert(
-                cache_key,
-                CachedPaths {
-                    paths: paths.clone(),
-                    cached_at_ms: now,
-                },
-            );
+    pub fn default_max_hops(&self) -> usize {
+        self.config.max_hops
+    }
+
+    pub fn default_max_paths(&self) -> usize {
+        self.config.max_paths
+    }
+
+    pub fn find_paths_with_limits(
+        &self,
+        token_in: &TokenId,
+        token_out: &TokenId,
+        max_hops: usize,
+        max_paths: usize,
+    ) -> Vec<Path> {
+        let cache_key = (token_in.canonical(), token_out.canonical());
+        let now = chrono::Utc::now().timestamp_millis() as u64;
+
+        let use_cache = max_hops == self.config.max_hops && max_paths == self.config.max_paths;
+        if use_cache {
+            if let Ok(cache) = self.cache.lock() {
+                if let Some(cached) = cache.get(&cache_key) {
+                    if now - cached.cached_at_ms < CACHE_TTL_MS {
+                        return cached.paths.clone();
+                    }
+                }
+            }
+        }
+
+        let paths = self
+            .graph
+            .find_paths(token_in, token_out, max_hops, max_paths);
+
+        if use_cache {
+            if let Ok(mut cache) = self.cache.lock() {
+                cache.insert(
+                    cache_key,
+                    CachedPaths {
+                        paths: paths.clone(),
+                        cached_at_ms: now,
+                    },
+                );
+            }
         }
 
         paths

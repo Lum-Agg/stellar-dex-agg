@@ -13,6 +13,7 @@ dex-adapters = { path = "../dex-adapters" }
 
 stellar-xdr.workspace = true
 stellar-strkey.workspace = true
+soroban-client.workspace = true
 
 tokio.workspace = true
 async-trait.workspace = true

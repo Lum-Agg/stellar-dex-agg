@@ -119,7 +119,12 @@ async fn run_reserve_refresh(adapters: &[Arc<dyn DexAdapter>], engine: &Arc<Quot
 impl AppState {
     pub async fn new(config: AppConfig) -> Result<Self> {
         let path_finder_config = PathFinderConfig::default();
-        let split_config = SplitConfig::default();
+        let split_config = SplitConfig {
+            split_threshold_bps: config.split_threshold_bps,
+            split_competitive_delta_bps: config.split_competitive_delta_bps,
+            max_splits: config.max_splits,
+            ..SplitConfig::default()
+        };
 
         let engine = Arc::new(QuoteEngine::new(path_finder_config, split_config));
 

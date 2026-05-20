@@ -1,5 +1,6 @@
 pub mod config;
 pub mod handlers;
+pub mod soroban_prepare;
 pub mod state;
 
 use axum::{routing::get, routing::post, Router};

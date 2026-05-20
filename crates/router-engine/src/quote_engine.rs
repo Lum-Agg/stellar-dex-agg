@@ -135,12 +135,18 @@ impl QuoteEngine {
     pub async fn get_route(&self, request: &RouteRequest) -> OptimalRoute {
         let start = std::time::Instant::now();
         let slippage_bps = request.slippage_bps.unwrap_or(50);
-        let max_hops = request.max_hops.unwrap_or(4);
+        let (max_hops, max_paths) = {
+            let pf = self.path_finder.read().await;
+            (
+                request.max_hops.unwrap_or(pf.default_max_hops()),
+                pf.default_max_paths(),
+            )
+        };
 
         // 1. Discover paths (read lock — graph updates take write lock briefly)
         let paths = {
             let pf = self.path_finder.read().await;
-            pf.find_paths(&request.token_in, &request.token_out)
+            pf.find_paths_with_limits(&request.token_in, &request.token_out, max_hops, max_paths)
         };
 
         if paths.is_empty() {
@@ -158,6 +164,7 @@ impl QuoteEngine {
                 improvement_bps: 0,
                 minimum_out: 0,
                 compute_time_ms: start.elapsed().as_millis() as u64,
+                debug: None,
             };
         }
 
@@ -186,6 +193,7 @@ impl QuoteEngine {
                 improvement_bps: 0,
                 minimum_out: 0,
                 compute_time_ms: start.elapsed().as_millis() as u64,
+                debug: None,
             };
         }
 
@@ -198,6 +206,7 @@ impl QuoteEngine {
                 &quoted_paths,
                 request.amount_in,
                 slippage_bps,
+                request.max_splits,
                 |path, amount| {
                     let adapters_ref = adapters_clone.clone();
                     let path_clone = path.clone();
