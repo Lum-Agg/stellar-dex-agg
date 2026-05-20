@@ -103,7 +103,6 @@ impl SplitOptimizer {
             };
         }
 
-        // Take top N paths for split optimization
         let candidates: Vec<&QuotedPath> =
             sorted.into_iter().take(self.config.max_splits).collect();
 

@@ -81,7 +81,8 @@ export async function getQuote(
   tokenIn: string,
   tokenOut: string,
   amountIn: string,
-  slippage?: number
+  slippage?: number,
+  signal?: AbortSignal
 ): Promise<QuoteResponse> {
   const params = new URLSearchParams({
     token_in: tokenIn,
@@ -92,7 +93,7 @@ export async function getQuote(
     params.set('slippage', slippage.toString());
   }
 
-  const resp = await fetch(`${API_URL}/api/v1/quote?${params}`);
+  const resp = await fetch(`${API_URL}/api/v1/quote?${params}`, { signal });
   const json = (await resp.json()) as QuoteResponse;
   if (json.success && json.data) {
     json.data = normalizeQuoteData(json.data);

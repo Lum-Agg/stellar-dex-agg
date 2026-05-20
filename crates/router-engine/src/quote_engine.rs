@@ -66,9 +66,15 @@ impl QuoteEngine {
                     })
                     .collect();
 
-                let mut pf = self.path_finder.write().await;
-                pf.update_from_source(&source, &trading_pairs);
-                self.update_pairs_from_cache(&source, &trading_pairs).await;
+                {
+                    let mut pf = self.path_finder.write().await;
+                    pf.update_from_source(&source, &trading_pairs);
+                }
+                {
+                    let mut cache = self.cached_pools.write().await;
+                    cache.retain(|p| p.source != source);
+                    cache.extend(trading_pairs.iter().cloned());
+                }
 
                 info!(
                     source = %source,
@@ -88,11 +94,11 @@ impl QuoteEngine {
     /// Used for instant startup from disk cache.
     /// Also stores pairs in cached_pools for local quote computation.
     pub async fn update_pairs_from_cache(&self, source: &str, pairs: &[TradingPair]) {
-        // Update path finder graph
-        let mut pf = self.path_finder.write().await;
-        pf.update_from_source(source, pairs);
+        {
+            let mut pf = self.path_finder.write().await;
+            pf.update_from_source(source, pairs);
+        }
 
-        // Store in cached_pools for local quote fallback (keep every edge, not one per pool)
         let mut cache = self.cached_pools.write().await;
         cache.retain(|p| p.source != source);
         cache.extend(pairs.iter().cloned());
@@ -131,9 +137,9 @@ impl QuoteEngine {
         let slippage_bps = request.slippage_bps.unwrap_or(50);
         let max_hops = request.max_hops.unwrap_or(4);
 
-        // 1. Discover paths
+        // 1. Discover paths (read lock — graph updates take write lock briefly)
         let paths = {
-            let mut pf = self.path_finder.write().await;
+            let pf = self.path_finder.read().await;
             pf.find_paths(&request.token_in, &request.token_out)
         };
 
@@ -187,8 +193,7 @@ impl QuoteEngine {
 
         // 3. Optimize (potentially split across paths)
         let adapters_clone = adapters.clone();
-        let route = self
-            .split_optimizer
+        self.split_optimizer
             .optimize(
                 &quoted_paths,
                 request.amount_in,
@@ -199,9 +204,7 @@ impl QuoteEngine {
                     async move { self.quote_path(&path_clone, amount, &adapters_ref).await }
                 },
             )
-            .await;
-
-        route
+            .await
     }
 
     /// Quote a single path by simulating each hop sequentially.
@@ -222,7 +225,6 @@ impl QuoteEngine {
             let token_out = &path.tokens[i + 1];
             let pool_address = &path.pool_addresses[i];
 
-            // Try adapter first
             let adapter = adapters.iter().find(|a| a.id() == source);
 
             let hop_result = if let Some(adapter) = adapter {
@@ -232,7 +234,6 @@ impl QuoteEngine {
                     .ok()
                     .flatten()
             } else {
-                // Fallback: compute locally from cached reserves
                 self.local_quote(
                     token_in,
                     token_out,

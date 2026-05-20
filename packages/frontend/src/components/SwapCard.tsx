@@ -44,7 +44,7 @@ export function SwapCard() {
           setQuote(null);
           setError(result.error || 'No route found');
         }
-      } catch (err: any) {
+      } catch {
         setQuote(null);
         setError('Failed to fetch quote');
       } finally {

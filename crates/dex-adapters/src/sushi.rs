@@ -661,9 +661,151 @@ impl SushiAdapter {
             }
             Err(e) => {
                 debug!("Sushi simulate fallback failed: {}", e);
-                Ok(None)
+                Err(e)
             }
         }
+    }
+
+    /// On-chain quote via router `swap_exact_input_hints` simulation.
+    pub async fn quote_via_router_simulate(
+        &self,
+        token_in: &str,
+        token_out: &str,
+        amount_in: u128,
+        fee_ppm: u32,
+    ) -> Result<Option<u128>> {
+        self.simulate_quote_fallback(token_in, token_out, amount_in, fee_ppm)
+            .await
+    }
+
+    /// Load one pool (slot0, liquidity, ticks) without scanning the factory.
+    pub async fn ensure_pool_loaded(&self, pool_address: &str) -> Result<()> {
+        if self.pool_cache.read().await.contains_key(pool_address) {
+            return Ok(());
+        }
+        let mut pool = self.read_pool_state(pool_address).await?;
+        if let Err(e) = self.read_tick_data(&mut pool).await {
+            warn!(
+                "Sushi: tick data incomplete for {}: {}",
+                pool_address, e
+            );
+        }
+        let pair = AdapterTradingPair {
+            token_a: TokenId::Contract {
+                address: pool.token0.clone(),
+            },
+            token_b: TokenId::Contract {
+                address: pool.token1.clone(),
+            },
+            pool_address: pool_address.to_string(),
+            fee_bps: pool.fee_bps,
+            reserve_a: Some(pool.liquidity),
+            reserve_b: None,
+        };
+        self.pool_cache
+            .write()
+            .await
+            .insert(pool_address.to_string(), pool);
+        let mut pairs = self.pairs.write().await;
+        if !pairs.iter().any(|p| p.pool_address == pool_address) {
+            pairs.push(pair);
+        }
+        Ok(())
+    }
+
+    /// On-chain quote by simulating the pool contract `swap` (with oracle hints).
+    pub async fn quote_via_pool_swap(
+        &self,
+        pool_address: &str,
+        token_in: &str,
+        amount_in: u128,
+    ) -> Result<Option<u128>> {
+        let cache = self.pool_cache.read().await;
+        let pool = match cache.get(pool_address) {
+            Some(p) => p.clone(),
+            None => return Ok(None),
+        };
+        drop(cache);
+
+        if amount_in == 0 {
+            return Ok(None);
+        }
+
+        let zero_for_one = token_in == pool.token0;
+        let hints_val = self
+            .rpc
+            .call_no_args(pool_address, "get_oracle_hints")
+            .await
+            .map_err(|e| anyhow!("get_oracle_hints failed: {}", e))?;
+
+        let dummy = xdr::ScVal::Address(xdr::ScAddress::Account(xdr::AccountId(
+            xdr::PublicKey::PublicKeyTypeEd25519(xdr::Uint256([0u8; 32])),
+        )));
+        let amount_val = xdr::ScVal::I128(xdr::Int128Parts {
+            hi: (amount_in as i128 >> 64) as i64,
+            lo: amount_in as u64,
+        });
+        let price_limit = sushi_sqrt_price_limit_scval(zero_for_one);
+
+        let swap_args = vec![
+            dummy.clone(),
+            dummy,
+            xdr::ScVal::Bool(zero_for_one),
+            amount_val,
+            price_limit,
+            hints_val,
+        ];
+
+        match self.rpc.simulate_call(pool_address, "swap", swap_args).await {
+            Ok(result) => Ok(parse_sushi_pool_swap_output(&result, zero_for_one)),
+            Err(e) => {
+                let err_str = e.to_string();
+                Ok(extract_sushi_swap_out_from_sim_error(&err_str, amount_in))
+            }
+        }
+    }
+
+    /// Compare local CLMM vs pool-contract `swap` simulation for one pool/direction.
+    pub async fn compare_local_vs_simulate(
+        &self,
+        pool_address: &str,
+        token_in: &str,
+        _token_out: &str,
+        amount_in: u128,
+    ) -> Result<(Option<u128>, Option<u128>, u32, Option<String>)> {
+        let cache = self.pool_cache.read().await;
+        let pool = match cache.get(pool_address) {
+            Some(p) => p,
+            None => return Ok((None, None, 0, Some("pool not in cache".into()))),
+        };
+        let fee_ppm = pool.fee_bps;
+        let local = self.local_quote(pool, token_in, amount_in);
+        drop(cache);
+        let sim = match self
+            .quote_via_pool_swap(pool_address, token_in, amount_in)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => return Ok((local, None, fee_ppm, Some(e.to_string()))),
+        };
+        Ok((local, sim, fee_ppm, None))
+    }
+
+    /// Pool metadata for diagnostics (token0, token1, fee ppm, liquidity).
+    pub async fn pool_info(&self, pool_address: &str) -> Option<(String, String, u32, u128)> {
+        let cache = self.pool_cache.read().await;
+        cache.get(pool_address).map(|p| {
+            (
+                p.token0.clone(),
+                p.token1.clone(),
+                p.fee_bps,
+                p.liquidity,
+            )
+        })
+    }
+
+    pub async fn pool_addresses(&self) -> Vec<String> {
+        self.pool_cache.read().await.keys().cloned().collect()
     }
 }
 
@@ -717,7 +859,7 @@ impl DexAdapter for SushiAdapter {
     async fn get_quote(
         &self,
         token_in: &TokenId,
-        token_out: &TokenId,
+        _token_out: &TokenId,
         amount_in: u128,
         pool_address: &str,
     ) -> Result<Option<AdapterQuote>> {
@@ -739,31 +881,7 @@ impl DexAdapter for SushiAdapter {
                 }));
             }
         }
-        drop(cache);
-
-        // Fall back to simulate
-        let pairs = self.pairs.read().await;
-        let pair = match pairs.iter().find(|p| p.pool_address == pool_address) {
-            Some(p) => p,
-            None => return Ok(None),
-        };
-        let fee_bps = pair.fee_bps;
-        drop(pairs);
-
-        let token_in_addr = token_in.canonical();
-        let token_out_addr = token_out.canonical();
-
-        match self
-            .simulate_quote_fallback(&token_in_addr, &token_out_addr, amount_in, fee_bps)
-            .await?
-        {
-            Some(amount_out) if amount_out > 0 => Ok(Some(AdapterQuote {
-                amount_out,
-                fee_bps,
-                price_impact_bps: 0,
-            })),
-            _ => Ok(None),
-        }
+        Ok(None)
     }
 
     async fn build_swap_op(
@@ -828,6 +946,84 @@ impl DexAdapter for SushiAdapter {
 // ============================================================================
 // Helpers
 // ============================================================================
+
+/// MIN_SQRT_RATIO+1 (zero_for_one) or MAX_SQRT_RATIO-1, matching aggregator swap limits.
+fn sushi_sqrt_price_limit_scval(zero_for_one: bool) -> xdr::ScVal {
+    if zero_for_one {
+        xdr::ScVal::U256(xdr::UInt256Parts {
+            hi_hi: 0,
+            hi_lo: 0,
+            lo_hi: 0,
+            lo_lo: 4_295_128_740,
+        })
+    } else {
+        // MAX_SQRT_RATIO - 1 (same as contracts/aggregator)
+        xdr::ScVal::U256(xdr::UInt256Parts {
+            hi_hi: 0,
+            hi_lo: 0,
+            lo_hi: 0xffff_ffff,
+            lo_lo: 0xefd1_fc6a,
+        })
+    }
+}
+
+fn parse_sushi_pool_swap_output(val: &xdr::ScVal, zero_for_one: bool) -> Option<u128> {
+    let inner = match val {
+        xdr::ScVal::Vec(Some(vec)) if vec.0.len() >= 2 => &vec.0[1],
+        _ => val,
+    };
+
+    if let xdr::ScVal::Map(Some(map)) = inner {
+        let mut amount0 = None;
+        let mut amount1 = None;
+        for entry in map.0.iter() {
+            let key_name = match &entry.key {
+                xdr::ScVal::Symbol(s) => String::from_utf8(s.0.to_vec()).unwrap_or_default(),
+                _ => continue,
+            };
+            match key_name.as_str() {
+                "amount0" => amount0 = scval_to_i128(&entry.val).ok(),
+                "amount1" => amount1 = scval_to_i128(&entry.val).ok(),
+                _ => {}
+            }
+        }
+        if let (Some(a0), Some(a1)) = (amount0, amount1) {
+            let output = if zero_for_one { -a1 } else { -a0 };
+            if output > 0 {
+                return Some(output as u128);
+            }
+        }
+    }
+    None
+}
+
+/// Parse output amount from a failed swap simulation (transfer auth in error payload).
+fn extract_sushi_swap_out_from_sim_error(err_str: &str, amount_in: u128) -> Option<u128> {
+    const PATTERNS: &[&str] = &[
+        "\"contract call failed\", transfer, [",
+        "\\\"contract call failed\\\", transfer, [",
+        "contract call failed\", transfer, [",
+    ];
+    for pattern in PATTERNS {
+        if let Some(idx) = err_str.find(pattern) {
+            let after = &err_str[idx + pattern.len()..];
+            if let Some(bracket_end) = after.find(']') {
+                let segment = &after[..bracket_end];
+                if let Some(amount_str) = segment.split(',').next_back() {
+                    let cleaned = amount_str
+                        .trim()
+                        .trim_matches(|c: char| !c.is_ascii_digit());
+                    if let Ok(amount) = cleaned.parse::<u128>() {
+                        if amount != amount_in {
+                            return Some(amount);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
 
 /// Floor division (rounds toward negative infinity).
 fn floor_div(a: i32, b: i32) -> i32 {

@@ -39,5 +39,6 @@ pub mod utils;
 
 pub use cache::{default_cache_path, PoolCache};
 pub use rpc::SorobanRpc;
+pub use sushi::SushiAdapter;
 pub use token_registry::TokenRegistry;
 pub use traits::*;

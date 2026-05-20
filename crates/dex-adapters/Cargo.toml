@@ -25,3 +25,9 @@ hex.workspace = true
 base64.workspace = true
 reqwest.workspace = true
 chrono.workspace = true
+tracing-subscriber = "0.3"
+
+[[bin]]
+name = "sushi-quote-compare"
+path = "src/bin/sushi_quote_compare.rs"
+required-features = []

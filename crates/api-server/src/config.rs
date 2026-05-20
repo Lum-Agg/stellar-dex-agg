@@ -12,7 +12,8 @@ pub struct AppConfig {
     pub listen_addr: String,
     /// Aggregator contract address (optional, for on-chain execution)
     pub aggregator_contract: Option<String>,
-    /// Pool refresh interval in seconds
+    /// Pool reserve refresh interval (seconds). Keep short so quotes track live reserves.
+    /// Path finding uses a read lock, so refresh no longer blocks `/api/v1/quote`.
     pub refresh_interval_secs: u64,
 }
 
@@ -23,7 +24,7 @@ impl Default for AppConfig {
             network_passphrase: "Public Global Stellar Network ; September 2015".to_string(),
             listen_addr: "0.0.0.0:3100".to_string(),
             aggregator_contract: None,
-            refresh_interval_secs: 60,
+            refresh_interval_secs: 5,
         }
     }
 }

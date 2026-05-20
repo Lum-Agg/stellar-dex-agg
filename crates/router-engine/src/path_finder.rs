@@ -5,6 +5,7 @@ use crate::{
     types::{Path, TokenId, TradingPair},
 };
 use std::collections::HashMap;
+use std::sync::Mutex;
 use tracing::info;
 
 /// Configuration for path finding.
@@ -39,8 +40,8 @@ impl Default for PathFinderConfig {
 pub struct PathFinder {
     graph: TokenGraph,
     config: PathFinderConfig,
-    /// Simple path cache: (token_in, token_out) -> cached paths
-    cache: HashMap<(String, String), CachedPaths>,
+    /// Path cache — separate mutex so `find_paths` only needs a read lock on the finder.
+    cache: Mutex<HashMap<(String, String), CachedPaths>>,
 }
 
 struct CachedPaths {
@@ -56,7 +57,7 @@ impl PathFinder {
         Self {
             graph: TokenGraph::new(),
             config,
-            cache: HashMap::new(),
+            cache: Mutex::new(HashMap::new()),
         }
     }
 
@@ -78,7 +79,7 @@ impl PathFinder {
         }
 
         // Invalidate all cached paths (source changed)
-        self.cache.clear();
+        self.cache.lock().unwrap().clear();
 
         info!(
             source = source,
@@ -90,18 +91,18 @@ impl PathFinder {
     }
 
     /// Find all valid paths from token_in to token_out.
-    pub fn find_paths(&mut self, token_in: &TokenId, token_out: &TokenId) -> Vec<Path> {
+    pub fn find_paths(&self, token_in: &TokenId, token_out: &TokenId) -> Vec<Path> {
         let cache_key = (token_in.canonical(), token_out.canonical());
         let now = chrono::Utc::now().timestamp_millis() as u64;
 
-        // Check cache
-        if let Some(cached) = self.cache.get(&cache_key) {
-            if now - cached.cached_at_ms < CACHE_TTL_MS {
-                return cached.paths.clone();
+        if let Ok(cache) = self.cache.lock() {
+            if let Some(cached) = cache.get(&cache_key) {
+                if now - cached.cached_at_ms < CACHE_TTL_MS {
+                    return cached.paths.clone();
+                }
             }
         }
 
-        // BFS path discovery
         let paths = self.graph.find_paths(
             token_in,
             token_out,
@@ -109,14 +110,15 @@ impl PathFinder {
             self.config.max_paths,
         );
 
-        // Cache results
-        self.cache.insert(
-            cache_key,
-            CachedPaths {
-                paths: paths.clone(),
-                cached_at_ms: now,
-            },
-        );
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.insert(
+                cache_key,
+                CachedPaths {
+                    paths: paths.clone(),
+                    cached_at_ms: now,
+                },
+            );
+        }
 
         paths
     }
@@ -125,13 +127,16 @@ impl PathFinder {
     pub fn invalidate(&mut self, token_a: &TokenId, token_b: &TokenId) {
         let key_a = token_a.canonical();
         let key_b = token_b.canonical();
-        self.cache
-            .retain(|k, _| k.0 != key_a && k.0 != key_b && k.1 != key_a && k.1 != key_b);
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.retain(|k, _| k.0 != key_a && k.0 != key_b && k.1 != key_a && k.1 != key_b);
+        }
     }
 
     /// Clear all caches.
     pub fn clear_cache(&mut self) {
-        self.cache.clear();
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.clear();
+        }
     }
 
     /// Get graph stats.
