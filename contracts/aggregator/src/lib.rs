@@ -241,11 +241,8 @@ impl AggregatorContract {
                     ]);
                 }
 
-                let received: u128 = env.invoke_contract(
-                    &step.dex_id,
-                    &Symbol::new(env, "swap"),
-                    build_swap_args(),
-                );
+                let received: u128 =
+                    env.invoke_contract(&step.dex_id, &Symbol::new(env, "swap"), build_swap_args());
                 received as i128
             }
 

@@ -34,6 +34,8 @@ pub struct QuoteResponse {
 
 #[derive(Serialize)]
 pub struct QuoteData {
+    /// Total input stroops used for this quote (sum of sub-route amounts)
+    pub amount_in: String,
     pub expected_output: String,
     pub minimum_output: String,
     pub price_impact: f64,
@@ -152,6 +154,7 @@ pub async fn get_quote(
         Json(QuoteResponse {
             success: true,
             data: Some(QuoteData {
+                amount_in: route.total_amount_in.to_string(),
                 expected_output: route.total_expected_out.to_string(),
                 minimum_output: route.minimum_out.to_string(),
                 price_impact: route.price_impact_bps as f64 / 100.0,
@@ -294,6 +297,7 @@ pub async fn build_swap(
                         unsigned_tx_xdr: xdr_b64,
                         simulation: sim,
                         route: QuoteData {
+                            amount_in: route.total_amount_in.to_string(),
                             expected_output: route.total_expected_out.to_string(),
                             minimum_output: route.minimum_out.to_string(),
                             price_impact: route.price_impact_bps as f64 / 100.0,
@@ -1030,6 +1034,12 @@ pub async fn build_tx(
             } else if e.contains("EmptyPool") || e.contains("empty") {
                 "Swap failed: one of the pools has insufficient liquidity. \
                  Please try a smaller amount."
+                    .to_string()
+            } else if e.contains("resulting balance is not within the allowed range")
+                || (e.contains("transfer") && e.contains("Error(Contract, #10)"))
+            {
+                "Insufficient balance: your wallet does not hold enough of the input token \
+                 for this swap amount. Lower the amount and refresh the quote."
                     .to_string()
             } else {
                 format!("Swap simulation failed: {}", e)

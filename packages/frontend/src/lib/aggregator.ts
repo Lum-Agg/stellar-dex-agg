@@ -17,6 +17,7 @@ export interface SubRoute {
 }
 
 export interface QuoteData {
+  amount_in?: string;
   expected_output: string;
   minimum_output: string;
   price_impact: number;
@@ -69,7 +70,11 @@ function normalizeQuoteData(data: QuoteData): QuoteData {
   const sub_routes = (data.sub_routes ?? []).map((r) =>
     normalizeSubRoute(r as unknown as Record<string, unknown>)
   );
-  return { ...data, sub_routes };
+  const subSum = sub_routes.reduce((s, r) => s + BigInt(r.amount_in || '0'), 0n);
+  const amount_in =
+    data.amount_in ??
+    (subSum > 0n ? subSum.toString() : undefined);
+  return { ...data, sub_routes, amount_in };
 }
 
 export async function getQuote(

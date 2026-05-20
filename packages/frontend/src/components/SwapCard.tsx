@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { getQuote, type QuoteData } from '@/lib/aggregator';
+import { fetchSpendableBalanceStroops } from '@/lib/balance';
 import { useWallet } from '@/lib/wallet-context';
 import { RouteDisplay } from './RouteDisplay';
 import { TokenSelector, type Token, TOKENS } from './TokenSelector';
@@ -86,6 +87,42 @@ export function SwapCard() {
       const totalAmountIn = Math.floor(
         parseFloat(amountIn) * 10 ** tokenIn.decimals
       ).toString();
+
+      const subSum = quote.sub_routes.reduce(
+        (s, r) => s + BigInt(r.amount_in || '0'),
+        0n
+      );
+      if (subSum.toString() !== totalAmountIn) {
+        setTxResult({
+          success: false,
+          error:
+            'Quote is out of date for this amount. Wait for the route to refresh, then try again.',
+        });
+        return;
+      }
+      if (quote.amount_in && quote.amount_in !== totalAmountIn) {
+        setTxResult({
+          success: false,
+          error:
+            'Quote is out of date for this amount. Wait for the route to refresh, then try again.',
+        });
+        return;
+      }
+
+      const balance = await fetchSpendableBalanceStroops(
+        walletAddress,
+        tokenIn.id,
+        tokenIn.decimals
+      );
+      if (balance !== null && BigInt(totalAmountIn) > balance) {
+        const have = Number(balance) / 10 ** tokenIn.decimals;
+        const need = Number(totalAmountIn) / 10 ** tokenIn.decimals;
+        setTxResult({
+          success: false,
+          error: `Insufficient ${tokenIn.symbol} balance: you have ~${have.toFixed(4)}, but this swap needs ~${need.toFixed(4)}.`,
+        });
+        return;
+      }
 
       const sub_routes = quote.sub_routes.map((route) => ({
         amount_in: route.amount_in,
