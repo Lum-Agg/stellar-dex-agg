@@ -435,8 +435,8 @@ pub struct TokenInfo {
     pub id: String,
     pub symbol: String,
     pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub logo: Option<String>,
+    /// Stellar.expert asset icon URL when known; empty string otherwise.
+    pub logo: String,
 }
 
 fn logo_url_for_asset_id(asset_id: &str) -> Option<String> {
@@ -454,11 +454,39 @@ fn logo_url_for_asset_id(asset_id: &str) -> Option<String> {
     None
 }
 
-fn resolve_token_logo(id: &str, name: &str, metadata_logo: Option<String>) -> Option<String> {
-    if metadata_logo.is_some() {
-        return metadata_logo;
-    }
-    logo_url_for_asset_id(id).or_else(|| logo_url_for_asset_id(name))
+/// Mainnet SAC / classic mapping for tokens returned as contract ids (C...).
+const WELL_KNOWN_CONTRACT_LOGOS: &[(&str, &str)] = &[
+    (
+        "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+        "https://stellar.expert/explorer/public/asset/native/icon",
+    ),
+    (
+        "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+        "https://stellar.expert/explorer/public/asset/USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN-1/icon",
+    ),
+    (
+        "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+        "https://stellar.expert/explorer/public/asset/EURC-GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2-1/icon",
+    ),
+    (
+        "CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV",
+        "https://stellar.expert/explorer/public/asset/AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA-1/icon",
+    ),
+];
+
+fn logo_for_contract(contract: &str) -> Option<String> {
+    WELL_KNOWN_CONTRACT_LOGOS
+        .iter()
+        .find(|(c, _)| *c == contract)
+        .map(|(_, url)| url.to_string())
+}
+
+fn resolve_token_logo(id: &str, name: &str, metadata_logo: Option<String>) -> String {
+    metadata_logo
+        .or_else(|| logo_url_for_asset_id(id))
+        .or_else(|| logo_url_for_asset_id(name))
+        .or_else(|| logo_for_contract(id))
+        .unwrap_or_default()
 }
 
 pub async fn list_tokens(State(state): State<AppState>) -> impl IntoResponse {
@@ -489,11 +517,11 @@ pub async fn list_tokens(State(state): State<AppState>) -> impl IntoResponse {
                     id: addr,
                     symbol: "XLM".to_string(),
                     name: "Stellar Lumens".to_string(),
-                    logo: logo_url_for_asset_id("native"),
+                    logo: resolve_token_logo("native", "native", None),
                 }
             } else if addr.contains(':') {
                 let code = addr.split(':').next().unwrap_or(&addr).to_string();
-                let logo = logo_url_for_asset_id(&addr);
+                let logo = resolve_token_logo(&addr, &addr, None);
                 TokenInfo {
                     id: addr,
                     symbol: code.clone(),
@@ -515,11 +543,12 @@ pub async fn list_tokens(State(state): State<AppState>) -> impl IntoResponse {
                 } else {
                     addr.clone()
                 };
+                let logo = resolve_token_logo(&addr, "", None);
                 TokenInfo {
                     id: addr,
                     symbol: short,
                     name: "Unknown".to_string(),
-                    logo: None,
+                    logo,
                 }
             }
         })

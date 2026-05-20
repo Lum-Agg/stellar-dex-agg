@@ -25,12 +25,24 @@ function getColor(symbol: string): string {
   return TOKEN_COLORS[symbol[0]] || '#6B7280';
 }
 
-// Well-known tokens (always shown at top) with logo URLs
+// Well-known tokens (always shown at top). Logos come from API when available;
+// fallbacks use stellar.expert asset icons so logos show even before API deploy.
+const WELL_KNOWN_CONTRACT_LOGOS: Record<string, string> = {
+  CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA:
+    'https://stellar.expert/explorer/public/asset/native/icon',
+  CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75:
+    'https://stellar.expert/explorer/public/asset/USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN-1/icon',
+  CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC:
+    'https://stellar.expert/explorer/public/asset/EURC-GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2-1/icon',
+  CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV:
+    'https://stellar.expert/explorer/public/asset/AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA-1/icon',
+};
+
 const PRIORITY_TOKENS: Token[] = [
-  { id: 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA', symbol: 'XLM', name: 'Stellar Lumens', decimals: 7, color: '#14B8A6' },
-  { id: 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75', symbol: 'USDC', name: 'USD Coin', decimals: 7, color: '#2775CA' },
-  { id: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC', symbol: 'EURC', name: 'Euro Coin', decimals: 7, color: '#2B6CB0' },
-  { id: 'CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV', symbol: 'AQUA', name: 'Aquarius', decimals: 7, color: '#06B6D4' },
+  { id: 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA', symbol: 'XLM', name: 'Stellar Lumens', decimals: 7, color: '#14B8A6', logo: WELL_KNOWN_CONTRACT_LOGOS.CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA },
+  { id: 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75', symbol: 'USDC', name: 'USD Coin', decimals: 7, color: '#2775CA', logo: WELL_KNOWN_CONTRACT_LOGOS.CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75 },
+  { id: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC', symbol: 'EURC', name: 'Euro Coin', decimals: 7, color: '#2B6CB0', logo: WELL_KNOWN_CONTRACT_LOGOS.CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC },
+  { id: 'CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV', symbol: 'AQUA', name: 'Aquarius', decimals: 7, color: '#06B6D4', logo: WELL_KNOWN_CONTRACT_LOGOS.CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV },
 ];
 
 // Export for SwapCard default
@@ -55,11 +67,25 @@ export function useTokenList() {
               name: t.name,
               decimals: 7,
               color: getColor(t.symbol),
-              logo: t.logo,
+              logo: typeof t.logo === 'string' && t.logo.length > 0 ? t.logo : undefined,
             }));
+          const byId = new Map(apiTokens.map(t => [t.id, t]));
           const priorityIds = new Set(PRIORITY_TOKENS.map(t => t.id));
+          // Merge API logos/names into priority rows (API used to exclude these ids entirely).
+          const mergedPriority = PRIORITY_TOKENS.map((p) => {
+            const api = byId.get(p.id);
+            const logo = api?.logo ?? p.logo ?? WELL_KNOWN_CONTRACT_LOGOS[p.id];
+            const symbol = api?.symbol ?? p.symbol;
+            return {
+              ...p,
+              symbol,
+              name: api?.name ?? p.name,
+              color: getColor(symbol),
+              logo,
+            };
+          });
           const others = apiTokens.filter(t => !priorityIds.has(t.id));
-          setTokens([...PRIORITY_TOKENS, ...others]);
+          setTokens([...mergedPriority, ...others]);
         }
         setLoaded(true);
       })

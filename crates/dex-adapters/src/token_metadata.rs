@@ -11,6 +11,21 @@ use tracing::{debug, info, warn};
 
 const METADATA_FILE: &str = "data/token_metadata.json";
 
+fn logo_url_for_asset_id(asset_id: &str) -> Option<String> {
+    if asset_id == "native" {
+        return Some("https://stellar.expert/explorer/public/asset/native/icon".to_string());
+    }
+    if let Some((code, issuer)) = asset_id.split_once(':') {
+        if !code.is_empty() && !issuer.is_empty() {
+            return Some(format!(
+                "https://stellar.expert/explorer/public/asset/{}-{}-1/icon",
+                code, issuer
+            ));
+        }
+    }
+    None
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenMetadata {
     pub contract: String,
@@ -135,17 +150,23 @@ impl TokenMetadataStore {
         }
 
         // For SAC tokens, name is "CODE:ISSUER" — use code as display name
+        let asset_id = if name.contains(':') || name == "native" {
+            name.clone()
+        } else {
+            contract.to_string()
+        };
         let display_name = if name.contains(':') {
             name.split(':').next().unwrap_or(&name).to_string()
         } else if name == "native" {
             "Stellar Lumens".to_string()
         } else {
-            name
+            name.clone()
         };
+        let logo = logo_url_for_asset_id(&asset_id);
 
         debug!(
             "Resolved token {}: symbol={}, name={}",
-            &contract[..12],
+            &contract[..12.min(contract.len())],
             symbol,
             display_name
         );
@@ -154,7 +175,7 @@ impl TokenMetadataStore {
             contract: contract.to_string(),
             symbol,
             name: display_name,
-            logo: None, // TODO: fetch from stellar.toml
+            logo,
         })
     }
 
