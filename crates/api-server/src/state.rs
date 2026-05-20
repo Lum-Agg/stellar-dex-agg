@@ -2,7 +2,7 @@ use anyhow::Result;
 use dex_adapters::{
     aquarius::AquariusAdapter,
     aquarius_clmm::AquariusClmmAdapter,
-    cache::{PoolCache, default_cache_path},
+    cache::{default_cache_path, PoolCache},
     classic_dex::ClassicDexAdapter,
     comet::CometAdapter,
     phoenix::PhoenixAdapter,
@@ -12,11 +12,7 @@ use dex_adapters::{
     token_metadata::TokenMetadataStore,
     AdapterTradingPair, DexAdapter,
 };
-use router_engine::{
-    path_finder::PathFinderConfig,
-    split_optimizer::SplitConfig,
-    QuoteEngine,
-};
+use router_engine::{path_finder::PathFinderConfig, split_optimizer::SplitConfig, QuoteEngine};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
@@ -64,8 +60,14 @@ impl AppState {
                         })
                         .collect();
 
-                    engine.update_pairs_from_cache(&source.source, &trading_pairs).await;
-                    info!("Loaded {} cached pairs for {}", trading_pairs.len(), source.source);
+                    engine
+                        .update_pairs_from_cache(&source.source, &trading_pairs)
+                        .await;
+                    info!(
+                        "Loaded {} cached pairs for {}",
+                        trading_pairs.len(),
+                        source.source
+                    );
                 }
                 true
             }
@@ -100,7 +102,11 @@ impl AppState {
                 info!("Background: fetching {} pools...", adapter.id());
                 match adapter.get_trading_pairs().await {
                     Ok(pairs) => {
-                        info!("Background: {} returned {} pairs", adapter.id(), pairs.len());
+                        info!(
+                            "Background: {} returned {} pairs",
+                            adapter.id(),
+                            pairs.len()
+                        );
                         cache.update_source(adapter.id(), pairs);
                     }
                     Err(e) => {
@@ -119,7 +125,10 @@ impl AppState {
                 info!("Pool cache saved to disk");
             }
 
-            info!("Background: initial load complete. Starting refresh loop ({}s interval).", refresh_interval);
+            info!(
+                "Background: initial load complete. Starting refresh loop ({}s interval).",
+                refresh_interval
+            );
 
             // Resolve token metadata for all discovered tokens
             let all_tokens = engine_clone.get_all_tokens().await;
@@ -149,7 +158,9 @@ impl AppState {
                                         reserve_b: p.reserve_b,
                                     })
                                     .collect();
-                                engine_clone.update_pairs_from_cache(adapter.id(), &trading_pairs).await;
+                                engine_clone
+                                    .update_pairs_from_cache(adapter.id(), &trading_pairs)
+                                    .await;
                             }
                         }
                         Ok(_) => {}
@@ -161,6 +172,10 @@ impl AppState {
             }
         });
 
-        Ok(Self { engine, config, token_metadata })
+        Ok(Self {
+            engine,
+            config,
+            token_metadata,
+        })
     }
 }

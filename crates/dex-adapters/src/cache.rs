@@ -83,9 +83,9 @@ impl PoolCache {
     /// Check if cache is stale (older than max_age_secs).
     pub fn is_stale(&self, max_age_secs: u64) -> bool {
         let now = chrono::Utc::now().timestamp_millis() as u64;
-        self.sources.iter().any(|s| {
-            (now - s.updated_at) / 1000 > max_age_secs
-        })
+        self.sources
+            .iter()
+            .any(|s| (now - s.updated_at) / 1000 > max_age_secs)
     }
 }
 

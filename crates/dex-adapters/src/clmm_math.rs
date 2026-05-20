@@ -22,7 +22,11 @@ pub struct U256(pub [u64; 4]);
 
 impl fmt::Debug for U256 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "U256({:#x}_{:016x}_{:016x}_{:016x})", self.0[3], self.0[2], self.0[1], self.0[0])
+        write!(
+            f,
+            "U256({:#x}_{:016x}_{:016x}_{:016x})",
+            self.0[3], self.0[2], self.0[1], self.0[0]
+        )
     }
 }
 
@@ -51,9 +55,15 @@ impl U256 {
     }
 
     pub fn leading_zeros(&self) -> u32 {
-        if self.0[3] != 0 { return self.0[3].leading_zeros(); }
-        if self.0[2] != 0 { return 64 + self.0[2].leading_zeros(); }
-        if self.0[1] != 0 { return 128 + self.0[1].leading_zeros(); }
+        if self.0[3] != 0 {
+            return self.0[3].leading_zeros();
+        }
+        if self.0[2] != 0 {
+            return 64 + self.0[2].leading_zeros();
+        }
+        if self.0[1] != 0 {
+            return 128 + self.0[1].leading_zeros();
+        }
         192 + self.0[0].leading_zeros()
     }
 
@@ -62,8 +72,12 @@ impl U256 {
     }
 
     pub fn shl(&self, shift: u32) -> Self {
-        if shift >= 256 { return Self::ZERO; }
-        if shift == 0 { return *self; }
+        if shift >= 256 {
+            return Self::ZERO;
+        }
+        if shift == 0 {
+            return *self;
+        }
 
         let word_shift = (shift / 64) as usize;
         let bit_shift = shift % 64;
@@ -85,8 +99,12 @@ impl U256 {
     }
 
     pub fn shr(&self, shift: u32) -> Self {
-        if shift >= 256 { return Self::ZERO; }
-        if shift == 0 { return *self; }
+        if shift >= 256 {
+            return Self::ZERO;
+        }
+        if shift == 0 {
+            return *self;
+        }
 
         let word_shift = (shift / 64) as usize;
         let bit_shift = shift % 64;
@@ -148,8 +166,18 @@ impl U256 {
                 result[i + 4] += carry;
             }
         }
-        let lo = U256([result[0] as u64, result[1] as u64, result[2] as u64, result[3] as u64]);
-        let hi = U256([result[4] as u64, result[5] as u64, result[6] as u64, result[7] as u64]);
+        let lo = U256([
+            result[0] as u64,
+            result[1] as u64,
+            result[2] as u64,
+            result[3] as u64,
+        ]);
+        let hi = U256([
+            result[4] as u64,
+            result[5] as u64,
+            result[6] as u64,
+            result[7] as u64,
+        ]);
         (lo, hi)
     }
 
@@ -297,8 +325,12 @@ fn div_512_by_256(hi: &U256, lo: &U256, d: &U256) -> (U256, U256) {
 
 /// mul_div for u128 values (convenience)
 pub fn mul_div_u128(a: u128, b: u128, c: u128, round_up: bool) -> u128 {
-    if c == 0 { return 0; }
-    if a == 0 || b == 0 { return 0; }
+    if c == 0 {
+        return 0;
+    }
+    if a == 0 || b == 0 {
+        return 0;
+    }
 
     // Try direct multiplication first
     if let Some(product) = a.checked_mul(b) {
@@ -334,13 +366,7 @@ const Q96_U256: U256 = U256([0, 0x100000000, 0, 0]); // 2^96
 const MIN_SQRT_RATIO: u128 = 4_295_128_739;
 
 // MAX_SQRT_RATIO as bytes (big-endian): 0xfffd8963efd1fc6a506488495d951d5263988d26
-const MAX_SQRT_RATIO_LIMBS: [u64; 4] = [
-    0x5d951d5263988d26,
-    0xefd1fc6a50648849,
-    0x0000fffd8963,
-    0,
-];
-
+const MAX_SQRT_RATIO_LIMBS: [u64; 4] = [0x5d951d5263988d26, 0xefd1fc6a50648849, 0x0000fffd8963, 0];
 
 /// Tick multiplier table (same as on-chain). Each entry is a Q128.128 fixed-point value.
 const TICK_MULTIPLIERS: [u128; 20] = [
@@ -425,8 +451,10 @@ fn mul_shift_128(a: &U256, b: &U256) -> U256 {
 /// Compute tick from sqrt_price_x96.
 /// Uses the same algorithm as the on-chain contract.
 pub fn tick_at_sqrt_ratio(sqrt_price_x96: &U256) -> i32 {
-    assert!(*sqrt_price_x96 >= min_sqrt_ratio() && *sqrt_price_x96 < max_sqrt_ratio(),
-        "sqrt_price out of bounds");
+    assert!(
+        *sqrt_price_x96 >= min_sqrt_ratio() && *sqrt_price_x96 < max_sqrt_ratio(),
+        "sqrt_price out of bounds"
+    );
 
     const LOG_SQRT10001: u128 = 255_738_958_999_603_826_347_141;
     const TICK_LOW_ERROR: u128 = 3_402_992_956_809_132_418_596_140_100_660_247_210;
@@ -480,7 +508,12 @@ pub fn tick_at_sqrt_ratio(sqrt_price_x96: &U256) -> i32 {
     };
 
     let tick_low = (log_hi - if log_lo < TICK_LOW_ERROR { 1 } else { 0 }) as i32;
-    let tick_hi = (log_hi + if log_lo.overflowing_add(TICK_HI_ERROR).1 { 1 } else { 0 }) as i32;
+    let tick_hi = (log_hi
+        + if log_lo.overflowing_add(TICK_HI_ERROR).1 {
+            1
+        } else {
+            0
+        }) as i32;
 
     if tick_low == tick_hi {
         tick_low
@@ -517,7 +550,12 @@ fn widening_mul_u128(a: u128, b: u128) -> (u128, u128) {
 
 /// Compute amount0 (token0) delta between two sqrt prices for given liquidity.
 /// amount0 = L * Q96 * (sb - sa) / (sa * sb)
-pub fn amount0_delta(sqrt_a: &U256, sqrt_b: &U256, liquidity: u128, round_up: bool) -> Option<u128> {
+pub fn amount0_delta(
+    sqrt_a: &U256,
+    sqrt_b: &U256,
+    liquidity: u128,
+    round_up: bool,
+) -> Option<u128> {
     if liquidity == 0 {
         return Some(0);
     }
@@ -547,7 +585,11 @@ pub fn amount0_delta(sqrt_a: &U256, sqrt_b: &U256, liquidity: u128, round_up: bo
     let amount = if round_up {
         let r = temp.rem(sa);
         let q = temp.div(sa);
-        if r.is_zero() { q } else { q.wrapping_add(&U256::ONE) }
+        if r.is_zero() {
+            q
+        } else {
+            q.wrapping_add(&U256::ONE)
+        }
     } else {
         temp.div(sa)
     };
@@ -557,7 +599,12 @@ pub fn amount0_delta(sqrt_a: &U256, sqrt_b: &U256, liquidity: u128, round_up: bo
 
 /// Compute amount1 (token1) delta between two sqrt prices for given liquidity.
 /// amount1 = L * (sb - sa) / Q96
-pub fn amount1_delta(sqrt_a: &U256, sqrt_b: &U256, liquidity: u128, round_up: bool) -> Option<u128> {
+pub fn amount1_delta(
+    sqrt_a: &U256,
+    sqrt_b: &U256,
+    liquidity: u128,
+    round_up: bool,
+) -> Option<u128> {
     if liquidity == 0 {
         return Some(0);
     }
@@ -718,9 +765,17 @@ pub fn compute_swap_step(
             );
             // Clamp to target range
             if zero_for_one {
-                if computed < *sqrt_target { *sqrt_target } else { computed }
+                if computed < *sqrt_target {
+                    *sqrt_target
+                } else {
+                    computed
+                }
             } else {
-                if computed > *sqrt_target { *sqrt_target } else { computed }
+                if computed > *sqrt_target {
+                    *sqrt_target
+                } else {
+                    computed
+                }
             }
         };
 
@@ -744,7 +799,12 @@ pub fn compute_swap_step(
             amount_remaining.saturating_sub(amount_in)
         };
 
-        SwapStep { sqrt_next, amount_in, amount_out, fee_amount }
+        SwapStep {
+            sqrt_next,
+            amount_in,
+            amount_out,
+            fee_amount,
+        }
     } else {
         // Exact output
         let amount_out_to_target = if zero_for_one {
@@ -763,9 +823,17 @@ pub fn compute_swap_step(
                 zero_for_one,
             );
             if zero_for_one {
-                if computed < *sqrt_target { *sqrt_target } else { computed }
+                if computed < *sqrt_target {
+                    *sqrt_target
+                } else {
+                    computed
+                }
             } else {
-                if computed > *sqrt_target { *sqrt_target } else { computed }
+                if computed > *sqrt_target {
+                    *sqrt_target
+                } else {
+                    computed
+                }
             }
         };
 
@@ -787,7 +855,12 @@ pub fn compute_swap_step(
 
         let fee_amount = mul_div_u128(amount_in, fee, fee_complement, true);
 
-        SwapStep { sqrt_next, amount_in, amount_out, fee_amount }
+        SwapStep {
+            sqrt_next,
+            amount_in,
+            amount_out,
+            fee_amount,
+        }
     }
 }
 
@@ -829,7 +902,8 @@ pub mod bitmap {
 
     /// Convert compressed tick back to actual tick.
     pub fn compressed_to_tick(compressed: i32, spacing: i32) -> i32 {
-        compressed.saturating_mul(spacing)
+        compressed
+            .saturating_mul(spacing)
             .max(super::MIN_TICK)
             .min(super::MAX_TICK)
     }
@@ -935,17 +1009,15 @@ impl TickDataStore {
         let (chunk_pos, slot) = bitmap::chunk_address(compressed);
         match self.chunks.get(&chunk_pos) {
             Some(chunk) if (slot as usize) < chunk.len() => chunk[slot as usize].clone(),
-            _ => TickState { liquidity_gross: 0, liquidity_net: 0 },
+            _ => TickState {
+                liquidity_gross: 0,
+                liquidity_net: 0,
+            },
         }
     }
 
     /// Find next initialized tick (3-level bitmap search).
-    pub fn find_initialized_tick(
-        &self,
-        tick: i32,
-        spacing: i32,
-        lte: bool,
-    ) -> (i32, bool) {
+    pub fn find_initialized_tick(&self, tick: i32, spacing: i32, lte: bool) -> (i32, bool) {
         let compressed = bitmap::compress_tick(tick, spacing);
 
         if lte {
@@ -1079,7 +1151,12 @@ impl TickDataStore {
         search(l2_adj, from)
     }
 
-    fn extreme_tick_in_bitmap_word(&self, word_pos: i32, spacing: i32, highest: bool) -> Option<i32> {
+    fn extreme_tick_in_bitmap_word(
+        &self,
+        word_pos: i32,
+        spacing: i32,
+        highest: bool,
+    ) -> Option<i32> {
         let word = self.chunk_bitmap.get(&word_pos)?;
         let found_bit = if highest {
             bitmap::find_prev_set_bit(word, 255)
@@ -1139,9 +1216,17 @@ pub fn simulate_swap(
         let next_tick_price = sqrt_ratio_at_tick(next_tick);
 
         let sqrt_target = if zero_for_one {
-            if next_tick_price < price_limit { price_limit } else { next_tick_price }
+            if next_tick_price < price_limit {
+                price_limit
+            } else {
+                next_tick_price
+            }
         } else {
-            if next_tick_price > price_limit { price_limit } else { next_tick_price }
+            if next_tick_price > price_limit {
+                price_limit
+            } else {
+                next_tick_price
+            }
         };
 
         let step = compute_swap_step(
@@ -1321,8 +1406,8 @@ mod tests {
             liquidity,
             amount_remaining,
             fee_bps,
-            true,  // zero_for_one
-            true,  // exact_input
+            true, // zero_for_one
+            true, // exact_input
         );
 
         assert!(step.amount_in > 0);
@@ -1349,20 +1434,32 @@ mod tests {
 
         // Add initialized ticks at -1000 and 1000 (compressed: -5 and 5 for spacing=200)
         let lower_compressed = bitmap::compress_tick(-1000, 200); // -5
-        let upper_compressed = bitmap::compress_tick(1000, 200);  // 5
+        let upper_compressed = bitmap::compress_tick(1000, 200); // 5
 
         let (lower_chunk, lower_slot) = bitmap::chunk_address(lower_compressed);
         let (upper_chunk, upper_slot) = bitmap::chunk_address(upper_compressed);
 
         // Initialize chunks
-        let mut lower_chunk_data = vec![TickState { liquidity_gross: 0, liquidity_net: 0 }; TICKS_PER_CHUNK as usize];
+        let mut lower_chunk_data = vec![
+            TickState {
+                liquidity_gross: 0,
+                liquidity_net: 0
+            };
+            TICKS_PER_CHUNK as usize
+        ];
         lower_chunk_data[lower_slot as usize] = TickState {
             liquidity_gross: 10_000_000_000_000,
             liquidity_net: 10_000_000_000_000,
         };
         ticks.chunks.insert(lower_chunk, lower_chunk_data);
 
-        let mut upper_chunk_data = vec![TickState { liquidity_gross: 0, liquidity_net: 0 }; TICKS_PER_CHUNK as usize];
+        let mut upper_chunk_data = vec![
+            TickState {
+                liquidity_gross: 0,
+                liquidity_net: 0
+            };
+            TICKS_PER_CHUNK as usize
+        ];
         upper_chunk_data[upper_slot as usize] = TickState {
             liquidity_gross: 10_000_000_000_000,
             liquidity_net: -10_000_000_000_000,

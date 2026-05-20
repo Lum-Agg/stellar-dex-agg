@@ -3,7 +3,7 @@
 //! Provides contract simulation (read-only calls) and ledger entry queries
 //! needed by all Soroban DEX adapters.
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -54,7 +54,7 @@ impl SorobanRpc {
         function_name: &str,
         args: Vec<xdr::ScVal>,
     ) -> Result<xdr::ScVal> {
-        use stellar_xdr::curr::{Limits, WriteXdr, ReadXdr};
+        use stellar_xdr::curr::{Limits, ReadXdr, WriteXdr};
 
         // Build a dummy transaction for simulation
         let contract_hash = stellar_strkey::Contract::from_string(contract_address)
@@ -165,8 +165,11 @@ impl SorobanRpc {
     }
 
     /// Get ledger entries by key.
-    pub async fn get_ledger_entries(&self, keys: Vec<xdr::LedgerKey>) -> Result<Vec<LedgerEntryResult>> {
-        use stellar_xdr::curr::{Limits, WriteXdr, ReadXdr};
+    pub async fn get_ledger_entries(
+        &self,
+        keys: Vec<xdr::LedgerKey>,
+    ) -> Result<Vec<LedgerEntryResult>> {
+        use stellar_xdr::curr::{Limits, ReadXdr, WriteXdr};
 
         let key_xdrs: Vec<String> = keys
             .iter()
@@ -244,7 +247,10 @@ pub struct LedgerEntryResult {
 pub fn scval_to_u32(val: &xdr::ScVal) -> Result<u32> {
     match val {
         xdr::ScVal::U32(v) => Ok(*v),
-        _ => Err(anyhow!("Expected U32, got {:?}", std::mem::discriminant(val))),
+        _ => Err(anyhow!(
+            "Expected U32, got {:?}",
+            std::mem::discriminant(val)
+        )),
     }
 }
 
@@ -252,7 +258,10 @@ pub fn scval_to_u32(val: &xdr::ScVal) -> Result<u32> {
 pub fn scval_to_u128(val: &xdr::ScVal) -> Result<u128> {
     match val {
         xdr::ScVal::U128(parts) => Ok(((parts.hi as u128) << 64) | (parts.lo as u128)),
-        _ => Err(anyhow!("Expected U128, got {:?}", std::mem::discriminant(val))),
+        _ => Err(anyhow!(
+            "Expected U128, got {:?}",
+            std::mem::discriminant(val)
+        )),
     }
 }
 
@@ -260,7 +269,10 @@ pub fn scval_to_u128(val: &xdr::ScVal) -> Result<u128> {
 pub fn scval_to_i128(val: &xdr::ScVal) -> Result<i128> {
     match val {
         xdr::ScVal::I128(parts) => Ok(((parts.hi as i128) << 64) | (parts.lo as u64 as i128)),
-        _ => Err(anyhow!("Expected I128, got {:?}", std::mem::discriminant(val))),
+        _ => Err(anyhow!(
+            "Expected I128, got {:?}",
+            std::mem::discriminant(val)
+        )),
     }
 }
 
@@ -273,7 +285,10 @@ pub fn scval_to_address(val: &xdr::ScVal) -> Result<String> {
         xdr::ScVal::Address(xdr::ScAddress::Account(xdr::AccountId(
             xdr::PublicKey::PublicKeyTypeEd25519(xdr::Uint256(key)),
         ))) => Ok(format!("{}", stellar_strkey::ed25519::PublicKey(*key))),
-        _ => Err(anyhow!("Expected Address, got {:?}", std::mem::discriminant(val))),
+        _ => Err(anyhow!(
+            "Expected Address, got {:?}",
+            std::mem::discriminant(val)
+        )),
     }
 }
 

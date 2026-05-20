@@ -8,7 +8,7 @@
 //!           net_return = gross_return - commission
 //! - Pool discovery via query_all_pools_details()
 
-use crate::rpc::{SorobanRpc, scval_to_address, scval_to_i128, scval_to_string, get_map_field};
+use crate::rpc::{get_map_field, scval_to_address, scval_to_i128, scval_to_string, SorobanRpc};
 use crate::traits::*;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use stellar_xdr::curr as xdr;
 use tokio::sync::RwLock;
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
 /// Phoenix Factory contract address (Mainnet)
 pub const PHOENIX_FACTORY: &str = "CB4SVAWJA6TSRNOJZ7W2AWFW46D5VR4ZMFZKDIKXEINZCZEGZCJZCKMI";
@@ -40,7 +40,12 @@ impl PhoenixAdapter {
     /// gross_return = amount_in * reserve_out / (reserve_in + amount_in)
     /// commission = gross_return * fee_bps / 10_000
     /// net_return = gross_return - commission
-    pub fn compute_output(amount_in: u128, reserve_in: u128, reserve_out: u128, fee_bps: u32) -> u128 {
+    pub fn compute_output(
+        amount_in: u128,
+        reserve_in: u128,
+        reserve_out: u128,
+        fee_bps: u32,
+    ) -> u128 {
         if reserve_in == 0 || reserve_out == 0 || amount_in == 0 {
             return 0;
         }
@@ -51,7 +56,10 @@ impl PhoenixAdapter {
 
     /// Fetch all pools from Phoenix Factory via query_all_pools_details().
     async fn fetch_pools_from_factory(&self) -> Result<Vec<(AdapterTradingPair, u32)>> {
-        let result = self.rpc.call_no_args(PHOENIX_FACTORY, "query_all_pools_details").await?;
+        let result = self
+            .rpc
+            .call_no_args(PHOENIX_FACTORY, "query_all_pools_details")
+            .await?;
 
         let entries = match &result {
             xdr::ScVal::Vec(Some(v)) => &v.0,
@@ -120,8 +128,8 @@ impl PhoenixAdapter {
 
     /// Parse an Asset field: { address: Address, amount: i128 }
     fn parse_asset_field(&self, map: &xdr::ScMap, key: &str) -> Result<(String, i128)> {
-        let asset_val = get_map_field(map, key)
-            .ok_or_else(|| anyhow::anyhow!("missing {}", key))?;
+        let asset_val =
+            get_map_field(map, key).ok_or_else(|| anyhow::anyhow!("missing {}", key))?;
 
         let asset_map = match asset_val {
             xdr::ScVal::Map(Some(m)) => m,
@@ -153,7 +161,9 @@ impl PhoenixAdapter {
             }
             Err(_) => {}
         }
-        TokenId::Contract { address: contract_address.to_string() }
+        TokenId::Contract {
+            address: contract_address.to_string(),
+        }
     }
 }
 
@@ -253,7 +263,10 @@ impl DexAdapter for PhoenixAdapter {
     }
 
     async fn health_check(&self) -> bool {
-        self.rpc.call_no_args(PHOENIX_FACTORY, "query_all_pools_details").await.is_ok()
+        self.rpc
+            .call_no_args(PHOENIX_FACTORY, "query_all_pools_details")
+            .await
+            .is_ok()
     }
 }
 
@@ -274,7 +287,7 @@ mod tests {
     #[test]
     fn test_phoenix_high_fee() {
         let out = PhoenixAdapter::compute_output(1000, 100_000, 100_000, 300); // 3% fee
-        // gross ≈ 990, commission ≈ 29.7, net ≈ 960
+                                                                               // gross ≈ 990, commission ≈ 29.7, net ≈ 960
         assert!(out > 950 && out < 980);
     }
 

@@ -1,13 +1,13 @@
 use axum::{
-    Json,
     extract::{Query, State},
     http::StatusCode,
     response::IntoResponse,
+    Json,
 };
 use router_engine::types::{RouteRequest, TokenId};
 use serde::{Deserialize, Serialize};
 use stellar_xdr::curr as xdr;
-use stellar_xdr::curr::{Limits, WriteXdr, ReadXdr};
+use stellar_xdr::curr::{Limits, ReadXdr, WriteXdr};
 
 use crate::state::AppState;
 
@@ -77,10 +77,7 @@ pub async fn get_quote(
         }
     };
 
-    let slippage_bps = params
-        .slippage
-        .map(|s| (s * 100.0) as u32)
-        .unwrap_or(50); // default 0.5%
+    let slippage_bps = params.slippage.map(|s| (s * 100.0) as u32).unwrap_or(50); // default 0.5%
 
     let request = RouteRequest {
         token_in: TokenId::from_str_auto(&params.token_in),
@@ -112,7 +109,10 @@ pub async fn get_quote(
             let token_in = &so.path.tokens[i];
             let token_out = &so.path.tokens[i + 1];
             let pool = &so.path.pool_addresses[i];
-            let indices = state.engine.get_pool_indices(pool, token_in, token_out).await;
+            let indices = state
+                .engine
+                .get_pool_indices(pool, token_in, token_out)
+                .await;
             let (in_idx, out_idx) = indices.unwrap_or((0, 1));
             in_indices.push(in_idx);
             out_indices.push(out_idx);
@@ -194,10 +194,14 @@ pub async fn build_swap(
     let amount_in: u128 = match body.amount_in.parse() {
         Ok(v) => v,
         Err(_) => {
-            return (StatusCode::BAD_REQUEST, Json(SwapResponse {
-                success: false, data: None,
-                error: Some("Invalid amount_in".to_string()),
-            }));
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(SwapResponse {
+                    success: false,
+                    data: None,
+                    error: Some("Invalid amount_in".to_string()),
+                }),
+            );
         }
     };
 
@@ -216,10 +220,14 @@ pub async fn build_swap(
     let route = state.engine.get_route(&request).await;
 
     if route.sub_orders.is_empty() {
-        return (StatusCode::OK, Json(SwapResponse {
-            success: false, data: None,
-            error: Some("No route available".to_string()),
-        }));
+        return (
+            StatusCode::OK,
+            Json(SwapResponse {
+                success: false,
+                data: None,
+                error: Some("No route available".to_string()),
+            }),
+        );
     }
 
     // 2. Build transaction — always use PathPaymentStrictSend
@@ -237,7 +245,10 @@ pub async fn build_swap(
                     let token_in = &so.path.tokens[i];
                     let token_out = &so.path.tokens[i + 1];
                     let pool = &so.path.pool_addresses[i];
-                    let indices = state.engine.get_pool_indices(pool, token_in, token_out).await;
+                    let indices = state
+                        .engine
+                        .get_pool_indices(pool, token_in, token_out)
+                        .await;
                     let (in_idx, out_idx) = indices.unwrap_or((0, 1));
                     in_indices.push(in_idx);
                     out_indices.push(out_idx);
@@ -255,29 +266,34 @@ pub async fn build_swap(
                 });
             }
 
-            (StatusCode::OK, Json(SwapResponse {
-                success: true,
-                data: Some(SwapData {
-                    unsigned_tx_xdr: xdr_b64,
-                    simulation: sim,
-                    route: QuoteData {
-                        expected_output: route.total_expected_out.to_string(),
-                        minimum_output: route.minimum_out.to_string(),
-                        price_impact: route.price_impact_bps as f64 / 100.0,
-                        is_split: route.is_split,
-                        sub_routes,
-                        compute_time_ms: route.compute_time_ms,
-                    },
+            (
+                StatusCode::OK,
+                Json(SwapResponse {
+                    success: true,
+                    data: Some(SwapData {
+                        unsigned_tx_xdr: xdr_b64,
+                        simulation: sim,
+                        route: QuoteData {
+                            expected_output: route.total_expected_out.to_string(),
+                            minimum_output: route.minimum_out.to_string(),
+                            price_impact: route.price_impact_bps as f64 / 100.0,
+                            is_split: route.is_split,
+                            sub_routes,
+                            compute_time_ms: route.compute_time_ms,
+                        },
+                    }),
+                    error: None,
                 }),
-                error: None,
-            }))
+            )
         }
-        Err(e) => {
-            (StatusCode::OK, Json(SwapResponse {
-                success: false, data: None,
+        Err(e) => (
+            StatusCode::OK,
+            Json(SwapResponse {
+                success: false,
+                data: None,
                 error: Some(format!("Transaction build failed: {}", e)),
-            }))
-        }
+            }),
+        ),
     }
 }
 
@@ -294,10 +310,10 @@ fn build_classic_dex_tx(
         .map_err(|e| format!("Invalid public key: {:?}", e))?;
 
     // Parse assets
-    let send_asset = parse_asset_xdr(&body.token_in)
-        .map_err(|e| format!("Invalid token_in: {}", e))?;
-    let dest_asset = parse_asset_xdr(&body.token_out)
-        .map_err(|e| format!("Invalid token_out: {}", e))?;
+    let send_asset =
+        parse_asset_xdr(&body.token_in).map_err(|e| format!("Invalid token_in: {}", e))?;
+    let dest_asset =
+        parse_asset_xdr(&body.token_out).map_err(|e| format!("Invalid token_out: {}", e))?;
 
     let send_amount = route.total_amount_in as i64;
     let dest_min = route.minimum_out as i64;
@@ -322,7 +338,7 @@ fn build_classic_dex_tx(
 
     let tx = xdr::Transaction {
         source_account,
-        fee: 10000, // 0.001 XLM
+        fee: 10000,                      // 0.001 XLM
         seq_num: xdr::SequenceNumber(0), // Client will set this
         cond: xdr::Preconditions::None,
         memo: xdr::Memo::None,
@@ -339,12 +355,15 @@ fn build_classic_dex_tx(
         .to_xdr_base64(Limits::none())
         .map_err(|e| format!("XDR encode error: {:?}", e))?;
 
-    Ok((xdr_b64, SimulationData {
-        success: true,
-        actual_output: Some(route.total_expected_out.to_string()),
-        fee: Some("10000".to_string()),
-        error: None,
-    }))
+    Ok((
+        xdr_b64,
+        SimulationData {
+            success: true,
+            actual_output: Some(route.total_expected_out.to_string()),
+            fee: Some("10000".to_string()),
+            error: None,
+        },
+    ))
 }
 
 /// Build a Soroban DEX transaction (calls aggregator contract).
@@ -355,7 +374,10 @@ fn build_soroban_dex_tx(
 ) -> Result<(String, SimulationData), String> {
     // TODO: Build InvokeHostFunction calling the aggregator contract
     // For now, return an error indicating this needs the aggregator contract
-    Err("Soroban DEX swap requires aggregator contract (not yet deployed). Use Classic DEX route.".to_string())
+    Err(
+        "Soroban DEX swap requires aggregator contract (not yet deployed). Use Classic DEX route."
+            .to_string(),
+    )
 }
 
 /// Parse a token identifier to XDR Asset.
@@ -371,8 +393,9 @@ fn parse_asset_xdr(token: &str) -> Result<stellar_xdr::curr::Asset, String> {
     // USDC SAC
     if token == "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75" {
         let issuer = stellar_strkey::ed25519::PublicKey::from_string(
-            "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
-        ).map_err(|e| format!("{:?}", e))?;
+            "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        )
+        .map_err(|e| format!("{:?}", e))?;
         let mut code = [0u8; 4];
         code[..4].copy_from_slice(b"USDC");
         return Ok(xdr::Asset::CreditAlphanum4(xdr::AlphaNum4 {
@@ -384,8 +407,9 @@ fn parse_asset_xdr(token: &str) -> Result<stellar_xdr::curr::Asset, String> {
     // EURC SAC
     if token == "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC" {
         let issuer = stellar_strkey::ed25519::PublicKey::from_string(
-            "GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2"
-        ).map_err(|e| format!("{:?}", e))?;
+            "GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2",
+        )
+        .map_err(|e| format!("{:?}", e))?;
         let mut code = [0u8; 4];
         code[..4].copy_from_slice(b"EURC");
         return Ok(xdr::Asset::CreditAlphanum4(xdr::AlphaNum4 {
@@ -419,32 +443,55 @@ pub async fn list_tokens(State(state): State<AppState>) -> impl IntoResponse {
     // Get cached metadata
     let metadata = state.token_metadata.get_all().await;
 
-    let tokens: Vec<TokenInfo> = all_tokens.into_iter().map(|addr| {
-        // Check metadata store first
-        if let Some(meta) = metadata.get(&addr) {
-            if meta.name != "Unknown" {
-                return TokenInfo {
+    let tokens: Vec<TokenInfo> = all_tokens
+        .into_iter()
+        .map(|addr| {
+            // Check metadata store first
+            if let Some(meta) = metadata.get(&addr) {
+                if meta.name != "Unknown" {
+                    return TokenInfo {
+                        id: addr,
+                        symbol: meta.symbol.clone(),
+                        name: meta.name.clone(),
+                    };
+                }
+            }
+
+            // Handle classic asset format "CODE:ISSUER" and "native"
+            if addr == "native" {
+                TokenInfo {
+                    id: addr,
+                    symbol: "XLM".to_string(),
+                    name: "Stellar Lumens".to_string(),
+                }
+            } else if addr.contains(':') {
+                let code = addr.split(':').next().unwrap_or(&addr).to_string();
+                TokenInfo {
+                    id: addr,
+                    symbol: code.clone(),
+                    name: code,
+                }
+            } else if let Some(meta) = metadata.get(&addr) {
+                // Use metadata even if "Unknown" (at least has the short symbol)
+                TokenInfo {
                     id: addr,
                     symbol: meta.symbol.clone(),
                     name: meta.name.clone(),
+                }
+            } else {
+                let short = if addr.len() > 8 {
+                    addr[..8].to_string()
+                } else {
+                    addr.clone()
                 };
+                TokenInfo {
+                    id: addr,
+                    symbol: short,
+                    name: "Unknown".to_string(),
+                }
             }
-        }
-
-        // Handle classic asset format "CODE:ISSUER" and "native"
-        if addr == "native" {
-            TokenInfo { id: addr, symbol: "XLM".to_string(), name: "Stellar Lumens".to_string() }
-        } else if addr.contains(':') {
-            let code = addr.split(':').next().unwrap_or(&addr).to_string();
-            TokenInfo { id: addr, symbol: code.clone(), name: code }
-        } else if let Some(meta) = metadata.get(&addr) {
-            // Use metadata even if "Unknown" (at least has the short symbol)
-            TokenInfo { id: addr, symbol: meta.symbol.clone(), name: meta.name.clone() }
-        } else {
-            let short = if addr.len() > 8 { addr[..8].to_string() } else { addr.clone() };
-            TokenInfo { id: addr, symbol: short, name: "Unknown".to_string() }
-        }
-    }).collect();
+        })
+        .collect();
 
     Json(TokensResponse { tokens })
 }
@@ -539,42 +586,58 @@ pub async fn build_tx(
     Json(body): Json<BuildTxRequest>,
 ) -> impl IntoResponse {
     use stellar_xdr::curr as xdr;
-    use stellar_xdr::curr::{Limits, WriteXdr, ReadXdr};
+    use stellar_xdr::curr::{Limits, ReadXdr, WriteXdr};
 
     if body.steps.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(BuildTxResponse {
-            success: false, data: None,
-            error: Some("At least one step is required".to_string()),
-        }));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(BuildTxResponse {
+                success: false,
+                data: None,
+                error: Some("At least one step is required".to_string()),
+            }),
+        );
     }
 
     let user_key = match stellar_strkey::ed25519::PublicKey::from_string(&body.user_public_key) {
         Ok(k) => k,
         Err(e) => {
-            return (StatusCode::BAD_REQUEST, Json(BuildTxResponse {
-                success: false, data: None,
-                error: Some(format!("Invalid public key: {:?}", e)),
-            }));
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(BuildTxResponse {
+                    success: false,
+                    data: None,
+                    error: Some(format!("Invalid public key: {:?}", e)),
+                }),
+            );
         }
     };
 
     let amount_in: i128 = match body.amount_in.parse() {
         Ok(v) => v,
         Err(_) => {
-            return (StatusCode::BAD_REQUEST, Json(BuildTxResponse {
-                success: false, data: None,
-                error: Some("Invalid amount_in".to_string()),
-            }));
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(BuildTxResponse {
+                    success: false,
+                    data: None,
+                    error: Some("Invalid amount_in".to_string()),
+                }),
+            );
         }
     };
 
     let min_amount_out: i128 = match body.min_amount_out.parse() {
         Ok(v) => v,
         Err(_) => {
-            return (StatusCode::BAD_REQUEST, Json(BuildTxResponse {
-                success: false, data: None,
-                error: Some("Invalid min_amount_out".to_string()),
-            }));
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(BuildTxResponse {
+                    success: false,
+                    data: None,
+                    error: Some("Invalid min_amount_out".to_string()),
+                }),
+            );
         }
     };
 
@@ -590,10 +653,14 @@ pub async fn build_tx(
     let aggregator_hash = match stellar_strkey::Contract::from_string(AGGREGATOR_CONTRACT) {
         Ok(c) => c.0,
         Err(_) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(BuildTxResponse {
-                success: false, data: None,
-                error: Some("Invalid aggregator contract address".to_string()),
-            }));
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(BuildTxResponse {
+                    success: false,
+                    data: None,
+                    error: Some("Invalid aggregator contract address".to_string()),
+                }),
+            );
         }
     };
 
@@ -608,68 +675,97 @@ pub async fn build_tx(
             "sushi" => xdr::ScVal::Symbol(xdr::ScSymbol("Sushi".try_into().unwrap())),
             "comet" => xdr::ScVal::Symbol(xdr::ScSymbol("CometDex".try_into().unwrap())),
             other => {
-                return (StatusCode::BAD_REQUEST, Json(BuildTxResponse {
-                    success: false, data: None,
-                    error: Some(format!("Unknown dex_type: {}. Use: aquarius, soroswap, phoenix, sushi, comet", other)),
-                }));
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(BuildTxResponse {
+                        success: false,
+                        data: None,
+                        error: Some(format!(
+                            "Unknown dex_type: {}. Use: aquarius, soroswap, phoenix, sushi, comet",
+                            other
+                        )),
+                    }),
+                );
             }
         };
 
         let pool_hash = match stellar_strkey::Contract::from_string(&step.pool_address) {
             Ok(c) => c.0,
             Err(_) => {
-                return (StatusCode::BAD_REQUEST, Json(BuildTxResponse {
-                    success: false, data: None,
-                    error: Some(format!("Invalid pool_address: {}", step.pool_address)),
-                }));
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(BuildTxResponse {
+                        success: false,
+                        data: None,
+                        error: Some(format!("Invalid pool_address: {}", step.pool_address)),
+                    }),
+                );
             }
         };
         let token_in_hash = match stellar_strkey::Contract::from_string(&step.token_in) {
             Ok(c) => c.0,
             Err(_) => {
-                return (StatusCode::BAD_REQUEST, Json(BuildTxResponse {
-                    success: false, data: None,
-                    error: Some(format!("Invalid token_in: {}", step.token_in)),
-                }));
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(BuildTxResponse {
+                        success: false,
+                        data: None,
+                        error: Some(format!("Invalid token_in: {}", step.token_in)),
+                    }),
+                );
             }
         };
         let token_out_hash = match stellar_strkey::Contract::from_string(&step.token_out) {
             Ok(c) => c.0,
             Err(_) => {
-                return (StatusCode::BAD_REQUEST, Json(BuildTxResponse {
-                    success: false, data: None,
-                    error: Some(format!("Invalid token_out: {}", step.token_out)),
-                }));
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(BuildTxResponse {
+                        success: false,
+                        data: None,
+                        error: Some(format!("Invalid token_out: {}", step.token_out)),
+                    }),
+                );
             }
         };
 
         // SwapStep struct as ScVal::Map
-        let step_val = xdr::ScVal::Map(Some(xdr::ScMap(vec![
-            xdr::ScMapEntry {
-                key: xdr::ScVal::Symbol(xdr::ScSymbol("in_idx".try_into().unwrap())),
-                val: xdr::ScVal::U32(step.in_idx),
-            },
-            xdr::ScMapEntry {
-                key: xdr::ScVal::Symbol(xdr::ScSymbol("out_idx".try_into().unwrap())),
-                val: xdr::ScVal::U32(step.out_idx),
-            },
-            xdr::ScMapEntry {
-                key: xdr::ScVal::Symbol(xdr::ScSymbol("dex_id".try_into().unwrap())),
-                val: xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(pool_hash)))),
-            },
-            xdr::ScMapEntry {
-                key: xdr::ScVal::Symbol(xdr::ScSymbol("dex_type".try_into().unwrap())),
-                val: dex_type_val,
-            },
-            xdr::ScMapEntry {
-                key: xdr::ScVal::Symbol(xdr::ScSymbol("token_in".try_into().unwrap())),
-                val: xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(token_in_hash)))),
-            },
-            xdr::ScMapEntry {
-                key: xdr::ScVal::Symbol(xdr::ScSymbol("token_out".try_into().unwrap())),
-                val: xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(token_out_hash)))),
-            },
-        ].try_into().unwrap())));
+        let step_val = xdr::ScVal::Map(Some(xdr::ScMap(
+            vec![
+                xdr::ScMapEntry {
+                    key: xdr::ScVal::Symbol(xdr::ScSymbol("in_idx".try_into().unwrap())),
+                    val: xdr::ScVal::U32(step.in_idx),
+                },
+                xdr::ScMapEntry {
+                    key: xdr::ScVal::Symbol(xdr::ScSymbol("out_idx".try_into().unwrap())),
+                    val: xdr::ScVal::U32(step.out_idx),
+                },
+                xdr::ScMapEntry {
+                    key: xdr::ScVal::Symbol(xdr::ScSymbol("dex_id".try_into().unwrap())),
+                    val: xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
+                        pool_hash,
+                    )))),
+                },
+                xdr::ScMapEntry {
+                    key: xdr::ScVal::Symbol(xdr::ScSymbol("dex_type".try_into().unwrap())),
+                    val: dex_type_val,
+                },
+                xdr::ScMapEntry {
+                    key: xdr::ScVal::Symbol(xdr::ScSymbol("token_in".try_into().unwrap())),
+                    val: xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
+                        token_in_hash,
+                    )))),
+                },
+                xdr::ScMapEntry {
+                    key: xdr::ScVal::Symbol(xdr::ScSymbol("token_out".try_into().unwrap())),
+                    val: xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
+                        token_out_hash,
+                    )))),
+                },
+            ]
+            .try_into()
+            .unwrap(),
+        )));
 
         steps_scval.push(step_val);
     }
@@ -678,10 +774,14 @@ pub async fn build_tx(
     let token_in_hash = match stellar_strkey::Contract::from_string(&body.token_in) {
         Ok(c) => c.0,
         Err(_) => {
-            return (StatusCode::BAD_REQUEST, Json(BuildTxResponse {
-                success: false, data: None,
-                error: Some(format!("Invalid token_in: {}", body.token_in)),
-            }));
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(BuildTxResponse {
+                    success: false,
+                    data: None,
+                    error: Some(format!("Invalid token_in: {}", body.token_in)),
+                }),
+            );
         }
     };
 
@@ -692,10 +792,12 @@ pub async fn build_tx(
         args: vec![
             // user: Address
             xdr::ScVal::Address(xdr::ScAddress::Account(xdr::AccountId(
-                xdr::PublicKey::PublicKeyTypeEd25519(xdr::Uint256(user_key.0))
+                xdr::PublicKey::PublicKeyTypeEd25519(xdr::Uint256(user_key.0)),
             ))),
             // token_in: Address
-            xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(token_in_hash)))),
+            xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
+                token_in_hash,
+            )))),
             // amount_in: i128
             xdr::ScVal::I128(xdr::Int128Parts {
                 hi: (amount_in >> 64) as i64,
@@ -708,7 +810,9 @@ pub async fn build_tx(
                 hi: (contract_min >> 64) as i64,
                 lo: contract_min as u64,
             }),
-        ].try_into().unwrap(),
+        ]
+        .try_into()
+        .unwrap(),
     };
 
     let op = xdr::Operation {
@@ -725,10 +829,14 @@ pub async fn build_tx(
     let seq_num = match fetch_sequence_number(&body.user_public_key).await {
         Ok(seq) => seq,
         Err(e) => {
-            return (StatusCode::BAD_REQUEST, Json(BuildTxResponse {
-                success: false, data: None,
-                error: Some(format!("Failed to fetch sequence number: {}", e)),
-            }));
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(BuildTxResponse {
+                    success: false,
+                    data: None,
+                    error: Some(format!("Failed to fetch sequence number: {}", e)),
+                }),
+            );
         }
     };
 
@@ -750,18 +858,24 @@ pub async fn build_tx(
     let tx_xdr = match envelope.to_xdr_base64(Limits::none()) {
         Ok(x) => x,
         Err(e) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(BuildTxResponse {
-                success: false, data: None,
-                error: Some(format!("XDR encode error: {:?}", e)),
-            }));
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(BuildTxResponse {
+                    success: false,
+                    data: None,
+                    error: Some(format!("XDR encode error: {:?}", e)),
+                }),
+            );
         }
     };
 
     // 2. Simulate transaction to get footprint + auth + fees
-    let rpc_url = std::env::var("RPC_URL").unwrap_or_else(|_| "https://soroban-rpc.mainnet.stellar.gateway.fm".to_string());
+    let rpc_url = std::env::var("RPC_URL")
+        .unwrap_or_else(|_| "https://soroban-rpc.mainnet.stellar.gateway.fm".to_string());
     match simulate_and_assemble(&rpc_url, &tx_xdr).await {
-        Ok(assembled_xdr) => {
-            (StatusCode::OK, Json(BuildTxResponse {
+        Ok(assembled_xdr) => (
+            StatusCode::OK,
+            Json(BuildTxResponse {
                 success: true,
                 data: Some(BuildTxData {
                     unsigned_tx_xdr: assembled_xdr,
@@ -770,26 +884,31 @@ pub async fn build_tx(
                     contract: AGGREGATOR_CONTRACT.to_string(),
                 }),
                 error: None,
-            }))
-        }
+            }),
+        ),
         Err(e) => {
             // Simulate failed — do NOT return a broken raw XDR.
             // A Soroban tx without sorobanData cannot be signed by any wallet.
             // Categorize the error for a better UX message.
             let user_msg = if e.contains("Output below minimum") || e.contains("below minimum") {
                 "Swap failed: price moved unfavorably since the quote was generated. \
-                 Please click Refresh or increase your slippage tolerance and try again.".to_string()
+                 Please click Refresh or increase your slippage tolerance and try again."
+                    .to_string()
             } else if e.contains("EmptyPool") || e.contains("empty") {
                 "Swap failed: one of the pools has insufficient liquidity. \
-                 Please try a smaller amount.".to_string()
+                 Please try a smaller amount."
+                    .to_string()
             } else {
                 format!("Swap simulation failed: {}", e)
             };
-            (StatusCode::OK, Json(BuildTxResponse {
-                success: false,
-                data: None,
-                error: Some(user_msg),
-            }))
+            (
+                StatusCode::OK,
+                Json(BuildTxResponse {
+                    success: false,
+                    data: None,
+                    error: Some(user_msg),
+                }),
+            )
         }
     }
 }
@@ -798,13 +917,22 @@ pub async fn build_tx(
 async fn fetch_sequence_number(public_key: &str) -> Result<i64, String> {
     let url = format!("https://horizon.stellar.org/accounts/{}", public_key);
     let client = reqwest::Client::new();
-    let resp = client.get(&url).send().await
+    let resp = client
+        .get(&url)
+        .send()
+        .await
         .map_err(|e| format!("Horizon request failed: {}", e))?;
-    let data: serde_json::Value = resp.json().await
+    let data: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| format!("Horizon response parse failed: {}", e))?;
-    let seq_str = data.get("sequence").and_then(|s| s.as_str())
+    let seq_str = data
+        .get("sequence")
+        .and_then(|s| s.as_str())
         .ok_or_else(|| "No sequence in response".to_string())?;
-    seq_str.parse::<i64>().map_err(|e| format!("Invalid sequence: {}", e))
+    seq_str
+        .parse::<i64>()
+        .map_err(|e| format!("Invalid sequence: {}", e))
 }
 
 /// Simulate transaction and assemble with footprint + auth.
@@ -819,12 +947,19 @@ async fn simulate_and_assemble(rpc_url: &str, tx_xdr: &str) -> Result<String, St
         }
     });
 
-    let resp = client.post(rpc_url).json(&body).send().await
+    let resp = client
+        .post(rpc_url)
+        .json(&body)
+        .send()
+        .await
         .map_err(|e| format!("RPC request failed: {}", e))?;
-    let resp_json: serde_json::Value = resp.json().await
+    let resp_json: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| format!("RPC response parse failed: {}", e))?;
 
-    let result = resp_json.get("result")
+    let result = resp_json
+        .get("result")
         .ok_or_else(|| "No result in simulate response".to_string())?;
 
     // Check for simulation error
@@ -848,12 +983,17 @@ async fn simulate_and_assemble(rpc_url: &str, tx_xdr: &str) -> Result<String, St
 
         if let xdr::TransactionEnvelope::Tx(ref mut v1) = envelope {
             // Set the transaction ext to include soroban data
-            let soroban_data = xdr::SorobanTransactionData::from_xdr_base64(transaction_data, Limits::none())
-                .map_err(|e| format!("Failed to parse soroban data: {:?}", e))?;
+            let soroban_data =
+                xdr::SorobanTransactionData::from_xdr_base64(transaction_data, Limits::none())
+                    .map_err(|e| format!("Failed to parse soroban data: {:?}", e))?;
             v1.tx.ext = xdr::TransactionExt::V1(soroban_data);
 
             // Update fee from simulate result
-            if let Some(min_fee) = result.get("minResourceFee").and_then(|f| f.as_str()).and_then(|f| f.parse::<u32>().ok()) {
+            if let Some(min_fee) = result
+                .get("minResourceFee")
+                .and_then(|f| f.as_str())
+                .and_then(|f| f.parse::<u32>().ok())
+            {
                 v1.tx.fee = v1.tx.fee.max(min_fee + 100_000); // Add buffer
             }
 
@@ -862,11 +1002,17 @@ async fn simulate_and_assemble(rpc_url: &str, tx_xdr: &str) -> Result<String, St
                 if let Some(first) = results_arr.first() {
                     if let Some(auth_arr) = first.get("auth").and_then(|a| a.as_array()) {
                         let mut ops_vec: Vec<xdr::Operation> = v1.tx.operations.to_vec();
-                        if let xdr::OperationBody::InvokeHostFunction(ref mut ihf) = ops_vec[0].body {
+                        if let xdr::OperationBody::InvokeHostFunction(ref mut ihf) = ops_vec[0].body
+                        {
                             let mut auth_entries = Vec::new();
                             for auth_xdr in auth_arr {
                                 if let Some(auth_str) = auth_xdr.as_str() {
-                                    if let Ok(entry) = xdr::SorobanAuthorizationEntry::from_xdr_base64(auth_str, Limits::none()) {
+                                    if let Ok(entry) =
+                                        xdr::SorobanAuthorizationEntry::from_xdr_base64(
+                                            auth_str,
+                                            Limits::none(),
+                                        )
+                                    {
                                         auth_entries.push(entry);
                                     }
                                 }
@@ -881,7 +1027,8 @@ async fn simulate_and_assemble(rpc_url: &str, tx_xdr: &str) -> Result<String, St
             }
         }
 
-        let assembled = envelope.to_xdr_base64(Limits::none())
+        let assembled = envelope
+            .to_xdr_base64(Limits::none())
             .map_err(|e| format!("Failed to encode assembled tx: {:?}", e))?;
         Ok(assembled)
     } else {

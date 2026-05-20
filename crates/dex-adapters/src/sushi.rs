@@ -17,16 +17,18 @@
 //!   - Bitmap word_pos = compressed_tick / 256
 //!   - compressed_tick = tick / tick_spacing (floor division)
 
-use crate::clmm_math::{self, bitmap, ClmmPoolState, TickDataStore, TickState, U256 as ClmmU256, TICKS_PER_CHUNK};
-use crate::rpc::{SorobanRpc, scval_to_address, scval_to_i128, scval_to_u128};
+use crate::clmm_math::{
+    self, bitmap, ClmmPoolState, TickDataStore, TickState, TICKS_PER_CHUNK, U256 as ClmmU256,
+};
+use crate::rpc::{scval_to_address, scval_to_i128, scval_to_u128, SorobanRpc};
 use crate::traits::*;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use stellar_xdr::curr as xdr;
 use tokio::sync::RwLock;
-use tracing::{info, debug, warn};
+use tracing::{debug, info, warn};
 
 /// Sushi V3 Router contract address on Stellar Mainnet
 pub const SUSHI_ROUTER: &str = "CDMIM23WOUL5CZBKX3GOA3V5R5AMVIMTCP52KCDQORWELAPLJ27WZCHL";
@@ -47,9 +49,9 @@ const FEE_TIERS: &[u32] = &[100, 500, 3000, 10000]; // 0.01%, 0.05%, 0.3%, 1%
 /// - spacing=200: each word covers 51200 ticks, very few words needed
 fn bitmap_scan_words(tick_spacing: i32) -> i32 {
     match tick_spacing {
-        1..=10 => 30,    // 30 words × 256 × 10 = 76,800 ticks each direction
-        11..=60 => 15,   // 15 words × 256 × 60 = 230,400 ticks each direction
-        _ => 10,         // 10 words × 256 × 200 = 512,000 ticks each direction
+        1..=10 => 30,  // 30 words × 256 × 10 = 76,800 ticks each direction
+        11..=60 => 15, // 15 words × 256 × 60 = 230,400 ticks each direction
+        _ => 10,       // 10 words × 256 × 200 = 512,000 ticks each direction
     }
 }
 
@@ -85,18 +87,27 @@ impl SushiAdapter {
     /// Read pool state from the pool contract via simulate_call.
     async fn read_pool_state(&self, pool_address: &str) -> Result<SushiPoolCache> {
         // slot0() -> Map { sqrt_price_x96: U256, tick: i32 }
-        let slot0_val = self.rpc.call_no_args(pool_address, "slot0").await
+        let slot0_val = self
+            .rpc
+            .call_no_args(pool_address, "slot0")
+            .await
             .map_err(|e| anyhow!("slot0 failed: {}", e))?;
         let (sqrt_price_x96, tick) = parse_slot0(&slot0_val)?;
 
         // liquidity() -> u128
-        let liq_val = self.rpc.call_no_args(pool_address, "liquidity").await
+        let liq_val = self
+            .rpc
+            .call_no_args(pool_address, "liquidity")
+            .await
             .map_err(|e| anyhow!("liquidity failed: {}", e))?;
-        let liquidity = scval_to_u128(&liq_val)
-            .map_err(|e| anyhow!("Cannot parse liquidity: {}", e))?;
+        let liquidity =
+            scval_to_u128(&liq_val).map_err(|e| anyhow!("Cannot parse liquidity: {}", e))?;
 
         // fee() -> u32
-        let fee_val = self.rpc.call_no_args(pool_address, "fee").await
+        let fee_val = self
+            .rpc
+            .call_no_args(pool_address, "fee")
+            .await
             .map_err(|e| anyhow!("fee failed: {}", e))?;
         let fee_bps = match &fee_val {
             xdr::ScVal::U32(v) => *v,
@@ -104,7 +115,10 @@ impl SushiAdapter {
         };
 
         // tick_spacing() -> i32
-        let ts_val = self.rpc.call_no_args(pool_address, "tick_spacing").await
+        let ts_val = self
+            .rpc
+            .call_no_args(pool_address, "tick_spacing")
+            .await
             .map_err(|e| anyhow!("tick_spacing failed: {}", e))?;
         let tick_spacing = match &ts_val {
             xdr::ScVal::I32(v) => *v,
@@ -112,16 +126,22 @@ impl SushiAdapter {
         };
 
         // token0() -> Address
-        let t0_val = self.rpc.call_no_args(pool_address, "token0").await
+        let t0_val = self
+            .rpc
+            .call_no_args(pool_address, "token0")
+            .await
             .map_err(|e| anyhow!("token0 failed: {}", e))?;
-        let token0 = scval_to_address(&t0_val)
-            .map_err(|e| anyhow!("Cannot parse token0: {}", e))?;
+        let token0 =
+            scval_to_address(&t0_val).map_err(|e| anyhow!("Cannot parse token0: {}", e))?;
 
         // token1() -> Address
-        let t1_val = self.rpc.call_no_args(pool_address, "token1").await
+        let t1_val = self
+            .rpc
+            .call_no_args(pool_address, "token1")
+            .await
             .map_err(|e| anyhow!("token1 failed: {}", e))?;
-        let token1 = scval_to_address(&t1_val)
-            .map_err(|e| anyhow!("Cannot parse token1: {}", e))?;
+        let token1 =
+            scval_to_address(&t1_val).map_err(|e| anyhow!("Cannot parse token1: {}", e))?;
 
         Ok(SushiPoolCache {
             pool_address: pool_address.to_string(),
@@ -145,10 +165,11 @@ impl SushiAdapter {
         let current_word = floor_div(compressed_tick, 256);
 
         let pool_hash = stellar_strkey::Contract::from_string(&pool.pool_address)
-            .map_err(|e| anyhow!("Invalid pool address: {:?}", e))?.0;
-        let pool_addr_val = xdr::ScVal::Address(
-            xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(pool_hash)))
-        );
+            .map_err(|e| anyhow!("Invalid pool address: {:?}", e))?
+            .0;
+        let pool_addr_val = xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(
+            xdr::Hash(pool_hash),
+        )));
 
         // Scan words around current tick (dynamic range based on tick_spacing)
         let scan_words = bitmap_scan_words(pool.tick_spacing);
@@ -156,29 +177,46 @@ impl SushiAdapter {
         let end_word = current_word + scan_words;
 
         for word_pos in start_word..=end_word {
-            let args = vec![
-                pool_addr_val.clone(),
-                xdr::ScVal::I32(word_pos),
-            ];
+            let args = vec![pool_addr_val.clone(), xdr::ScVal::I32(word_pos)];
 
-            match self.rpc.simulate_call(SUSHI_POOL_LENS, "get_populated_ticks_in_word", args).await {
+            match self
+                .rpc
+                .simulate_call(SUSHI_POOL_LENS, "get_populated_ticks_in_word", args)
+                .await
+            {
                 Ok(result) => {
                     if let xdr::ScVal::Vec(Some(ticks_vec)) = &result {
                         for tick_val in ticks_vec.0.iter() {
                             if let Some((tick_idx, lg, ln)) = parse_populated_tick(tick_val) {
                                 if lg > 0 {
                                     // Store in our TickDataStore using Aquarius-style chunked format
-                                    let compressed = bitmap::compress_tick(tick_idx, pool.tick_spacing);
+                                    let compressed =
+                                        bitmap::compress_tick(tick_idx, pool.tick_spacing);
                                     let (chunk_pos, slot) = bitmap::chunk_address(compressed);
 
-                                    let chunk = pool.tick_store.chunks
-                                        .entry(chunk_pos)
-                                        .or_insert_with(|| vec![TickState { liquidity_gross: 0, liquidity_net: 0 }; TICKS_PER_CHUNK as usize]);
-                                    chunk[slot as usize] = TickState { liquidity_gross: lg, liquidity_net: ln };
+                                    let chunk =
+                                        pool.tick_store.chunks.entry(chunk_pos).or_insert_with(
+                                            || {
+                                                vec![
+                                                    TickState {
+                                                        liquidity_gross: 0,
+                                                        liquidity_net: 0
+                                                    };
+                                                    TICKS_PER_CHUNK as usize
+                                                ]
+                                            },
+                                        );
+                                    chunk[slot as usize] = TickState {
+                                        liquidity_gross: lg,
+                                        liquidity_net: ln,
+                                    };
 
                                     // Also set bitmap bit
-                                    let (bm_word, bm_bit) = bitmap::chunk_bitmap_position(chunk_pos);
-                                    let word = pool.tick_store.chunk_bitmap
+                                    let (bm_word, bm_bit) =
+                                        bitmap::chunk_bitmap_position(chunk_pos);
+                                    let word = pool
+                                        .tick_store
+                                        .chunk_bitmap
                                         .entry(bm_word)
                                         .or_insert([0u8; 32]);
                                     let byte_idx = 31 - (bm_bit / 8) as usize;
@@ -190,16 +228,26 @@ impl SushiAdapter {
                     }
                 }
                 Err(e) => {
-                    debug!("Sushi get_populated_ticks_in_word({}) failed: {}", word_pos, e);
+                    debug!(
+                        "Sushi get_populated_ticks_in_word({}) failed: {}",
+                        word_pos, e
+                    );
                 }
             }
         }
 
-        let loaded_ticks: usize = pool.tick_store.chunks.values()
+        let loaded_ticks: usize = pool
+            .tick_store
+            .chunks
+            .values()
             .map(|c| c.iter().filter(|t| t.liquidity_gross > 0).count())
             .sum();
-        debug!("Sushi {}: loaded {} initialized ticks from {} bitmap words",
-            pool.pool_address, loaded_ticks, end_word - start_word + 1);
+        debug!(
+            "Sushi {}: loaded {} initialized ticks from {} bitmap words",
+            pool.pool_address,
+            loaded_ticks,
+            end_word - start_word + 1
+        );
 
         Ok(())
     }
@@ -232,7 +280,8 @@ impl SushiAdapter {
             token1: pool.token1.clone(),
         };
 
-        let result = clmm_math::simulate_swap(&pool_state, &pool.tick_store, amount_in, zero_for_one);
+        let result =
+            clmm_math::simulate_swap(&pool_state, &pool.tick_store, amount_in, zero_for_one);
         result.map(|(amount_out, _, _)| amount_out)
     }
 
@@ -249,7 +298,10 @@ impl SushiAdapter {
         // Fallback 1: stellar.expert API
         match self.discover_pools_from_factory_storage().await {
             Ok(pools) if !pools.is_empty() => {
-                info!("Sushi: discovered {} pools from factory storage", pools.len());
+                info!(
+                    "Sushi: discovered {} pools from factory storage",
+                    pools.len()
+                );
                 return Ok(pools);
             }
             _ => {}
@@ -269,12 +321,18 @@ impl SushiAdapter {
             SUSHI_FACTORY
         );
 
-        let resp = client.get(&url).send().await
+        let resp = client
+            .get(&url)
+            .send()
+            .await
             .map_err(|e| anyhow!("stellar.expert request failed: {}", e))?;
-        let data: serde_json::Value = resp.json().await
+        let data: serde_json::Value = resp
+            .json()
+            .await
             .map_err(|e| anyhow!("stellar.expert response parse failed: {}", e))?;
 
-        let records = data.get("_embedded")
+        let records = data
+            .get("_embedded")
             .and_then(|e| e.get("records"))
             .and_then(|r| r.as_array())
             .ok_or_else(|| anyhow!("No records in response"))?;
@@ -302,47 +360,57 @@ impl SushiAdapter {
             }
         }
 
-        info!("Sushi: found {} unique pool addresses from factory storage", pool_hashes.len());
+        info!(
+            "Sushi: found {} unique pool addresses from factory storage",
+            pool_hashes.len()
+        );
 
         // Convert hashes to strkey addresses and read pool info concurrently
         let mut pools = Vec::new();
-        let pool_addrs: Vec<String> = pool_hashes.iter()
+        let pool_addrs: Vec<String> = pool_hashes
+            .iter()
             .map(|hash| format!("{}", stellar_strkey::Contract(*hash)))
             .collect();
 
         // Read pool info in batches of 10 (concurrent)
         for chunk in pool_addrs.chunks(10) {
-            let futures: Vec<_> = chunk.iter().map(|pool_addr| {
-                let rpc = self.rpc.clone();
-                let addr = pool_addr.clone();
-                async move {
-                    // Read token0, token1, fee, liquidity concurrently
-                    let (t0, t1, fee_res, liq) = tokio::join!(
-                        rpc.call_no_args(&addr, "token0"),
-                        rpc.call_no_args(&addr, "token1"),
-                        rpc.call_no_args(&addr, "fee"),
-                        rpc.call_no_args(&addr, "liquidity"),
-                    );
+            let futures: Vec<_> = chunk
+                .iter()
+                .map(|pool_addr| {
+                    let rpc = self.rpc.clone();
+                    let addr = pool_addr.clone();
+                    async move {
+                        // Read token0, token1, fee, liquidity concurrently
+                        let (t0, t1, fee_res, liq) = tokio::join!(
+                            rpc.call_no_args(&addr, "token0"),
+                            rpc.call_no_args(&addr, "token1"),
+                            rpc.call_no_args(&addr, "fee"),
+                            rpc.call_no_args(&addr, "liquidity"),
+                        );
 
-                    let token0 = t0.ok().and_then(|v| scval_to_address(&v).ok())?;
-                    let token1 = t1.ok().and_then(|v| scval_to_address(&v).ok())?;
-                    let fee = match fee_res.ok()? { xdr::ScVal::U32(f) => f, _ => return None };
-                    let liquidity = liq.ok().and_then(|v| scval_to_u128(&v).ok()).unwrap_or(0);
+                        let token0 = t0.ok().and_then(|v| scval_to_address(&v).ok())?;
+                        let token1 = t1.ok().and_then(|v| scval_to_address(&v).ok())?;
+                        let fee = match fee_res.ok()? {
+                            xdr::ScVal::U32(f) => f,
+                            _ => return None,
+                        };
+                        let liquidity = liq.ok().and_then(|v| scval_to_u128(&v).ok()).unwrap_or(0);
 
-                    if liquidity > 0 {
-                        Some(AdapterTradingPair {
-                            token_a: TokenId::Contract { address: token0 },
-                            token_b: TokenId::Contract { address: token1 },
-                            pool_address: addr,
-                            fee_bps: fee,
-                            reserve_a: None,
-                            reserve_b: None,
-                        })
-                    } else {
-                        None
+                        if liquidity > 0 {
+                            Some(AdapterTradingPair {
+                                token_a: TokenId::Contract { address: token0 },
+                                token_b: TokenId::Contract { address: token1 },
+                                pool_address: addr,
+                                fee_bps: fee,
+                                reserve_a: None,
+                                reserve_b: None,
+                            })
+                        } else {
+                            None
+                        }
                     }
-                }
-            }).collect();
+                })
+                .collect();
 
             let results = futures::future::join_all(futures).await;
             for result in results {
@@ -382,8 +450,12 @@ impl SushiAdapter {
                     match self.get_pool_address(tokens[i], tokens[j], fee).await {
                         Ok(Some(pool_addr)) => {
                             pools.push(AdapterTradingPair {
-                                token_a: TokenId::Contract { address: tokens[i].to_string() },
-                                token_b: TokenId::Contract { address: tokens[j].to_string() },
+                                token_a: TokenId::Contract {
+                                    address: tokens[i].to_string(),
+                                },
+                                token_b: TokenId::Contract {
+                                    address: tokens[j].to_string(),
+                                },
                                 pool_address: pool_addr,
                                 fee_bps: fee,
                                 reserve_a: None,
@@ -422,7 +494,10 @@ impl SushiAdapter {
             "CALM7JTAJC7AJ7ZGTQKXZNNILJUCD2AZNN7QA7FVM3YYIJBCJGUABEDH", // MBC/XLM 0.3%
         ];
 
-        info!("Sushi: checking {} known pool addresses...", KNOWN_POOL_ADDRS.len());
+        info!(
+            "Sushi: checking {} known pool addresses...",
+            KNOWN_POOL_ADDRS.len()
+        );
         let mut pools = Vec::new();
 
         // Use public RPC for discovery (server's local RPC may have issues with some contracts)
@@ -434,14 +509,20 @@ impl SushiAdapter {
         // Check pools sequentially
         for &addr in KNOWN_POOL_ADDRS {
             let token0 = match discovery_rpc.call_no_args(addr, "token0").await {
-                Ok(v) => match scval_to_address(&v) { Ok(a) => a, Err(_) => continue },
+                Ok(v) => match scval_to_address(&v) {
+                    Ok(a) => a,
+                    Err(_) => continue,
+                },
                 Err(e) => {
                     debug!("Sushi: pool {} token0 failed: {}", &addr[..12], e);
                     continue;
                 }
             };
             let token1 = match discovery_rpc.call_no_args(addr, "token1").await {
-                Ok(v) => match scval_to_address(&v) { Ok(a) => a, Err(_) => continue },
+                Ok(v) => match scval_to_address(&v) {
+                    Ok(a) => a,
+                    Err(_) => continue,
+                },
                 Err(_) => continue,
             };
             let fee = match discovery_rpc.call_no_args(addr, "fee").await {
@@ -465,30 +546,46 @@ impl SushiAdapter {
             }
         }
 
-        info!("Sushi: {} pools with liquidity from known addresses", pools.len());
+        info!(
+            "Sushi: {} pools with liquidity from known addresses",
+            pools.len()
+        );
         pools
     }
 
     /// Query factory for a pool address given token pair and fee.
-    async fn get_pool_address(&self, token_a: &str, token_b: &str, fee: u32) -> Result<Option<String>> {
+    async fn get_pool_address(
+        &self,
+        token_a: &str,
+        token_b: &str,
+        fee: u32,
+    ) -> Result<Option<String>> {
         let token_a_hash = stellar_strkey::Contract::from_string(token_a)
-            .map_err(|e| anyhow!("Invalid token: {:?}", e))?.0;
+            .map_err(|e| anyhow!("Invalid token: {:?}", e))?
+            .0;
         let token_b_hash = stellar_strkey::Contract::from_string(token_b)
-            .map_err(|e| anyhow!("Invalid token: {:?}", e))?.0;
+            .map_err(|e| anyhow!("Invalid token: {:?}", e))?
+            .0;
 
         let args = vec![
-            xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(token_a_hash)))),
-            xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(token_b_hash)))),
+            xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
+                token_a_hash,
+            )))),
+            xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
+                token_b_hash,
+            )))),
             xdr::ScVal::U32(fee),
         ];
 
-        match self.rpc.simulate_call(SUSHI_FACTORY, "get_pool", args).await {
-            Ok(result) => {
-                match scval_to_address(&result) {
-                    Ok(addr) if !addr.is_empty() && !addr.contains("AAAAAAAAAAAAA") => Ok(Some(addr)),
-                    _ => Ok(None),
-                }
-            }
+        match self
+            .rpc
+            .simulate_call(SUSHI_FACTORY, "get_pool", args)
+            .await
+        {
+            Ok(result) => match scval_to_address(&result) {
+                Ok(addr) if !addr.is_empty() && !addr.contains("AAAAAAAAAAAAA") => Ok(Some(addr)),
+                _ => Ok(None),
+            },
             Err(_) => Ok(None),
         }
     }
@@ -502,9 +599,11 @@ impl SushiAdapter {
         fee_bps: u32,
     ) -> Result<Option<u128>> {
         let token_in_hash = stellar_strkey::Contract::from_string(token_in)
-            .map_err(|e| anyhow!("Invalid token_in: {:?}", e))?.0;
+            .map_err(|e| anyhow!("Invalid token_in: {:?}", e))?
+            .0;
         let token_out_hash = stellar_strkey::Contract::from_string(token_out)
-            .map_err(|e| anyhow!("Invalid token_out: {:?}", e))?.0;
+            .map_err(|e| anyhow!("Invalid token_out: {:?}", e))?
+            .0;
 
         let amount_in_val = xdr::ScVal::I128(xdr::Int128Parts {
             hi: (amount_in as i128 >> 64) as i64,
@@ -513,26 +612,44 @@ impl SushiAdapter {
         let min_out_val = xdr::ScVal::I128(xdr::Int128Parts { hi: 0, lo: 0 });
         let deadline_val = xdr::ScVal::U64(1779031769);
 
-        let path_val = xdr::ScVal::Vec(Some(xdr::ScVec(vec![
-            xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(token_in_hash)))),
-            xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(token_out_hash)))),
-        ].try_into().unwrap())));
+        let path_val = xdr::ScVal::Vec(Some(xdr::ScVec(
+            vec![
+                xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
+                    token_in_hash,
+                )))),
+                xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
+                    token_out_hash,
+                )))),
+            ]
+            .try_into()
+            .unwrap(),
+        )));
 
-        let fees_val = xdr::ScVal::Vec(Some(xdr::ScVec(vec![
-            xdr::ScVal::U32(fee_bps),
-        ].try_into().unwrap())));
+        let fees_val = xdr::ScVal::Vec(Some(xdr::ScVec(
+            vec![xdr::ScVal::U32(fee_bps)].try_into().unwrap(),
+        )));
 
-        let dummy_addr = xdr::ScVal::Address(xdr::ScAddress::Account(
-            xdr::AccountId(xdr::PublicKey::PublicKeyTypeEd25519(xdr::Uint256([0u8; 32])))
-        ));
+        let dummy_addr = xdr::ScVal::Address(xdr::ScAddress::Account(xdr::AccountId(
+            xdr::PublicKey::PublicKeyTypeEd25519(xdr::Uint256([0u8; 32])),
+        )));
         let checkpoints_val = xdr::ScVal::Vec(Some(xdr::ScVec(vec![].try_into().unwrap())));
 
         let args = vec![
-            amount_in_val, min_out_val, deadline_val, path_val, fees_val,
-            dummy_addr.clone(), dummy_addr, checkpoints_val,
+            amount_in_val,
+            min_out_val,
+            deadline_val,
+            path_val,
+            fees_val,
+            dummy_addr.clone(),
+            dummy_addr,
+            checkpoints_val,
         ];
 
-        match self.rpc.simulate_call(SUSHI_ROUTER, "swap_exact_input_hints", args).await {
+        match self
+            .rpc
+            .simulate_call(SUSHI_ROUTER, "swap_exact_input_hints", args)
+            .await
+        {
             Ok(result) => {
                 if let Ok(amount_out) = scval_to_i128(&result) {
                     return Ok(Some(amount_out as u128));
@@ -574,13 +691,19 @@ impl DexAdapter for SushiAdapter {
                 Ok(mut pool) => {
                     // Read tick data via pool-lens
                     if let Err(e) = self.read_tick_data(&mut pool).await {
-                        warn!("Sushi: failed to read tick data for {}: {}", pair.pool_address, e);
+                        warn!(
+                            "Sushi: failed to read tick data for {}: {}",
+                            pair.pool_address, e
+                        );
                         // Still store the pool (can fall back to simulate)
                     }
                     cache.insert(pair.pool_address.clone(), pool);
                 }
                 Err(e) => {
-                    warn!("Sushi: failed to read pool state for {}: {}", pair.pool_address, e);
+                    warn!(
+                        "Sushi: failed to read pool state for {}: {}",
+                        pair.pool_address, e
+                    );
                 }
             }
         }
@@ -606,7 +729,9 @@ impl DexAdapter for SushiAdapter {
                 // Estimate price impact from liquidity
                 let impact_bps = if pool.liquidity > 0 {
                     ((amount_in as f64 / pool.liquidity as f64) * 10_000.0).min(10_000.0) as u32
-                } else { 0 };
+                } else {
+                    0
+                };
                 return Ok(Some(AdapterQuote {
                     amount_out,
                     fee_bps: pool.fee_bps,
@@ -628,14 +753,15 @@ impl DexAdapter for SushiAdapter {
         let token_in_addr = token_in.canonical();
         let token_out_addr = token_out.canonical();
 
-        match self.simulate_quote_fallback(&token_in_addr, &token_out_addr, amount_in, fee_bps).await? {
-            Some(amount_out) if amount_out > 0 => {
-                Ok(Some(AdapterQuote {
-                    amount_out,
-                    fee_bps,
-                    price_impact_bps: 0,
-                }))
-            }
+        match self
+            .simulate_quote_fallback(&token_in_addr, &token_out_addr, amount_in, fee_bps)
+            .await?
+        {
+            Some(amount_out) if amount_out > 0 => Ok(Some(AdapterQuote {
+                amount_out,
+                fee_bps,
+                price_impact_bps: 0,
+            })),
             _ => Ok(None),
         }
     }
@@ -656,7 +782,10 @@ impl DexAdapter for SushiAdapter {
     }
 
     async fn health_check(&self) -> bool {
-        self.rpc.call_no_args(SUSHI_FACTORY, "get_protocol_fee_0").await.is_ok()
+        self.rpc
+            .call_no_args(SUSHI_FACTORY, "get_protocol_fee_0")
+            .await
+            .is_ok()
     }
 
     async fn refresh_reserves(&self) -> Result<usize> {
@@ -675,7 +804,9 @@ impl DexAdapter for SushiAdapter {
                 Err(_) => continue,
             };
 
-            if let (Ok((sqrt_price, tick)), Ok(liquidity)) = (parse_slot0(&slot0_val), scval_to_u128(&liq_val)) {
+            if let (Ok((sqrt_price, tick)), Ok(liquidity)) =
+                (parse_slot0(&slot0_val), scval_to_u128(&liq_val))
+            {
                 let mut cache = self.pool_cache.write().await;
                 if let Some(pool) = cache.get_mut(addr) {
                     pool.sqrt_price_x96 = sqrt_price;
@@ -745,7 +876,12 @@ fn parse_u256_scval(val: &xdr::ScVal) -> Option<ClmmU256> {
         xdr::ScVal::U256(parts) => {
             // UInt256Parts { hi_hi, hi_lo, lo_hi, lo_lo }
             // Our U256 is little-endian limbs: [lo_lo, lo_hi, hi_lo, hi_hi]
-            Some(ClmmU256([parts.lo_lo, parts.lo_hi, parts.hi_lo, parts.hi_hi]))
+            Some(ClmmU256([
+                parts.lo_lo,
+                parts.lo_hi,
+                parts.hi_lo,
+                parts.hi_hi,
+            ]))
         }
         xdr::ScVal::U128(parts) => {
             let v = (parts.hi as u128) << 64 | parts.lo as u128;
@@ -769,7 +905,9 @@ fn parse_populated_tick(val: &xdr::ScVal) -> Option<(i32, u128, i128)> {
             };
             match key_name.as_str() {
                 "tick" => {
-                    if let xdr::ScVal::I32(v) = &entry.val { tick = Some(*v); }
+                    if let xdr::ScVal::I32(v) = &entry.val {
+                        tick = Some(*v);
+                    }
                 }
                 "liquidity_gross" => {
                     lg = scval_to_u128(&entry.val).ok();

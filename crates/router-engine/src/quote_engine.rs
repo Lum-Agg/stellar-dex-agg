@@ -92,10 +92,7 @@ impl QuoteEngine {
 
     /// Remove a DEX adapter.
     pub async fn unregister_adapter(&self, adapter_id: &str) {
-        self.adapters
-            .write()
-            .await
-            .retain(|a| a.id() != adapter_id);
+        self.adapters.write().await.retain(|a| a.id() != adapter_id);
 
         let mut pf = self.path_finder.write().await;
         pf.clear_cache();
@@ -178,13 +175,16 @@ impl QuoteEngine {
         let adapters_clone = adapters.clone();
         let route = self
             .split_optimizer
-            .optimize(&quoted_paths, request.amount_in, slippage_bps, |path, amount| {
-                let adapters_ref = adapters_clone.clone();
-                let path_clone = path.clone();
-                async move {
-                    self.quote_path(&path_clone, amount, &adapters_ref).await
-                }
-            })
+            .optimize(
+                &quoted_paths,
+                request.amount_in,
+                slippage_bps,
+                |path, amount| {
+                    let adapters_ref = adapters_clone.clone();
+                    let path_clone = path.clone();
+                    async move { self.quote_path(&path_clone, amount, &adapters_ref).await }
+                },
+            )
             .await;
 
         route
@@ -219,7 +219,14 @@ impl QuoteEngine {
                     .flatten()
             } else {
                 // Fallback: compute locally from cached reserves
-                self.local_quote(token_in, token_out, current_amount, pool_address, source, &cached_pools)
+                self.local_quote(
+                    token_in,
+                    token_out,
+                    current_amount,
+                    pool_address,
+                    source,
+                    &cached_pools,
+                )
             };
 
             match hop_result {

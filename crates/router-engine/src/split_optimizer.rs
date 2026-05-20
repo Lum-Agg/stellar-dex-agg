@@ -104,10 +104,8 @@ impl SplitOptimizer {
         }
 
         // Take top N paths for split optimization
-        let candidates: Vec<&QuotedPath> = sorted
-            .into_iter()
-            .take(self.config.max_splits)
-            .collect();
+        let candidates: Vec<&QuotedPath> =
+            sorted.into_iter().take(self.config.max_splits).collect();
 
         // Optimize split using recursive pairwise Brent's method
         let split_result = self
@@ -276,12 +274,18 @@ impl SplitOptimizer {
 
                 async move {
                     let out_a = if amount_a > 0 {
-                        quote_fn(&pa, amount_a).await.map(|q| q.amount_out).unwrap_or(0)
+                        quote_fn(&pa, amount_a)
+                            .await
+                            .map(|q| q.amount_out)
+                            .unwrap_or(0)
                     } else {
                         0
                     };
                     let out_b = if amount_b > 0 {
-                        quote_fn(&pb, amount_b).await.map(|q| q.amount_out).unwrap_or(0)
+                        quote_fn(&pb, amount_b)
+                            .await
+                            .map(|q| q.amount_out)
+                            .unwrap_or(0)
                     } else {
                         0
                     };
@@ -294,12 +298,18 @@ impl SplitOptimizer {
         let amount_b = total_amount.saturating_sub(amount_a);
 
         let out_a = if amount_a > 0 {
-            quote_fn(path_a, amount_a).await.map(|q| q.amount_out).unwrap_or(0)
+            quote_fn(path_a, amount_a)
+                .await
+                .map(|q| q.amount_out)
+                .unwrap_or(0)
         } else {
             0
         };
         let out_b = if amount_b > 0 {
-            quote_fn(path_b, amount_b).await.map(|q| q.amount_out).unwrap_or(0)
+            quote_fn(path_b, amount_b)
+                .await
+                .map(|q| q.amount_out)
+                .unwrap_or(0)
         } else {
             0
         };
@@ -445,12 +455,14 @@ mod tests {
 
         // f(x) = -(x - 0.6)^2 + 1, maximum at x = 0.6
         let result = optimizer
-            .brent_maximize(0.0, 1.0, |x| async move {
-                -(x - 0.6) * (x - 0.6) + 1.0
-            })
+            .brent_maximize(0.0, 1.0, |x| async move { -(x - 0.6) * (x - 0.6) + 1.0 })
             .await;
 
-        assert!((result - 0.6).abs() < 0.001, "Expected ~0.6, got {}", result);
+        assert!(
+            (result - 0.6).abs() < 0.001,
+            "Expected ~0.6, got {}",
+            result
+        );
     }
 
     /// Test Brent's method on AMM-like diminishing returns
@@ -475,8 +487,16 @@ mod tests {
             .await;
 
         // Pool A is deeper, so optimal split should favor A (x > 0.5)
-        assert!(result > 0.5, "Expected x > 0.5 (favor deeper pool), got {}", result);
-        assert!(result < 0.8, "Expected x < 0.8 (still use both), got {}", result);
+        assert!(
+            result > 0.5,
+            "Expected x > 0.5 (favor deeper pool), got {}",
+            result
+        );
+        assert!(
+            result < 0.8,
+            "Expected x < 0.8 (still use both), got {}",
+            result
+        );
     }
 
     /// Test that 100% to one pool is chosen when other pool is empty

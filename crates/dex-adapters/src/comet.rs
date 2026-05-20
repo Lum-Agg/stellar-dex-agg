@@ -13,13 +13,13 @@
 use crate::comet_math::{self, CometRecord, STROOP_SCALAR};
 use crate::rpc::SorobanRpc;
 use crate::traits::*;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use stellar_xdr::curr as xdr;
 use tokio::sync::RwLock;
-use tracing::{info, debug, warn};
+use tracing::{debug, info, warn};
 
 /// Known Comet pools on mainnet
 const COMET_POOLS: &[(&str, &str, &str)] = &[
@@ -61,20 +61,26 @@ impl CometAdapter {
         // Comet pools have: get_swap_fee(), get_tokens(), get_balance(token), get_denorm_weight(token)
 
         // Get swap fee
-        let fee_val = self.rpc.call_no_args(pool_address, "get_swap_fee").await
+        let fee_val = self
+            .rpc
+            .call_no_args(pool_address, "get_swap_fee")
+            .await
             .map_err(|e| anyhow!("get_swap_fee failed: {}", e))?;
         let swap_fee = extract_i128(&fee_val).unwrap_or(30_000);
 
         // Get tokens
-        let tokens_val = self.rpc.call_no_args(pool_address, "get_tokens").await
+        let tokens_val = self
+            .rpc
+            .call_no_args(pool_address, "get_tokens")
+            .await
             .map_err(|e| anyhow!("get_tokens failed: {}", e))?;
 
         let token_addrs: Vec<String> = match &tokens_val {
-            xdr::ScVal::Vec(Some(vec)) => {
-                vec.0.iter()
-                    .filter_map(|v| crate::rpc::scval_to_address(v).ok())
-                    .collect()
-            }
+            xdr::ScVal::Vec(Some(vec)) => vec
+                .0
+                .iter()
+                .filter_map(|v| crate::rpc::scval_to_address(v).ok())
+                .collect(),
             _ => return Err(anyhow!("Cannot parse get_tokens result")),
         };
 
@@ -86,28 +92,36 @@ impl CometAdapter {
         let mut records = HashMap::new();
         for token_addr in &token_addrs {
             let token_hash = stellar_strkey::Contract::from_string(token_addr)
-                .map_err(|e| anyhow!("Invalid token: {:?}", e))?.0;
-            let token_scval = xdr::ScVal::Address(
-                xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(token_hash)))
-            );
+                .map_err(|e| anyhow!("Invalid token: {:?}", e))?
+                .0;
+            let token_scval = xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(
+                xdr::Hash(token_hash),
+            )));
 
-            let balance_val = self.rpc.simulate_call(
-                pool_address, "get_balance", vec![token_scval.clone()]
-            ).await.map_err(|e| anyhow!("get_balance failed: {}", e))?;
+            let balance_val = self
+                .rpc
+                .simulate_call(pool_address, "get_balance", vec![token_scval.clone()])
+                .await
+                .map_err(|e| anyhow!("get_balance failed: {}", e))?;
 
-            let weight_val = self.rpc.simulate_call(
-                pool_address, "get_denorm_weight", vec![token_scval]
-            ).await.map_err(|e| anyhow!("get_denorm_weight failed: {}", e))?;
+            let weight_val = self
+                .rpc
+                .simulate_call(pool_address, "get_denorm_weight", vec![token_scval])
+                .await
+                .map_err(|e| anyhow!("get_denorm_weight failed: {}", e))?;
 
             let balance = extract_i128(&balance_val).unwrap_or(0);
             let weight = extract_i128(&weight_val).unwrap_or(0);
 
             if balance > 0 && weight > 0 {
-                records.insert(token_addr.clone(), CometRecord {
-                    balance,
-                    weight,
-                    scalar: STROOP_SCALAR,
-                });
+                records.insert(
+                    token_addr.clone(),
+                    CometRecord {
+                        balance,
+                        weight,
+                        scalar: STROOP_SCALAR,
+                    },
+                );
             }
         }
 
@@ -115,81 +129,84 @@ impl CometAdapter {
             return Err(anyhow!("Pool has fewer than 2 tokens with balance"));
         }
 
-        debug!("Comet pool {}: {} tokens, fee={}", pool_address, records.len(), swap_fee);
+        debug!(
+            "Comet pool {}: {} tokens, fee={}",
+            pool_address,
+            records.len(),
+            swap_fee
+        );
         Ok(CometPoolState { records, swap_fee })
     }
-//     /// Parse the instance storage to extract AllRecordData and SwapFee.
-//     fn parse_pool_instance(&self, xdr_b64: &str) -> Result<CometPoolState> {
-//         // Try decoding as different types (RPC returns LedgerEntryData or ContractDataEntry)
-//         let data = if let Ok(entry) = xdr::LedgerEntry::from_xdr_base64(xdr_b64, Limits::none()) {
-//             entry.data
-//         } else if let Ok(data) = xdr::LedgerEntryData::from_xdr_base64(xdr_b64, Limits::none()) {
-//             data
-//         } else if let Ok(cd) = xdr::ContractDataEntry::from_xdr_base64(xdr_b64, Limits::none()) {
-//             xdr::LedgerEntryData::ContractData(cd)
-//         } else {
-//             return Err(anyhow!("Cannot decode XDR"));
-//         };
-// 
-//         let contract_data = match &data {
-//             xdr::LedgerEntryData::ContractData(cd) => cd,
-//             _ => return Err(anyhow!("Not ContractData")),
-//         };
-// 
-//         let instance = match &contract_data.val {
-//             xdr::ScVal::ContractInstance(inst) => inst,
-//             _ => return Err(anyhow!("Not ContractInstance")),
-//         };
-// 
-//         let storage = match &instance.storage {
-//             Some(map) => map,
-//             None => return Err(anyhow!("No storage")),
-//         };
-// 
-//         let mut swap_fee: i128 = 30_000; // default 0.3%
-//         let mut records: HashMap<String, CometRecord> = HashMap::new();
-// 
-//         for entry in storage.0.iter() {
-//             // DataKey::SwapFee is encoded as Vec([Symbol("SwapFee")])
-//             if is_data_key(&entry.key, "SwapFee") {
-//                 if let Ok(fee) = extract_i128(&entry.val) {
-//                     swap_fee = fee;
-//                 }
-//             }
-// 
-//             // DataKey::AllRecordData is encoded as Vec([Symbol("AllRecordData")])
-//             if is_data_key(&entry.key, "AllRecordData") {
-//                 if let xdr::ScVal::Map(Some(map)) = &entry.val {
-//                     for record_entry in map.0.iter() {
-//                         if let Ok(addr) = crate::rpc::scval_to_address(&record_entry.key) {
-//                             if let Some(record) = parse_record(&record_entry.val) {
-//                                 records.insert(addr, record);
-//                             }
-//                         }
-//                     }
-//                 }
-//             }
-//         }
-// 
-//         if records.is_empty() {
-//             return Err(anyhow!("No records found in pool instance"));
-//         }
-// 
-//         debug!("Comet pool: {} tokens, fee={}", records.len(), swap_fee);
-//         Ok(CometPoolState { records, swap_fee })
-//     }
+    //     /// Parse the instance storage to extract AllRecordData and SwapFee.
+    //     fn parse_pool_instance(&self, xdr_b64: &str) -> Result<CometPoolState> {
+    //         // Try decoding as different types (RPC returns LedgerEntryData or ContractDataEntry)
+    //         let data = if let Ok(entry) = xdr::LedgerEntry::from_xdr_base64(xdr_b64, Limits::none()) {
+    //             entry.data
+    //         } else if let Ok(data) = xdr::LedgerEntryData::from_xdr_base64(xdr_b64, Limits::none()) {
+    //             data
+    //         } else if let Ok(cd) = xdr::ContractDataEntry::from_xdr_base64(xdr_b64, Limits::none()) {
+    //             xdr::LedgerEntryData::ContractData(cd)
+    //         } else {
+    //             return Err(anyhow!("Cannot decode XDR"));
+    //         };
+    //
+    //         let contract_data = match &data {
+    //             xdr::LedgerEntryData::ContractData(cd) => cd,
+    //             _ => return Err(anyhow!("Not ContractData")),
+    //         };
+    //
+    //         let instance = match &contract_data.val {
+    //             xdr::ScVal::ContractInstance(inst) => inst,
+    //             _ => return Err(anyhow!("Not ContractInstance")),
+    //         };
+    //
+    //         let storage = match &instance.storage {
+    //             Some(map) => map,
+    //             None => return Err(anyhow!("No storage")),
+    //         };
+    //
+    //         let mut swap_fee: i128 = 30_000; // default 0.3%
+    //         let mut records: HashMap<String, CometRecord> = HashMap::new();
+    //
+    //         for entry in storage.0.iter() {
+    //             // DataKey::SwapFee is encoded as Vec([Symbol("SwapFee")])
+    //             if is_data_key(&entry.key, "SwapFee") {
+    //                 if let Ok(fee) = extract_i128(&entry.val) {
+    //                     swap_fee = fee;
+    //                 }
+    //             }
+    //
+    //             // DataKey::AllRecordData is encoded as Vec([Symbol("AllRecordData")])
+    //             if is_data_key(&entry.key, "AllRecordData") {
+    //                 if let xdr::ScVal::Map(Some(map)) = &entry.val {
+    //                     for record_entry in map.0.iter() {
+    //                         if let Ok(addr) = crate::rpc::scval_to_address(&record_entry.key) {
+    //                             if let Some(record) = parse_record(&record_entry.val) {
+    //                                 records.insert(addr, record);
+    //                             }
+    //                         }
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //
+    //         if records.is_empty() {
+    //             return Err(anyhow!("No records found in pool instance"));
+    //         }
+    //
+    //         debug!("Comet pool: {} tokens, fee={}", records.len(), swap_fee);
+    //         Ok(CometPoolState { records, swap_fee })
+    //     }
 }
 
 /// Check if a ScVal key matches a DataKey enum variant name.
 /// Comet DataKey is encoded as Vec([Symbol("VariantName")]) in soroban-sdk v22+
 fn is_data_key(key: &xdr::ScVal, name: &str) -> bool {
     match key {
-        xdr::ScVal::Vec(Some(vec)) if !vec.0.is_empty() => {
-            match &vec.0[0] {
-                xdr::ScVal::Symbol(s) => s.to_string() == name,
-                _ => false,
-            }
-        }
+        xdr::ScVal::Vec(Some(vec)) if !vec.0.is_empty() => match &vec.0[0] {
+            xdr::ScVal::Symbol(s) => s.to_string() == name,
+            _ => false,
+        },
         // Also try direct Symbol (older encoding)
         xdr::ScVal::Symbol(s) => s.to_string() == name,
         _ => false,
@@ -266,8 +283,12 @@ impl DexAdapter for CometAdapter {
                     let reserve_b = state.records.get(*token_b).map(|r| r.balance as u128);
 
                     pairs.push(AdapterTradingPair {
-                        token_a: TokenId::Contract { address: token_a.to_string() },
-                        token_b: TokenId::Contract { address: token_b.to_string() },
+                        token_a: TokenId::Contract {
+                            address: token_a.to_string(),
+                        },
+                        token_b: TokenId::Contract {
+                            address: token_b.to_string(),
+                        },
                         pool_address: pool_addr.to_string(),
                         fee_bps: (state.swap_fee / 1000) as u32, // convert from stroops to bps
                         reserve_a,
@@ -313,18 +334,15 @@ impl DexAdapter for CometAdapter {
             None => return Ok(None),
         };
 
-        let amount_out = comet_math::calc_out_given_in(
-            in_record,
-            out_record,
-            amount_in as i128,
-            state.swap_fee,
-        );
+        let amount_out =
+            comet_math::calc_out_given_in(in_record, out_record, amount_in as i128, state.swap_fee);
 
         if amount_out <= 0 {
             return Ok(None);
         }
 
-        let price_impact_bps = (amount_in as i128 * 10_000 / (2 * in_record.balance)).min(10_000) as u32;
+        let price_impact_bps =
+            (amount_in as i128 * 10_000 / (2 * in_record.balance)).min(10_000) as u32;
 
         Ok(Some(AdapterQuote {
             amount_out: amount_out as u128,

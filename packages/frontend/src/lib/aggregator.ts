@@ -31,6 +31,47 @@ export interface QuoteResponse {
   error?: string;
 }
 
+/** Raw API row may omit indices or use camelCase; pad to pool hop count. */
+function normalizeSubRoute(raw: Record<string, unknown>): SubRoute {
+  const pool_addresses =
+    (raw.pool_addresses as string[] | undefined) ??
+    (raw.poolAddresses as string[] | undefined) ??
+    [];
+  const n = pool_addresses.length;
+  const path = (raw.path as string[] | undefined) ?? [];
+  let in_indices =
+    (raw.in_indices as number[] | undefined) ?? (raw.inIndices as number[] | undefined) ?? [];
+  let out_indices =
+    (raw.out_indices as number[] | undefined) ?? (raw.outIndices as number[] | undefined) ?? [];
+  let dex_types =
+    (raw.dex_types as string[] | undefined) ?? (raw.dexTypes as string[] | undefined) ?? [];
+  in_indices = [...in_indices];
+  out_indices = [...out_indices];
+  dex_types = [...dex_types];
+  while (in_indices.length < n) in_indices.push(0);
+  while (out_indices.length < n) out_indices.push(1);
+  while (dex_types.length < n) dex_types.push('aquarius');
+
+  return {
+    source: String(raw.source ?? ''),
+    path,
+    pool_addresses,
+    dex_types,
+    in_indices,
+    out_indices,
+    amount_in: String(raw.amount_in ?? raw.amountIn ?? '0'),
+    amount_out: String(raw.amount_out ?? raw.amountOut ?? '0'),
+    percentage: Number(raw.percentage ?? 0),
+  };
+}
+
+function normalizeQuoteData(data: QuoteData): QuoteData {
+  const sub_routes = (data.sub_routes ?? []).map((r) =>
+    normalizeSubRoute(r as unknown as Record<string, unknown>)
+  );
+  return { ...data, sub_routes };
+}
+
 export async function getQuote(
   tokenIn: string,
   tokenOut: string,
@@ -47,7 +88,11 @@ export async function getQuote(
   }
 
   const resp = await fetch(`${API_URL}/api/v1/quote?${params}`);
-  return resp.json();
+  const json = (await resp.json()) as QuoteResponse;
+  if (json.success && json.data) {
+    json.data = normalizeQuoteData(json.data);
+  }
+  return json;
 }
 
 export async function buildSwap(

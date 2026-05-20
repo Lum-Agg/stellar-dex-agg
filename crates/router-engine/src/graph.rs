@@ -198,13 +198,7 @@ impl TokenGraph {
                 let mut new_visited = visited_pools.clone();
                 new_visited.insert(edge.pool_address.clone());
 
-                queue.push_back((
-                    target_key,
-                    new_tokens,
-                    new_sources,
-                    new_pools,
-                    new_visited,
-                ));
+                queue.push_back((target_key, new_tokens, new_sources, new_pools, new_visited));
             }
         }
 

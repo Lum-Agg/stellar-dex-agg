@@ -19,18 +19,17 @@
 //!   - DataKey::WordBitmap(i32) -> U256
 
 use crate::clmm_math::{
-    self, bitmap, ClmmPoolState, TickDataStore, TickState, U256 as ClmmU256,
-    TICKS_PER_CHUNK,
+    self, bitmap, ClmmPoolState, TickDataStore, TickState, TICKS_PER_CHUNK, U256 as ClmmU256,
 };
 use crate::rpc::SorobanRpc;
 use crate::traits::*;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use stellar_xdr::curr as xdr;
 use tokio::sync::RwLock;
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
 /// Aquarius concentrated pool state (cached for quoting).
 #[derive(Debug, Clone)]
@@ -81,7 +80,10 @@ impl AquariusClmmAdapter {
         use crate::rpc::scval_to_u128;
 
         // 1. Get total token sets count
-        let count_val = self.rpc.call_no_args(AQUARIUS_ROUTER, "get_tokens_sets_count").await?;
+        let count_val = self
+            .rpc
+            .call_no_args(AQUARIUS_ROUTER, "get_tokens_sets_count")
+            .await?;
         let total_count = scval_to_u128(&count_val)?;
         info!("Aquarius CLMM: total token sets = {}", total_count);
 
@@ -106,8 +108,13 @@ impl AquariusClmmAdapter {
                 lo: end as u64,
             });
 
-            match self.rpc
-                .simulate_call(AQUARIUS_ROUTER, "get_pools_for_tokens_range", vec![start_val, end_val])
+            match self
+                .rpc
+                .simulate_call(
+                    AQUARIUS_ROUTER,
+                    "get_pools_for_tokens_range",
+                    vec![start_val, end_val],
+                )
                 .await
             {
                 Ok(result) => {
@@ -118,7 +125,9 @@ impl AquariusClmmAdapter {
                                 if pair.0.len() >= 2 {
                                     if let xdr::ScVal::Map(Some(map)) = &pair.0[1] {
                                         for map_entry in map.0.iter() {
-                                            if let Ok(addr) = crate::rpc::scval_to_address(&map_entry.val) {
+                                            if let Ok(addr) =
+                                                crate::rpc::scval_to_address(&map_entry.val)
+                                            {
                                                 all_pool_addresses.push(addr);
                                             }
                                         }
@@ -139,28 +148,34 @@ impl AquariusClmmAdapter {
             }
         }
 
-        info!("Aquarius CLMM: found {} total pool addresses, filtering for concentrated...", all_pool_addresses.len());
+        info!(
+            "Aquarius CLMM: found {} total pool addresses, filtering for concentrated...",
+            all_pool_addresses.len()
+        );
 
         // 3. Filter for concentrated pools by calling pool_type()
         let mut concentrated = Vec::new();
         for chunk in all_pool_addresses.chunks(20) {
-            let futures: Vec<_> = chunk.iter().map(|addr| {
-                let rpc = self.rpc.clone();
-                let addr = addr.clone();
-                async move {
-                    match rpc.call_no_args(&addr, "pool_type").await {
-                        Ok(xdr::ScVal::Symbol(s)) => {
-                            let name = String::from_utf8(s.0.to_vec()).unwrap_or_default();
-                            if name == "concentrated" {
-                                Some(addr)
-                            } else {
-                                None
+            let futures: Vec<_> = chunk
+                .iter()
+                .map(|addr| {
+                    let rpc = self.rpc.clone();
+                    let addr = addr.clone();
+                    async move {
+                        match rpc.call_no_args(&addr, "pool_type").await {
+                            Ok(xdr::ScVal::Symbol(s)) => {
+                                let name = String::from_utf8(s.0.to_vec()).unwrap_or_default();
+                                if name == "concentrated" {
+                                    Some(addr)
+                                } else {
+                                    None
+                                }
                             }
+                            _ => None,
                         }
-                        _ => None,
                     }
-                }
-            }).collect();
+                })
+                .collect();
 
             let results = futures::future::join_all(futures).await;
             for result in results {
@@ -170,7 +185,10 @@ impl AquariusClmmAdapter {
             }
         }
 
-        info!("Aquarius CLMM: found {} concentrated pools", concentrated.len());
+        info!(
+            "Aquarius CLMM: found {} concentrated pools",
+            concentrated.len()
+        );
         Ok(concentrated)
     }
 
@@ -193,7 +211,10 @@ impl AquariusClmmAdapter {
         };
 
         // get_fee_fraction() -> u32
-        let fee_val = self.rpc.call_no_args(pool_address, "get_fee_fraction").await?;
+        let fee_val = self
+            .rpc
+            .call_no_args(pool_address, "get_fee_fraction")
+            .await?;
         let fee_bps = match &fee_val {
             xdr::ScVal::U32(v) => *v,
             _ => 30, // default
@@ -205,7 +226,8 @@ impl AquariusClmmAdapter {
 
         // Read Slot0 via getLedgerEntries on instance storage
         // If that fails, try to infer from simulate
-        let (sqrt_price_x96, tick, liquidity) = match self.read_slot0_via_ledger(pool_address).await {
+        let (sqrt_price_x96, tick, liquidity) = match self.read_slot0_via_ledger(pool_address).await
+        {
             Ok(state) => state,
             Err(_) => {
                 // Fallback: read via get_pool_state_with_balances or similar
@@ -234,7 +256,8 @@ impl AquariusClmmAdapter {
     /// Try to read Slot0 from instance storage via getLedgerEntries.
     async fn read_slot0_via_ledger(&self, pool_address: &str) -> Result<(ClmmU256, i32, u128)> {
         let contract_hash = stellar_strkey::Contract::from_string(pool_address)
-            .map_err(|e| anyhow!("Invalid contract address: {:?}", e))?.0;
+            .map_err(|e| anyhow!("Invalid contract address: {:?}", e))?
+            .0;
 
         let instance_key = xdr::LedgerKey::ContractData(xdr::LedgerKeyContractData {
             contract: xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(contract_hash))),
@@ -258,12 +281,18 @@ impl AquariusClmmAdapter {
     /// Fallback: read pool state by simulating get_reserves and inferring from estimate_swap.
     async fn read_slot0_via_simulate(&self, pool_address: &str) -> Result<(ClmmU256, i32, u128)> {
         // Use get_slot0() and get_active_liquidity()
-        let slot0_val = self.rpc.call_no_args(pool_address, "get_slot0").await
+        let slot0_val = self
+            .rpc
+            .call_no_args(pool_address, "get_slot0")
+            .await
             .map_err(|e| anyhow!("get_slot0 failed: {}", e))?;
 
         let (sqrt_price_x96, tick) = parse_slot0_scval(&slot0_val)?;
 
-        let liq_val = self.rpc.call_no_args(pool_address, "get_active_liquidity").await
+        let liq_val = self
+            .rpc
+            .call_no_args(pool_address, "get_active_liquidity")
+            .await
             .map_err(|e| anyhow!("get_active_liquidity failed: {}", e))?;
         let liquidity = crate::rpc::scval_to_u128(&liq_val)
             .map_err(|e| anyhow!("Cannot parse liquidity: {}", e))?;
@@ -275,15 +304,25 @@ impl AquariusClmmAdapter {
     /// Uses simulate_call on pool's getter functions (avoids XDR decode issues with U256).
     async fn read_tick_data(&self, pool: &mut AquaClmmPool) -> Result<()> {
         // 1. Read tick bounds
-        let bounds_val = self.rpc.call_no_args(&pool.pool_address, "get_tick_bounds").await?;
+        let bounds_val = self
+            .rpc
+            .call_no_args(&pool.pool_address, "get_tick_bounds")
+            .await?;
         if let xdr::ScVal::Vec(Some(vec)) = &bounds_val {
             if vec.0.len() >= 2 {
-                if let xdr::ScVal::I32(min_t) = &vec.0[0] { pool.min_init_tick = *min_t; }
-                if let xdr::ScVal::I32(max_t) = &vec.0[1] { pool.max_init_tick = *max_t; }
+                if let xdr::ScVal::I32(min_t) = &vec.0[0] {
+                    pool.min_init_tick = *min_t;
+                }
+                if let xdr::ScVal::I32(max_t) = &vec.0[1] {
+                    pool.max_init_tick = *max_t;
+                }
             }
         }
 
-        debug!("Aquarius CLMM {}: tick bounds [{}, {}]", pool.pool_address, pool.min_init_tick, pool.max_init_tick);
+        debug!(
+            "Aquarius CLMM {}: tick bounds [{}, {}]",
+            pool.pool_address, pool.min_init_tick, pool.max_init_tick
+        );
 
         if pool.min_init_tick >= pool.max_init_tick {
             // Pool has no initialized ticks (empty)
@@ -302,7 +341,15 @@ impl AquariusClmmAdapter {
         let start_word_val = xdr::ScVal::I32(min_bm_word);
         let count_val = xdr::ScVal::U32(bm_word_count.min(50)); // Cap at 50 words
 
-        match self.rpc.simulate_call(&pool.pool_address, "get_chunk_bitmap_batch", vec![start_word_val, count_val]).await {
+        match self
+            .rpc
+            .simulate_call(
+                &pool.pool_address,
+                "get_chunk_bitmap_batch",
+                vec![start_word_val, count_val],
+            )
+            .await
+        {
             Ok(result) => {
                 if let xdr::ScVal::Vec(Some(vec)) = &result {
                     for (i, val) in vec.0.iter().enumerate() {
@@ -344,29 +391,52 @@ impl AquariusClmmAdapter {
             return Ok(());
         }
 
-        debug!("Aquarius CLMM {}: reading {} candidate ticks", pool.pool_address, initialized_ticks.len());
+        debug!(
+            "Aquarius CLMM {}: reading {} candidate ticks",
+            pool.pool_address,
+            initialized_ticks.len()
+        );
 
         // 4. Read ticks in batches via get_ticks_batch
         for batch in initialized_ticks.chunks(50) {
             let ticks_vec: Vec<xdr::ScVal> = batch.iter().map(|t| xdr::ScVal::I32(*t)).collect();
             let ticks_val = xdr::ScVal::Vec(Some(xdr::ScVec(ticks_vec.try_into().unwrap())));
 
-            match self.rpc.simulate_call(&pool.pool_address, "get_ticks_batch", vec![ticks_val]).await {
+            match self
+                .rpc
+                .simulate_call(&pool.pool_address, "get_ticks_batch", vec![ticks_val])
+                .await
+            {
                 Ok(result) => {
                     if let xdr::ScVal::Vec(Some(vec)) = &result {
                         for (i, tick_info_val) in vec.0.iter().enumerate() {
-                            if i >= batch.len() { break; }
+                            if i >= batch.len() {
+                                break;
+                            }
                             let tick_idx = batch[i];
                             if let Some((lg, ln)) = parse_tick_info_scval(tick_info_val) {
                                 if lg > 0 {
                                     // Store in our tick data store
-                                    let compressed = bitmap::compress_tick(tick_idx, pool.tick_spacing);
+                                    let compressed =
+                                        bitmap::compress_tick(tick_idx, pool.tick_spacing);
                                     let (chunk_pos, slot) = bitmap::chunk_address(compressed);
 
-                                    let chunk = pool.tick_store.chunks
-                                        .entry(chunk_pos)
-                                        .or_insert_with(|| vec![TickState { liquidity_gross: 0, liquidity_net: 0 }; TICKS_PER_CHUNK as usize]);
-                                    chunk[slot as usize] = TickState { liquidity_gross: lg, liquidity_net: ln };
+                                    let chunk =
+                                        pool.tick_store.chunks.entry(chunk_pos).or_insert_with(
+                                            || {
+                                                vec![
+                                                    TickState {
+                                                        liquidity_gross: 0,
+                                                        liquidity_net: 0
+                                                    };
+                                                    TICKS_PER_CHUNK as usize
+                                                ]
+                                            },
+                                        );
+                                    chunk[slot as usize] = TickState {
+                                        liquidity_gross: lg,
+                                        liquidity_net: ln,
+                                    };
                                 }
                             }
                         }
@@ -381,21 +451,22 @@ impl AquariusClmmAdapter {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
 
-        let loaded_ticks: usize = pool.tick_store.chunks.values()
+        let loaded_ticks: usize = pool
+            .tick_store
+            .chunks
+            .values()
             .map(|c| c.iter().filter(|t| t.liquidity_gross > 0).count())
             .sum();
-        debug!("Aquarius CLMM {}: loaded {} initialized ticks", pool.pool_address, loaded_ticks);
+        debug!(
+            "Aquarius CLMM {}: loaded {} initialized ticks",
+            pool.pool_address, loaded_ticks
+        );
 
         Ok(())
     }
 
     /// Get a local quote using the CLMM math.
-    fn local_quote(
-        &self,
-        pool: &AquaClmmPool,
-        token_in: &str,
-        amount_in: u128,
-    ) -> Option<u128> {
+    fn local_quote(&self, pool: &AquaClmmPool, token_in: &str, amount_in: u128) -> Option<u128> {
         let zero_for_one = token_in == pool.token0;
 
         let pool_state = ClmmPoolState {
@@ -408,7 +479,8 @@ impl AquariusClmmAdapter {
             token1: pool.token1.clone(),
         };
 
-        let result = clmm_math::simulate_swap(&pool_state, &pool.tick_store, amount_in, zero_for_one);
+        let result =
+            clmm_math::simulate_swap(&pool_state, &pool.tick_store, amount_in, zero_for_one);
         result.map(|(amount_out, _, _)| amount_out)
     }
 }
@@ -442,7 +514,10 @@ impl DexAdapter for AquariusClmmAdapter {
             return Ok(vec![]);
         }
 
-        info!("Aquarius CLMM: loading state for {} concentrated pools...", addresses.len());
+        info!(
+            "Aquarius CLMM: loading state for {} concentrated pools...",
+            addresses.len()
+        );
 
         let mut all_pairs = Vec::new();
         let mut all_pools = HashMap::new();
@@ -452,13 +527,20 @@ impl DexAdapter for AquariusClmmAdapter {
                 Ok(mut pool) => {
                     // Read tick data
                     if let Err(e) = self.read_tick_data(&mut pool).await {
-                        warn!("Aquarius CLMM: failed to read tick data for {}: {}", addr, e);
+                        warn!(
+                            "Aquarius CLMM: failed to read tick data for {}: {}",
+                            addr, e
+                        );
                         continue;
                     }
 
                     let pair = AdapterTradingPair {
-                        token_a: TokenId::Contract { address: pool.token0.clone() },
-                        token_b: TokenId::Contract { address: pool.token1.clone() },
+                        token_a: TokenId::Contract {
+                            address: pool.token0.clone(),
+                        },
+                        token_b: TokenId::Contract {
+                            address: pool.token1.clone(),
+                        },
                         pool_address: addr.clone(),
                         fee_bps: pool.fee_bps,
                         reserve_a: None,
@@ -578,23 +660,31 @@ fn make_persistent_key(contract_hash: &[u8; 32], variant: &DataKeyVariant) -> xd
         DataKeyVariant::TickChunk(pos) => {
             // DataKey::TickChunk(i32) is enum variant index 23 (counting from storage.rs)
             // In XDR, Soroban enums with data are encoded as Vec [symbol, val]
-            xdr::ScVal::Vec(Some(xdr::ScVec(vec![
-                xdr::ScVal::Symbol(xdr::ScSymbol("TickChunk".try_into().unwrap())),
-                xdr::ScVal::I32(*pos),
-            ].try_into().unwrap())))
+            xdr::ScVal::Vec(Some(xdr::ScVec(
+                vec![
+                    xdr::ScVal::Symbol(xdr::ScSymbol("TickChunk".try_into().unwrap())),
+                    xdr::ScVal::I32(*pos),
+                ]
+                .try_into()
+                .unwrap(),
+            )))
         }
-        DataKeyVariant::ChunkBitmap(pos) => {
-            xdr::ScVal::Vec(Some(xdr::ScVec(vec![
+        DataKeyVariant::ChunkBitmap(pos) => xdr::ScVal::Vec(Some(xdr::ScVec(
+            vec![
                 xdr::ScVal::Symbol(xdr::ScSymbol("ChunkBitmap".try_into().unwrap())),
                 xdr::ScVal::I32(*pos),
-            ].try_into().unwrap())))
-        }
-        DataKeyVariant::WordBitmap(pos) => {
-            xdr::ScVal::Vec(Some(xdr::ScVec(vec![
+            ]
+            .try_into()
+            .unwrap(),
+        ))),
+        DataKeyVariant::WordBitmap(pos) => xdr::ScVal::Vec(Some(xdr::ScVec(
+            vec![
                 xdr::ScVal::Symbol(xdr::ScSymbol("WordBitmap".try_into().unwrap())),
                 xdr::ScVal::I32(*pos),
-            ].try_into().unwrap())))
-        }
+            ]
+            .try_into()
+            .unwrap(),
+        ))),
     };
 
     xdr::LedgerKey::ContractData(xdr::LedgerKeyContractData {
@@ -626,9 +716,7 @@ fn parse_instance_storage(entry: &xdr::LedgerEntryData) -> Result<HashMap<String
 
 fn scval_to_symbol_name(val: &xdr::ScVal) -> Option<String> {
     match val {
-        xdr::ScVal::Symbol(s) => {
-            String::from_utf8(s.0.to_vec()).ok()
-        }
+        xdr::ScVal::Symbol(s) => String::from_utf8(s.0.to_vec()).ok(),
         // Enum variant without data: Vec [Symbol(name)]
         xdr::ScVal::Vec(Some(vec)) if !vec.0.is_empty() => {
             if let xdr::ScVal::Symbol(s) = &vec.0[0] {
@@ -642,7 +730,9 @@ fn scval_to_symbol_name(val: &xdr::ScVal) -> Option<String> {
 }
 
 fn extract_slot0_sqrt_price(map: &HashMap<String, xdr::ScVal>) -> Result<ClmmU256> {
-    let slot0_val = map.get("Slot0").ok_or_else(|| anyhow!("No Slot0 in instance"))?;
+    let slot0_val = map
+        .get("Slot0")
+        .ok_or_else(|| anyhow!("No Slot0 in instance"))?;
     // Slot0 is a struct: { sqrt_price_x96: U256, tick: i32 }
     // In XDR it's a Map with symbol keys
     if let xdr::ScVal::Map(Some(m)) = slot0_val {
@@ -659,7 +749,9 @@ fn extract_slot0_sqrt_price(map: &HashMap<String, xdr::ScVal>) -> Result<ClmmU25
 }
 
 fn extract_slot0_tick(map: &HashMap<String, xdr::ScVal>) -> Result<i32> {
-    let slot0_val = map.get("Slot0").ok_or_else(|| anyhow!("No Slot0 in instance"))?;
+    let slot0_val = map
+        .get("Slot0")
+        .ok_or_else(|| anyhow!("No Slot0 in instance"))?;
     if let xdr::ScVal::Map(Some(m)) = slot0_val {
         for entry in m.0.iter() {
             if let xdr::ScVal::Symbol(s) = &entry.key {
@@ -676,7 +768,9 @@ fn extract_slot0_tick(map: &HashMap<String, xdr::ScVal>) -> Result<i32> {
 }
 
 fn extract_u128_field(map: &HashMap<String, xdr::ScVal>, name: &str) -> Result<u128> {
-    let val = map.get(name).ok_or_else(|| anyhow!("No {} in instance", name))?;
+    let val = map
+        .get(name)
+        .ok_or_else(|| anyhow!("No {} in instance", name))?;
     match val {
         xdr::ScVal::U128(parts) => Ok((parts.hi as u128) << 64 | parts.lo as u128),
         xdr::ScVal::I128(parts) => Ok((parts.hi as u128) << 64 | parts.lo as u128),
@@ -687,7 +781,9 @@ fn extract_u128_field(map: &HashMap<String, xdr::ScVal>, name: &str) -> Result<u
 }
 
 fn extract_u32_field(map: &HashMap<String, xdr::ScVal>, name: &str) -> Result<u32> {
-    let val = map.get(name).ok_or_else(|| anyhow!("No {} in instance", name))?;
+    let val = map
+        .get(name)
+        .ok_or_else(|| anyhow!("No {} in instance", name))?;
     match val {
         xdr::ScVal::U32(v) => Ok(*v),
         xdr::ScVal::U64(v) => Ok(*v as u32),
@@ -696,7 +792,9 @@ fn extract_u32_field(map: &HashMap<String, xdr::ScVal>, name: &str) -> Result<u3
 }
 
 fn extract_i32_field(map: &HashMap<String, xdr::ScVal>, name: &str) -> Result<i32> {
-    let val = map.get(name).ok_or_else(|| anyhow!("No {} in instance", name))?;
+    let val = map
+        .get(name)
+        .ok_or_else(|| anyhow!("No {} in instance", name))?;
     match val {
         xdr::ScVal::I32(v) => Ok(*v),
         xdr::ScVal::I64(v) => Ok(*v as i32),
@@ -705,8 +803,11 @@ fn extract_i32_field(map: &HashMap<String, xdr::ScVal>, name: &str) -> Result<i3
 }
 
 fn extract_address_field(map: &HashMap<String, xdr::ScVal>, name: &str) -> Result<String> {
-    let val = map.get(name).ok_or_else(|| anyhow!("No {} in instance", name))?;
-    crate::rpc::scval_to_address(val).map_err(|e| anyhow!("Cannot parse {} as address: {}", name, e))
+    let val = map
+        .get(name)
+        .ok_or_else(|| anyhow!("No {} in instance", name))?;
+    crate::rpc::scval_to_address(val)
+        .map_err(|e| anyhow!("Cannot parse {} as address: {}", name, e))
 }
 
 fn extract_tick_spacing_from_info(val: &xdr::ScVal) -> Option<i32> {
@@ -753,7 +854,10 @@ fn parse_slot0_scval(val: &xdr::ScVal) -> Result<(ClmmU256, i32)> {
             return Ok((sp, t));
         }
     }
-    Err(anyhow!("Cannot parse Slot0 from {:?}", std::mem::discriminant(val)))
+    Err(anyhow!(
+        "Cannot parse Slot0 from {:?}",
+        std::mem::discriminant(val)
+    ))
 }
 
 /// Parse U256 from any ScVal format (U256Parts, Bytes, etc.)
@@ -762,12 +866,19 @@ fn parse_u256_from_scval_any(val: &xdr::ScVal) -> Option<ClmmU256> {
         xdr::ScVal::U256(parts) => {
             // UInt256Parts { hi_hi, hi_lo, lo_hi, lo_lo }
             // Our U256 is little-endian limbs: [lo_lo, lo_hi, hi_lo, hi_hi]
-            Some(ClmmU256([parts.lo_lo, parts.lo_hi, parts.hi_lo, parts.hi_hi]))
+            Some(ClmmU256([
+                parts.lo_lo,
+                parts.lo_hi,
+                parts.hi_lo,
+                parts.hi_hi,
+            ]))
         }
         xdr::ScVal::Bytes(bytes) if bytes.0.len() == 32 => {
             let b = &bytes.0;
-            let limb0 = u64::from_be_bytes([b[24], b[25], b[26], b[27], b[28], b[29], b[30], b[31]]);
-            let limb1 = u64::from_be_bytes([b[16], b[17], b[18], b[19], b[20], b[21], b[22], b[23]]);
+            let limb0 =
+                u64::from_be_bytes([b[24], b[25], b[26], b[27], b[28], b[29], b[30], b[31]]);
+            let limb1 =
+                u64::from_be_bytes([b[16], b[17], b[18], b[19], b[20], b[21], b[22], b[23]]);
             let limb2 = u64::from_be_bytes([b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]]);
             let limb3 = u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]);
             Some(ClmmU256([limb0, limb1, limb2, limb3]))
@@ -803,8 +914,12 @@ fn parse_tick_info_scval(val: &xdr::ScVal) -> Option<(u128, i128)> {
                 _ => continue,
             };
             match key_name.as_str() {
-                "liquidity_gross" => { lg = parse_u128_scval(&entry.val); }
-                "liquidity_net" => { ln = parse_i128_scval(&entry.val); }
+                "liquidity_gross" => {
+                    lg = parse_u128_scval(&entry.val);
+                }
+                "liquidity_net" => {
+                    ln = parse_i128_scval(&entry.val);
+                }
                 _ => {}
             }
         }
@@ -846,13 +961,23 @@ fn parse_pool_state_with_balances(val: &xdr::ScVal) -> Result<(ClmmU256, i32, u1
                     if let xdr::ScVal::Map(Some(inner)) = &entry.val {
                         for inner_entry in inner.0.iter() {
                             let inner_key = match &inner_entry.key {
-                                xdr::ScVal::Symbol(s) => String::from_utf8(s.0.to_vec()).unwrap_or_default(),
+                                xdr::ScVal::Symbol(s) => {
+                                    String::from_utf8(s.0.to_vec()).unwrap_or_default()
+                                }
                                 _ => continue,
                             };
                             match inner_key.as_str() {
-                                "liquidity" => { liquidity = parse_u128_scval(&inner_entry.val); }
-                                "sqrt_price_x96" => { sqrt_price = parse_u256_scval(&inner_entry.val).ok(); }
-                                "tick" => { if let xdr::ScVal::I32(v) = &inner_entry.val { tick = Some(*v); } }
+                                "liquidity" => {
+                                    liquidity = parse_u128_scval(&inner_entry.val);
+                                }
+                                "sqrt_price_x96" => {
+                                    sqrt_price = parse_u256_scval(&inner_entry.val).ok();
+                                }
+                                "tick" => {
+                                    if let xdr::ScVal::I32(v) = &inner_entry.val {
+                                        tick = Some(*v);
+                                    }
+                                }
                                 _ => {}
                             }
                         }
@@ -875,8 +1000,10 @@ fn parse_u256_scval(val: &xdr::ScVal) -> Result<ClmmU256> {
         xdr::ScVal::Bytes(bytes) if bytes.0.len() == 32 => {
             // Big-endian bytes -> little-endian limbs
             let b = &bytes.0;
-            let limb0 = u64::from_be_bytes([b[24], b[25], b[26], b[27], b[28], b[29], b[30], b[31]]);
-            let limb1 = u64::from_be_bytes([b[16], b[17], b[18], b[19], b[20], b[21], b[22], b[23]]);
+            let limb0 =
+                u64::from_be_bytes([b[24], b[25], b[26], b[27], b[28], b[29], b[30], b[31]]);
+            let limb1 =
+                u64::from_be_bytes([b[16], b[17], b[18], b[19], b[20], b[21], b[22], b[23]]);
             let limb2 = u64::from_be_bytes([b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]]);
             let limb3 = u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]);
             Ok(ClmmU256([limb0, limb1, limb2, limb3]))
@@ -897,7 +1024,10 @@ fn parse_u256_scval(val: &xdr::ScVal) -> Result<ClmmU256> {
             // Map order: hi_hi, hi_lo, lo_hi, lo_lo -> limbs[3], limbs[2], limbs[1], limbs[0]
             Ok(ClmmU256([parts[3], parts[2], parts[1], parts[0]]))
         }
-        _ => Err(anyhow!("Cannot parse ScVal as U256: {:?}", std::mem::discriminant(val))),
+        _ => Err(anyhow!(
+            "Cannot parse ScVal as U256: {:?}",
+            std::mem::discriminant(val)
+        )),
     }
 }
 
@@ -928,17 +1058,29 @@ fn parse_tick_chunk_entry(entry: &xdr::LedgerEntryData) -> Option<Vec<TickState>
                     if tuple.0.len() >= 4 {
                         let liquidity_gross = parse_u128_scval(&tuple.0[2]).unwrap_or(0);
                         let liquidity_net = parse_i128_scval(&tuple.0[3]).unwrap_or(0);
-                        ticks.push(TickState { liquidity_gross, liquidity_net });
+                        ticks.push(TickState {
+                            liquidity_gross,
+                            liquidity_net,
+                        });
                     } else {
-                        ticks.push(TickState { liquidity_gross: 0, liquidity_net: 0 });
+                        ticks.push(TickState {
+                            liquidity_gross: 0,
+                            liquidity_net: 0,
+                        });
                     }
                 } else {
-                    ticks.push(TickState { liquidity_gross: 0, liquidity_net: 0 });
+                    ticks.push(TickState {
+                        liquidity_gross: 0,
+                        liquidity_net: 0,
+                    });
                 }
             }
             // Pad to TICKS_PER_CHUNK if needed
             while ticks.len() < TICKS_PER_CHUNK as usize {
-                ticks.push(TickState { liquidity_gross: 0, liquidity_net: 0 });
+                ticks.push(TickState {
+                    liquidity_gross: 0,
+                    liquidity_net: 0,
+                });
             }
             return Some(ticks);
         }

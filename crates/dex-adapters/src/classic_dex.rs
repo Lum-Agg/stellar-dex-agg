@@ -11,7 +11,7 @@
 //! Soroban contract calls (Stellar supports mixed Classic + Soroban ops).
 
 use crate::traits::*;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
@@ -25,9 +25,21 @@ const DEFAULT_HORIZON_URL: &str = "https://horizon.stellar.org";
 /// Well-known assets for Classic DEX path finding
 const CLASSIC_ASSETS: &[(&str, &str, &str)] = &[
     // (contract_address, asset_code_for_horizon, issuer_or_native)
-    ("CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA", "native", ""),
-    ("CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75", "USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"),
-    ("CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC", "EURC", "GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2"),
+    (
+        "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+        "native",
+        "",
+    ),
+    (
+        "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+        "USDC",
+        "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+    ),
+    (
+        "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+        "EURC",
+        "GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2",
+    ),
 ];
 
 pub struct ClassicDexAdapter {
@@ -90,7 +102,11 @@ impl ClassicDexAdapter {
         let source_params = match source_asset {
             HorizonAsset::Native => "source_asset_type=native".to_string(),
             HorizonAsset::Credit { code, issuer } => {
-                let asset_type = if code.len() <= 4 { "credit_alphanum4" } else { "credit_alphanum12" };
+                let asset_type = if code.len() <= 4 {
+                    "credit_alphanum4"
+                } else {
+                    "credit_alphanum12"
+                };
                 format!(
                     "source_asset_type={}&source_asset_code={}&source_asset_issuer={}",
                     asset_type, code, issuer
@@ -121,7 +137,9 @@ impl ClassicDexAdapter {
 
         if let Some(records) = records {
             if let Some(first) = records.first() {
-                if let Some(dest_amount_str) = first.get("destination_amount").and_then(|v| v.as_str()) {
+                if let Some(dest_amount_str) =
+                    first.get("destination_amount").and_then(|v| v.as_str())
+                {
                     let amount_out = parse_stellar_amount(dest_amount_str)?;
                     return Ok(Some(amount_out));
                 }
@@ -141,10 +159,14 @@ impl ClassicDexAdapter {
                 let (addr_b, _, _) = CLASSIC_ASSETS[j];
 
                 pairs.push(AdapterTradingPair {
-                    token_a: TokenId::Contract { address: addr_a.to_string() },
-                    token_b: TokenId::Contract { address: addr_b.to_string() },
+                    token_a: TokenId::Contract {
+                        address: addr_a.to_string(),
+                    },
+                    token_b: TokenId::Contract {
+                        address: addr_b.to_string(),
+                    },
                     pool_address: format!("classic:{}:{}", addr_a, addr_b),
-                    fee_bps: 0, // Horizon handles fees internally
+                    fee_bps: 0,      // Horizon handles fees internally
                     reserve_a: None, // Not applicable for black-box quotes
                     reserve_b: None,
                 });
@@ -252,7 +274,10 @@ impl DexAdapter for ClassicDexAdapter {
             None => return Ok(None),
         };
 
-        match self.horizon_quote(&source_asset, &dest_asset, amount_in).await {
+        match self
+            .horizon_quote(&source_asset, &dest_asset, amount_in)
+            .await
+        {
             Ok(Some(amount_out)) => {
                 Ok(Some(AdapterQuote {
                     amount_out,

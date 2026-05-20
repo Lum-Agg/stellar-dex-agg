@@ -25,13 +25,20 @@ impl StablePool {
     /// Compute precision_mul for each token (scales to max decimals).
     fn precision_mul(&self) -> Vec<u128> {
         let max_dec = self.decimals.iter().copied().max().unwrap_or(7);
-        self.decimals.iter().map(|&d| 10u128.pow(max_dec - d)).collect()
+        self.decimals
+            .iter()
+            .map(|&d| 10u128.pow(max_dec - d))
+            .collect()
     }
 
     /// Normalize reserves to common precision (xp).
     fn xp(&self) -> Vec<u128> {
         let pmul = self.precision_mul();
-        self.reserves.iter().zip(pmul.iter()).map(|(&r, &m)| r * m).collect()
+        self.reserves
+            .iter()
+            .zip(pmul.iter())
+            .map(|(&r, &m)| r * m)
+            .collect()
     }
 
     /// Compute the StableSwap invariant D.

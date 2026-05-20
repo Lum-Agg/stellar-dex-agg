@@ -8,7 +8,7 @@
 //! All transactions are simulated before returning to the user.
 
 use crate::types::{OptimalRoute, SimulationResult, SubOrder, UnsignedTransaction};
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use dex_adapters::rpc::SorobanRpc;
 use sha2::Digest;
 use std::sync::Arc;
@@ -65,9 +65,15 @@ impl TransactionBuilder {
 
         // Determine token_in and token_out from the route
         let first_order = &route.sub_orders[0];
-        let token_in = first_order.path.tokens.first()
+        let token_in = first_order
+            .path
+            .tokens
+            .first()
             .ok_or_else(|| anyhow!("Empty path in sub-order"))?;
-        let token_out = first_order.path.tokens.last()
+        let token_out = first_order
+            .path
+            .tokens
+            .last()
             .ok_or_else(|| anyhow!("Empty path in sub-order"))?;
 
         let invoke_args = if route.sub_orders.len() == 1 {
@@ -91,18 +97,25 @@ impl TransactionBuilder {
         };
 
         // Build the InvokeHostFunction operation
-        let aggregator_hash = stellar_strkey::Contract::from_string(&self.config.aggregator_contract)
-            .map_err(|e| anyhow!("Invalid aggregator contract: {:?}", e))?
-            .0;
+        let aggregator_hash =
+            stellar_strkey::Contract::from_string(&self.config.aggregator_contract)
+                .map_err(|e| anyhow!("Invalid aggregator contract: {:?}", e))?
+                .0;
 
-        let function_name = if route.sub_orders.len() == 1 { "swap" } else { "split_swap" };
+        let function_name = if route.sub_orders.len() == 1 {
+            "swap"
+        } else {
+            "split_swap"
+        };
 
         let invoke_contract_args = xdr::InvokeContractArgs {
             contract_address: xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(aggregator_hash))),
             function_name: function_name
                 .try_into()
                 .map_err(|_| anyhow!("Invalid function name"))?,
-            args: invoke_args.try_into().map_err(|_| anyhow!("Too many args"))?,
+            args: invoke_args
+                .try_into()
+                .map_err(|_| anyhow!("Too many args"))?,
         };
 
         let host_function = xdr::HostFunction::InvokeContract(invoke_contract_args);
@@ -152,7 +165,9 @@ impl TransactionBuilder {
             xdr: tx_xdr,
             hash,
             operation_count: 1,
-            estimated_fee: simulation.resource_fee.unwrap_or(self.config.base_fee as u64),
+            estimated_fee: simulation
+                .resource_fee
+                .unwrap_or(self.config.base_fee as u64),
             simulation,
         })
     }
@@ -169,11 +184,19 @@ impl TransactionBuilder {
         let user_val = self.address_to_scval(user_address)?;
         let token_in_val = self.token_to_scval(token_in)?;
         let amount_in_val = self.i128_to_scval(sub_order.amount_in as i128);
-        let indices_default: Vec<(u32, u32)> = std::iter::repeat((0, 1)).take(sub_order.path.hops).collect();
+        let indices_default: Vec<(u32, u32)> = std::iter::repeat((0, 1))
+            .take(sub_order.path.hops)
+            .collect();
         let steps_val = self.build_steps_scval(&sub_order.path, &indices_default)?;
         let min_out_val = self.i128_to_scval(min_output as i128);
 
-        Ok(vec![user_val, token_in_val, amount_in_val, steps_val, min_out_val])
+        Ok(vec![
+            user_val,
+            token_in_val,
+            amount_in_val,
+            steps_val,
+            min_out_val,
+        ])
     }
 
     /// Build args for aggregator.split_swap(user, token_in, token_out, sub_routes, min_amount_out)
@@ -196,12 +219,20 @@ impl TransactionBuilder {
             .collect::<Result<Vec<_>>>()?;
 
         let sub_routes_val = xdr::ScVal::Vec(Some(xdr::ScVec(
-            sub_routes.try_into().map_err(|_| anyhow!("Too many sub-routes"))?
+            sub_routes
+                .try_into()
+                .map_err(|_| anyhow!("Too many sub-routes"))?,
         )));
 
         let min_out_val = self.i128_to_scval(min_output as i128);
 
-        Ok(vec![user_val, token_in_val, token_out_val, sub_routes_val, min_out_val])
+        Ok(vec![
+            user_val,
+            token_in_val,
+            token_out_val,
+            sub_routes_val,
+            min_out_val,
+        ])
     }
 
     /// Build a SubRoute ScVal (Map with amount_in and steps)
@@ -211,20 +242,26 @@ impl TransactionBuilder {
             val: self.i128_to_scval(sub_order.amount_in as i128),
         };
 
-        let indices_default: Vec<(u32, u32)> = std::iter::repeat((0, 1)).take(sub_order.path.hops).collect();
+        let indices_default: Vec<(u32, u32)> = std::iter::repeat((0, 1))
+            .take(sub_order.path.hops)
+            .collect();
         let steps_entry = xdr::ScMapEntry {
             key: xdr::ScVal::Symbol("steps".try_into().unwrap()),
             val: self.build_steps_scval(&sub_order.path, &indices_default)?,
         };
 
         Ok(xdr::ScVal::Map(Some(xdr::ScMap(
-            vec![amount_in_entry, steps_entry].try_into().unwrap()
+            vec![amount_in_entry, steps_entry].try_into().unwrap(),
         ))))
     }
 
     /// Build Vec<SwapStep> as ScVal from a Path
     /// `indices` specifies (in_idx, out_idx) for each hop
-    fn build_steps_scval(&self, path: &crate::types::Path, indices: &[(u32, u32)]) -> Result<xdr::ScVal> {
+    fn build_steps_scval(
+        &self,
+        path: &crate::types::Path,
+        indices: &[(u32, u32)],
+    ) -> Result<xdr::ScVal> {
         let mut steps = Vec::new();
 
         for i in 0..path.sources.len() {
@@ -271,12 +308,12 @@ impl TransactionBuilder {
             });
 
             steps.push(xdr::ScVal::Map(Some(xdr::ScMap(
-                entries.try_into().unwrap()
+                entries.try_into().unwrap(),
             ))));
         }
 
         Ok(xdr::ScVal::Vec(Some(xdr::ScVec(
-            steps.try_into().map_err(|_| anyhow!("Too many steps"))?
+            steps.try_into().map_err(|_| anyhow!("Too many steps"))?,
         ))))
     }
 
@@ -341,7 +378,7 @@ impl TransactionBuilder {
         let key = stellar_strkey::ed25519::PublicKey::from_string(address)
             .map_err(|e| anyhow!("Invalid address: {:?}", e))?;
         Ok(xdr::ScVal::Address(xdr::ScAddress::Account(
-            xdr::AccountId(xdr::PublicKey::PublicKeyTypeEd25519(xdr::Uint256(key.0)))
+            xdr::AccountId(xdr::PublicKey::PublicKeyTypeEd25519(xdr::Uint256(key.0))),
         )))
     }
 
@@ -350,7 +387,7 @@ impl TransactionBuilder {
             .map_err(|e| anyhow!("Invalid contract: {:?}", e))?
             .0;
         Ok(xdr::ScVal::Address(xdr::ScAddress::Contract(
-            xdr::ContractId(xdr::Hash(hash))
+            xdr::ContractId(xdr::Hash(hash)),
         )))
     }
 
@@ -365,11 +402,12 @@ impl TransactionBuilder {
                 // For now, use a placeholder - real implementation needs SAC computation
                 let asset_str = format!("{}:{}", code, issuer);
                 // TODO: compute_sac_contract_id
-                Err(anyhow!("Classic asset SAC computation not yet implemented for {}", asset_str))
+                Err(anyhow!(
+                    "Classic asset SAC computation not yet implemented for {}",
+                    asset_str
+                ))
             }
-            dex_adapters::TokenId::Contract { address } => {
-                self.contract_to_scval(address)
-            }
+            dex_adapters::TokenId::Contract { address } => self.contract_to_scval(address),
         }
     }
 

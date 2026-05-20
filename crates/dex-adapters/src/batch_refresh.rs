@@ -11,9 +11,9 @@
 //! so one getLedgerEntries call with N contract instance keys gives us N pools' reserves.
 
 use crate::rpc::SorobanRpc;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde_json::json;
-use stellar_xdr::curr::{self as xdr, Limits, WriteXdr, ReadXdr};
+use stellar_xdr::curr::{self as xdr, Limits, ReadXdr, WriteXdr};
 use tracing::{debug, info, warn};
 
 /// Maximum keys per getLedgerEntries call (Stellar RPC limit)
@@ -150,7 +150,10 @@ fn parse_instance_reserves(xdr_b64: &str) -> Result<Option<(u128, u128)>> {
     let contract_data = match &data {
         xdr::LedgerEntryData::ContractData(cd) => cd,
         other => {
-            println!("[parse] Not ContractData: {:?}", std::mem::discriminant(other));
+            println!(
+                "[parse] Not ContractData: {:?}",
+                std::mem::discriminant(other)
+            );
             return Ok(None);
         }
     };
@@ -158,7 +161,10 @@ fn parse_instance_reserves(xdr_b64: &str) -> Result<Option<(u128, u128)>> {
     let instance = match &contract_data.val {
         xdr::ScVal::ContractInstance(inst) => inst,
         other => {
-            println!("[parse] val is not ContractInstance: {:?}", std::mem::discriminant(other));
+            println!(
+                "[parse] val is not ContractInstance: {:?}",
+                std::mem::discriminant(other)
+            );
             return Ok(None);
         }
     };
@@ -199,9 +205,7 @@ fn extract_i128_as_u128(val: &xdr::ScVal) -> Option<u128> {
             let v = ((parts.hi as i128) << 64) | (parts.lo as u64 as i128);
             Some(v as u128)
         }
-        xdr::ScVal::U128(parts) => {
-            Some(((parts.hi as u128) << 64) | (parts.lo as u128))
-        }
+        xdr::ScVal::U128(parts) => Some(((parts.hi as u128) << 64) | (parts.lo as u128)),
         _ => None,
     }
 }
@@ -219,9 +223,7 @@ mod tests {
         );
 
         // First Soroswap pair (from our earlier tests)
-        let pools = vec![
-            "CB46LMGJC7SYSH4C7SBNLV635OX5BSNQDGRR32NRXAV7N2AVNZMQUJ3A".to_string(),
-        ];
+        let pools = vec!["CB46LMGJC7SYSH4C7SBNLV635OX5BSNQDGRR32NRXAV7N2AVNZMQUJ3A".to_string()];
 
         let results = batch_refresh_soroswap_reserves(&rpc, &pools).await.unwrap();
 

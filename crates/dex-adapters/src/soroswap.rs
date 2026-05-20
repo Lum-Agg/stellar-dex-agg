@@ -7,14 +7,14 @@
 //! - Each pair is a separate contract with token_0(), token_1(), get_reserves()
 
 use crate::batch_refresh::batch_refresh_soroswap_reserves;
-use crate::rpc::{SorobanRpc, scval_to_address, scval_to_i128, scval_to_u128, scval_to_u32};
+use crate::rpc::{scval_to_address, scval_to_i128, scval_to_u128, scval_to_u32, SorobanRpc};
 use crate::traits::*;
 use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::Arc;
 use stellar_xdr::curr as xdr;
 use tokio::sync::RwLock;
-use tracing::{info, debug};
+use tracing::{debug, info};
 
 /// Soroswap Factory contract address (Mainnet)
 pub const SOROSWAP_FACTORY: &str = "CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2";
@@ -63,7 +63,11 @@ impl SoroswapAdapter {
             }
         }
 
-        debug!("Soroswap: batch-refreshed {}/{} pools", updated, pool_addresses.len());
+        debug!(
+            "Soroswap: batch-refreshed {}/{} pools",
+            updated,
+            pool_addresses.len()
+        );
         Ok(updated)
     }
 
@@ -95,7 +99,10 @@ impl SoroswapAdapter {
     /// Optimized: uses contract addresses directly as TokenId (no name() calls).
     async fn fetch_pairs_from_factory(&self) -> Result<Vec<AdapterTradingPair>> {
         // 1. Get total pair count
-        let length_val = self.rpc.call_no_args(SOROSWAP_FACTORY, "all_pairs_length").await?;
+        let length_val = self
+            .rpc
+            .call_no_args(SOROSWAP_FACTORY, "all_pairs_length")
+            .await?;
         let total_pairs = scval_to_u32(&length_val)?;
         info!("Soroswap: total pairs = {}", total_pairs);
 
@@ -120,7 +127,11 @@ impl SoroswapAdapter {
             }
 
             if all_pairs.len() % 50 == 0 && !all_pairs.is_empty() {
-                info!("Soroswap: fetched {}/{} pairs so far", all_pairs.len(), total_pairs);
+                info!(
+                    "Soroswap: fetched {}/{} pairs so far",
+                    all_pairs.len(),
+                    total_pairs
+                );
             }
 
             // Small delay to avoid overwhelming RPC
@@ -137,7 +148,8 @@ impl SoroswapAdapter {
         let index_val = xdr::ScVal::U32(index);
 
         // Get pair contract address
-        let pair_addr_val = self.rpc
+        let pair_addr_val = self
+            .rpc
             .simulate_call(SOROSWAP_FACTORY, "all_pairs", vec![index_val])
             .await?;
         let pair_address = scval_to_address(&pair_addr_val)?;
@@ -153,8 +165,12 @@ impl SoroswapAdapter {
         let token_b_addr = scval_to_address(&token_1_result?)?;
 
         // Use contract address directly as TokenId (fast, no extra RPC)
-        let token_a = TokenId::Contract { address: token_a_addr };
-        let token_b = TokenId::Contract { address: token_b_addr };
+        let token_a = TokenId::Contract {
+            address: token_a_addr,
+        };
+        let token_b = TokenId::Contract {
+            address: token_b_addr,
+        };
 
         // Parse reserves
         let (reserve_a, reserve_b) = match reserves_result {
@@ -276,7 +292,10 @@ impl DexAdapter for SoroswapAdapter {
     }
 
     async fn health_check(&self) -> bool {
-        self.rpc.call_no_args(SOROSWAP_FACTORY, "all_pairs_length").await.is_ok()
+        self.rpc
+            .call_no_args(SOROSWAP_FACTORY, "all_pairs_length")
+            .await
+            .is_ok()
     }
 
     async fn refresh_reserves(&self) -> Result<usize> {

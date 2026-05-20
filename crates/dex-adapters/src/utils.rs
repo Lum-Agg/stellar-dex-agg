@@ -1,6 +1,6 @@
 //! Shared utilities for DEX adapters.
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use sha2::{Digest, Sha256};
 
 /// Compute the Stellar Asset Contract (SAC) address for a classic asset.

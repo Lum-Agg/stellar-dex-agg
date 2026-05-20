@@ -8,7 +8,7 @@
 //! The registry resolves contract addresses to human-readable names by calling
 //! the token's name() function, and caches the results.
 
-use crate::rpc::{SorobanRpc, scval_to_string};
+use crate::rpc::{scval_to_string, SorobanRpc};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -20,9 +20,24 @@ use tracing::debug;
 /// These are pre-populated to avoid RPC calls for common tokens.
 const WELL_KNOWN_TOKENS: &[(&str, &str, &str, u32)] = &[
     // (contract_address, symbol, name/asset_id, decimals)
-    ("CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA", "XLM", "native", 7),
-    ("CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75", "USDC", "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", 7),
-    ("CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC", "EURC", "EURC:GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2", 7),
+    (
+        "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+        "XLM",
+        "native",
+        7,
+    ),
+    (
+        "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+        "USDC",
+        "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        7,
+    ),
+    (
+        "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+        "EURC",
+        "EURC:GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2",
+        7,
+    ),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

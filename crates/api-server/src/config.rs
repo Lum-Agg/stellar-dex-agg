@@ -32,8 +32,7 @@ impl AppConfig {
     /// Load config from environment variables, falling back to defaults.
     pub fn from_env() -> Self {
         Self {
-            rpc_url: std::env::var("RPC_URL")
-                .unwrap_or_else(|_| Self::default().rpc_url),
+            rpc_url: std::env::var("RPC_URL").unwrap_or_else(|_| Self::default().rpc_url),
             network_passphrase: std::env::var("NETWORK_PASSPHRASE")
                 .unwrap_or_else(|_| Self::default().network_passphrase),
             listen_addr: std::env::var("LISTEN_ADDR")

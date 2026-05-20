@@ -2,7 +2,7 @@ pub mod config;
 pub mod handlers;
 pub mod state;
 
-use axum::{Router, routing::get, routing::post};
+use axum::{routing::get, routing::post, Router};
 use std::net::SocketAddr;
 use tower_http::cors::CorsLayer;
 use tracing::info;
@@ -12,7 +12,10 @@ use state::AppState;
 
 pub async fn run_server() -> anyhow::Result<()> {
     let config = AppConfig::from_env();
-    info!("Config: rpc_url={}, listen={}", config.rpc_url, config.listen_addr);
+    info!(
+        "Config: rpc_url={}, listen={}",
+        config.rpc_url, config.listen_addr
+    );
 
     let listen_addr: SocketAddr = config.listen_addr.parse()?;
     let app_state = AppState::new(config).await?;

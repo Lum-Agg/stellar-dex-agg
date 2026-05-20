@@ -75,6 +75,10 @@ export function SwapCard() {
 
   const handleSwap = useCallback(async () => {
     if (!walletAddress || !quote) return;
+    if (!quote.sub_routes?.length) {
+      setTxResult({ success: false, error: 'No route to execute' });
+      return;
+    }
     setSwapping(true);
     setTxResult(null);
 
@@ -82,19 +86,19 @@ export function SwapCard() {
       // For split orders, we'd need split_swap; for now, use the best single route.
       // If the route is split across multiple paths, pick the largest one (most amount).
       const route = quote.sub_routes.reduce((best, r) =>
-        parseInt(r.amount_in) > parseInt(best.amount_in) ? r : best,
+        parseInt(r.amount_in, 10) > parseInt(best.amount_in, 10) ? r : best,
         quote.sub_routes[0]
       );
 
       // Build swap steps. The api-server provides in_indices/out_indices
       // for each pool to specify input/output token positions.
       const steps = route.pool_addresses.map((pool: string, i: number) => ({
-        dex_type: route.dex_types[i],
+        dex_type: route.dex_types[i] ?? 'aquarius',
         pool_address: pool,
-        token_in: route.path[i],
-        token_out: route.path[i + 1],
-        in_idx: route.in_indices[i],
-        out_idx: route.out_indices[i],
+        token_in: route.path[i] ?? '',
+        token_out: route.path[i + 1] ?? '',
+        in_idx: route.in_indices[i] ?? 0,
+        out_idx: route.out_indices[i] ?? 1,
       }));
 
       const buildResp = await fetch(`${API_URL}/api/v1/build_tx`, {
@@ -111,7 +115,7 @@ export function SwapCard() {
       });
       const buildData = await buildResp.json();
 
-      if (!buildData.success) {
+      if (!buildData.success || !buildData.data?.unsigned_tx_xdr) {
         setTxResult({ success: false, error: buildData.error || 'Failed to build transaction' });
         return;
       }
@@ -227,12 +231,14 @@ export function SwapCard() {
           </div>
         </div>
 
-        {/* Rate display */}
-        {quote && (
+        {/* Rate display: human out per 1 unit token in (not stroops passed to formatOutput) */}
+        {quote && amountIn && parseFloat(amountIn) > 0 && (
           <div className="mt-3 px-1 text-xs text-gray-500">
-            1 {tokenIn.symbol} ≈ {formatOutput(
-              (parseInt(quote.expected_output) * 10 ** tokenIn.decimals / parseInt(amountIn || '1') / 10 ** tokenIn.decimals * 10 ** tokenOut.decimals).toFixed(0)
-            )} {tokenOut.symbol}
+            1 {tokenIn.symbol} ≈{' '}
+            {(parseInt(quote.expected_output, 10) / 10 ** tokenOut.decimals / parseFloat(amountIn)).toLocaleString(undefined, {
+              maximumFractionDigits: 8,
+            })}{' '}
+            {tokenOut.symbol}
           </div>
         )}
 

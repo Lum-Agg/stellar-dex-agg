@@ -1,13 +1,13 @@
 //! Token metadata cache: persists token symbol/name to a JSON file.
 //! On startup, loads from file. In background, resolves unknown tokens via RPC.
 
-use crate::rpc::{SorobanRpc, scval_to_string};
+use crate::rpc::{scval_to_string, SorobanRpc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, debug, warn};
+use tracing::{debug, info, warn};
 
 const METADATA_FILE: &str = "data/token_metadata.json";
 
@@ -62,7 +62,8 @@ impl TokenMetadataStore {
     /// Call this with a list of all known token addresses.
     pub async fn resolve_unknown(&self, token_addresses: Vec<String>) {
         let cache = self.cache.read().await;
-        let unknown: Vec<String> = token_addresses.into_iter()
+        let unknown: Vec<String> = token_addresses
+            .into_iter()
             .filter(|addr| !cache.contains_key(addr))
             .collect();
         drop(cache);
@@ -82,13 +83,20 @@ impl TokenMetadataStore {
                 }
                 None => {
                     // Store with contract prefix as symbol so we don't retry
-                    let short = if addr.len() > 8 { &addr[..8] } else { addr.as_str() };
-                    self.cache.write().await.insert(addr.clone(), TokenMetadata {
-                        contract: addr.clone(),
-                        symbol: short.to_string(),
-                        name: "Unknown".to_string(),
-                        logo: None,
-                    });
+                    let short = if addr.len() > 8 {
+                        &addr[..8]
+                    } else {
+                        addr.as_str()
+                    };
+                    self.cache.write().await.insert(
+                        addr.clone(),
+                        TokenMetadata {
+                            contract: addr.clone(),
+                            symbol: short.to_string(),
+                            name: "Unknown".to_string(),
+                            logo: None,
+                        },
+                    );
                 }
             }
 
@@ -135,7 +143,12 @@ impl TokenMetadataStore {
             name
         };
 
-        debug!("Resolved token {}: symbol={}, name={}", &contract[..12], symbol, display_name);
+        debug!(
+            "Resolved token {}: symbol={}, name={}",
+            &contract[..12],
+            symbol,
+            display_name
+        );
 
         Some(TokenMetadata {
             contract: contract.to_string(),
@@ -148,7 +161,9 @@ impl TokenMetadataStore {
     /// Save cache to file.
     async fn save(&self) {
         let cache = self.cache.read().await;
-        let file_cache = MetadataCache { tokens: cache.clone() };
+        let file_cache = MetadataCache {
+            tokens: cache.clone(),
+        };
 
         match serde_json::to_string_pretty(&file_cache) {
             Ok(json) => {

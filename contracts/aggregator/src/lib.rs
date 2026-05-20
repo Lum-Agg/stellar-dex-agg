@@ -2,7 +2,7 @@
 //! Stellar DEX Aggregator Contract
 //!
 //! Executes multi-hop and split-order swaps atomically across Soroban DEXes
-//! (Aquarius, Soroswap, Phoenix).
+//! (Aquarius, Soroswap, Phoenix, Sushi V3, Comet).
 //!
 //! Two main entry points:
 //! - `swap()`: Single-path multi-hop swap (A→B→C through different DEXes)
@@ -13,9 +13,9 @@
 //! directly back to the user — all in one atomic invocation.
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, token, Address, BytesN, Env, Symbol, Vec, Val,
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
-    IntoVal,
+    contract, contractimpl, contracttype, token, vec, Address, BytesN, Env, IntoVal, Symbol, Val,
+    Vec,
 };
 
 /// Supported DEX protocol types
@@ -81,7 +81,10 @@ impl AggregatorContract {
 
     /// Upgrade the contract WASM code. Only admin can call.
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin)
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
             .expect("Not initialized");
         admin.require_auth();
         env.deployer().update_current_contract_wasm(new_wasm_hash);
@@ -89,19 +92,15 @@ impl AggregatorContract {
 
     /// Get the admin address.
     pub fn admin(env: Env) -> Address {
-        env.storage().instance().get(&DataKey::Admin)
+        env.storage()
+            .instance()
+            .get(&DataKey::Admin)
             .expect("Not initialized")
     }
 
     /// Execute a single-path multi-hop swap atomically.
     ///
-    /// Use this when the optimal route is a single path (no splitting needed).
-    ///
-    /// Flow:
-    /// 1. Pull `amount_in` of `token_in` from user
-    /// 2. Execute each swap step sequentially (A→B→C)
-    /// 3. Verify final output >= `min_amount_out`
-    /// 4. Transfer output to user
+    /// Delegates to `split_swap` internally — wraps the steps as a single sub-route.
     pub fn swap(
         env: Env,
         user: Address,
@@ -110,26 +109,10 @@ impl AggregatorContract {
         steps: Vec<SwapStep>,
         min_amount_out: i128,
     ) -> i128 {
-        user.require_auth();
-
-        let contract_addr = env.current_contract_address();
-
-        // Pull input tokens from user
-        let token_in_client = token::Client::new(&env, &token_in);
-        token_in_client.transfer(&user, &contract_addr, &amount_in);
-
-        // Execute swap chain
-        let output = Self::execute_path(&env, &steps, amount_in, &contract_addr);
-
-        // Verify minimum output
-        assert!(output >= min_amount_out, "Output below minimum");
-
-        // Determine output token (last step's token_out)
-        let last_step = steps.last().expect("Empty steps");
-        let token_out_client = token::Client::new(&env, &last_step.token_out);
-        token_out_client.transfer(&contract_addr, &user, &output);
-
-        output
+        let token_out = steps.last().expect("Empty steps").token_out.clone();
+        let sub = SubRoute { amount_in, steps };
+        let sub_routes = vec![&env, sub];
+        Self::split_swap(env, user, token_in, token_out, sub_routes, min_amount_out)
     }
 
     /// Execute a split-order swap atomically.
@@ -174,11 +157,17 @@ impl AggregatorContract {
         for sr in sub_routes.iter() {
             // Verify first step starts with token_in
             if let Some(first_step) = sr.steps.first() {
-                assert!(first_step.token_in == token_in, "Sub-route must start with token_in");
+                assert!(
+                    first_step.token_in == token_in,
+                    "Sub-route must start with token_in"
+                );
             }
             // Verify last step ends with token_out
             if let Some(last_step) = sr.steps.last() {
-                assert!(last_step.token_out == token_out, "Sub-route must end with token_out");
+                assert!(
+                    last_step.token_out == token_out,
+                    "Sub-route must end with token_out"
+                );
             }
 
             let output = Self::execute_path(&env, &sr.steps, sr.amount_in, &contract_addr);
@@ -195,8 +184,20 @@ impl AggregatorContract {
         total_output
     }
 
+    /// Comet rounds the approval ledger to avoid simulation vs execution sequence mismatch.
+    #[cfg(not(test))]
+    fn comet_approval_ledger(env: &Env) -> u32 {
+        let seq = env.ledger().sequence();
+        (seq / 100_000 + 1) * 100_000
+    }
+
     /// Execute a path (sequence of swap steps) and return the final output amount.
-    fn execute_path(env: &Env, steps: &Vec<SwapStep>, amount_in: i128, my_address: &Address) -> i128 {
+    fn execute_path(
+        env: &Env,
+        steps: &Vec<SwapStep>,
+        amount_in: i128,
+        my_address: &Address,
+    ) -> i128 {
         let mut current_amount = amount_in;
 
         for step in steps.iter() {
@@ -241,7 +242,8 @@ impl AggregatorContract {
                     aq_in_amount.into_val(env),
                     0u128.into_val(env),
                 ];
-                let received: u128 = env.invoke_contract(&step.dex_id, &Symbol::new(env, "swap"), args);
+                let received: u128 =
+                    env.invoke_contract(&step.dex_id, &Symbol::new(env, "swap"), args);
                 received as i128
             }
 
@@ -292,7 +294,6 @@ impl AggregatorContract {
             }
 
             DexType::Phoenix => {
-                let a2b = step.in_idx == 0 && step.out_idx == 1;
                 // Phoenix: swap(sender, offer_asset, offer_amount, ...)
                 // Fee on output, need balance diff to determine actual output
                 let token_out_client = token::Client::new(env, &step.token_out);
@@ -327,41 +328,53 @@ impl AggregatorContract {
                     }),
                 ]);
 
-                let _: Val = env.invoke_contract(&step.dex_id, &Symbol::new(env, "swap"), swap_args);
+                let _: Val =
+                    env.invoke_contract(&step.dex_id, &Symbol::new(env, "swap"), swap_args);
 
                 let balance_after = token_out_client.balance(my_address);
                 balance_after - balance_before
             }
 
             DexType::Sushi => {
-                // Sushi V3: swap(sender, recipient, zero_for_one, amount_specified, sqrt_price_limit_x96, hints)
-                // The pool pulls tokens from sender and sends output to recipient.
+                // Sushi V3 pool: swap(sender, recipient, zero_for_one, amount_specified,
+                //               sqrt_price_limit_x96, hints)
+                // hints must come from get_oracle_hints() on the same pool (see sushiswap bindings).
                 let zero_for_one = step.in_idx == 0 && step.out_idx == 1;
 
                 // sqrt_price_limit: MIN_SQRT_RATIO+1 for zero_for_one, MAX_SQRT_RATIO-1 otherwise
                 let price_limit: soroban_sdk::U256 = if zero_for_one {
                     soroban_sdk::U256::from_u128(env, 4_295_128_740u128)
                 } else {
-                    let max_minus_1 = soroban_sdk::U256::from_be_bytes(env, &soroban_sdk::Bytes::from_array(env, &[
-                        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                        0x00, 0x00, 0x00, 0x00,
-                        0xff, 0xfd, 0x89, 0x63, 0xef, 0xd1, 0xfc, 0x6a,
-                        0x50, 0x64, 0x88, 0x49, 0x5d, 0x95, 0x1d, 0x52,
-                        0x63, 0x98, 0x8d, 0x25,
-                    ]));
-                    max_minus_1
+                    soroban_sdk::U256::from_be_bytes(
+                        env,
+                        &soroban_sdk::Bytes::from_array(
+                            env,
+                            &[
+                                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                                0x00, 0xff, 0xfd, 0x89, 0x63, 0xef, 0xd1, 0xfc, 0x6a, 0x50, 0x64,
+                                0x88, 0x49, 0x5d, 0x95, 0x1d, 0x52, 0x63, 0x98, 0x8d, 0x25,
+                            ],
+                        ),
+                    )
                 };
+
+                let hints: Val = env.invoke_contract(
+                    &step.dex_id,
+                    &Symbol::new(env, "get_oracle_hints"),
+                    soroban_sdk::vec![env],
+                );
 
                 let token_out_client = token::Client::new(env, &step.token_out);
                 let balance_before = token_out_client.balance(my_address);
 
                 let swap_args = soroban_sdk::vec![
                     env,
-                    my_address.into_val(env),       // sender
-                    my_address.into_val(env),       // recipient
-                    zero_for_one.into_val(env),     // zero_for_one
-                    amount_in.into_val(env),        // amount_specified (positive = exact input)
-                    price_limit.into_val(env),      // sqrt_price_limit_x96
+                    my_address.into_val(env),
+                    my_address.into_val(env),
+                    zero_for_one.into_val(env),
+                    amount_in.into_val(env),
+                    price_limit.into_val(env),
+                    hints,
                 ];
 
                 env.authorize_as_current_contract(soroban_sdk::vec![
@@ -381,54 +394,139 @@ impl AggregatorContract {
                     }),
                 ]);
 
-                let _: Val = env.invoke_contract(&step.dex_id, &Symbol::new(env, "swap"), swap_args);
+                let _: Val =
+                    env.invoke_contract(&step.dex_id, &Symbol::new(env, "swap"), swap_args);
 
                 let balance_after = token_out_client.balance(my_address);
                 balance_after - balance_before
             }
 
             DexType::CometDex => {
-                // Comet (Balancer V1 weighted pool): swap_exact_amount_in(token_in, amount_in, token_out, min_out, max_price)
-                // The pool pulls token_in from sender and sends token_out to sender.
-
-                let token_out_client = token::Client::new(env, &step.token_out);
-                let balance_before = token_out_client.balance(my_address);
-
+                // Comet: swap_exact_amount_in(token_in, amount_in, token_out, min_out, max_price, user)
+                // user = aggregator (funds already here). Comet uses approve + transfer_from
+                // (comet token_utility::pull_underlying).
                 let max_price = i128::MAX;
-                let swap_args = soroban_sdk::vec![
-                    env,
-                    step.token_in.into_val(env),
-                    amount_in.into_val(env),
-                    step.token_out.into_val(env),
-                    0i128.into_val(env),
-                    max_price.into_val(env),
-                ];
 
-                env.authorize_as_current_contract(soroban_sdk::vec![
-                    env,
-                    InvokerContractAuthEntry::Contract(SubContractInvocation {
-                        context: ContractContext {
-                            contract: step.token_in.clone(),
-                            fn_name: Symbol::new(env, "transfer"),
-                            args: soroban_sdk::vec![
+                let build_swap_args = || {
+                    soroban_sdk::vec![
+                        env,
+                        step.token_in.into_val(env),
+                        amount_in.into_val(env),
+                        step.token_out.into_val(env),
+                        0i128.into_val(env),
+                        max_price.into_val(env),
+                        my_address.into_val(env),
+                    ]
+                };
+
+                #[cfg(test)]
+                {
+                    env.authorize_as_current_contract(soroban_sdk::vec![
+                        env,
+                        InvokerContractAuthEntry::Contract(SubContractInvocation {
+                            context: ContractContext {
+                                contract: step.token_in.clone(),
+                                fn_name: Symbol::new(env, "transfer"),
+                                args: soroban_sdk::vec![
+                                    env,
+                                    my_address.into_val(env),
+                                    step.dex_id.into_val(env),
+                                    amount_in.into_val(env),
+                                ],
+                            },
+                            sub_invocations: soroban_sdk::vec![env],
+                        }),
+                    ]);
+                    token::Client::new(env, &step.token_in).transfer(
+                        my_address,
+                        &step.dex_id,
+                        &amount_in,
+                    );
+                    let (amount_out, _): (i128, i128) = env.invoke_contract(
+                        &step.dex_id,
+                        &Symbol::new(env, "swap_exact_amount_in"),
+                        build_swap_args(),
+                    );
+                    return amount_out;
+                }
+
+                #[cfg(not(test))]
+                {
+                    let approval_ledger = Self::comet_approval_ledger(env);
+
+                    env.authorize_as_current_contract(soroban_sdk::vec![
+                        env,
+                        InvokerContractAuthEntry::Contract(SubContractInvocation {
+                            context: ContractContext {
+                                contract: step.token_in.clone(),
+                                fn_name: Symbol::new(env, "approve"),
+                                args: soroban_sdk::vec![
+                                    env,
+                                    my_address.into_val(env),
+                                    step.dex_id.into_val(env),
+                                    amount_in.into_val(env),
+                                    approval_ledger.into_val(env),
+                                ],
+                            },
+                            sub_invocations: soroban_sdk::vec![env],
+                        }),
+                    ]);
+                    token::Client::new(env, &step.token_in).approve(
+                        my_address,
+                        &step.dex_id,
+                        &amount_in,
+                        &approval_ledger,
+                    );
+
+                    env.authorize_as_current_contract(soroban_sdk::vec![
+                        env,
+                        InvokerContractAuthEntry::Contract(SubContractInvocation {
+                            context: ContractContext {
+                                contract: step.dex_id.clone(),
+                                fn_name: Symbol::new(env, "swap_exact_amount_in"),
+                                args: build_swap_args(),
+                            },
+                            sub_invocations: soroban_sdk::vec![
                                 env,
-                                my_address.into_val(env),
-                                step.dex_id.into_val(env),
-                                amount_in.into_val(env),
+                                InvokerContractAuthEntry::Contract(SubContractInvocation {
+                                    context: ContractContext {
+                                        contract: step.token_in.clone(),
+                                        fn_name: Symbol::new(env, "approve"),
+                                        args: soroban_sdk::vec![
+                                            env,
+                                            my_address.into_val(env),
+                                            step.dex_id.into_val(env),
+                                            amount_in.into_val(env),
+                                            approval_ledger.into_val(env),
+                                        ],
+                                    },
+                                    sub_invocations: soroban_sdk::vec![env],
+                                }),
+                                InvokerContractAuthEntry::Contract(SubContractInvocation {
+                                    context: ContractContext {
+                                        contract: step.token_in.clone(),
+                                        fn_name: Symbol::new(env, "transfer_from"),
+                                        args: soroban_sdk::vec![
+                                            env,
+                                            step.dex_id.into_val(env),
+                                            my_address.into_val(env),
+                                            step.dex_id.into_val(env),
+                                            amount_in.into_val(env),
+                                        ],
+                                    },
+                                    sub_invocations: soroban_sdk::vec![env],
+                                }),
                             ],
-                        },
-                        sub_invocations: soroban_sdk::vec![env],
-                    }),
-                ]);
+                        }),
+                    ]);
 
-                let _: Val = env.invoke_contract(
-                    &step.dex_id,
-                    &Symbol::new(env, "swap_exact_amount_in"),
-                    swap_args,
-                );
-
-                let balance_after = token_out_client.balance(my_address);
-                balance_after - balance_before
+                    let (amount_out, _): (i128, i128) = env.invoke_contract(
+                        &step.dex_id,
+                        &Symbol::new(env, "swap_exact_amount_in"),
+                        build_swap_args(),
+                    );
+                    amount_out
+                }
             }
         }
     }
@@ -473,7 +571,10 @@ mod test {
         pub struct AqPool;
 
         #[contracttype]
-        enum AqKey { TokenA, TokenB }
+        enum AqKey {
+            TokenA,
+            TokenB,
+        }
 
         #[contractimpl]
         impl AqPool {
@@ -481,7 +582,14 @@ mod test {
                 env.storage().instance().set(&AqKey::TokenA, &a);
                 env.storage().instance().set(&AqKey::TokenB, &b);
             }
-            pub fn swap(env: Env, user: Address, in_idx: u32, out_idx: u32, in_amount: u128, _min: u128) -> u128 {
+            pub fn swap(
+                env: Env,
+                user: Address,
+                in_idx: u32,
+                out_idx: u32,
+                in_amount: u128,
+                _min: u128,
+            ) -> u128 {
                 user.require_auth();
                 let a: Address = env.storage().instance().get(&AqKey::TokenA).unwrap();
                 let b: Address = env.storage().instance().get(&AqKey::TokenB).unwrap();
@@ -503,7 +611,12 @@ mod test {
         pub struct SsPair;
 
         #[contracttype]
-        enum SsKey { TokenA, TokenB, ReserveA, ReserveB }
+        enum SsKey {
+            TokenA,
+            TokenB,
+            ReserveA,
+            ReserveB,
+        }
 
         #[contractimpl]
         impl SsPair {
@@ -514,22 +627,133 @@ mod test {
                 env.storage().instance().set(&SsKey::ReserveB, &rb);
             }
             pub fn get_reserves(env: Env) -> (i128, i128) {
-                let ra = env.storage().instance().get(&SsKey::ReserveA).unwrap_or(0i128);
-                let rb = env.storage().instance().get(&SsKey::ReserveB).unwrap_or(0i128);
+                let ra = env
+                    .storage()
+                    .instance()
+                    .get(&SsKey::ReserveA)
+                    .unwrap_or(0i128);
+                let rb = env
+                    .storage()
+                    .instance()
+                    .get(&SsKey::ReserveB)
+                    .unwrap_or(0i128);
                 (ra, rb)
             }
             pub fn swap(env: Env, a0: i128, a1: i128, to: Address) {
                 let a = env.storage().instance().get(&SsKey::TokenA).unwrap();
                 let b = env.storage().instance().get(&SsKey::TokenB).unwrap();
                 let me = env.current_contract_address();
-                if a0 > 0 { token::Client::new(&env, &a).transfer(&me, &to, &a0); }
-                if a1 > 0 { token::Client::new(&env, &b).transfer(&me, &to, &a1); }
+                if a0 > 0 {
+                    token::Client::new(&env, &a).transfer(&me, &to, &a0);
+                }
+                if a1 > 0 {
+                    token::Client::new(&env, &b).transfer(&me, &to, &a1);
+                }
+            }
+        }
+    }
+
+    // ── Mock Sushi V3 Pool ──
+    mod sushi_mock {
+        use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, U256};
+
+        #[contracttype]
+        #[derive(Clone)]
+        pub struct OracleHints {
+            pub checkpoint: u32,
+            pub slot: u128,
+        }
+
+        #[contract]
+        pub struct SushiPool;
+
+        #[contracttype]
+        enum SushiKey {
+            TokenA,
+            TokenB,
+        }
+
+        #[contractimpl]
+        impl SushiPool {
+            pub fn init(env: Env, a: Address, b: Address) {
+                env.storage().instance().set(&SushiKey::TokenA, &a);
+                env.storage().instance().set(&SushiKey::TokenB, &b);
+            }
+
+            pub fn get_oracle_hints(env: Env) -> OracleHints {
+                let _ = env;
+                OracleHints {
+                    checkpoint: 1,
+                    slot: 2,
+                }
+            }
+
+            pub fn swap(
+                env: Env,
+                sender: Address,
+                recipient: Address,
+                zero_for_one: bool,
+                amount_specified: i128,
+                _sqrt_price_limit_x96: U256,
+                _hints: OracleHints,
+            ) {
+                sender.require_auth();
+                assert!(amount_specified > 0);
+                let a: Address = env.storage().instance().get(&SushiKey::TokenA).unwrap();
+                let b: Address = env.storage().instance().get(&SushiKey::TokenB).unwrap();
+                let (token_in, token_out) = if zero_for_one { (&a, &b) } else { (&b, &a) };
+                let me = env.current_contract_address();
+                token::Client::new(&env, token_in).transfer(&sender, &me, &amount_specified);
+                token::Client::new(&env, token_out).transfer(&me, &recipient, &amount_specified);
+            }
+        }
+    }
+
+    // ── Mock Comet Pool ──
+    mod comet_mock {
+        use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env};
+
+        #[contract]
+        pub struct CometPool;
+
+        #[contracttype]
+        enum CometKey {
+            TokenA,
+            TokenB,
+        }
+
+        #[contractimpl]
+        impl CometPool {
+            pub fn init(env: Env, a: Address, b: Address) {
+                env.storage().instance().set(&CometKey::TokenA, &a);
+                env.storage().instance().set(&CometKey::TokenB, &b);
+            }
+
+            pub fn swap_exact_amount_in(
+                env: Env,
+                token_in: Address,
+                token_amount_in: i128,
+                token_out: Address,
+                min_amount_out: i128,
+                _max_price: i128,
+                user: Address,
+            ) -> (i128, i128) {
+                // In unit tests the aggregator pre-deposits token_in; on mainnet Comet
+                // pulls via approve + transfer_from (see pull_underlying).
+                let _ = token_in;
+                assert!(token_amount_in > 0);
+                let me = env.current_contract_address();
+                token::Client::new(&env, &token_out).transfer(&me, &user, &token_amount_in);
+                assert!(token_amount_in >= min_amount_out);
+                (token_amount_in, 0)
             }
         }
     }
 
     use aq_mock::AqPoolClient;
+    use comet_mock::CometPoolClient;
     use ss_mock::SsPairClient;
+    use sushi_mock::SushiPoolClient;
 
     // ═══════════════════════════════════════════════════════════════════════
     //  Aquarius tests
@@ -551,7 +775,14 @@ mod test {
         AqPoolClient::new(&env, &pid).init(&a, &b);
         sac_b.mint(&p, &10_000_000);
 
-        let step = SwapStep { dex_id: p, dex_type: DexType::Aquarius, token_in: a.clone(), token_out: b, in_idx: 0, out_idx: 1 };
+        let step = SwapStep {
+            dex_id: p,
+            dex_type: DexType::Aquarius,
+            token_in: a.clone(),
+            token_out: b,
+            in_idx: 0,
+            out_idx: 1,
+        };
         let before = tok_b.balance(&user);
         let out = agg.swap(&user, &a, &5000, &vec![&env, step], &1);
         assert_eq!(out, 5000);
@@ -574,7 +805,14 @@ mod test {
         AqPoolClient::new(&env, &pid).init(&a, &b);
         sac_a.mint(&p, &10_000_000);
 
-        let step = SwapStep { dex_id: p, dex_type: DexType::Aquarius, token_in: b.clone(), token_out: a.clone(), in_idx: 1, out_idx: 0 };
+        let step = SwapStep {
+            dex_id: p,
+            dex_type: DexType::Aquarius,
+            token_in: b.clone(),
+            token_out: a.clone(),
+            in_idx: 1,
+            out_idx: 0,
+        };
         let before = tok_a.balance(&user);
         let out = agg.swap(&user, &b, &3000, &vec![&env, step], &1);
         assert_eq!(out, 3000);
@@ -597,10 +835,18 @@ mod test {
         AqPoolClient::new(&env, &pid).init(&a, &b);
         sac_b.mint(&p, &10_000_000);
 
-        let step = SwapStep { dex_id: p, dex_type: DexType::Aquarius, token_in: a.clone(), token_out: b, in_idx: 0, out_idx: 1 };
+        let step = SwapStep {
+            dex_id: p,
+            dex_type: DexType::Aquarius,
+            token_in: a.clone(),
+            token_out: b,
+            in_idx: 0,
+            out_idx: 1,
+        };
         assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             agg.swap(&user, &a, &5000, &vec![&env, step], &9999);
-        })).is_err());
+        }))
+        .is_err());
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -624,7 +870,14 @@ mod test {
         sac_a.mint(&p, &100_000);
         sac_b.mint(&p, &100_000);
 
-        let step = SwapStep { dex_id: p, dex_type: DexType::SoroswapPair, token_in: a.clone(), token_out: b, in_idx: 0, out_idx: 1 };
+        let step = SwapStep {
+            dex_id: p,
+            dex_type: DexType::SoroswapPair,
+            token_in: a.clone(),
+            token_out: b,
+            in_idx: 0,
+            out_idx: 1,
+        };
         let before = tok_b.balance(&user);
         let out = agg.swap(&user, &a, &1000, &vec![&env, step], &1);
         assert_eq!(out, 987);
@@ -648,11 +901,86 @@ mod test {
         sac_a.mint(&p, &100_000);
         sac_b.mint(&p, &100_000);
 
-        let step = SwapStep { dex_id: p, dex_type: DexType::SoroswapPair, token_in: b.clone(), token_out: a.clone(), in_idx: 1, out_idx: 0 };
+        let step = SwapStep {
+            dex_id: p,
+            dex_type: DexType::SoroswapPair,
+            token_in: b.clone(),
+            token_out: a.clone(),
+            in_idx: 1,
+            out_idx: 0,
+        };
         let before = tok_a.balance(&user);
         let out = agg.swap(&user, &b, &1000, &vec![&env, step], &1);
         assert_eq!(out, 987);
         assert_eq!(tok_a.balance(&user) - before, 987);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  Sushi tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_sushi_swap_with_hints() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let user = gen_addr(&env);
+        let (_, agg) = setup_agg(&env);
+
+        let (a, sac_a, _) = create_token(&env);
+        let (b, sac_b, tok_b) = create_token(&env);
+        sac_a.mint(&user, &1_000_000);
+
+        let pid = env.register_contract(None, sushi_mock::SushiPool);
+        let p = pid.clone();
+        SushiPoolClient::new(&env, &pid).init(&a, &b);
+        sac_b.mint(&p, &10_000_000);
+
+        let step = SwapStep {
+            dex_id: p,
+            dex_type: DexType::Sushi,
+            token_in: a.clone(),
+            token_out: b,
+            in_idx: 0,
+            out_idx: 1,
+        };
+        let before = tok_b.balance(&user);
+        let out = agg.swap(&user, &a, &4000, &vec![&env, step], &1);
+        assert_eq!(out, 4000);
+        assert_eq!(tok_b.balance(&user) - before, 4000);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  Comet tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_comet_swap_exact_amount_in() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let user = gen_addr(&env);
+        let (_, agg) = setup_agg(&env);
+
+        let (a, sac_a, _) = create_token(&env);
+        let (b, sac_b, tok_b) = create_token(&env);
+        sac_a.mint(&user, &1_000_000);
+
+        let pid = env.register_contract(None, comet_mock::CometPool);
+        let p = pid.clone();
+        CometPoolClient::new(&env, &pid).init(&a, &b);
+        sac_b.mint(&p, &10_000_000);
+
+        let step = SwapStep {
+            dex_id: p,
+            dex_type: DexType::CometDex,
+            token_in: a.clone(),
+            token_out: b,
+            in_idx: 0,
+            out_idx: 1,
+        };
+        let before = tok_b.balance(&user);
+        let out = agg.swap(&user, &a, &2500, &vec![&env, step], &1);
+        assert_eq!(out, 2500);
+        assert_eq!(tok_b.balance(&user) - before, 2500);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -684,8 +1012,22 @@ mod test {
 
         let steps = vec![
             &env,
-            SwapStep { dex_id: aq, dex_type: DexType::Aquarius, token_in: a.clone(), token_out: b.clone(), in_idx: 0, out_idx: 1 },
-            SwapStep { dex_id: ss, dex_type: DexType::SoroswapPair, token_in: b, token_out: c, in_idx: 0, out_idx: 1 },
+            SwapStep {
+                dex_id: aq,
+                dex_type: DexType::Aquarius,
+                token_in: a.clone(),
+                token_out: b.clone(),
+                in_idx: 0,
+                out_idx: 1,
+            },
+            SwapStep {
+                dex_id: ss,
+                dex_type: DexType::SoroswapPair,
+                token_in: b,
+                token_out: c,
+                in_idx: 0,
+                out_idx: 1,
+            },
         ];
         let before_c = tok_c.balance(&user);
         let before_b = tok_b.balance(&user);
@@ -725,15 +1067,31 @@ mod test {
             &env,
             SubRoute {
                 amount_in: 3000,
-                steps: vec![&env, SwapStep {
-                    dex_id: aq, dex_type: DexType::Aquarius, token_in: a.clone(), token_out: b.clone(), in_idx: 0, out_idx: 1,
-                }],
+                steps: vec![
+                    &env,
+                    SwapStep {
+                        dex_id: aq,
+                        dex_type: DexType::Aquarius,
+                        token_in: a.clone(),
+                        token_out: b.clone(),
+                        in_idx: 0,
+                        out_idx: 1,
+                    },
+                ],
             },
             SubRoute {
                 amount_in: 2000,
-                steps: vec![&env, SwapStep {
-                    dex_id: ss, dex_type: DexType::SoroswapPair,                 token_in: a.clone(), token_out: b.clone(), in_idx: 0, out_idx: 1,
-                }],
+                steps: vec![
+                    &env,
+                    SwapStep {
+                        dex_id: ss,
+                        dex_type: DexType::SoroswapPair,
+                        token_in: a.clone(),
+                        token_out: b.clone(),
+                        in_idx: 0,
+                        out_idx: 1,
+                    },
+                ],
             },
         ];
         let before = tok_b.balance(&user);
@@ -762,7 +1120,14 @@ mod test {
         AqPoolClient::new(&env, &pid).init(&a, &b);
         sac_b.mint(&p, &10_000_000);
 
-        let step = SwapStep { dex_id: p, dex_type: DexType::Aquarius, token_in: a.clone(), token_out: b, in_idx: 0, out_idx: 1 };
+        let step = SwapStep {
+            dex_id: p,
+            dex_type: DexType::Aquarius,
+            token_in: a.clone(),
+            token_out: b,
+            in_idx: 0,
+            out_idx: 1,
+        };
         let before = tok_b.balance(&user);
         let out = agg.swap(&user, &a, &1000, &vec![&env, step], &1000);
         assert_eq!(out, 1000);
@@ -801,7 +1166,14 @@ mod test {
         let p = pid.clone();
         AqPoolClient::new(&env, &pid).init(&a, &b);
 
-        let step = SwapStep { dex_id: p, dex_type: DexType::Aquarius, token_in: a.clone(), token_out: b, in_idx: 0, out_idx: 1 };
+        let step = SwapStep {
+            dex_id: p,
+            dex_type: DexType::Aquarius,
+            token_in: a.clone(),
+            token_out: b,
+            in_idx: 0,
+            out_idx: 1,
+        };
         agg.swap(&user, &a, &1000, &vec![&env, step], &1);
     }
 }

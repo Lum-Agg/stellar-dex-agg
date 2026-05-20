@@ -15,9 +15,9 @@ pub const CPOW_PRECISION: i128 = 100_000_000; // 10^8
 /// Record for a token in the pool
 #[derive(Debug, Clone)]
 pub struct CometRecord {
-    pub balance: i128,  // in token's native decimals (stroops for 7-decimal tokens)
-    pub weight: i128,   // in STROOP (7 decimals), e.g., 0.8 = 8_000_000
-    pub scalar: i128,   // scaling factor to 18 decimals
+    pub balance: i128, // in token's native decimals (stroops for 7-decimal tokens)
+    pub weight: i128,  // in STROOP (7 decimals), e.g., 0.8 = 8_000_000
+    pub scalar: i128,  // scaling factor to 18 decimals
 }
 
 /// Calculate token out given token in (Balancer weighted pool formula).
@@ -49,11 +49,7 @@ pub fn calc_out_given_in(
 
     let adjusted_in = fixed_mul_floor_i128(token_amount_in, fee_adjust_ratio, BONE);
 
-    let base = fixed_div_floor_i128(
-        token_balance_in,
-        token_balance_in + adjusted_in,
-        BONE,
-    );
+    let base = fixed_div_floor_i128(token_balance_in, token_balance_in + adjusted_in, BONE);
 
     let power = c_pow(base, weight_ratio, true);
     let balance_ratio = BONE - power;
@@ -141,7 +137,9 @@ fn fixed_mul_floor_i128(a: i128, b: i128, scale: i128) -> i128 {
 }
 
 fn fixed_div_floor_i128(a: i128, b: i128, scale: i128) -> i128 {
-    if b == 0 { return 0; }
+    if b == 0 {
+        return 0;
+    }
     let sign = if (a < 0) ^ (b < 0) { -1i128 } else { 1i128 };
     let a_abs = a.unsigned_abs();
     let b_abs = b.unsigned_abs();
@@ -154,8 +152,12 @@ fn fixed_div_floor_i128(a: i128, b: i128, scale: i128) -> i128 {
 /// Compute (a * b) / c without overflow using 256-bit intermediate.
 /// Uses the schoolbook method: split into high/low 64-bit parts.
 fn mul_div_u128(a: u128, b: u128, c: u128) -> u128 {
-    if c == 0 { return 0; }
-    if a == 0 || b == 0 { return 0; }
+    if c == 0 {
+        return 0;
+    }
+    if a == 0 || b == 0 {
+        return 0;
+    }
 
     // Check if a * b fits in u128
     if let Some(product) = a.checked_mul(b) {
@@ -192,7 +194,9 @@ fn upscale(amount: i128, scalar: i128) -> i128 {
 }
 
 fn downscale_floor(amount: i128, scalar: i128) -> i128 {
-    if scalar == 0 { return 0; }
+    if scalar == 0 {
+        return 0;
+    }
     amount / scalar
 }
 
@@ -216,7 +220,7 @@ mod tests {
 
         // Swap 10 tokens in
         let out = calc_out_given_in(&in_rec, &out_rec, 10_0000000, 30_000); // 0.3% fee
-        // With equal weights and equal balances, ~9.87 out (after fee + impact)
+                                                                            // With equal weights and equal balances, ~9.87 out (after fee + impact)
         assert!(out > 9_0000000 && out < 10_0000000, "out = {}", out);
     }
 
@@ -257,11 +261,16 @@ mod tests {
     fn test_c_pow_integer() {
         // 0.5^2 = 0.25
         let base = BONE / 2; // 0.5 in 18 decimals
-        let exp = 2 * BONE;  // 2.0
+        let exp = 2 * BONE; // 2.0
         let result = c_pow(base, exp, false);
         let expected = BONE / 4; // 0.25
         let diff = (result - expected).unsigned_abs();
-        assert!(diff < CPOW_PRECISION as u128, "result={}, expected={}", result, expected);
+        assert!(
+            diff < CPOW_PRECISION as u128,
+            "result={}, expected={}",
+            result,
+            expected
+        );
     }
 
     #[test]
@@ -273,6 +282,12 @@ mod tests {
         let expected = 707_106_781_186_547_524i128; // sqrt(0.5) * BONE
         let diff = (result - expected).unsigned_abs();
         // Allow 0.01% error
-        assert!(diff < (expected as u128 / 10000), "result={}, expected={}, diff={}", result, expected, diff);
+        assert!(
+            diff < (expected as u128 / 10000),
+            "result={}, expected={}, diff={}",
+            result,
+            expected,
+            diff
+        );
     }
 }
