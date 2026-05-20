@@ -340,7 +340,8 @@ fn build_classic_dex_tx(
         parse_asset_xdr(&body.token_out).map_err(|e| format!("Invalid token_out: {}", e))?;
 
     let send_amount = route.total_amount_in as i64;
-    let dest_min = route.minimum_out as i64;
+    // Per-leg min is 0; slippage is enforced off-chain via quote.minimum_output, not in PathPayment.
+    let dest_min = 0i64;
 
     // Build PathPaymentStrictSend operation
     let path_payment = xdr::OperationBody::PathPaymentStrictSend(xdr::PathPaymentStrictSendOp {
@@ -788,15 +789,6 @@ fn sub_route_is_soroban(sub: &BuildTxSubRoute) -> bool {
     !sub.steps.is_empty() && sub.steps.iter().all(|s| s.dex_type != DEX_CLASSIC)
 }
 
-/// Per-leg minimum output (stroops), with the same 2% stale-reserve buffer as Soroban legs.
-fn leg_min_output_stroops(total_min: i128, leg_in: i128, total_in: i128) -> i64 {
-    if total_in <= 0 || leg_in <= 0 {
-        return 0;
-    }
-    let v = total_min.saturating_mul(leg_in) / total_in * 98 / 100;
-    v.min(i128::from(i64::MAX)) as i64
-}
-
 fn build_path_payment_op(
     sub: &BuildTxSubRoute,
     user_key: &stellar_strkey::ed25519::PublicKey,
@@ -1030,9 +1022,8 @@ pub async fn build_tx(
     let mut ops: Vec<xdr::Operation> = Vec::new();
 
     for sub in &classic_subs {
-        let leg_in: i128 = sub.amount_in.parse().unwrap_or(0);
-        let dest_min = leg_min_output_stroops(min_amount_out, leg_in, amount_in);
-        match build_path_payment_op(sub, &user_key, dest_min) {
+        // Classic PathPayment: dest_min=0 per leg; hybrid txs cannot apply one on-chain min.
+        match build_path_payment_op(sub, &user_key, 0) {
             Ok(op) => ops.push(op),
             Err(e) => {
                 return (
@@ -1048,12 +1039,10 @@ pub async fn build_tx(
     }
 
     if !soroban_subs.is_empty() {
-        let soroban_in: i128 = soroban_subs
-            .iter()
-            .map(|s| s.amount_in.parse::<i128>().unwrap_or(0))
-            .sum();
-        let contract_min = if amount_in > 0 {
-            min_amount_out.saturating_mul(soroban_in) / amount_in * 98 / 100
+        // Slippage only at aggregator.swap exit: full min_amount_out when entire tx is Soroban-only.
+        // Hybrid (Classic + Soroban ops): per-leg mins are 0; total slippage is not enforced atomically on-chain.
+        let contract_min = if execution == "soroban" {
+            min_amount_out
         } else {
             0
         };
@@ -1324,8 +1313,9 @@ fn merge_simulate_result_into_tx(
         return Err("Unsupported transaction envelope".to_string());
     };
 
-    let soroban_data = xdr::SorobanTransactionData::from_xdr_base64(transaction_data, Limits::none())
-        .map_err(|e| format!("Failed to parse soroban data: {:?}", e))?;
+    let soroban_data =
+        xdr::SorobanTransactionData::from_xdr_base64(transaction_data, Limits::none())
+            .map_err(|e| format!("Failed to parse soroban data: {:?}", e))?;
     v1.tx.ext = xdr::TransactionExt::V1(soroban_data);
 
     if let Some(min_fee) = result

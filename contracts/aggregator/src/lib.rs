@@ -13,7 +13,7 @@
 
 use soroban_sdk::{
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
-    contract, contractimpl, contracttype, token, vec, Address, BytesN, Env, IntoVal, Symbol, Val,
+    contract, contractimpl, contracttype, token, Address, BytesN, Env, IntoVal, Symbol, Val,
     Vec,
 };
 
@@ -175,8 +175,8 @@ impl AggregatorContract {
             total_output += output;
         }
 
-        // Verify minimum output
-        assert!(total_output >= min_amount_out, "Split output below minimum");
+        // Slippage: per-hop pool mins are 0; only check total output here (all sub_routes summed).
+        assert!(total_output >= min_amount_out, "Output below minimum");
 
         // Transfer total output to user
         let token_out_client = token::Client::new(&env, &token_out);
@@ -212,11 +212,32 @@ impl AggregatorContract {
     fn execute_step(env: &Env, step: &SwapStep, amount_in: i128, my_address: &Address) -> i128 {
         match step.dex_type {
             DexType::Aquarius => {
-                // Aquarius Pool: swap(user, in_idx, out_idx, in_amount, out_min) -> u128
+                // Aquarius pool: swap(user, in_idx, out_idx, in_amount, out_min) -> u128
+                // The pool pulls token_in via transfer(user, pool, amount); authorize only that
+                // transfer (same pattern as stellar-arb arb-contract).
                 let (in_idx, out_idx) = (step.in_idx, step.out_idx);
                 let aq_in_amount: u128 = amount_in as u128;
 
-                let build_swap_args = || {
+                env.authorize_as_current_contract(soroban_sdk::vec![
+                    env,
+                    InvokerContractAuthEntry::Contract(SubContractInvocation {
+                        context: ContractContext {
+                            contract: step.token_in.clone(),
+                            fn_name: Symbol::new(env, "transfer"),
+                            args: soroban_sdk::vec![
+                                env,
+                                my_address.into_val(env),
+                                step.dex_id.into_val(env),
+                                amount_in.into_val(env),
+                            ],
+                        },
+                        sub_invocations: soroban_sdk::vec![env],
+                    }),
+                ]);
+
+                let received: u128 = env.invoke_contract(
+                    &step.dex_id,
+                    &Symbol::new(env, "swap"),
                     soroban_sdk::vec![
                         env,
                         my_address.into_val(env),
@@ -224,45 +245,8 @@ impl AggregatorContract {
                         out_idx.into_val(env),
                         aq_in_amount.into_val(env),
                         0u128.into_val(env),
-                    ]
-                };
-
-                let transfer_auth = InvokerContractAuthEntry::Contract(SubContractInvocation {
-                    context: ContractContext {
-                        contract: step.token_in.clone(),
-                        fn_name: Symbol::new(env, "transfer"),
-                        args: soroban_sdk::vec![
-                            env,
-                            my_address.into_val(env),
-                            step.dex_id.into_val(env),
-                            amount_in.into_val(env),
-                        ],
-                    },
-                    sub_invocations: soroban_sdk::vec![env],
-                });
-
-                #[cfg(test)]
-                {
-                    env.authorize_as_current_contract(soroban_sdk::vec![env, transfer_auth]);
-                }
-
-                #[cfg(not(test))]
-                {
-                    env.authorize_as_current_contract(soroban_sdk::vec![
-                        env,
-                        InvokerContractAuthEntry::Contract(SubContractInvocation {
-                            context: ContractContext {
-                                contract: step.dex_id.clone(),
-                                fn_name: Symbol::new(env, "swap"),
-                                args: build_swap_args(),
-                            },
-                            sub_invocations: soroban_sdk::vec![env, transfer_auth],
-                        }),
-                    ]);
-                }
-
-                let received: u128 =
-                    env.invoke_contract(&step.dex_id, &Symbol::new(env, "swap"), build_swap_args());
+                    ],
+                );
                 received as i128
             }
 
@@ -322,11 +306,8 @@ impl AggregatorContract {
 
                 token_in_client.transfer(my_address, &step.dex_id, &amount_in);
 
-                let (amount0_out, amount1_out): (i128, i128) = if a2b {
-                    (0, safe_out)
-                } else {
-                    (safe_out, 0)
-                };
+                let (amount0_out, amount1_out): (i128, i128) =
+                    if a2b { (0, safe_out) } else { (safe_out, 0) };
 
                 let args = soroban_sdk::vec![
                     env,
