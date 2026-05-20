@@ -7,7 +7,6 @@ use crate::{
     types::*,
 };
 use dex_adapters::DexAdapter;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
@@ -17,8 +16,8 @@ pub struct QuoteEngine {
     path_finder: RwLock<PathFinder>,
     split_optimizer: SplitOptimizer,
     adapters: RwLock<Vec<Arc<dyn DexAdapter>>>,
-    /// Cached pool data for local quote computation (pool_address -> TradingPair)
-    cached_pools: RwLock<HashMap<String, TradingPair>>,
+    /// All cached pool edges (one entry per token pair per pool; same pool may appear many times).
+    cached_pools: RwLock<Vec<TradingPair>>,
 }
 
 impl QuoteEngine {
@@ -27,8 +26,23 @@ impl QuoteEngine {
             path_finder: RwLock::new(PathFinder::new(path_finder_config)),
             split_optimizer: SplitOptimizer::new(split_config),
             adapters: RwLock::new(Vec::new()),
-            cached_pools: RwLock::new(HashMap::new()),
+            cached_pools: RwLock::new(Vec::new()),
         }
+    }
+
+    fn find_pool_edge<'a>(
+        pools: &'a [TradingPair],
+        pool_address: &str,
+        token_in: &TokenId,
+        token_out: &TokenId,
+    ) -> Option<&'a TradingPair> {
+        let in_key = token_in.canonical();
+        let out_key = token_out.canonical();
+        pools.iter().find(|p| {
+            p.pool_address == pool_address
+                && ((p.token_a.canonical() == in_key && p.token_b.canonical() == out_key)
+                    || (p.token_b.canonical() == in_key && p.token_a.canonical() == out_key))
+        })
     }
 
     /// Register a new DEX adapter and update the token graph.
@@ -54,6 +68,7 @@ impl QuoteEngine {
 
                 let mut pf = self.path_finder.write().await;
                 pf.update_from_source(&source, &trading_pairs);
+                self.update_pairs_from_cache(&source, &trading_pairs).await;
 
                 info!(
                     source = %source,
@@ -77,11 +92,10 @@ impl QuoteEngine {
         let mut pf = self.path_finder.write().await;
         pf.update_from_source(source, pairs);
 
-        // Store in cached_pools for local quote fallback
+        // Store in cached_pools for local quote fallback (keep every edge, not one per pool)
         let mut cache = self.cached_pools.write().await;
-        for pair in pairs {
-            cache.insert(pair.pool_address.clone(), pair.clone());
-        }
+        cache.retain(|p| p.source != source);
+        cache.extend(pairs.iter().cloned());
 
         info!(
             source = source,
@@ -102,7 +116,7 @@ impl QuoteEngine {
     pub async fn get_all_tokens(&self) -> Vec<String> {
         let pools = self.cached_pools.read().await;
         let mut tokens: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for pair in pools.values() {
+        for pair in pools.iter() {
             tokens.insert(pair.token_a.canonical());
             tokens.insert(pair.token_b.canonical());
         }
@@ -264,9 +278,9 @@ impl QuoteEngine {
         amount_in: u128,
         pool_address: &str,
         source: &str,
-        cached_pools: &HashMap<String, TradingPair>,
+        cached_pools: &[TradingPair],
     ) -> Option<dex_adapters::AdapterQuote> {
-        let pair = cached_pools.get(pool_address)?;
+        let pair = Self::find_pool_edge(cached_pools, pool_address, token_in, token_out)?;
 
         let (reserve_in, reserve_out) = if token_in.canonical() == pair.token_a.canonical() {
             (pair.reserve_a?, pair.reserve_b?)
@@ -343,15 +357,12 @@ impl QuoteEngine {
         token_out: &TokenId,
     ) -> Option<(u32, u32)> {
         let pools = self.cached_pools.read().await;
-        let pair = pools.get(pool_address)?;
+        let pair = Self::find_pool_edge(&pools, pool_address, token_in, token_out)?;
         let in_key = token_in.canonical();
-        let out_key = token_out.canonical();
-        if in_key == pair.token_a.canonical() && out_key == pair.token_b.canonical() {
+        if in_key == pair.token_a.canonical() {
             Some((0, 1))
-        } else if in_key == pair.token_b.canonical() && out_key == pair.token_a.canonical() {
-            Some((1, 0))
         } else {
-            None
+            Some((1, 0))
         }
     }
 

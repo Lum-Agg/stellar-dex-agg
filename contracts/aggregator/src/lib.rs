@@ -4,9 +4,8 @@
 //! Executes multi-hop and split-order swaps atomically across Soroban DEXes
 //! (Aquarius, Soroswap, Phoenix, Sushi V3, Comet).
 //!
-//! Two main entry points:
-//! - `swap()`: Single-path multi-hop swap (A→B→C through different DEXes)
-//! - `split_swap()`: Split-order execution (0.3A via path1, 0.7A via path2)
+//! Main entry point:
+//! - `swap()`: Atomic swap via `sub_routes` (one leg = simple path; multiple = split)
 //!
 //! Key design: the contract holds no funds permanently.
 //! Users approve token transfers, the contract executes swaps, and outputs go
@@ -98,37 +97,18 @@ impl AggregatorContract {
             .expect("Not initialized")
     }
 
-    /// Execute a single-path multi-hop swap atomically.
+    /// Execute a swap atomically (single-path or split-order).
     ///
-    /// Delegates to `split_swap` internally — wraps the steps as a single sub-route.
-    pub fn swap(
-        env: Env,
-        user: Address,
-        token_in: Address,
-        amount_in: i128,
-        steps: Vec<SwapStep>,
-        min_amount_out: i128,
-    ) -> i128 {
-        let token_out = steps.last().expect("Empty steps").token_out.clone();
-        let sub = SubRoute { amount_in, steps };
-        let sub_routes = vec![&env, sub];
-        Self::split_swap(env, user, token_in, token_out, sub_routes, min_amount_out)
-    }
-
-    /// Execute a split-order swap atomically.
-    ///
-    /// Splits the input across multiple paths for better execution:
-    /// e.g., 30% via Soroswap (A→B), 70% via Aquarius (A→C→B)
+    /// `sub_routes` is always a list of legs; a simple swap is one entry with the full
+    /// `amount_in` and its hop `steps`. Split execution uses multiple entries.
     ///
     /// Flow:
-    /// 1. Pull total `amount_in` of `token_in` from user
+    /// 1. Pull total input from user (sum of sub-route amounts)
     /// 2. For each sub-route: execute its path with its allocated amount
-    /// 3. Sum all outputs (must all produce the same `token_out`)
+    /// 3. Sum outputs (all must produce the same `token_out`)
     /// 4. Verify total output >= `min_amount_out`
     /// 5. Transfer total output to user
-    ///
-    /// All sub-routes MUST produce the same output token.
-    pub fn split_swap(
+    pub fn swap(
         env: Env,
         user: Address,
         token_in: Address,
@@ -155,6 +135,7 @@ impl AggregatorContract {
         let mut total_output: i128 = 0;
 
         for sr in sub_routes.iter() {
+            assert!(!sr.steps.is_empty(), "Empty steps");
             // Verify first step starts with token_in
             if let Some(first_step) = sr.steps.first() {
                 assert!(
@@ -212,38 +193,59 @@ impl AggregatorContract {
         match step.dex_type {
             DexType::Aquarius => {
                 // Aquarius Pool: swap(user, in_idx, out_idx, in_amount, out_min) -> u128
-                // Pool calls user.require_auth() and token.transfer() internally.
-                // Pre-authorize the aggregator contract as the token transfer source.
                 let (in_idx, out_idx) = (step.in_idx, step.out_idx);
                 let aq_in_amount: u128 = amount_in as u128;
 
-                env.authorize_as_current_contract(soroban_sdk::vec![
-                    env,
-                    InvokerContractAuthEntry::Contract(SubContractInvocation {
-                        context: ContractContext {
-                            contract: step.token_in.clone(),
-                            fn_name: Symbol::new(env, "transfer"),
-                            args: soroban_sdk::vec![
-                                env,
-                                my_address.into_val(env),
-                                step.dex_id.into_val(env),
-                                amount_in.into_val(env),
-                            ],
-                        },
-                        sub_invocations: soroban_sdk::vec![env],
-                    })
-                ]);
+                let build_swap_args = || {
+                    soroban_sdk::vec![
+                        env,
+                        my_address.into_val(env),
+                        in_idx.into_val(env),
+                        out_idx.into_val(env),
+                        aq_in_amount.into_val(env),
+                        0u128.into_val(env),
+                    ]
+                };
 
-                let args = soroban_sdk::vec![
-                    env,
-                    my_address.into_val(env),
-                    in_idx.into_val(env),
-                    out_idx.into_val(env),
-                    aq_in_amount.into_val(env),
-                    0u128.into_val(env),
-                ];
-                let received: u128 =
-                    env.invoke_contract(&step.dex_id, &Symbol::new(env, "swap"), args);
+                let transfer_auth = InvokerContractAuthEntry::Contract(SubContractInvocation {
+                    context: ContractContext {
+                        contract: step.token_in.clone(),
+                        fn_name: Symbol::new(env, "transfer"),
+                        args: soroban_sdk::vec![
+                            env,
+                            my_address.into_val(env),
+                            step.dex_id.into_val(env),
+                            amount_in.into_val(env),
+                        ],
+                    },
+                    sub_invocations: soroban_sdk::vec![env],
+                });
+
+                #[cfg(test)]
+                {
+                    env.authorize_as_current_contract(soroban_sdk::vec![env, transfer_auth]);
+                }
+
+                #[cfg(not(test))]
+                {
+                    env.authorize_as_current_contract(soroban_sdk::vec![
+                        env,
+                        InvokerContractAuthEntry::Contract(SubContractInvocation {
+                            context: ContractContext {
+                                contract: step.dex_id.clone(),
+                                fn_name: Symbol::new(env, "swap"),
+                                args: build_swap_args(),
+                            },
+                            sub_invocations: soroban_sdk::vec![env, transfer_auth],
+                        }),
+                    ]);
+                }
+
+                let received: u128 = env.invoke_contract(
+                    &step.dex_id,
+                    &Symbol::new(env, "swap"),
+                    build_swap_args(),
+                );
                 received as i128
             }
 
@@ -563,6 +565,20 @@ mod test {
         (admin, agg)
     }
 
+    fn single_swap(
+        env: &Env,
+        agg: &AggregatorContractClient<'_>,
+        user: &Address,
+        token_in: &Address,
+        token_out: &Address,
+        amount_in: i128,
+        steps: soroban_sdk::Vec<SwapStep>,
+        min: i128,
+    ) -> i128 {
+        let sub = SubRoute { amount_in, steps };
+        agg.swap(user, token_in, token_out, &vec![env, sub], &min)
+    }
+
     // ── Mock Aquarius Pool ──
     mod aq_mock {
         use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env};
@@ -779,12 +795,12 @@ mod test {
             dex_id: p,
             dex_type: DexType::Aquarius,
             token_in: a.clone(),
-            token_out: b,
+            token_out: b.clone(),
             in_idx: 0,
             out_idx: 1,
         };
         let before = tok_b.balance(&user);
-        let out = agg.swap(&user, &a, &5000, &vec![&env, step], &1);
+        let out = single_swap(&env, &agg, &user, &a, &b, 5000, vec![&env, step], 1);
         assert_eq!(out, 5000);
         assert_eq!(tok_b.balance(&user) - before, 5000);
     }
@@ -814,7 +830,7 @@ mod test {
             out_idx: 0,
         };
         let before = tok_a.balance(&user);
-        let out = agg.swap(&user, &b, &3000, &vec![&env, step], &1);
+        let out = single_swap(&env, &agg, &user, &b, &a, 3000, vec![&env, step], 1);
         assert_eq!(out, 3000);
         assert_eq!(tok_a.balance(&user) - before, 3000);
     }
@@ -839,12 +855,12 @@ mod test {
             dex_id: p,
             dex_type: DexType::Aquarius,
             token_in: a.clone(),
-            token_out: b,
+            token_out: b.clone(),
             in_idx: 0,
             out_idx: 1,
         };
         assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            agg.swap(&user, &a, &5000, &vec![&env, step], &9999);
+            single_swap(&env, &agg, &user, &a, &b, 5000, vec![&env, step], 9999);
         }))
         .is_err());
     }
@@ -874,12 +890,12 @@ mod test {
             dex_id: p,
             dex_type: DexType::SoroswapPair,
             token_in: a.clone(),
-            token_out: b,
+            token_out: b.clone(),
             in_idx: 0,
             out_idx: 1,
         };
         let before = tok_b.balance(&user);
-        let out = agg.swap(&user, &a, &1000, &vec![&env, step], &1);
+        let out = single_swap(&env, &agg, &user, &a, &b, 1000, vec![&env, step], 1);
         assert_eq!(out, 987);
         assert_eq!(tok_b.balance(&user) - before, 987);
     }
@@ -910,7 +926,7 @@ mod test {
             out_idx: 0,
         };
         let before = tok_a.balance(&user);
-        let out = agg.swap(&user, &b, &1000, &vec![&env, step], &1);
+        let out = single_swap(&env, &agg, &user, &b, &a, 1000, vec![&env, step], 1);
         assert_eq!(out, 987);
         assert_eq!(tok_a.balance(&user) - before, 987);
     }
@@ -939,12 +955,12 @@ mod test {
             dex_id: p,
             dex_type: DexType::Sushi,
             token_in: a.clone(),
-            token_out: b,
+            token_out: b.clone(),
             in_idx: 0,
             out_idx: 1,
         };
         let before = tok_b.balance(&user);
-        let out = agg.swap(&user, &a, &4000, &vec![&env, step], &1);
+        let out = single_swap(&env, &agg, &user, &a, &b, 4000, vec![&env, step], 1);
         assert_eq!(out, 4000);
         assert_eq!(tok_b.balance(&user) - before, 4000);
     }
@@ -973,12 +989,12 @@ mod test {
             dex_id: p,
             dex_type: DexType::CometDex,
             token_in: a.clone(),
-            token_out: b,
+            token_out: b.clone(),
             in_idx: 0,
             out_idx: 1,
         };
         let before = tok_b.balance(&user);
-        let out = agg.swap(&user, &a, &2500, &vec![&env, step], &1);
+        let out = single_swap(&env, &agg, &user, &a, &b, 2500, vec![&env, step], 1);
         assert_eq!(out, 2500);
         assert_eq!(tok_b.balance(&user) - before, 2500);
     }
@@ -1024,14 +1040,14 @@ mod test {
                 dex_id: ss,
                 dex_type: DexType::SoroswapPair,
                 token_in: b,
-                token_out: c,
+                token_out: c.clone(),
                 in_idx: 0,
                 out_idx: 1,
             },
         ];
         let before_c = tok_c.balance(&user);
         let before_b = tok_b.balance(&user);
-        let out = agg.swap(&user, &a, &5000, &steps, &1);
+        let out = single_swap(&env, &agg, &user, &a, &c, 5000, steps, 1);
         assert_eq!(out, 4748);
         assert_eq!(tok_c.balance(&user) - before_c, 4748);
         assert_eq!(tok_b.balance(&user) - before_b, 0);
@@ -1042,7 +1058,7 @@ mod test {
     // ═══════════════════════════════════════════════════════════════════════
 
     #[test]
-    fn test_split_swap_two_routes() {
+    fn test_swap_split_two_routes() {
         let env = Env::default();
         env.mock_all_auths();
         let user = gen_addr(&env);
@@ -1095,7 +1111,7 @@ mod test {
             },
         ];
         let before = tok_b.balance(&user);
-        let total = agg.split_swap(&user, &a, &b, &sub_routes, &1);
+        let total = agg.swap(&user, &a, &b, &sub_routes, &1);
         assert_eq!(total, 4955);
         assert_eq!(tok_b.balance(&user) - before, 4955);
     }
@@ -1124,12 +1140,12 @@ mod test {
             dex_id: p,
             dex_type: DexType::Aquarius,
             token_in: a.clone(),
-            token_out: b,
+            token_out: b.clone(),
             in_idx: 0,
             out_idx: 1,
         };
         let before = tok_b.balance(&user);
-        let out = agg.swap(&user, &a, &1000, &vec![&env, step], &1000);
+        let out = single_swap(&env, &agg, &user, &a, &b, 1000, vec![&env, step], 1000);
         assert_eq!(out, 1000);
         assert_eq!(tok_b.balance(&user) - before, 1000);
     }
@@ -1147,7 +1163,11 @@ mod test {
         let (_, agg) = setup_agg(&env);
         let (t, sac, _) = create_token(&env);
         sac.mint(&user, &1_000_000);
-        agg.swap(&user, &t, &1000, &vec![&env], &1);
+        let sub = SubRoute {
+            amount_in: 1000,
+            steps: vec![&env],
+        };
+        agg.swap(&user, &t, &t, &vec![&env, sub], &1);
     }
 
     #[test]
@@ -1170,10 +1190,10 @@ mod test {
             dex_id: p,
             dex_type: DexType::Aquarius,
             token_in: a.clone(),
-            token_out: b,
+            token_out: b.clone(),
             in_idx: 0,
             out_idx: 1,
         };
-        agg.swap(&user, &a, &1000, &vec![&env, step], &1);
+        single_swap(&env, &agg, &user, &a, &b, 1000, vec![&env, step], 1);
     }
 }

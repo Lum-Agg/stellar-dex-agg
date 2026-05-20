@@ -63,14 +63,14 @@ export default function DocsPage() {
         <EndpointSection
           method="POST"
           path="/api/v1/build_tx"
-          description="Build an unsigned transaction that calls the aggregator contract. User specifies exactly which DEX/pool to use for each swap step."
+          description="Build an unsigned transaction calling aggregator.swap with sub_routes from the quote (single or split)."
           params={[
             { name: 'user_public_key', type: 'string', required: true, desc: 'User Stellar public key (G...)' },
             { name: 'token_in', type: 'string', required: true, desc: 'Input token contract address' },
             { name: 'token_out', type: 'string', required: true, desc: 'Final output token contract address' },
-            { name: 'amount_in', type: 'string', required: true, desc: 'Input amount in stroops' },
+            { name: 'amount_in', type: 'string', required: true, desc: 'Total input in stroops (sum of sub-route amounts)' },
             { name: 'min_amount_out', type: 'string', required: true, desc: 'Minimum acceptable output' },
-            { name: 'steps', type: 'array', required: true, desc: 'Swap steps: [{dex_type, pool_address, token_in, token_out, in_idx, out_idx}]' },
+            { name: 'sub_routes', type: 'array', required: true, desc: 'Legs: [{amount_in, steps: [{dex_type, pool_address, token_in, token_out, in_idx, out_idx}]}]' },
           ]}
           tryIt={<BuildTxTryIt />}
         />
@@ -264,12 +264,15 @@ function BuildTxTryIt() {
     token_out: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
     amount_in: "1000000000",
     min_amount_out: "140000000",
-    steps: [{
-      dex_type: "aquarius",
-      pool_address: "CDKVJYMN34ZIEXSLNFYHVAFF6M6FM5E2U6OHXOTBKH2WLBULXOE53YDP",
-      token_in: "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
-      token_out: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
-      in_idx: 0, out_idx: 1
+    sub_routes: [{
+      amount_in: "1000000000",
+      steps: [{
+        dex_type: "aquarius",
+        pool_address: "CDKVJYMN34ZIEXSLNFYHVAFF6M6FM5E2U6OHXOTBKH2WLBULXOE53YDP",
+        token_in: "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+        token_out: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+        in_idx: 0, out_idx: 1
+      }]
     }]
   }, null, 2));
   const [result, setResult] = useState<string | null>(null);

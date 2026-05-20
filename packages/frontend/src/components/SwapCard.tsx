@@ -83,22 +83,20 @@ export function SwapCard() {
     setTxResult(null);
 
     try {
-      // For split orders, we'd need split_swap; for now, use the best single route.
-      // If the route is split across multiple paths, pick the largest one (most amount).
-      const route = quote.sub_routes.reduce((best, r) =>
-        parseInt(r.amount_in, 10) > parseInt(best.amount_in, 10) ? r : best,
-        quote.sub_routes[0]
-      );
+      const totalAmountIn = Math.floor(
+        parseFloat(amountIn) * 10 ** tokenIn.decimals
+      ).toString();
 
-      // Build swap steps. The api-server provides in_indices/out_indices
-      // for each pool to specify input/output token positions.
-      const steps = route.pool_addresses.map((pool: string, i: number) => ({
-        dex_type: route.dex_types[i] ?? 'aquarius',
-        pool_address: pool,
-        token_in: route.path[i] ?? '',
-        token_out: route.path[i + 1] ?? '',
-        in_idx: route.in_indices[i] ?? 0,
-        out_idx: route.out_indices[i] ?? 1,
+      const sub_routes = quote.sub_routes.map((route) => ({
+        amount_in: route.amount_in,
+        steps: route.pool_addresses.map((pool: string, i: number) => ({
+          dex_type: route.dex_types[i] ?? 'aquarius',
+          pool_address: pool,
+          token_in: route.path[i] ?? '',
+          token_out: route.path[i + 1] ?? '',
+          in_idx: route.in_indices[i] ?? 0,
+          out_idx: route.out_indices[i] ?? 1,
+        })),
       }));
 
       const buildResp = await fetch(`${API_URL}/api/v1/build_tx`, {
@@ -108,9 +106,9 @@ export function SwapCard() {
           user_public_key: walletAddress,
           token_in: tokenIn.id,
           token_out: tokenOut.id,
-          amount_in: Math.floor(parseFloat(amountIn) * 10 ** tokenIn.decimals).toString(),
+          amount_in: totalAmountIn,
           min_amount_out: quote.minimum_output,
-          steps,
+          sub_routes,
         }),
       });
       const buildData = await buildResp.json();

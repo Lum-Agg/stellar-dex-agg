@@ -3,7 +3,7 @@
 //! Determines the appropriate on-chain execution strategy:
 //! - Single path, single Soroban DEX: direct contract call
 //! - Single path, multi-hop Soroban: aggregator.swap()
-//! - Split order: aggregator.split_swap()
+//! - Split or single path: aggregator.swap(sub_routes)
 //!
 //! All transactions are simulated before returning to the user.
 
@@ -49,8 +49,7 @@ impl TransactionBuilder {
     /// Build an unsigned atomic transaction for the given route.
     ///
     /// Strategy:
-    /// - If route has 1 sub-order: use aggregator.swap() (single path)
-    /// - If route has multiple sub-orders: use aggregator.split_swap()
+    /// Always calls aggregator.swap() with sub_routes (one entry for a single path).
     pub async fn build(
         &self,
         route: &OptimalRoute,
@@ -76,25 +75,13 @@ impl TransactionBuilder {
             .last()
             .ok_or_else(|| anyhow!("Empty path in sub-order"))?;
 
-        let invoke_args = if route.sub_orders.len() == 1 {
-            // Single path: aggregator.swap(user, token_in, amount_in, steps, min_out)
-            self.build_single_swap_args(
-                user_address,
-                token_in,
-                token_out,
-                &first_order,
-                min_output,
-            )?
-        } else {
-            // Split order: aggregator.split_swap(user, token_in, token_out, sub_routes, min_out)
-            self.build_split_swap_args(
-                user_address,
-                token_in,
-                token_out,
-                &route.sub_orders,
-                min_output,
-            )?
-        };
+        let invoke_args = self.build_swap_args(
+            user_address,
+            token_in,
+            token_out,
+            &route.sub_orders,
+            min_output,
+        )?;
 
         // Build the InvokeHostFunction operation
         let aggregator_hash =
@@ -102,15 +89,9 @@ impl TransactionBuilder {
                 .map_err(|e| anyhow!("Invalid aggregator contract: {:?}", e))?
                 .0;
 
-        let function_name = if route.sub_orders.len() == 1 {
-            "swap"
-        } else {
-            "split_swap"
-        };
-
         let invoke_contract_args = xdr::InvokeContractArgs {
             contract_address: xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(aggregator_hash))),
-            function_name: function_name
+            function_name: "swap"
                 .try_into()
                 .map_err(|_| anyhow!("Invalid function name"))?,
             args: invoke_args
@@ -172,35 +153,8 @@ impl TransactionBuilder {
         })
     }
 
-    /// Build args for aggregator.swap(user, token_in, amount_in, steps, min_amount_out)
-    fn build_single_swap_args(
-        &self,
-        user_address: &str,
-        token_in: &dex_adapters::TokenId,
-        _token_out: &dex_adapters::TokenId,
-        sub_order: &SubOrder,
-        min_output: u128,
-    ) -> Result<Vec<xdr::ScVal>> {
-        let user_val = self.address_to_scval(user_address)?;
-        let token_in_val = self.token_to_scval(token_in)?;
-        let amount_in_val = self.i128_to_scval(sub_order.amount_in as i128);
-        let indices_default: Vec<(u32, u32)> = std::iter::repeat((0, 1))
-            .take(sub_order.path.hops)
-            .collect();
-        let steps_val = self.build_steps_scval(&sub_order.path, &indices_default)?;
-        let min_out_val = self.i128_to_scval(min_output as i128);
-
-        Ok(vec![
-            user_val,
-            token_in_val,
-            amount_in_val,
-            steps_val,
-            min_out_val,
-        ])
-    }
-
-    /// Build args for aggregator.split_swap(user, token_in, token_out, sub_routes, min_amount_out)
-    fn build_split_swap_args(
+    /// Build args for aggregator.swap(user, token_in, token_out, sub_routes, min_amount_out)
+    fn build_swap_args(
         &self,
         user_address: &str,
         token_in: &dex_adapters::TokenId,

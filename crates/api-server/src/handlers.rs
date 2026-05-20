@@ -109,11 +109,28 @@ pub async fn get_quote(
             let token_in = &so.path.tokens[i];
             let token_out = &so.path.tokens[i + 1];
             let pool = &so.path.pool_addresses[i];
-            let indices = state
+            let (in_idx, out_idx) = match state
                 .engine
                 .get_pool_indices(pool, token_in, token_out)
-                .await;
-            let (in_idx, out_idx) = indices.unwrap_or((0, 1));
+                .await
+            {
+                Some(indices) => indices,
+                None => {
+                    return (
+                        StatusCode::OK,
+                        Json(QuoteResponse {
+                            success: false,
+                            data: None,
+                            error: Some(format!(
+                                "Cannot resolve pool token indices for {} → {} on {}",
+                                token_in.canonical(),
+                                token_out.canonical(),
+                                pool
+                            )),
+                        }),
+                    );
+                }
+            };
             in_indices.push(in_idx);
             out_indices.push(out_idx);
         }
@@ -245,11 +262,14 @@ pub async fn build_swap(
                     let token_in = &so.path.tokens[i];
                     let token_out = &so.path.tokens[i + 1];
                     let pool = &so.path.pool_addresses[i];
-                    let indices = state
+                    let (in_idx, out_idx) = match state
                         .engine
                         .get_pool_indices(pool, token_in, token_out)
-                        .await;
-                    let (in_idx, out_idx) = indices.unwrap_or((0, 1));
+                        .await
+                    {
+                        Some(v) => v,
+                        None => (0, 1),
+                    };
                     in_indices.push(in_idx);
                     out_indices.push(out_idx);
                 }
@@ -588,12 +608,12 @@ pub async fn health_check(State(_state): State<AppState>) -> impl IntoResponse {
 const AGGREGATOR_CONTRACT: &str = "CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K";
 
 /// Build an unsigned transaction that calls the aggregator contract.
-/// User specifies exactly which DEX/pool to use for each swap step.
+/// Always uses `swap` with one or more sub-routes (split is multiple entries).
 #[derive(Deserialize)]
 pub struct BuildTxRequest {
     /// User's Stellar public key (G...)
     pub user_public_key: String,
-    /// Total input amount (stroops)
+    /// Total input amount (stroops); must equal sum of sub-route amounts
     pub amount_in: String,
     /// Input token contract address
     pub token_in: String,
@@ -601,7 +621,14 @@ pub struct BuildTxRequest {
     pub token_out: String,
     /// Minimum acceptable output (stroops)
     pub min_amount_out: String,
-    /// Swap steps: each step specifies a DEX pool to use
+    /// Execution legs from the quote (single path = one entry)
+    pub sub_routes: Vec<BuildTxSubRoute>,
+}
+
+#[derive(Deserialize)]
+pub struct BuildTxSubRoute {
+    /// Input allocated to this leg (stroops)
+    pub amount_in: String,
     pub steps: Vec<BuildTxStep>,
 }
 
@@ -642,6 +669,103 @@ pub struct BuildTxData {
     pub contract: String,
 }
 
+fn build_tx_step_scval(step: &BuildTxStep) -> Result<stellar_xdr::curr::ScVal, String> {
+    use stellar_xdr::curr as xdr;
+
+    let dex_type_val = match step.dex_type.as_str() {
+        "aquarius" | "aquarius_clmm" => {
+            xdr::ScVal::Symbol(xdr::ScSymbol("Aquarius".try_into().unwrap()))
+        }
+        "soroswap" => xdr::ScVal::Symbol(xdr::ScSymbol("SoroswapPair".try_into().unwrap())),
+        "phoenix" => xdr::ScVal::Symbol(xdr::ScSymbol("Phoenix".try_into().unwrap())),
+        "sushi" => xdr::ScVal::Symbol(xdr::ScSymbol("Sushi".try_into().unwrap())),
+        "comet" => xdr::ScVal::Symbol(xdr::ScSymbol("CometDex".try_into().unwrap())),
+        other => return Err(format!("Unknown dex_type: {}", other)),
+    };
+
+    let pool_hash = stellar_strkey::Contract::from_string(&step.pool_address)
+        .map_err(|_| format!("Invalid pool_address: {}", step.pool_address))?
+        .0;
+    let token_in_hash = stellar_strkey::Contract::from_string(&step.token_in)
+        .map_err(|_| format!("Invalid token_in: {}", step.token_in))?
+        .0;
+    let token_out_hash = stellar_strkey::Contract::from_string(&step.token_out)
+        .map_err(|_| format!("Invalid token_out: {}", step.token_out))?
+        .0;
+
+    Ok(xdr::ScVal::Map(Some(xdr::ScMap(
+        vec![
+            xdr::ScMapEntry {
+                key: xdr::ScVal::Symbol(xdr::ScSymbol("dex_id".try_into().unwrap())),
+                val: xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
+                    pool_hash,
+                )))),
+            },
+            xdr::ScMapEntry {
+                key: xdr::ScVal::Symbol(xdr::ScSymbol("dex_type".try_into().unwrap())),
+                val: dex_type_val,
+            },
+            xdr::ScMapEntry {
+                key: xdr::ScVal::Symbol(xdr::ScSymbol("in_idx".try_into().unwrap())),
+                val: xdr::ScVal::U32(step.in_idx),
+            },
+            xdr::ScMapEntry {
+                key: xdr::ScVal::Symbol(xdr::ScSymbol("out_idx".try_into().unwrap())),
+                val: xdr::ScVal::U32(step.out_idx),
+            },
+            xdr::ScMapEntry {
+                key: xdr::ScVal::Symbol(xdr::ScSymbol("token_in".try_into().unwrap())),
+                val: xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
+                    token_in_hash,
+                )))),
+            },
+            xdr::ScMapEntry {
+                key: xdr::ScVal::Symbol(xdr::ScSymbol("token_out".try_into().unwrap())),
+                val: xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
+                    token_out_hash,
+                )))),
+            },
+        ]
+        .try_into()
+        .unwrap(),
+    ))))
+}
+
+fn build_tx_sub_route_scval(sub: &BuildTxSubRoute) -> Result<stellar_xdr::curr::ScVal, String> {
+    use stellar_xdr::curr as xdr;
+
+    if sub.steps.is_empty() {
+        return Err("Each sub-route must have at least one step".to_string());
+    }
+    let leg_amount: i128 = sub
+        .amount_in
+        .parse()
+        .map_err(|_| format!("Invalid sub-route amount_in: {}", sub.amount_in))?;
+
+    let mut steps_scval = Vec::new();
+    for step in &sub.steps {
+        steps_scval.push(build_tx_step_scval(step)?);
+    }
+
+    Ok(xdr::ScVal::Map(Some(xdr::ScMap(
+        vec![
+            xdr::ScMapEntry {
+                key: xdr::ScVal::Symbol(xdr::ScSymbol("amount_in".try_into().unwrap())),
+                val: xdr::ScVal::I128(xdr::Int128Parts {
+                    hi: (leg_amount >> 64) as i64,
+                    lo: leg_amount as u64,
+                }),
+            },
+            xdr::ScMapEntry {
+                key: xdr::ScVal::Symbol(xdr::ScSymbol("steps".try_into().unwrap())),
+                val: xdr::ScVal::Vec(Some(xdr::ScVec(steps_scval.try_into().unwrap()))),
+            },
+        ]
+        .try_into()
+        .unwrap(),
+    ))))
+}
+
 pub async fn build_tx(
     State(_state): State<AppState>,
     Json(body): Json<BuildTxRequest>,
@@ -649,13 +773,13 @@ pub async fn build_tx(
     use stellar_xdr::curr as xdr;
     use stellar_xdr::curr::{Limits, ReadXdr, WriteXdr};
 
-    if body.steps.is_empty() {
+    if body.sub_routes.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
             Json(BuildTxResponse {
                 success: false,
                 data: None,
-                error: Some("At least one step is required".to_string()),
+                error: Some("At least one sub-route is required".to_string()),
             }),
         );
     }
@@ -725,110 +849,50 @@ pub async fn build_tx(
         }
     };
 
-    // Build SwapStep args for the contract
-    // Each step: { dex_id: Address, dex_type: DexType, token_in: Address, token_out: Address, a2b: bool }
-    let mut steps_scval = Vec::new();
-    for step in &body.steps {
-        let dex_type_val = match step.dex_type.as_str() {
-            "aquarius" => xdr::ScVal::Symbol(xdr::ScSymbol("Aquarius".try_into().unwrap())),
-            "soroswap" => xdr::ScVal::Symbol(xdr::ScSymbol("SoroswapPair".try_into().unwrap())),
-            "phoenix" => xdr::ScVal::Symbol(xdr::ScSymbol("Phoenix".try_into().unwrap())),
-            "sushi" => xdr::ScVal::Symbol(xdr::ScSymbol("Sushi".try_into().unwrap())),
-            "comet" => xdr::ScVal::Symbol(xdr::ScSymbol("CometDex".try_into().unwrap())),
-            other => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(BuildTxResponse {
-                        success: false,
-                        data: None,
-                        error: Some(format!(
-                            "Unknown dex_type: {}. Use: aquarius, soroswap, phoenix, sushi, comet",
-                            other
-                        )),
-                    }),
-                );
-            }
-        };
-
-        let pool_hash = match stellar_strkey::Contract::from_string(&step.pool_address) {
-            Ok(c) => c.0,
+    let mut sub_routes_scval = Vec::new();
+    let mut sub_routes_total: i128 = 0;
+    for sub in &body.sub_routes {
+        let leg_amount: i128 = match sub.amount_in.parse() {
+            Ok(v) => v,
             Err(_) => {
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(BuildTxResponse {
                         success: false,
                         data: None,
-                        error: Some(format!("Invalid pool_address: {}", step.pool_address)),
+                        error: Some(format!("Invalid sub-route amount_in: {}", sub.amount_in)),
                     }),
                 );
             }
         };
-        let token_in_hash = match stellar_strkey::Contract::from_string(&step.token_in) {
-            Ok(c) => c.0,
-            Err(_) => {
+        sub_routes_total += leg_amount;
+        match build_tx_sub_route_scval(sub) {
+            Ok(v) => sub_routes_scval.push(v),
+            Err(e) => {
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(BuildTxResponse {
                         success: false,
                         data: None,
-                        error: Some(format!("Invalid token_in: {}", step.token_in)),
+                        error: Some(e),
                     }),
                 );
             }
-        };
-        let token_out_hash = match stellar_strkey::Contract::from_string(&step.token_out) {
-            Ok(c) => c.0,
-            Err(_) => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(BuildTxResponse {
-                        success: false,
-                        data: None,
-                        error: Some(format!("Invalid token_out: {}", step.token_out)),
-                    }),
-                );
-            }
-        };
+        }
+    }
 
-        // SwapStep as ScVal::Map — keys MUST be lexicographically sorted for Soroban host conversion
-        let step_val = xdr::ScVal::Map(Some(xdr::ScMap(
-            vec![
-                xdr::ScMapEntry {
-                    key: xdr::ScVal::Symbol(xdr::ScSymbol("dex_id".try_into().unwrap())),
-                    val: xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
-                        pool_hash,
-                    )))),
-                },
-                xdr::ScMapEntry {
-                    key: xdr::ScVal::Symbol(xdr::ScSymbol("dex_type".try_into().unwrap())),
-                    val: dex_type_val,
-                },
-                xdr::ScMapEntry {
-                    key: xdr::ScVal::Symbol(xdr::ScSymbol("in_idx".try_into().unwrap())),
-                    val: xdr::ScVal::U32(step.in_idx),
-                },
-                xdr::ScMapEntry {
-                    key: xdr::ScVal::Symbol(xdr::ScSymbol("out_idx".try_into().unwrap())),
-                    val: xdr::ScVal::U32(step.out_idx),
-                },
-                xdr::ScMapEntry {
-                    key: xdr::ScVal::Symbol(xdr::ScSymbol("token_in".try_into().unwrap())),
-                    val: xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
-                        token_in_hash,
-                    )))),
-                },
-                xdr::ScMapEntry {
-                    key: xdr::ScVal::Symbol(xdr::ScSymbol("token_out".try_into().unwrap())),
-                    val: xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
-                        token_out_hash,
-                    )))),
-                },
-            ]
-            .try_into()
-            .unwrap(),
-        )));
-
-        steps_scval.push(step_val);
+    if sub_routes_total != amount_in {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(BuildTxResponse {
+                success: false,
+                data: None,
+                error: Some(format!(
+                    "sub_routes amount_in sum ({}) does not match amount_in ({})",
+                    sub_routes_total, amount_in
+                )),
+            }),
+        );
     }
 
     // token_in address
@@ -846,27 +910,35 @@ pub async fn build_tx(
         }
     };
 
-    // Build InvokeContract args for aggregator.swap(user, token_in, amount_in, steps, min_amount_out)
+    let token_out_hash = match stellar_strkey::Contract::from_string(&body.token_out) {
+        Ok(c) => c.0,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(BuildTxResponse {
+                    success: false,
+                    data: None,
+                    error: Some(format!("Invalid token_out: {}", body.token_out)),
+                }),
+            );
+        }
+    };
+
+    // aggregator.swap(user, token_in, token_out, sub_routes, min_amount_out)
     let invoke_args = xdr::InvokeContractArgs {
         contract_address: xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(aggregator_hash))),
         function_name: xdr::ScSymbol("swap".try_into().unwrap()),
         args: vec![
-            // user: Address
             xdr::ScVal::Address(xdr::ScAddress::Account(xdr::AccountId(
                 xdr::PublicKey::PublicKeyTypeEd25519(xdr::Uint256(user_key.0)),
             ))),
-            // token_in: Address
             xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
                 token_in_hash,
             )))),
-            // amount_in: i128
-            xdr::ScVal::I128(xdr::Int128Parts {
-                hi: (amount_in >> 64) as i64,
-                lo: amount_in as u64,
-            }),
-            // steps: Vec<SwapStep>
-            xdr::ScVal::Vec(Some(xdr::ScVec(steps_scval.try_into().unwrap()))),
-            // min_amount_out: i128  (contract_min = user minimum with 2% staleness buffer)
+            xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
+                token_out_hash,
+            )))),
+            xdr::ScVal::Vec(Some(xdr::ScVec(sub_routes_scval.try_into().unwrap()))),
             xdr::ScVal::I128(xdr::Int128Parts {
                 hi: (contract_min >> 64) as i64,
                 lo: contract_min as u64,
