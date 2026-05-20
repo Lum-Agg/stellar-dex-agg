@@ -281,31 +281,33 @@ impl TransactionBuilder {
                 _ => return Err(anyhow!("Unknown DEX source: {}", source)),
             };
 
-            let mut entries = Vec::new();
-            entries.push(xdr::ScMapEntry {
-                key: xdr::ScVal::Symbol("in_idx".try_into().unwrap()),
-                val: xdr::ScVal::U32(in_idx),
-            });
-            entries.push(xdr::ScMapEntry {
-                key: xdr::ScVal::Symbol("out_idx".try_into().unwrap()),
-                val: xdr::ScVal::U32(out_idx),
-            });
-            entries.push(xdr::ScMapEntry {
-                key: xdr::ScVal::Symbol("dex_id".try_into().unwrap()),
-                val: self.contract_to_scval(pool_address)?,
-            });
-            entries.push(xdr::ScMapEntry {
-                key: xdr::ScVal::Symbol("dex_type".try_into().unwrap()),
-                val: dex_type_val,
-            });
-            entries.push(xdr::ScMapEntry {
-                key: xdr::ScVal::Symbol("token_in".try_into().unwrap()),
-                val: self.token_to_scval(token_in)?,
-            });
-            entries.push(xdr::ScMapEntry {
-                key: xdr::ScVal::Symbol("token_out".try_into().unwrap()),
-                val: self.token_to_scval(token_out)?,
-            });
+            // Keys must be lexicographically sorted for Soroban host conversion
+            let entries = vec![
+                xdr::ScMapEntry {
+                    key: xdr::ScVal::Symbol("dex_id".try_into().unwrap()),
+                    val: self.contract_to_scval(pool_address)?,
+                },
+                xdr::ScMapEntry {
+                    key: xdr::ScVal::Symbol("dex_type".try_into().unwrap()),
+                    val: dex_type_val,
+                },
+                xdr::ScMapEntry {
+                    key: xdr::ScVal::Symbol("in_idx".try_into().unwrap()),
+                    val: xdr::ScVal::U32(in_idx),
+                },
+                xdr::ScMapEntry {
+                    key: xdr::ScVal::Symbol("out_idx".try_into().unwrap()),
+                    val: xdr::ScVal::U32(out_idx),
+                },
+                xdr::ScMapEntry {
+                    key: xdr::ScVal::Symbol("token_in".try_into().unwrap()),
+                    val: self.token_to_scval(token_in)?,
+                },
+                xdr::ScMapEntry {
+                    key: xdr::ScVal::Symbol("token_out".try_into().unwrap()),
+                    val: self.token_to_scval(token_out)?,
+                },
+            ];
 
             steps.push(xdr::ScVal::Map(Some(xdr::ScMap(
                 entries.try_into().unwrap(),

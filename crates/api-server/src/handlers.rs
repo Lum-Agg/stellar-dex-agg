@@ -790,17 +790,9 @@ pub async fn build_tx(
             }
         };
 
-        // SwapStep struct as ScVal::Map
+        // SwapStep as ScVal::Map — keys MUST be lexicographically sorted for Soroban host conversion
         let step_val = xdr::ScVal::Map(Some(xdr::ScMap(
             vec![
-                xdr::ScMapEntry {
-                    key: xdr::ScVal::Symbol(xdr::ScSymbol("in_idx".try_into().unwrap())),
-                    val: xdr::ScVal::U32(step.in_idx),
-                },
-                xdr::ScMapEntry {
-                    key: xdr::ScVal::Symbol(xdr::ScSymbol("out_idx".try_into().unwrap())),
-                    val: xdr::ScVal::U32(step.out_idx),
-                },
                 xdr::ScMapEntry {
                     key: xdr::ScVal::Symbol(xdr::ScSymbol("dex_id".try_into().unwrap())),
                     val: xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
@@ -810,6 +802,14 @@ pub async fn build_tx(
                 xdr::ScMapEntry {
                     key: xdr::ScVal::Symbol(xdr::ScSymbol("dex_type".try_into().unwrap())),
                     val: dex_type_val,
+                },
+                xdr::ScMapEntry {
+                    key: xdr::ScVal::Symbol(xdr::ScSymbol("in_idx".try_into().unwrap())),
+                    val: xdr::ScVal::U32(step.in_idx),
+                },
+                xdr::ScMapEntry {
+                    key: xdr::ScVal::Symbol(xdr::ScSymbol("out_idx".try_into().unwrap())),
+                    val: xdr::ScVal::U32(step.out_idx),
                 },
                 xdr::ScMapEntry {
                     key: xdr::ScVal::Symbol(xdr::ScSymbol("token_in".try_into().unwrap())),

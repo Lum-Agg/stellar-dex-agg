@@ -16,7 +16,7 @@ export function SwapCard() {
   const [quote, setQuote] = useState<QuoteData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { address: walletAddress, signTx } = useWallet();
+  const { address: walletAddress, signTx, connect, connecting } = useWallet();
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
   // Auto-fetch quote when amount changes (debounced)
@@ -146,6 +146,34 @@ export function SwapCard() {
     }
   }, [walletAddress, quote, tokenIn, tokenOut, amountIn, signTx]);
 
+  const handlePrimaryAction = useCallback(() => {
+    if (!walletAddress) {
+      connect();
+      return;
+    }
+    handleSwap();
+  }, [walletAddress, connect, handleSwap]);
+
+  const needsWallet = !walletAddress;
+  const primaryDisabled =
+    connecting ||
+    swapping ||
+    (walletAddress !== null && (loading || !quote || !amountIn));
+
+  const primaryLabel = connecting
+    ? 'Connecting...'
+    : swapping
+      ? 'Submitting...'
+      : loading && walletAddress
+        ? 'Finding best route...'
+        : !walletAddress
+          ? 'Connect wallet to swap'
+          : !amountIn
+            ? 'Enter amount'
+            : !quote
+              ? 'No route available'
+              : 'Review & swap';
+
   return (
     <div className="w-full max-w-[480px] space-y-3">
       {/* Main Card */}
@@ -257,21 +285,16 @@ export function SwapCard() {
         {/* Action Button */}
         <div className="mt-4">
           <button
-            onClick={handleSwap}
-            disabled={!walletAddress || !quote || loading || swapping}
-            className="w-full py-3.5 bg-gradient-to-r from-blue-600 to-indigo-500 hover:from-blue-500 hover:to-indigo-400 disabled:from-slate-700 disabled:to-slate-700 disabled:text-slate-400 rounded-xl font-medium transition-all shadow-lg shadow-blue-900/30"
+            type="button"
+            onClick={handlePrimaryAction}
+            disabled={primaryDisabled}
+            className={`w-full py-3.5 rounded-xl font-medium transition-all ${
+              needsWallet && !connecting
+                ? 'bg-gradient-to-r from-blue-600 to-indigo-500 hover:from-blue-500 hover:to-indigo-400 shadow-lg shadow-blue-900/30 text-white'
+                : 'bg-gradient-to-r from-blue-600 to-indigo-500 hover:from-blue-500 hover:to-indigo-400 disabled:from-slate-700 disabled:to-slate-700 disabled:text-slate-400 shadow-lg shadow-blue-900/30'
+            }`}
           >
-            {swapping
-              ? 'Submitting...'
-              : loading
-                ? 'Finding best route...'
-                : !amountIn
-                  ? 'Enter amount'
-                  : !walletAddress
-                    ? 'Connect wallet to swap'
-                    : !quote
-                      ? 'No route available'
-                      : 'Review & swap'}
+            {primaryLabel}
           </button>
         </div>
 
