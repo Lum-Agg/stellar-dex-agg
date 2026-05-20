@@ -685,10 +685,7 @@ impl SushiAdapter {
         }
         let mut pool = self.read_pool_state(pool_address).await?;
         if let Err(e) = self.read_tick_data(&mut pool).await {
-            warn!(
-                "Sushi: tick data incomplete for {}: {}",
-                pool_address, e
-            );
+            warn!("Sushi: tick data incomplete for {}: {}", pool_address, e);
         }
         let pair = AdapterTradingPair {
             token_a: TokenId::Contract {
@@ -756,7 +753,11 @@ impl SushiAdapter {
             hints_val,
         ];
 
-        match self.rpc.simulate_call(pool_address, "swap", swap_args).await {
+        match self
+            .rpc
+            .simulate_call(pool_address, "swap", swap_args)
+            .await
+        {
             Ok(result) => Ok(parse_sushi_pool_swap_output(&result, zero_for_one)),
             Err(e) => {
                 let err_str = e.to_string();
@@ -794,14 +795,9 @@ impl SushiAdapter {
     /// Pool metadata for diagnostics (token0, token1, fee ppm, liquidity).
     pub async fn pool_info(&self, pool_address: &str) -> Option<(String, String, u32, u128)> {
         let cache = self.pool_cache.read().await;
-        cache.get(pool_address).map(|p| {
-            (
-                p.token0.clone(),
-                p.token1.clone(),
-                p.fee_bps,
-                p.liquidity,
-            )
-        })
+        cache
+            .get(pool_address)
+            .map(|p| (p.token0.clone(), p.token1.clone(), p.fee_bps, p.liquidity))
     }
 
     pub async fn pool_addresses(&self) -> Vec<String> {

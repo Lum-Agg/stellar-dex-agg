@@ -67,6 +67,26 @@ pub struct SubRoute {
 #[contract]
 pub struct AggregatorContract;
 
+/// Soroswap fee: ceil(amount_in * 3 / 1000), matching pair swap K-check.
+fn soroswap_fee(amount_in: i128) -> i128 {
+    if amount_in <= 0 {
+        return 0;
+    }
+    (amount_in * 3 + 999) / 1000
+}
+
+/// Soroswap library `get_amount_out` (floor division on output).
+fn soroswap_get_amount_out(amount_in: i128, reserve_in: i128, reserve_out: i128) -> i128 {
+    if amount_in <= 0 || reserve_in <= 0 || reserve_out <= 0 {
+        return 0;
+    }
+    let in_less = amount_in - soroswap_fee(amount_in);
+    if in_less <= 0 {
+        return 0;
+    }
+    in_less * reserve_out / (reserve_in + in_less)
+}
+
 #[contractimpl]
 impl AggregatorContract {
     /// Initialize the contract with an admin address.
@@ -247,7 +267,7 @@ impl AggregatorContract {
             }
 
             DexType::SoroswapPair => {
-                // Soroswap flash-swap: transfer to pair, then call swap()
+                // Soroswap: transfer input to pair, then swap() with library get_amount_out math.
                 let reserves: (i128, i128) = env.invoke_contract(
                     &step.dex_id,
                     &Symbol::new(env, "get_reserves"),
@@ -261,25 +281,51 @@ impl AggregatorContract {
                     (reserves.1, reserves.0)
                 };
 
-                // Compute expected output (matching on-chain formula)
-                let amount_in_u = amount_in as u128;
-                let fee = (amount_in_u * 3 + 999) / 1000;
-                let in_net = amount_in_u - fee;
-                let expected_out = if reserve_in > 0 && reserve_out > 0 {
-                    (in_net * (reserve_out as u128)) / ((reserve_in as u128) + in_net)
-                } else {
-                    0
-                };
+                let amount_out = soroswap_get_amount_out(amount_in, reserve_in, reserve_out);
+                if amount_out <= 0 {
+                    return 0;
+                }
+                // Defensive: pair K-check uses post-transfer balances; shave 1 stroop only
+                // for edge cases (stale reserves / rounding). Irrelevant at 1 XLM scale.
+                let safe_out = amount_out.saturating_sub(1);
+                if safe_out <= 0 {
+                    return 0;
+                }
 
-                // Transfer token_in to pair
-                let token_client = token::Client::new(env, &step.token_in);
-                token_client.transfer(my_address, &step.dex_id, &amount_in);
+                let token_in_client = token::Client::new(env, &step.token_in);
+                let token_out_client = token::Client::new(env, &step.token_out);
+                let balance_before = token_out_client.balance(my_address);
 
-                // Call swap
+                let transfer_auth = InvokerContractAuthEntry::Contract(SubContractInvocation {
+                    context: ContractContext {
+                        contract: step.token_in.clone(),
+                        fn_name: Symbol::new(env, "transfer"),
+                        args: soroban_sdk::vec![
+                            env,
+                            my_address.into_val(env),
+                            step.dex_id.into_val(env),
+                            amount_in.into_val(env),
+                        ],
+                    },
+                    sub_invocations: soroban_sdk::vec![env],
+                });
+
+                #[cfg(test)]
+                {
+                    env.authorize_as_current_contract(soroban_sdk::vec![env, transfer_auth]);
+                }
+
+                #[cfg(not(test))]
+                {
+                    env.authorize_as_current_contract(soroban_sdk::vec![env, transfer_auth]);
+                }
+
+                token_in_client.transfer(my_address, &step.dex_id, &amount_in);
+
                 let (amount0_out, amount1_out): (i128, i128) = if a2b {
-                    (0, expected_out as i128)
+                    (0, safe_out)
                 } else {
-                    (expected_out as i128, 0)
+                    (safe_out, 0)
                 };
 
                 let args = soroban_sdk::vec![
@@ -289,7 +335,9 @@ impl AggregatorContract {
                     my_address.into_val(env),
                 ];
                 let _: Val = env.invoke_contract(&step.dex_id, &Symbol::new(env, "swap"), args);
-                expected_out as i128
+
+                let balance_after = token_out_client.balance(my_address);
+                balance_after - balance_before
             }
 
             DexType::Phoenix => {
@@ -893,8 +941,8 @@ mod test {
         };
         let before = tok_b.balance(&user);
         let out = single_swap(&env, &agg, &user, &a, &b, 1000, vec![&env, step], 1);
-        assert_eq!(out, 987);
-        assert_eq!(tok_b.balance(&user) - before, 987);
+        assert_eq!(out, 986);
+        assert_eq!(tok_b.balance(&user) - before, 986);
     }
 
     #[test]
@@ -924,8 +972,8 @@ mod test {
         };
         let before = tok_a.balance(&user);
         let out = single_swap(&env, &agg, &user, &b, &a, 1000, vec![&env, step], 1);
-        assert_eq!(out, 987);
-        assert_eq!(tok_a.balance(&user) - before, 987);
+        assert_eq!(out, 986);
+        assert_eq!(tok_a.balance(&user) - before, 986);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1045,8 +1093,8 @@ mod test {
         let before_c = tok_c.balance(&user);
         let before_b = tok_b.balance(&user);
         let out = single_swap(&env, &agg, &user, &a, &c, 5000, steps, 1);
-        assert_eq!(out, 4748);
-        assert_eq!(tok_c.balance(&user) - before_c, 4748);
+        assert_eq!(out, 4747);
+        assert_eq!(tok_c.balance(&user) - before_c, 4747);
         assert_eq!(tok_b.balance(&user) - before_b, 0);
     }
 
@@ -1109,8 +1157,8 @@ mod test {
         ];
         let before = tok_b.balance(&user);
         let total = agg.swap(&user, &a, &b, &sub_routes, &1);
-        assert_eq!(total, 4955);
-        assert_eq!(tok_b.balance(&user) - before, 4955);
+        assert_eq!(total, 4954);
+        assert_eq!(tok_b.balance(&user) - before, 4954);
     }
 
     // ═══════════════════════════════════════════════════════════════════════

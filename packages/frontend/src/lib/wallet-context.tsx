@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
 import { StellarWalletsKit } from '@creit.tech/stellar-wallets-kit';
+import { Networks } from '@creit.tech/stellar-wallets-kit/types';
 import { FreighterModule } from '@creit.tech/stellar-wallets-kit/modules/freighter';
 import { xBullModule } from '@creit.tech/stellar-wallets-kit/modules/xbull';
 import { LobstrModule } from '@creit.tech/stellar-wallets-kit/modules/lobstr';
@@ -31,7 +32,8 @@ let kitInitialized = false;
 function ensureKit() {
   if (kitInitialized) return;
   StellarWalletsKit.init({
-    network: 'public' as any,
+    // Must be the full passphrase, not the shorthand "public" (Freighter rejects signing otherwise).
+    network: Networks.PUBLIC,
     modules: [
       new FreighterModule(),
       new xBullModule(),
@@ -69,9 +71,12 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const signTx = useCallback(async (xdr: string): Promise<string> => {
     ensureKit();
-    const { signedTxXdr } = await StellarWalletsKit.signTransaction(xdr);
+    const { signedTxXdr } = await StellarWalletsKit.signTransaction(xdr, {
+      networkPassphrase: Networks.PUBLIC,
+      address: address ?? undefined,
+    });
     return signedTxXdr;
-  }, []);
+  }, [address]);
 
   return (
     <WalletContext.Provider value={{ address, connecting, connect, disconnect, signTx }}>

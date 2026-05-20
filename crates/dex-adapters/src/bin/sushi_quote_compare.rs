@@ -50,7 +50,10 @@ async fn main() -> Result<()> {
         println!("Loading all Sushi pools (slot0 + liquidity + ticks via pool-lens)...");
         sushi.get_trading_pairs().await?;
     } else {
-        println!("Loading pool {} (set SUSHI_LOAD_ALL=1 for every pool)...", &primary_pool[..16]);
+        println!(
+            "Loading pool {} (set SUSHI_LOAD_ALL=1 for every pool)...",
+            &primary_pool[..16]
+        );
         sushi.ensure_pool_loaded(&primary_pool).await?;
     }
 
