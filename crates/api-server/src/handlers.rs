@@ -435,6 +435,30 @@ pub struct TokenInfo {
     pub id: String,
     pub symbol: String,
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logo: Option<String>,
+}
+
+fn logo_url_for_asset_id(asset_id: &str) -> Option<String> {
+    if asset_id == "native" {
+        return Some("https://stellar.expert/explorer/public/asset/native/icon".to_string());
+    }
+    if let Some((code, issuer)) = asset_id.split_once(':') {
+        if !code.is_empty() && !issuer.is_empty() {
+            return Some(format!(
+                "https://stellar.expert/explorer/public/asset/{}-{}-1/icon",
+                code, issuer
+            ));
+        }
+    }
+    None
+}
+
+fn resolve_token_logo(id: &str, name: &str, metadata_logo: Option<String>) -> Option<String> {
+    if metadata_logo.is_some() {
+        return metadata_logo;
+    }
+    logo_url_for_asset_id(id).or_else(|| logo_url_for_asset_id(name))
 }
 
 pub async fn list_tokens(State(state): State<AppState>) -> impl IntoResponse {
@@ -449,10 +473,12 @@ pub async fn list_tokens(State(state): State<AppState>) -> impl IntoResponse {
             // Check metadata store first
             if let Some(meta) = metadata.get(&addr) {
                 if meta.name != "Unknown" {
+                    let logo = resolve_token_logo(&addr, &meta.name, meta.logo.clone());
                     return TokenInfo {
                         id: addr,
                         symbol: meta.symbol.clone(),
                         name: meta.name.clone(),
+                        logo,
                     };
                 }
             }
@@ -463,20 +489,25 @@ pub async fn list_tokens(State(state): State<AppState>) -> impl IntoResponse {
                     id: addr,
                     symbol: "XLM".to_string(),
                     name: "Stellar Lumens".to_string(),
+                    logo: logo_url_for_asset_id("native"),
                 }
             } else if addr.contains(':') {
                 let code = addr.split(':').next().unwrap_or(&addr).to_string();
+                let logo = logo_url_for_asset_id(&addr);
                 TokenInfo {
                     id: addr,
                     symbol: code.clone(),
                     name: code,
+                    logo,
                 }
             } else if let Some(meta) = metadata.get(&addr) {
                 // Use metadata even if "Unknown" (at least has the short symbol)
+                let logo = resolve_token_logo(&addr, &meta.name, meta.logo.clone());
                 TokenInfo {
                     id: addr,
                     symbol: meta.symbol.clone(),
                     name: meta.name.clone(),
+                    logo,
                 }
             } else {
                 let short = if addr.len() > 8 {
@@ -488,6 +519,7 @@ pub async fn list_tokens(State(state): State<AppState>) -> impl IntoResponse {
                     id: addr,
                     symbol: short,
                     name: "Unknown".to_string(),
+                    logo: None,
                 }
             }
         })

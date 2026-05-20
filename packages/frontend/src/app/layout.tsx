@@ -15,23 +15,22 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark">
-      <body className="bg-[#0a0b0f] text-white min-h-screen antialiased">
+      <body className="min-h-screen antialiased text-slate-100">
         <Providers>
-          {/* Background gradient */}
-          <div className="fixed inset-0 bg-gradient-to-br from-blue-950/20 via-transparent to-purple-950/20 pointer-events-none" />
+          <div className="fixed inset-0 pointer-events-none bg-[linear-gradient(to_bottom,rgba(148,163,184,0.06)_1px,transparent_1px)] bg-[size:100%_24px] opacity-20" />
 
-          <header className="relative border-b border-white/5 backdrop-blur-sm">
+          <header className="sticky top-0 z-40 border-b border-white/10 bg-[#0a0f1be6] backdrop-blur-xl">
             <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
-              <a href="/" className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-sm font-bold">
+              <a href="/" className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-violet-500 flex items-center justify-center text-sm font-bold shadow-lg shadow-blue-500/20">
                   L
                 </div>
-                <span className="text-lg font-semibold tracking-tight">
+                <span className="text-lg font-semibold tracking-tight text-slate-100">
                   Lum<span className="text-blue-400">Agg</span>
                 </span>
               </a>
               <div className="flex items-center gap-4">
-                <nav className="hidden sm:flex items-center gap-6 text-sm text-gray-400">
+                <nav className="hidden sm:flex items-center gap-6 text-sm text-slate-400">
                   <a href="/" className="hover:text-white transition-colors">
                     Swap
                   </a>
@@ -48,9 +47,9 @@ export default function RootLayout({
             {children}
           </main>
 
-          <footer className="relative border-t border-white/5 mt-20">
-            <div className="max-w-5xl mx-auto px-6 py-6 text-center text-xs text-gray-500">
-              Aggregating liquidity across Aquarius, Phoenix, Soroswap, Sushi V3, Comet & Stellar Classic DEX
+          <footer className="relative border-t border-white/10 mt-20 bg-[#0a0f1b80]">
+            <div className="max-w-5xl mx-auto px-6 py-6 text-center text-xs text-slate-500">
+              Mainnet routing across Aquarius, Phoenix, Soroswap, Sushi V3, Comet and Stellar Classic DEX.
             </div>
           </footer>
         </Providers>

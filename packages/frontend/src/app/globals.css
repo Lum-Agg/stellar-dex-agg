@@ -1,1 +1,22 @@
 @import "tailwindcss";
+
+:root {
+  --bg-0: #070b14;
+  --bg-1: #0f1626;
+  --card: #111827cc;
+  --card-strong: #101726;
+  --border-soft: #ffffff1a;
+  --text-dim: #94a3b8;
+}
+
+html,
+body {
+  background: radial-gradient(1200px 700px at 20% -10%, #1d4ed833, transparent 60%),
+    radial-gradient(900px 500px at 95% 0%, #7c3aed22, transparent 60%),
+    var(--bg-0);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #334155 #0b1220;
+}

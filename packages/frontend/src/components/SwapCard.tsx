@@ -149,19 +149,22 @@ export function SwapCard() {
   return (
     <div className="w-full max-w-[480px] space-y-3">
       {/* Main Card */}
-      <div className="bg-[#12131a] rounded-2xl border border-white/5 p-5 shadow-2xl shadow-black/50">
+      <div className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-[0_20px_60px_rgba(2,6,23,0.6)] backdrop-blur-xl">
         {/* Header */}
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-base font-medium">Swap</h2>
+          <div>
+            <h2 className="text-base font-medium text-slate-100">Swap</h2>
+            <p className="text-[11px] text-slate-500 mt-0.5">Quotes include routing + slippage protection</p>
+          </div>
           <div className="flex items-center gap-1.5">
             {[0.1, 0.5, 1.0].map(s => (
               <button
                 key={s}
                 onClick={() => setSlippage(s)}
-                className={`px-2 py-0.5 rounded text-xs transition-colors ${
+                className={`px-2 py-0.5 rounded-md text-xs transition-colors ${
                   slippage === s
-                    ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30'
-                    : 'text-gray-500 hover:text-gray-300'
+                    ? 'bg-blue-600/20 text-blue-300 border border-blue-500/40'
+                    : 'text-slate-500 hover:text-slate-300'
                 }`}
               >
                 {s}%
@@ -171,8 +174,8 @@ export function SwapCard() {
         </div>
 
         {/* Input Section */}
-        <div className="bg-[#1a1b23] rounded-xl p-4 border border-white/5">
-          <div className="flex justify-between text-xs text-gray-500 mb-2">
+        <div className="bg-slate-950/60 rounded-2xl p-4 border border-white/10">
+          <div className="flex justify-between text-xs text-slate-500 mb-2">
             <span>You pay</span>
           </div>
           <div className="flex items-center gap-3">
@@ -185,7 +188,7 @@ export function SwapCard() {
                 if (/^\d*\.?\d*$/.test(val)) setAmountIn(val);
               }}
               placeholder="0"
-              className="flex-1 bg-transparent text-2xl font-medium outline-none placeholder-gray-600 min-w-0"
+              className="flex-1 bg-transparent text-2xl font-medium outline-none placeholder-slate-600 min-w-0"
             />
             <TokenSelector
               selected={tokenIn}
@@ -199,17 +202,17 @@ export function SwapCard() {
         <div className="flex justify-center -my-2 relative z-10">
           <button
             onClick={swapDirection}
-            className="w-9 h-9 rounded-xl bg-[#1a1b23] border border-white/10 flex items-center justify-center hover:border-blue-500/50 hover:bg-[#1e1f2a] transition-all group"
+            className="w-9 h-9 rounded-xl bg-slate-900 border border-white/15 flex items-center justify-center hover:border-blue-500/50 hover:bg-slate-800 transition-all group"
           >
-            <svg className="w-4 h-4 text-gray-400 group-hover:text-blue-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-4 h-4 text-slate-400 group-hover:text-blue-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
             </svg>
           </button>
         </div>
 
         {/* Output Section */}
-        <div className="bg-[#1a1b23] rounded-xl p-4 border border-white/5">
-          <div className="flex justify-between text-xs text-gray-500 mb-2">
+        <div className="bg-slate-950/60 rounded-2xl p-4 border border-white/10">
+          <div className="flex justify-between text-xs text-slate-500 mb-2">
             <span>You receive</span>
             {loading && (
               <span className="text-blue-400 animate-pulse">Finding best route...</span>
@@ -220,7 +223,7 @@ export function SwapCard() {
               {quote ? (
                 <span className="text-white">{formatOutput(quote.expected_output)}</span>
               ) : (
-                <span className="text-gray-600">0</span>
+                <span className="text-slate-600">0</span>
               )}
             </div>
             <TokenSelector
@@ -233,7 +236,7 @@ export function SwapCard() {
 
         {/* Rate display: human out per 1 unit token in (not stroops passed to formatOutput) */}
         {quote && amountIn && parseFloat(amountIn) > 0 && (
-          <div className="mt-3 px-1 text-xs text-gray-500">
+          <div className="mt-3 px-1 text-xs text-slate-400">
             1 {tokenIn.symbol} ≈{' '}
             {(parseInt(quote.expected_output, 10) / 10 ** tokenOut.decimals / parseFloat(amountIn)).toLocaleString(undefined, {
               maximumFractionDigits: 8,
@@ -244,7 +247,11 @@ export function SwapCard() {
 
         {/* Error */}
         {error && !loading && (
-          <div className="mt-3 text-xs text-red-400/80 text-center">{error}</div>
+          <div className="mt-3 text-xs text-red-300 border border-red-400/20 bg-red-500/10 rounded-xl px-3 py-2 text-center">
+            {error === 'Failed to fetch quote'
+              ? 'Unable to load quote. Please retry in a moment.'
+              : error}
+          </div>
         )}
 
         {/* Action Button */}
@@ -252,24 +259,34 @@ export function SwapCard() {
           <button
             onClick={handleSwap}
             disabled={!walletAddress || !quote || loading || swapping}
-            className="w-full py-3.5 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 disabled:from-gray-700 disabled:to-gray-700 disabled:text-gray-500 rounded-xl font-medium transition-all"
+            className="w-full py-3.5 bg-gradient-to-r from-blue-600 to-indigo-500 hover:from-blue-500 hover:to-indigo-400 disabled:from-slate-700 disabled:to-slate-700 disabled:text-slate-400 rounded-xl font-medium transition-all shadow-lg shadow-blue-900/30"
           >
-            {swapping ? 'Swapping...' : loading ? 'Finding route...' : !amountIn ? 'Enter amount' : !walletAddress ? 'Connect wallet to swap' : !quote ? 'No route' : 'Swap'}
+            {swapping
+              ? 'Submitting...'
+              : loading
+                ? 'Finding best route...'
+                : !amountIn
+                  ? 'Enter amount'
+                  : !walletAddress
+                    ? 'Connect wallet to swap'
+                    : !quote
+                      ? 'No route available'
+                      : 'Review & swap'}
           </button>
         </div>
 
         {/* Transaction Result */}
         {txResult && (
-          <div className={`mt-3 p-3 rounded-lg text-xs ${txResult.success ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+          <div className={`mt-3 p-3 rounded-lg text-xs border ${txResult.success ? 'bg-green-500/10 border-green-400/20 text-green-300' : 'bg-red-500/10 border-red-400/20 text-red-300'}`}>
             {txResult.success ? (
               <div>
-                ✅ Swap successful!{' '}
+                Swap submitted successfully.{' '}
                 <a href={`https://stellar.expert/explorer/public/tx/${txResult.hash}`} target="_blank" rel="noopener" className="underline">
-                  View tx
+                  View transaction
                 </a>
               </div>
             ) : (
-              <div>❌ {txResult.error}</div>
+              <div>{txResult.error}</div>
             )}
           </div>
         )}
