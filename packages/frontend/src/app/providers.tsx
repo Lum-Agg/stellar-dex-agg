@@ -9,9 +9,5 @@ const WalletProviderInner = dynamic(
 );
 
 export function Providers({ children }: { children: React.ReactNode }) {
-  return (
-    <WalletProviderInner>
-      <div className="flex min-h-screen flex-col">{children}</div>
-    </WalletProviderInner>
-  );
+  return <WalletProviderInner>{children}</WalletProviderInner>;
 }

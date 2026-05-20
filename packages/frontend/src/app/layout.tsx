@@ -15,7 +15,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark">
-      <body className="min-h-screen antialiased text-slate-100 flex flex-col">
+      <body className="min-h-screen antialiased text-slate-100">
         <Providers>
           <div className="fixed inset-0 pointer-events-none bg-[linear-gradient(to_bottom,rgba(148,163,184,0.06)_1px,transparent_1px)] bg-[size:100%_24px] opacity-20" />
 
@@ -43,12 +43,12 @@ export default function RootLayout({
             </div>
           </header>
 
-          <main className="relative flex-1 flex flex-col max-w-5xl w-full mx-auto px-6 py-10 md:py-14">
+          <main className="relative max-w-5xl w-full mx-auto px-6 py-10 md:py-12">
             {children}
           </main>
 
-          <footer className="relative shrink-0 border-t border-white/10 mt-auto bg-[#0a0f1b80]">
-            <div className="max-w-5xl mx-auto px-6 py-8 text-center text-xs text-slate-500">
+          <footer className="relative border-t border-white/10 mt-12 bg-[#0a0f1b80]">
+            <div className="max-w-5xl mx-auto px-6 py-6 text-center text-xs text-slate-500">
               Mainnet routing across Aquarius, Phoenix, Soroswap, Sushi V3, Comet and Stellar Classic DEX.
             </div>
           </footer>

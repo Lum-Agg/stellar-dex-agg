@@ -21,9 +21,9 @@ const DEXES = ['Aquarius', 'Soroswap', 'Phoenix', 'Sushi', 'Comet', 'Classic'] a
 
 export default function Home() {
   return (
-    <div className="flex flex-1 flex-col gap-10 md:gap-12 min-h-[calc(100vh-10rem)]">
-      <section className="grid flex-1 grid-cols-1 lg:grid-cols-[1.05fr_0.95fr] gap-8 lg:gap-10 items-stretch">
-        <div className="flex flex-col justify-center space-y-7 lg:py-6">
+    <div className="w-full space-y-8 md:space-y-10 pb-6">
+      <section className="grid grid-cols-1 lg:grid-cols-[1.05fr_0.95fr] gap-8 lg:gap-10 items-start">
+        <div className="space-y-6">
           <div className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-200">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-300 animate-pulse" />
             Mainnet live
@@ -66,7 +66,7 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="relative flex flex-col justify-center lg:min-h-[520px]">
+        <div className="relative lg:sticky lg:top-24">
           <div className="absolute -inset-6 bg-blue-500/10 blur-3xl rounded-[2rem] pointer-events-none" />
           <div className="relative rounded-[1.75rem] border border-white/10 bg-slate-900/50 p-3 md:p-4 shadow-2xl shadow-black/40">
             <SwapCard />
@@ -78,7 +78,7 @@ export default function Home() {
         {FEATURES.map((f) => (
           <div
             key={f.title}
-            className="rounded-2xl border border-white/10 bg-slate-900/40 p-5 flex flex-col gap-2 min-h-[120px]"
+            className="rounded-2xl border border-white/10 bg-slate-900/40 p-4 flex flex-col gap-2"
           >
             <h3 className="text-sm font-medium text-slate-100">{f.title}</h3>
             <p className="text-xs text-slate-400 leading-relaxed">{f.body}</p>
@@ -86,7 +86,7 @@ export default function Home() {
         ))}
       </section>
 
-      <section className="rounded-2xl border border-white/10 bg-slate-900/40 p-5 md:p-6 flex-1 flex flex-col justify-center min-h-[140px]">
+      <section className="rounded-2xl border border-white/10 bg-slate-900/40 p-5">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <h2 className="text-sm md:text-base font-medium text-slate-100">Liquidity coverage</h2>
           <span className="text-xs text-slate-400">Unified routing across Stellar DEX venues</span>
