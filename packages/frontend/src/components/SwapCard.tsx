@@ -90,7 +90,7 @@ export function SwapCard() {
 
       const subSum = quote.sub_routes.reduce(
         (s, r) => s + BigInt(r.amount_in || '0'),
-        0n
+        BigInt(0)
       );
       if (subSum.toString() !== totalAmountIn) {
         setTxResult({

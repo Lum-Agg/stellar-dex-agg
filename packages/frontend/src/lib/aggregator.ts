@@ -70,10 +70,13 @@ function normalizeQuoteData(data: QuoteData): QuoteData {
   const sub_routes = (data.sub_routes ?? []).map((r) =>
     normalizeSubRoute(r as unknown as Record<string, unknown>)
   );
-  const subSum = sub_routes.reduce((s, r) => s + BigInt(r.amount_in || '0'), 0n);
+  const subSum = sub_routes.reduce(
+    (s, r) => s + BigInt(r.amount_in || '0'),
+    BigInt(0)
+  );
   const amount_in =
     data.amount_in ??
-    (subSum > 0n ? subSum.toString() : undefined);
+    (subSum > BigInt(0) ? subSum.toString() : undefined);
   return { ...data, sub_routes, amount_in };
 }
 
