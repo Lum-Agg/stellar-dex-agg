@@ -8,3 +8,4 @@ packages/frontend/.next/
 packages/frontend/out/
 justfile
 data
+.worktrees/
