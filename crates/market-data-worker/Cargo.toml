@@ -1,0 +1,17 @@
+[package]
+name = "market-data-worker"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "market-data-worker"
+path = "src/main.rs"
+
+[dependencies]
+market-snapshot = { path = "../market-snapshot" }
+dex-adapters = { path = "../dex-adapters" }
+
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

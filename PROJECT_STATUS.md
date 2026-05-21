@@ -83,6 +83,7 @@
 - [x] Nginx reverse proxy + Cloudflare Origin Certificate
 - [x] 前端 Cloudflare Pages
 - [x] 部署脚本 `deploy_server.sh`（rsync + 服务器编译）
+- [x] Snapshot mode：支持 file/Redis 双后端，`market-data-worker` 发布共享快照，`api-server` 可热重载 `QuoteEngine`
 
 ---
 
@@ -94,6 +95,16 @@
 | Pool discovery | 600s（默认） | `DISCOVERY_INTERVAL_SECS` | `get_trading_pairs()` 全量替换图 + 写 `pool_cache.json` |
 
 启动：先读磁盘 cache → 注册 adapter → 立即一轮 discovery → 并行 refresh / discovery 循环。
+
+当前 snapshot mode：
+- file backend：`market-data-worker` 周期性写 `data/snapshots/current.json`
+- Redis backend：worker 发布版本化 snapshot，API 通过 Pub/Sub 优先热更新，并保留 `current` key 轮询兜底
+- `api-server` 配置 snapshot backend 后不再启动 adapter/discovery loop，而是从共享快照构建本地 `QuoteEngine`
+- Redis snapshot 会自动保留最近 `N` 个版本，避免版本 key 无限增长
+
+本地验证结果：
+- 已验证 Redis 模式下 `snapshot publish -> Pub/Sub -> api-server reload -> /api/v1/tokens -> /api/v1/quote`
+- 旧的 file snapshot 若缺少 `token_metadata` 字段，会被新的 loader 视为旧 schema；当前 synthetic snapshot 已覆盖新 schema smoke test
 
 ---
 
@@ -237,4 +248,4 @@ ssh root@178.63.81.216 "source ~/.cargo/env && cd /opt/stellar-dex-aggregator-sr
 
 ---
 
-*Last updated: 2026-05-19*
+*Last updated: 2026-05-21*

@@ -1,5 +1,7 @@
 [workspace]
 members = [
+    "crates/market-snapshot",
+    "crates/market-data-worker",
     "crates/router-engine",
     "crates/dex-adapters",
     "crates/api-server",

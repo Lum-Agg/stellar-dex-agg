@@ -8,6 +8,7 @@ name = "api-server"
 path = "src/main.rs"
 
 [dependencies]
+market-snapshot = { path = "../market-snapshot" }
 router-engine = { path = "../router-engine" }
 dex-adapters = { path = "../dex-adapters" }
 

@@ -9,25 +9,33 @@ use dex_adapters::{
     rpc::SorobanRpc,
     soroswap::SoroswapAdapter,
     sushi::SushiAdapter,
-    token_metadata::TokenMetadataStore,
+    token_metadata::{TokenMetadata, TokenMetadataStore},
     traits::AdapterTradingPair,
     DexAdapter,
 };
+use market_snapshot::{
+    store::{
+        build_snapshot_store, should_reload_snapshot_version,
+        subscribe_to_snapshot_events, SnapshotListenerEvent, SnapshotStore, SnapshotStoreBackend,
+    },
+    MarketSnapshot,
+};
 use router_engine::{path_finder::PathFinderConfig, split_optimizer::SplitConfig, QuoteEngine};
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
+use tokio::sync::{mpsc, RwLock};
 use tracing::{info, warn};
 
-use crate::config::AppConfig;
+use crate::{config::AppConfig, snapshot_loader::build_engine_from_snapshot};
 
 /// Shared application state.
 #[derive(Clone)]
 pub struct AppState {
-    pub engine: Arc<QuoteEngine>,
+    pub engine: Arc<RwLock<Arc<QuoteEngine>>>,
     pub config: AppConfig,
     pub token_metadata: Arc<TokenMetadataStore>,
 }
 
-fn sanitize_cached_pairs(
+pub(crate) fn sanitize_cached_pairs(
     source: &str,
     pairs: Vec<router_engine::TradingPair>,
 ) -> Vec<router_engine::TradingPair> {
@@ -49,6 +57,24 @@ fn sanitize_cached_pairs(
         .collect()
 }
 
+fn snapshot_token_metadata(snapshot: &MarketSnapshot) -> std::collections::HashMap<String, TokenMetadata> {
+    snapshot
+        .token_metadata
+        .iter()
+        .map(|meta| {
+            (
+                meta.contract.clone(),
+                TokenMetadata {
+                    contract: meta.contract.clone(),
+                    symbol: meta.symbol.clone(),
+                    name: meta.name.clone(),
+                    logo: meta.logo.clone(),
+                },
+            )
+        })
+        .collect()
+}
+
 fn pairs_to_trading(pairs: &[AdapterTradingPair], source: &str) -> Vec<router_engine::TradingPair> {
     pairs
         .iter()
@@ -62,6 +88,135 @@ fn pairs_to_trading(pairs: &[AdapterTradingPair], source: &str) -> Vec<router_en
             reserve_b: p.reserve_b,
         })
         .collect()
+}
+
+fn configured_snapshot_backend(config: &AppConfig) -> Result<Option<SnapshotStoreBackend>> {
+    if let Some(backend) = config.snapshot_backend.as_deref() {
+        return SnapshotStoreBackend::parse(backend).map(Some);
+    }
+    if config.snapshot_redis_url.is_some() {
+        return Ok(Some(SnapshotStoreBackend::Redis));
+    }
+    if config.snapshot_dir.is_some() {
+        return Ok(Some(SnapshotStoreBackend::File));
+    }
+    Ok(None)
+}
+
+fn configured_snapshot_store(config: &AppConfig) -> Result<Option<Arc<dyn SnapshotStore>>> {
+    let Some(backend) = configured_snapshot_backend(config)? else {
+        return Ok(None);
+    };
+
+    Ok(Some(build_snapshot_store(
+        backend,
+        config.snapshot_dir.clone().map(PathBuf::from),
+        config.snapshot_redis_url.as_deref(),
+        Some(config.snapshot_redis_channel.as_str()),
+        Some(config.snapshot_redis_keep_latest),
+    )?))
+}
+
+fn configured_snapshot_event_listener(
+    config: &AppConfig,
+) -> Result<Option<mpsc::UnboundedReceiver<SnapshotListenerEvent>>> {
+    let Some(backend) = configured_snapshot_backend(config)? else {
+        return Ok(None);
+    };
+
+    if backend != SnapshotStoreBackend::Redis {
+        return Ok(None);
+    }
+
+    let Some(redis_url) = config.snapshot_redis_url.as_deref() else {
+        return Ok(None);
+    };
+
+    match subscribe_to_snapshot_events(redis_url, &config.snapshot_redis_channel) {
+        Ok(listener) => Ok(Some(listener)),
+        Err(error) => {
+            warn!(
+                "Failed to start snapshot pub/sub listener, using polling only: {}",
+                error
+            );
+            Ok(None)
+        }
+    }
+}
+
+fn normalize_snapshot_poll_interval_ms(interval_ms: u64) -> u64 {
+    interval_ms.max(1)
+}
+
+fn build_empty_quote_engine(config: &AppConfig) -> Arc<QuoteEngine> {
+    let split_config = SplitConfig {
+        split_threshold_bps: config.split_threshold_bps,
+        split_competitive_delta_bps: config.split_competitive_delta_bps,
+        min_split_fraction_bps: config.min_split_fraction_bps,
+        max_splits: config.max_splits,
+        ..SplitConfig::default()
+    };
+    Arc::new(QuoteEngine::new(PathFinderConfig::default(), split_config))
+}
+
+async fn load_initial_snapshot_engine(
+    config: &AppConfig,
+    snapshot_store: &dyn SnapshotStore,
+) -> Result<(
+    Arc<QuoteEngine>,
+    Option<String>,
+    Option<std::collections::HashMap<String, TokenMetadata>>,
+)> {
+    match snapshot_store.load_current_snapshot().await {
+        Ok(snapshot) => {
+            let version = snapshot.version.clone();
+            Ok((
+                Arc::new(build_engine_from_snapshot(config, &snapshot).await?),
+                Some(version),
+                Some(snapshot_token_metadata(&snapshot)),
+            ))
+        }
+        Err(error) => {
+            warn!(
+                "Initial snapshot unavailable, starting with empty engine until reload succeeds: {}",
+                error
+            );
+            Ok((build_empty_quote_engine(config), None, None))
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SnapshotReloadMode {
+    PollingOnly,
+    PollingFallback,
+    PubSubHealthy,
+}
+
+enum SnapshotReloadTrigger {
+    PollTick,
+    ListenerEvent(SnapshotListenerEvent),
+    ListenerClosed,
+}
+
+fn reload_mode_uses_polling(mode: SnapshotReloadMode) -> bool {
+    mode != SnapshotReloadMode::PubSubHealthy
+}
+
+fn next_snapshot_reload_mode(
+    current_mode: SnapshotReloadMode,
+    event: &SnapshotListenerEvent,
+) -> SnapshotReloadMode {
+    match event {
+        SnapshotListenerEvent::ListenerHealthy => SnapshotReloadMode::PubSubHealthy,
+        SnapshotListenerEvent::ListenerDegraded => match current_mode {
+            SnapshotReloadMode::PollingOnly => SnapshotReloadMode::PollingOnly,
+            SnapshotReloadMode::PollingFallback | SnapshotReloadMode::PubSubHealthy => {
+                SnapshotReloadMode::PollingFallback
+            }
+        },
+        SnapshotListenerEvent::SnapshotVersion(_) => current_mode,
+    }
 }
 
 /// Full pool discovery for all adapters: replace graph edges per source and persist cache.
@@ -117,20 +272,128 @@ async fn run_reserve_refresh(adapters: &[Arc<dyn DexAdapter>], engine: &Arc<Quot
 }
 
 impl AppState {
+    pub async fn current_engine(&self) -> Arc<QuoteEngine> {
+        self.engine.read().await.clone()
+    }
+
+    fn spawn_snapshot_reloader(
+        &self,
+        snapshot_store: Arc<dyn SnapshotStore>,
+        snapshot_events: Option<mpsc::UnboundedReceiver<SnapshotListenerEvent>>,
+        initial_version: Option<String>,
+    ) {
+        let engine_holder = self.engine.clone();
+        let token_metadata = self.token_metadata.clone();
+        let config = self.config.clone();
+
+        tokio::spawn(async move {
+            let mut current_version = initial_version;
+            let mut interval =
+                tokio::time::interval(std::time::Duration::from_millis(normalize_snapshot_poll_interval_ms(
+                    config.snapshot_poll_interval_ms,
+                )));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut snapshot_events = snapshot_events;
+            let mut reload_mode = if snapshot_events.is_some() {
+                SnapshotReloadMode::PollingFallback
+            } else {
+                SnapshotReloadMode::PollingOnly
+            };
+
+            loop {
+                let trigger = if let Some(receiver) = snapshot_events.as_mut() {
+                    if reload_mode_uses_polling(reload_mode) {
+                        tokio::select! {
+                            _ = interval.tick() => SnapshotReloadTrigger::PollTick,
+                            event = receiver.recv() => match event {
+                                Some(event) => SnapshotReloadTrigger::ListenerEvent(event),
+                                None => SnapshotReloadTrigger::ListenerClosed,
+                            },
+                        }
+                    } else {
+                        match receiver.recv().await {
+                            Some(event) => SnapshotReloadTrigger::ListenerEvent(event),
+                            None => SnapshotReloadTrigger::ListenerClosed,
+                        }
+                    }
+                } else {
+                    interval.tick().await;
+                    SnapshotReloadTrigger::PollTick
+                };
+
+                match trigger {
+                    SnapshotReloadTrigger::PollTick => {}
+                    SnapshotReloadTrigger::ListenerClosed => {
+                        snapshot_events = None;
+                        reload_mode = SnapshotReloadMode::PollingOnly;
+                        warn!("Snapshot pub/sub listener stopped, continuing with polling fallback");
+                        continue;
+                    }
+                    SnapshotReloadTrigger::ListenerEvent(event) => {
+                        reload_mode = next_snapshot_reload_mode(reload_mode, &event);
+                        match event {
+                            SnapshotListenerEvent::ListenerHealthy => continue,
+                            SnapshotListenerEvent::ListenerDegraded => continue,
+                            SnapshotListenerEvent::SnapshotVersion(version) => {
+                                if !should_reload_snapshot_version(current_version.as_deref(), &version) {
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let snapshot = match snapshot_store.load_current_snapshot().await {
+                    Ok(snapshot) => snapshot,
+                    Err(e) => {
+                        warn!("Failed to reload snapshot from store: {}", e);
+                        continue;
+                    }
+                };
+
+                if !should_reload_snapshot_version(current_version.as_deref(), &snapshot.version) {
+                    continue;
+                }
+
+                match build_engine_from_snapshot(&config, &snapshot).await {
+                    Ok(engine) => {
+                        let engine = Arc::new(engine);
+                        token_metadata
+                            .replace_all(snapshot_token_metadata(&snapshot))
+                            .await;
+                        *engine_holder.write().await = engine;
+                        current_version = Some(snapshot.version.clone());
+                        info!("Reloaded market snapshot version {}", snapshot.version);
+                    }
+                    Err(e) => {
+                        warn!("Failed to build engine from snapshot {}: {}", snapshot.version, e);
+                    }
+                }
+            }
+        });
+    }
+
     pub async fn new(config: AppConfig) -> Result<Self> {
-        let path_finder_config = PathFinderConfig::default();
-        let split_config = SplitConfig {
-            split_threshold_bps: config.split_threshold_bps,
-            split_competitive_delta_bps: config.split_competitive_delta_bps,
-            min_split_fraction_bps: config.min_split_fraction_bps,
-            max_splits: config.max_splits,
-            ..SplitConfig::default()
-        };
-
-        let engine = Arc::new(QuoteEngine::new(path_finder_config, split_config));
-
         let rpc = Arc::new(SorobanRpc::new(&config.rpc_url, &config.network_passphrase));
         let token_metadata = Arc::new(TokenMetadataStore::new(rpc.clone()));
+
+        if let Some(snapshot_store) = configured_snapshot_store(&config)? {
+            let snapshot_events = configured_snapshot_event_listener(&config)?;
+            let (engine, initial_version, initial_token_metadata) =
+                load_initial_snapshot_engine(&config, snapshot_store.as_ref()).await?;
+            if let Some(token_metadata_map) = initial_token_metadata {
+                token_metadata.replace_all(token_metadata_map).await;
+            }
+            let state = Self {
+                engine: Arc::new(RwLock::new(engine)),
+                config,
+                token_metadata,
+            };
+            state.spawn_snapshot_reloader(snapshot_store, snapshot_events, initial_version);
+            return Ok(state);
+        }
+
+        let engine = build_empty_quote_engine(&config);
 
         let cache_path = default_cache_path();
         match PoolCache::load(&cache_path) {
@@ -226,9 +489,82 @@ impl AppState {
         });
 
         Ok(Self {
-            engine,
+            engine: Arc::new(RwLock::new(engine)),
             config,
             token_metadata,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::anyhow;
+    use async_trait::async_trait;
+    use router_engine::TokenId;
+    use market_snapshot::store::SnapshotListenerEvent;
+    use market_snapshot::MarketSnapshot;
+
+    struct FailingSnapshotStore;
+
+    #[async_trait]
+    impl SnapshotStore for FailingSnapshotStore {
+        async fn load_current_snapshot(&self) -> Result<MarketSnapshot> {
+            Err(anyhow!("snapshot missing"))
+        }
+
+        async fn publish_snapshot(&self, _snapshot: &MarketSnapshot) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn healthy_pubsub_mode_does_not_poll() {
+        assert!(!reload_mode_uses_polling(SnapshotReloadMode::PubSubHealthy));
+        assert!(reload_mode_uses_polling(SnapshotReloadMode::PollingFallback));
+        assert!(reload_mode_uses_polling(SnapshotReloadMode::PollingOnly));
+    }
+
+    #[test]
+    fn zero_poll_interval_is_normalized() {
+        assert_eq!(normalize_snapshot_poll_interval_ms(0), 1);
+        assert_eq!(normalize_snapshot_poll_interval_ms(25), 25);
+    }
+
+    #[test]
+    fn listener_degrade_and_recovery_switch_reload_modes() {
+        let degraded = next_snapshot_reload_mode(
+            SnapshotReloadMode::PubSubHealthy,
+            &SnapshotListenerEvent::ListenerDegraded,
+        );
+        assert_eq!(degraded, SnapshotReloadMode::PollingFallback);
+
+        let recovered = next_snapshot_reload_mode(
+            SnapshotReloadMode::PollingFallback,
+            &SnapshotListenerEvent::ListenerHealthy,
+        );
+        assert_eq!(recovered, SnapshotReloadMode::PubSubHealthy);
+    }
+
+    #[tokio::test]
+    async fn initial_snapshot_load_failure_uses_empty_engine() {
+        let config = AppConfig::default();
+        let (engine, current_version, token_metadata) =
+            load_initial_snapshot_engine(&config, &FailingSnapshotStore).await.unwrap();
+
+        let route = engine
+            .get_route(&router_engine::RouteRequest {
+                token_in: TokenId::from_str_auto("token-a"),
+                token_out: TokenId::from_str_auto("token-b"),
+                amount_in: 1_000,
+                slippage_bps: Some(50),
+                max_hops: Some(1),
+                max_splits: Some(1),
+            })
+            .await;
+
+        assert!(route.sub_orders.is_empty());
+        assert_eq!(current_version, None);
+        assert!(token_metadata.is_none());
     }
 }

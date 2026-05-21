@@ -72,6 +72,11 @@ impl TokenMetadataStore {
         self.cache.read().await.clone()
     }
 
+    /// Replace the cache contents with a prebuilt snapshot.
+    pub async fn replace_all(&self, tokens: HashMap<String, TokenMetadata>) {
+        *self.cache.write().await = tokens;
+    }
+
     /// Resolve unknown tokens in the background.
     /// Call this with a list of all known token addresses.
     pub async fn resolve_unknown(&self, token_addresses: Vec<String>) {
@@ -195,5 +200,35 @@ impl TokenMetadataStore {
             }
             Err(e) => warn!("Failed to serialize token metadata: {}", e),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn replace_all_overwrites_existing_cache() {
+        let rpc = Arc::new(SorobanRpc::new(
+            "https://soroban-rpc.mainnet.stellar.gateway.fm",
+            "Public Global Stellar Network ; September 2015",
+        ));
+        let store = TokenMetadataStore::new(rpc);
+        let mut replacement = HashMap::new();
+        replacement.insert(
+            "token-1".to_string(),
+            TokenMetadata {
+                contract: "token-1".to_string(),
+                symbol: "TOK".to_string(),
+                name: "Token".to_string(),
+                logo: None,
+            },
+        );
+
+        store.replace_all(replacement).await;
+
+        let all = store.get_all().await;
+        assert_eq!(all.len(), 1);
+        assert_eq!(all["token-1"].symbol, "TOK");
     }
 }

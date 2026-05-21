@@ -1,6 +1,11 @@
 //! Application configuration loaded from environment variables or config file.
 
+use market_snapshot::store::{DEFAULT_REDIS_EVENTS_CHANNEL, DEFAULT_REDIS_SNAPSHOT_HISTORY};
 use serde::{Deserialize, Serialize};
+
+fn normalize_snapshot_poll_interval_ms(interval_ms: u64) -> u64 {
+    interval_ms.max(1)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -24,6 +29,19 @@ pub struct AppConfig {
     pub min_split_fraction_bps: u32,
     /// Maximum number of candidate paths to consider for split optimization.
     pub max_splits: usize,
+    /// Optional snapshot backend selector (`file` or `redis`). When unset, snapshot mode
+    /// is enabled only if `snapshot_dir` is set.
+    pub snapshot_backend: Option<String>,
+    /// Optional directory containing file-backed market snapshots.
+    pub snapshot_dir: Option<String>,
+    /// Redis URL for shared snapshot storage.
+    pub snapshot_redis_url: Option<String>,
+    /// Redis Pub/Sub channel used to accelerate snapshot reloads.
+    pub snapshot_redis_channel: String,
+    /// Number of latest snapshot versions to retain in Redis history.
+    pub snapshot_redis_keep_latest: usize,
+    /// Poll interval for snapshot reload checks.
+    pub snapshot_poll_interval_ms: u64,
 }
 
 impl Default for AppConfig {
@@ -39,6 +57,12 @@ impl Default for AppConfig {
             split_competitive_delta_bps: 50,
             min_split_fraction_bps: 5,
             max_splits: 5,
+            snapshot_backend: None,
+            snapshot_dir: None,
+            snapshot_redis_url: None,
+            snapshot_redis_channel: DEFAULT_REDIS_EVENTS_CHANNEL.to_string(),
+            snapshot_redis_keep_latest: DEFAULT_REDIS_SNAPSHOT_HISTORY,
+            snapshot_poll_interval_ms: 1_000,
         }
     }
 }
@@ -77,6 +101,79 @@ impl AppConfig {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(Self::default().max_splits),
+            snapshot_backend: std::env::var("SNAPSHOT_BACKEND").ok(),
+            snapshot_dir: std::env::var("SNAPSHOT_DIR").ok(),
+            snapshot_redis_url: std::env::var("SNAPSHOT_REDIS_URL").ok(),
+            snapshot_redis_channel: std::env::var("SNAPSHOT_REDIS_CHANNEL")
+                .unwrap_or_else(|_| Self::default().snapshot_redis_channel),
+            snapshot_redis_keep_latest: std::env::var("SNAPSHOT_REDIS_KEEP_LATEST")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(Self::default().snapshot_redis_keep_latest),
+            snapshot_poll_interval_ms: normalize_snapshot_poll_interval_ms(
+                std::env::var("SNAPSHOT_POLL_INTERVAL_MS")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(Self::default().snapshot_poll_interval_ms),
+            ),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn default_config_uses_default_snapshot_redis_settings() {
+        let config = AppConfig::default();
+
+        assert_eq!(config.snapshot_redis_channel, "lumagg:snapshot:events");
+        assert_eq!(config.snapshot_redis_keep_latest, 10);
+    }
+
+    #[test]
+    fn from_env_reads_snapshot_redis_channel_and_keep_latest() {
+        let _guard = env_lock().lock().unwrap();
+        let original_channel = std::env::var("SNAPSHOT_REDIS_CHANNEL").ok();
+        let original_keep_latest = std::env::var("SNAPSHOT_REDIS_KEEP_LATEST").ok();
+        std::env::set_var("SNAPSHOT_REDIS_CHANNEL", "snapshots:test");
+        std::env::set_var("SNAPSHOT_REDIS_KEEP_LATEST", "42");
+
+        let config = AppConfig::from_env();
+
+        assert_eq!(config.snapshot_redis_channel, "snapshots:test");
+        assert_eq!(config.snapshot_redis_keep_latest, 42);
+
+        match original_channel {
+            Some(value) => std::env::set_var("SNAPSHOT_REDIS_CHANNEL", value),
+            None => std::env::remove_var("SNAPSHOT_REDIS_CHANNEL"),
+        }
+        match original_keep_latest {
+            Some(value) => std::env::set_var("SNAPSHOT_REDIS_KEEP_LATEST", value),
+            None => std::env::remove_var("SNAPSHOT_REDIS_KEEP_LATEST"),
+        }
+    }
+
+    #[test]
+    fn from_env_normalizes_zero_snapshot_poll_interval() {
+        let _guard = env_lock().lock().unwrap();
+        let original = std::env::var("SNAPSHOT_POLL_INTERVAL_MS").ok();
+        std::env::set_var("SNAPSHOT_POLL_INTERVAL_MS", "0");
+
+        let config = AppConfig::from_env();
+
+        assert_eq!(config.snapshot_poll_interval_ms, 1);
+
+        match original {
+            Some(value) => std::env::set_var("SNAPSHOT_POLL_INTERVAL_MS", value),
+            None => std::env::remove_var("SNAPSHOT_POLL_INTERVAL_MS"),
         }
     }
 }

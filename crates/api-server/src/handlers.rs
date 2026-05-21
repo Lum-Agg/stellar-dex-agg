@@ -5,9 +5,11 @@ use axum::{
     Json,
 };
 use router_engine::types::{RouteRequest, TokenId};
+use router_engine::QuoteEngine;
 use serde::{Deserialize, Serialize};
 use stellar_xdr::curr as xdr;
 use stellar_xdr::curr::{Limits, WriteXdr};
+use std::sync::Arc;
 
 use crate::soroban_prepare::prepare_transaction_xdr;
 use crate::state::AppState;
@@ -138,7 +140,8 @@ pub async fn get_quote(
         max_splits: None,
     };
 
-    let route = state.engine.get_route(&request).await;
+    let engine = state.current_engine().await;
+    let route = engine.get_route(&request).await;
 
     if route.sub_orders.is_empty() {
         return (
@@ -159,8 +162,7 @@ pub async fn get_quote(
             let token_in = &so.path.tokens[i];
             let token_out = &so.path.tokens[i + 1];
             let pool = &so.path.pool_addresses[i];
-            let (in_idx, out_idx) = match state
-                .engine
+            let (in_idx, out_idx) = match engine
                 .get_pool_indices(pool, token_in, token_out)
                 .await
             {
@@ -297,7 +299,7 @@ pub struct SimulationData {
 }
 
 async fn route_to_sub_routes(
-    state: &AppState,
+    engine: &Arc<QuoteEngine>,
     route: &router_engine::types::OptimalRoute,
 ) -> Result<(Vec<SubRouteData>, Vec<BuildTxSubRoute>), String> {
     let mut sub_routes = Vec::new();
@@ -314,8 +316,7 @@ async fn route_to_sub_routes(
             let pool = &so.path.pool_addresses[i];
             let dex_type = so.path.sources[i].clone();
 
-            let (in_idx, out_idx) = state
-                .engine
+            let (in_idx, out_idx) = engine
                 .get_pool_indices(pool, token_in, token_out)
                 .await
                 .ok_or_else(|| {
@@ -389,7 +390,8 @@ pub async fn build_swap(
         max_splits: None,
     };
 
-    let route = state.engine.get_route(&request).await;
+    let engine = state.current_engine().await;
+    let route = engine.get_route(&request).await;
 
     if route.sub_orders.is_empty() {
         return (
@@ -402,7 +404,7 @@ pub async fn build_swap(
         );
     }
 
-    let (sub_routes, build_sub_routes) = match route_to_sub_routes(&state, &route).await {
+    let (sub_routes, build_sub_routes) = match route_to_sub_routes(&engine, &route).await {
         Ok(v) => v,
         Err(e) => {
             return (
@@ -847,7 +849,8 @@ fn resolve_token_logo(id: &str, name: &str, metadata_logo: Option<String>) -> St
 
 pub async fn list_tokens(State(state): State<AppState>) -> impl IntoResponse {
     // Get all unique tokens from the quote engine
-    let all_tokens = state.engine.get_all_tokens().await;
+    let engine = state.current_engine().await;
+    let all_tokens = engine.get_all_tokens().await;
     // Get cached metadata
     let metadata = state.token_metadata.get_all().await;
 
