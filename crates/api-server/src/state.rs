@@ -122,6 +122,7 @@ impl AppState {
         let split_config = SplitConfig {
             split_threshold_bps: config.split_threshold_bps,
             split_competitive_delta_bps: config.split_competitive_delta_bps,
+            min_split_fraction_bps: config.min_split_fraction_bps,
             max_splits: config.max_splits,
             ..SplitConfig::default()
         };

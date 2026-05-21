@@ -1,7 +1,9 @@
 //! Compare api-server XDR encoding vs on-chain simulate (requires network).
 //! Run: cargo test -p api-server --test build_tx_simulate_test -- --ignored --nocapture
 
-use api_server::handlers::{build_unsigned_tx_xdr, BuildTxRequest, BuildTxStep, BuildTxSubRoute};
+use api_server::handlers::{
+    build_tx_impl, build_unsigned_tx_xdr, BuildTxRequest, BuildTxStep, BuildTxSubRoute,
+};
 use api_server::soroban_prepare::prepare_transaction_xdr;
 use stellar_xdr::curr::{Limits, ReadXdr};
 
@@ -37,6 +39,62 @@ fn build_request(
                 out_idx,
             }],
         }],
+    }
+}
+
+fn build_hybrid_request() -> BuildTxRequest {
+    BuildTxRequest {
+        user_public_key: USER.to_string(),
+        token_in: XLM.to_string(),
+        token_out: USDC.to_string(),
+        amount_in: "10000000".to_string(),
+        min_amount_out: "1423886".to_string(),
+        sub_routes: vec![
+            BuildTxSubRoute {
+                amount_in: "9310038".to_string(),
+                steps: vec![BuildTxStep {
+                    dex_type: "classic_dex".to_string(),
+                    pool_address: "classic:CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA:CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75".to_string(),
+                    token_in: XLM.to_string(),
+                    token_out: USDC.to_string(),
+                    in_idx: 0,
+                    out_idx: 1,
+                }],
+            },
+            BuildTxSubRoute {
+                amount_in: "619648".to_string(),
+                steps: vec![BuildTxStep {
+                    dex_type: "aquarius".to_string(),
+                    pool_address: "CA6PUJLBYKZKUEKLZJMKBZLEKP2OTHANDEOWSFF44FTSYLKQPIICCJBE".to_string(),
+                    token_in: XLM.to_string(),
+                    token_out: USDC.to_string(),
+                    in_idx: 0,
+                    out_idx: 1,
+                }],
+            },
+            BuildTxSubRoute {
+                amount_in: "51287".to_string(),
+                steps: vec![BuildTxStep {
+                    dex_type: "soroswap".to_string(),
+                    pool_address: "CAM7DY53G63XA4AJRS24Z6VFYAFSSF76C3RZ45BE5YU3FQS5255OOABP".to_string(),
+                    token_in: XLM.to_string(),
+                    token_out: USDC.to_string(),
+                    in_idx: 0,
+                    out_idx: 1,
+                }],
+            },
+            BuildTxSubRoute {
+                amount_in: "19027".to_string(),
+                steps: vec![BuildTxStep {
+                    dex_type: "sushi".to_string(),
+                    pool_address: "CCR2CH4GQVCZHG7CHFVMNANCK45CU5DVKXZIIITDZQAU3CEJZ7RQH2MQ".to_string(),
+                    token_in: XLM.to_string(),
+                    token_out: USDC.to_string(),
+                    in_idx: 0,
+                    out_idx: 1,
+                }],
+            },
+        ],
     }
 }
 
@@ -181,4 +239,17 @@ async fn api_build_tx_xdr_aquarius_simulates() {
         "1",
     ))
     .await;
+}
+
+#[tokio::test]
+#[ignore = "mainnet RPC"]
+async fn api_build_tx_xdr_hybrid_simulates() {
+    let err = match build_tx_impl(&build_hybrid_request()).await {
+        Ok(_) => panic!("hybrid build should be rejected"),
+        Err(err) => err,
+    };
+    assert!(
+        err.contains("not supported") && err.contains("more than one operation"),
+        "unexpected hybrid error: {err}"
+    );
 }

@@ -57,6 +57,26 @@ pub struct SubOrder {
 
 /// The optimal route computed by the engine.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouteDebugCandidate {
+    pub source: String,
+    pub path: Vec<String>,
+    pub pool_addresses: Vec<String>,
+    pub amount_out: u128,
+    pub price_impact_bps: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouteDebugPlannedSplit {
+    pub source: String,
+    pub path: Vec<String>,
+    pub pool_addresses: Vec<String>,
+    pub amount_in: u128,
+    pub expected_amount_out: u128,
+    pub fraction_bps: u32,
+}
+
+/// The optimal route computed by the engine.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RouteDebug {
     pub quoted_paths_count: usize,
     pub candidate_paths_count: usize,
@@ -65,8 +85,15 @@ pub struct RouteDebug {
     pub best_single_impact_bps: u32,
     pub split_threshold_bps: u32,
     pub competitive_delta_bps: u32,
+    pub min_split_fraction_bps: u32,
     pub split_attempted: bool,
     pub split_rejected_reason: Option<String>,
+    pub optimization_strategy: String,
+    pub used_rest_best_approximation: bool,
+    pub split_total_out: Option<u128>,
+    pub dust_filtered_legs: usize,
+    pub candidate_routes: Vec<RouteDebugCandidate>,
+    pub planned_split: Vec<RouteDebugPlannedSplit>,
 }
 
 /// The optimal route computed by the engine.

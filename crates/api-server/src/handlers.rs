@@ -58,10 +58,37 @@ pub struct QuoteDebugData {
     pub best_single_impact_bps: u32,
     pub split_threshold_bps: u32,
     pub competitive_delta_bps: u32,
+    pub min_split_fraction_bps: u32,
     pub split_attempted: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub split_rejected_reason: Option<String>,
+    pub optimization_strategy: String,
+    pub used_rest_best_approximation: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub split_total_out: Option<String>,
+    pub dust_filtered_legs: usize,
+    pub candidate_routes: Vec<QuoteDebugCandidateData>,
+    pub planned_split: Vec<QuoteDebugPlannedSplitData>,
     pub improvement_bps: u32,
+}
+
+#[derive(Serialize)]
+pub struct QuoteDebugCandidateData {
+    pub source: String,
+    pub path: Vec<String>,
+    pub pool_addresses: Vec<String>,
+    pub amount_out: String,
+    pub price_impact_bps: u32,
+}
+
+#[derive(Serialize)]
+pub struct QuoteDebugPlannedSplitData {
+    pub source: String,
+    pub path: Vec<String>,
+    pub pool_addresses: Vec<String>,
+    pub amount_in: String,
+    pub expected_amount_out: String,
+    pub fraction_bps: u32,
 }
 
 #[derive(Serialize)]
@@ -191,8 +218,36 @@ pub async fn get_quote(
                         best_single_impact_bps: d.best_single_impact_bps,
                         split_threshold_bps: d.split_threshold_bps,
                         competitive_delta_bps: d.competitive_delta_bps,
+                        min_split_fraction_bps: d.min_split_fraction_bps,
                         split_attempted: d.split_attempted,
                         split_rejected_reason: d.split_rejected_reason.clone(),
+                        optimization_strategy: d.optimization_strategy.clone(),
+                        used_rest_best_approximation: d.used_rest_best_approximation,
+                        split_total_out: d.split_total_out.map(|v| v.to_string()),
+                        dust_filtered_legs: d.dust_filtered_legs,
+                        candidate_routes: d
+                            .candidate_routes
+                            .iter()
+                            .map(|route| QuoteDebugCandidateData {
+                                source: route.source.clone(),
+                                path: route.path.clone(),
+                                pool_addresses: route.pool_addresses.clone(),
+                                amount_out: route.amount_out.to_string(),
+                                price_impact_bps: route.price_impact_bps,
+                            })
+                            .collect(),
+                        planned_split: d
+                            .planned_split
+                            .iter()
+                            .map(|leg| QuoteDebugPlannedSplitData {
+                                source: leg.source.clone(),
+                                path: leg.path.clone(),
+                                pool_addresses: leg.pool_addresses.clone(),
+                                amount_in: leg.amount_in.to_string(),
+                                expected_amount_out: leg.expected_amount_out.to_string(),
+                                fraction_bps: leg.fraction_bps,
+                            })
+                            .collect(),
                         improvement_bps: route.improvement_bps,
                     })
                 } else {
@@ -408,7 +463,7 @@ pub async fn build_swap(
     }
 }
 
-async fn build_tx_impl(body: &BuildTxRequest) -> Result<BuildTxData, String> {
+pub async fn build_tx_impl(body: &BuildTxRequest) -> Result<BuildTxData, String> {
     use stellar_xdr::curr as xdr;
     use stellar_xdr::curr::{Limits, WriteXdr};
 
@@ -460,6 +515,15 @@ async fn build_tx_impl(body: &BuildTxRequest) -> Result<BuildTxData, String> {
     } else {
         "soroban"
     };
+
+    if execution == "hybrid" {
+        return Err(
+            "Hybrid classic_dex + Soroban transactions are not supported on Stellar: \
+             Soroban simulation rejects transactions with more than one operation. \
+             Please use an all-Soroban route or an all-classic route."
+                .to_string(),
+        );
+    }
 
     let contract_label = if soroban_subs.is_empty() {
         DEX_CLASSIC.to_string()
@@ -655,6 +719,15 @@ pub async fn build_unsigned_tx_xdr(body: &BuildTxRequest) -> Result<String, Stri
     } else {
         "soroban"
     };
+
+    if execution == "hybrid" {
+        return Err(
+            "Hybrid classic_dex + Soroban transactions are not supported on Stellar: \
+             Soroban simulation rejects transactions with more than one operation. \
+             Please use an all-Soroban route or an all-classic route."
+                .to_string(),
+        );
+    }
 
     let mut ops: Vec<xdr::Operation> = Vec::new();
     for sub in &classic_subs {
@@ -1074,6 +1147,13 @@ fn build_path_payment_op(
         .amount_in
         .parse::<i64>()
         .map_err(|_| format!("Invalid sub-route amount_in: {}", sub.amount_in))?;
+    let path_assets: Vec<xdr::Asset> = sub
+        .steps
+        .iter()
+        .take(sub.steps.len().saturating_sub(1))
+        .map(|step| parse_asset_xdr(&step.token_out))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("Invalid classic path asset: {}", e))?;
 
     Ok(xdr::Operation {
         source_account: None,
@@ -1083,7 +1163,9 @@ fn build_path_payment_op(
             destination: xdr::MuxedAccount::Ed25519(xdr::Uint256(user_key.0)),
             dest_asset,
             dest_min,
-            path: xdr::VecM::default(),
+            path: path_assets
+                .try_into()
+                .map_err(|_| "classic path too long".to_string())?,
         }),
     })
 }

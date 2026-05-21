@@ -11,7 +11,9 @@
 //!
 //! Reference: Jupiter's Iris engine uses Golden-section + Brent's method.
 
-use crate::types::{OptimalRoute, Path, Quote, RouteDebug, SubOrder};
+use crate::types::{
+    OptimalRoute, Path, Quote, RouteDebug, RouteDebugCandidate, RouteDebugPlannedSplit, SubOrder,
+};
 use tracing::debug;
 
 /// Configuration for split optimization.
@@ -21,6 +23,8 @@ pub struct SplitConfig {
     pub split_threshold_bps: u32,
     /// If the second-best path is within this delta of the best path, still attempt split.
     pub split_competitive_delta_bps: u32,
+    /// Drop split legs whose expected output is below this share of total output.
+    pub min_split_fraction_bps: u32,
     /// Maximum number of splits.
     pub max_splits: usize,
     /// Brent's method tolerance (fraction, e.g., 0.0001 = 0.01%)
@@ -34,6 +38,7 @@ impl Default for SplitConfig {
         Self {
             split_threshold_bps: 5,          // 0.05% - split when impact exceeds this
             split_competitive_delta_bps: 50, // 0.5% output gap still worth checking
+            min_split_fraction_bps: 5,       // 0.05% minimum share of total output
             max_splits: 5,
             tolerance: 0.0001, // 0.01% precision
             max_iterations: 50,
@@ -127,8 +132,15 @@ impl SplitOptimizer {
                     best_single_impact_bps: best_single_impact,
                     split_threshold_bps: self.config.split_threshold_bps,
                     competitive_delta_bps,
+                    min_split_fraction_bps: self.config.min_split_fraction_bps,
                     split_attempted: false,
                     split_rejected_reason: Some("not_enough_paths".to_string()),
+                    optimization_strategy: "not_applicable".to_string(),
+                    used_rest_best_approximation: false,
+                    split_total_out: None,
+                    dust_filtered_legs: 0,
+                    candidate_routes: vec![],
+                    planned_split: vec![],
                 }),
             };
         }
@@ -157,8 +169,15 @@ impl SplitOptimizer {
                     best_single_impact_bps: best_single_impact,
                     split_threshold_bps: self.config.split_threshold_bps,
                     competitive_delta_bps,
+                    min_split_fraction_bps: self.config.min_split_fraction_bps,
                     split_attempted: false,
                     split_rejected_reason: Some("below_threshold_and_not_competitive".to_string()),
+                    optimization_strategy: "not_attempted".to_string(),
+                    used_rest_best_approximation: false,
+                    split_total_out: None,
+                    dust_filtered_legs: 0,
+                    candidate_routes: vec![],
+                    planned_split: vec![],
                 }),
             };
         }
@@ -168,11 +187,27 @@ impl SplitOptimizer {
             .take(max_splits_override.unwrap_or(self.config.max_splits).max(2))
             .collect();
         let candidate_paths_count = candidates.len();
+        let optimization_strategy = if candidate_paths_count > 2 {
+            "recursive_pairwise_exact".to_string()
+        } else {
+            "two_path_brent".to_string()
+        };
+        let used_rest_best_approximation = false;
+        let candidate_routes = build_candidate_debug(&candidates);
 
         // Optimize split using recursive pairwise Brent's method
         let split_result = self
             .optimize_n_paths(&candidates, total_amount, &quote_fn)
             .await;
+        let (effective_candidate_indices, split_result, dust_filtered_legs) = self
+            .filter_dust_split_legs(&candidates, split_result, total_amount, &quote_fn)
+            .await;
+        let effective_candidates: Vec<&QuotedPath> = effective_candidate_indices
+            .iter()
+            .map(|&idx| candidates[idx])
+            .collect();
+        let planned_split =
+            build_planned_split_debug(&effective_candidates, &split_result, total_amount);
 
         let total_out: u128 = split_result.iter().map(|(_, out)| out).sum();
 
@@ -201,8 +236,15 @@ impl SplitOptimizer {
                     best_single_impact_bps: best_single_impact,
                     split_threshold_bps: self.config.split_threshold_bps,
                     competitive_delta_bps,
+                    min_split_fraction_bps: self.config.min_split_fraction_bps,
                     split_attempted: true,
                     split_rejected_reason: Some("no_improvement".to_string()),
+                    optimization_strategy,
+                    used_rest_best_approximation,
+                    split_total_out: Some(total_out),
+                    dust_filtered_legs,
+                    candidate_routes,
+                    planned_split,
                 }),
             };
         }
@@ -213,7 +255,7 @@ impl SplitOptimizer {
             .filter(|(amount, _)| *amount > 0)
             .enumerate()
             .map(|(i, (amount, out))| SubOrder {
-                path: candidates[i].path.clone(),
+                path: effective_candidates[i].path.clone(),
                 amount_in: *amount,
                 expected_amount_out: *out,
                 fraction: *amount as f64 / total_amount as f64,
@@ -250,10 +292,84 @@ impl SplitOptimizer {
                 best_single_impact_bps: best_single_impact,
                 split_threshold_bps: self.config.split_threshold_bps,
                 competitive_delta_bps,
+                min_split_fraction_bps: self.config.min_split_fraction_bps,
                 split_attempted: true,
                 split_rejected_reason: None,
+                optimization_strategy,
+                used_rest_best_approximation,
+                split_total_out: Some(total_out),
+                dust_filtered_legs,
+                candidate_routes,
+                planned_split,
             }),
         }
+    }
+
+    async fn filter_dust_split_legs<F, Fut>(
+        &self,
+        candidates: &[&QuotedPath],
+        split_result: Vec<(u128, u128)>,
+        total_amount: u128,
+        quote_fn: &F,
+    ) -> (Vec<usize>, Vec<(u128, u128)>, usize)
+    where
+        F: Fn(&Path, u128) -> Fut,
+        Fut: std::future::Future<Output = Option<Quote>>,
+    {
+        if self.config.min_split_fraction_bps == 0 || candidates.len() < 2 {
+            return ((0..candidates.len()).collect(), split_result, 0);
+        }
+
+        let mut active_indices: Vec<usize> = (0..candidates.len()).collect();
+        let mut current_split = split_result;
+        let mut dust_filtered_legs = 0usize;
+
+        loop {
+            let total_out: u128 = current_split.iter().map(|(_, out)| *out).sum();
+            if total_out == 0 || active_indices.len() < 2 {
+                break;
+            }
+
+            let kept_positions: Vec<usize> = current_split
+                .iter()
+                .enumerate()
+                .filter(|(_, (amount, out))| {
+                    *amount > 0
+                        && (*out * 10_000 / total_out) as u32 >= self.config.min_split_fraction_bps
+                })
+                .map(|(idx, _)| idx)
+                .collect();
+
+            let active_nonzero = current_split
+                .iter()
+                .filter(|(amount, _)| *amount > 0)
+                .count();
+            if kept_positions.len() == active_nonzero || kept_positions.is_empty() {
+                break;
+            }
+
+            dust_filtered_legs += active_nonzero - kept_positions.len();
+            active_indices = kept_positions
+                .iter()
+                .map(|&position| active_indices[position])
+                .collect();
+
+            let active_candidates: Vec<&QuotedPath> =
+                active_indices.iter().map(|&idx| candidates[idx]).collect();
+
+            current_split = if active_candidates.len() == 1 {
+                let out = quote_fn(&active_candidates[0].path, total_amount)
+                    .await
+                    .map(|q| q.amount_out)
+                    .unwrap_or(0);
+                vec![(total_amount, out)]
+            } else {
+                self.optimize_n_paths(&active_candidates, total_amount, quote_fn)
+                    .await
+            };
+        }
+
+        (active_indices, current_split, dust_filtered_legs)
     }
 
     /// Optimize N paths using recursive pairwise Brent's method.
@@ -295,20 +411,16 @@ impl SplitOptimizer {
                 let amount_a = (x * total_amount as f64) as u128;
                 let amount_rest = total_amount.saturating_sub(amount_a);
 
-                // For "rest combined", use the best single path among rest as approximation
-                // (full recursive would be too expensive in async context)
                 let path_a_clone = path_a.clone();
-                let rest_best = rest[0].path.clone();
+                let this = self;
 
                 async move {
                     let out_a = quote_fn(&path_a_clone, amount_a)
                         .await
                         .map(|q| q.amount_out)
                         .unwrap_or(0);
-                    let out_rest = quote_fn(&rest_best, amount_rest)
-                        .await
-                        .map(|q| q.amount_out)
-                        .unwrap_or(0);
+                    let out_rest =
+                        Box::pin(this.total_out_for_paths(rest, amount_rest, quote_fn)).await;
                     (out_a + out_rest) as f64
                 }
             })
@@ -331,6 +443,70 @@ impl SplitOptimizer {
         }
 
         result
+    }
+
+    async fn total_out_for_paths<F, Fut>(
+        &self,
+        paths: &[&QuotedPath],
+        total_amount: u128,
+        quote_fn: &F,
+    ) -> u128
+    where
+        F: Fn(&Path, u128) -> Fut,
+        Fut: std::future::Future<Output = Option<Quote>>,
+    {
+        if paths.is_empty() || total_amount == 0 {
+            return 0;
+        }
+
+        if paths.len() == 1 {
+            return quote_fn(&paths[0].path, total_amount)
+                .await
+                .map(|q| q.amount_out)
+                .unwrap_or(0);
+        }
+
+        if paths.len() == 2 {
+            return self
+                .optimize_two_paths(&paths[0].path, &paths[1].path, total_amount, quote_fn)
+                .await
+                .iter()
+                .map(|(_, out)| *out)
+                .sum();
+        }
+
+        let path_a = &paths[0].path;
+        let rest = &paths[1..];
+
+        let optimal_fraction = self
+            .brent_maximize(0.0, 1.0, |x| {
+                let amount_a = (x * total_amount as f64) as u128;
+                let amount_rest = total_amount.saturating_sub(amount_a);
+                let path_a_clone = path_a.clone();
+                let this = self;
+
+                async move {
+                    let out_a = quote_fn(&path_a_clone, amount_a)
+                        .await
+                        .map(|q| q.amount_out)
+                        .unwrap_or(0);
+                    let out_rest =
+                        Box::pin(this.total_out_for_paths(rest, amount_rest, quote_fn)).await;
+                    (out_a + out_rest) as f64
+                }
+            })
+            .await;
+
+        let amount_a = (optimal_fraction * total_amount as f64) as u128;
+        let amount_rest = total_amount.saturating_sub(amount_a);
+
+        let out_a = quote_fn(path_a, amount_a)
+            .await
+            .map(|q| q.amount_out)
+            .unwrap_or(0);
+
+        let out_rest = Box::pin(self.total_out_for_paths(rest, amount_rest, quote_fn)).await;
+        out_a + out_rest
     }
 
     /// Optimize split between exactly 2 paths using Brent's method.
@@ -527,6 +703,51 @@ fn empty_route(total_amount: u128, compute_time_ms: u64) -> OptimalRoute {
         compute_time_ms,
         debug: None,
     }
+}
+
+fn build_candidate_debug(candidates: &[&QuotedPath]) -> Vec<RouteDebugCandidate> {
+    candidates
+        .iter()
+        .map(|candidate| RouteDebugCandidate {
+            source: candidate.path.sources.join(" → "),
+            path: candidate
+                .path
+                .tokens
+                .iter()
+                .map(|token| token.canonical())
+                .collect(),
+            pool_addresses: candidate.path.pool_addresses.clone(),
+            amount_out: candidate.quote.amount_out,
+            price_impact_bps: candidate.quote.price_impact_bps,
+        })
+        .collect()
+}
+
+fn build_planned_split_debug(
+    candidates: &[&QuotedPath],
+    split_result: &[(u128, u128)],
+    total_amount: u128,
+) -> Vec<RouteDebugPlannedSplit> {
+    split_result
+        .iter()
+        .enumerate()
+        .filter(|(_, (amount, _))| *amount > 0)
+        .map(|(i, (amount, out))| {
+            let path = &candidates[i].path;
+            RouteDebugPlannedSplit {
+                source: path.sources.join(" → "),
+                path: path.tokens.iter().map(|token| token.canonical()).collect(),
+                pool_addresses: path.pool_addresses.clone(),
+                amount_in: *amount,
+                expected_amount_out: *out,
+                fraction_bps: if total_amount == 0 {
+                    0
+                } else {
+                    ((*amount * 10_000) / total_amount) as u32
+                },
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -784,6 +1005,117 @@ mod tests {
                 .as_ref()
                 .and_then(|d| d.split_rejected_reason.as_deref()),
             Some("no_improvement")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_three_path_split_can_beat_rest_best_approximation() {
+        let config = SplitConfig {
+            split_threshold_bps: 1,
+            split_competitive_delta_bps: 10_000,
+            min_split_fraction_bps: 0,
+            max_splits: 3,
+            ..SplitConfig::default()
+        };
+        let optimizer = SplitOptimizer::new(config);
+        let path_a = test_path("a");
+        let path_b = test_path("b");
+        let path_c = test_path("c");
+        let quoted_paths = vec![
+            QuotedPath {
+                path: path_a.clone(),
+                quote: test_quote(&path_a, 1_000, 850, 30),
+            },
+            QuotedPath {
+                path: path_b.clone(),
+                quote: test_quote(&path_b, 1_000, 250, 10),
+            },
+            QuotedPath {
+                path: path_c.clone(),
+                quote: test_quote(&path_c, 1_000, 249, 10),
+            },
+        ];
+
+        let route = optimizer
+            .optimize(&quoted_paths, 1_000, 50, None, |path, amount| {
+                let path = path.clone();
+                async move {
+                    let out = match path.sources[0].as_str() {
+                        "a" => amount * 85 / 100,
+                        "b" | "c" => amount.min(250),
+                        _ => 0,
+                    };
+                    Some(test_quote(&path, amount, out, 10))
+                }
+            })
+            .await;
+
+        assert!(
+            route.total_expected_out >= 920,
+            "expected recursive optimizer to find a better 3-path split, got {}",
+            route.total_expected_out
+        );
+    }
+
+    #[tokio::test]
+    async fn test_filters_split_legs_below_min_fraction_bps() {
+        let config = SplitConfig {
+            split_threshold_bps: 1,
+            split_competitive_delta_bps: 10_000,
+            min_split_fraction_bps: 5,
+            max_splits: 3,
+            ..SplitConfig::default()
+        };
+        let optimizer = SplitOptimizer::new(config);
+        let path_a = test_path("a");
+        let path_b = test_path("b");
+        let path_c = test_path("c");
+        let quoted_paths = vec![
+            QuotedPath {
+                path: path_a.clone(),
+                quote: test_quote(&path_a, 10_000, 7_500, 10),
+            },
+            QuotedPath {
+                path: path_b.clone(),
+                quote: test_quote(&path_b, 10_000, 4_500, 10),
+            },
+            QuotedPath {
+                path: path_c.clone(),
+                quote: test_quote(&path_c, 10_000, 4, 10),
+            },
+        ];
+
+        let route = optimizer
+            .optimize(&quoted_paths, 10_000, 50, None, |path, amount| {
+                let path = path.clone();
+                async move {
+                    let out = match path.sources[0].as_str() {
+                        "a" => amount * 3 / 4,
+                        "b" => amount.min(4_500),
+                        "c" => amount.min(4),
+                        _ => 0,
+                    };
+                    Some(test_quote(&path, amount, out, 10))
+                }
+            })
+            .await;
+
+        assert_eq!(
+            route.sub_orders.len(),
+            2,
+            "expected dust split leg to be filtered out"
+        );
+        assert!(
+            route
+                .sub_orders
+                .iter()
+                .all(|leg| leg.path.sources[0] != "c"),
+            "expected dust path c to be removed"
+        );
+        assert_eq!(
+            route.debug.as_ref().map(|d| d.dust_filtered_legs),
+            Some(1),
+            "expected debug metadata to report one filtered dust leg"
         );
     }
 }

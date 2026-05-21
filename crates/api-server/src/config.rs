@@ -20,6 +20,8 @@ pub struct AppConfig {
     pub split_threshold_bps: u32,
     /// Also try split when the second-best path is within this delta (bps) of the best path.
     pub split_competitive_delta_bps: u32,
+    /// Drop split legs whose expected output is below this share of total output.
+    pub min_split_fraction_bps: u32,
     /// Maximum number of candidate paths to consider for split optimization.
     pub max_splits: usize,
 }
@@ -35,6 +37,7 @@ impl Default for AppConfig {
             discovery_interval_secs: 600,
             split_threshold_bps: 5,
             split_competitive_delta_bps: 50,
+            min_split_fraction_bps: 5,
             max_splits: 5,
         }
     }
@@ -66,6 +69,10 @@ impl AppConfig {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(Self::default().split_competitive_delta_bps),
+            min_split_fraction_bps: std::env::var("MIN_SPLIT_FRACTION_BPS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(Self::default().min_split_fraction_bps),
             max_splits: std::env::var("MAX_SPLITS")
                 .ok()
                 .and_then(|s| s.parse().ok())

@@ -11,6 +11,12 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
+const CLASSIC_SOURCE: &str = "classic_dex";
+
+fn apply_slippage(amount: u128, slippage_bps: u32) -> u128 {
+    amount * (10_000 - slippage_bps as u128) / 10_000
+}
+
 /// The main quote engine that coordinates all routing logic.
 pub struct QuoteEngine {
     path_finder: RwLock<PathFinder>,
@@ -199,21 +205,82 @@ impl QuoteEngine {
 
         debug!(quoted = quoted_paths.len(), "Paths quoted");
 
-        // 3. Optimize (potentially split across paths)
-        let adapters_clone = adapters.clone();
-        self.split_optimizer
-            .optimize(
-                &quoted_paths,
-                request.amount_in,
-                slippage_bps,
-                request.max_splits,
-                |path, amount| {
-                    let adapters_ref = adapters_clone.clone();
-                    let path_clone = path.clone();
-                    async move { self.quote_path(&path_clone, amount, &adapters_ref).await }
-                },
+        let (classic_quoted_paths, soroban_quoted_paths): (Vec<QuotedPath>, Vec<QuotedPath>) =
+            quoted_paths
+                .into_iter()
+                .partition(|quoted| Self::is_classic_only_path(&quoted.path));
+
+        let best_classic_route =
+            classic_quoted_paths
+                .iter()
+                .max_by_key(|quoted| quoted.quote.amount_out)
+                .map(|quoted| {
+                    let minimum_out = apply_slippage(quoted.quote.amount_out, slippage_bps);
+                    OptimalRoute {
+                        sub_orders: vec![SubOrder {
+                            path: quoted.path.clone(),
+                            amount_in: request.amount_in,
+                            expected_amount_out: quoted.quote.amount_out,
+                            fraction: 1.0,
+                        }],
+                        total_amount_in: request.amount_in,
+                        total_expected_out: quoted.quote.amount_out,
+                        price_impact_bps: quoted.quote.price_impact_bps,
+                        is_split: false,
+                        improvement_bps: 0,
+                        minimum_out,
+                        compute_time_ms: start.elapsed().as_millis() as u64,
+                        debug: None,
+                    }
+                });
+
+        let best_soroban_route = if soroban_quoted_paths.is_empty() {
+            None
+        } else {
+            let adapters_clone = adapters.clone();
+            Some(
+                self.split_optimizer
+                    .optimize(
+                        &soroban_quoted_paths,
+                        request.amount_in,
+                        slippage_bps,
+                        request.max_splits,
+                        |path, amount| {
+                            let adapters_ref = adapters_clone.clone();
+                            let path_clone = path.clone();
+                            async move { self.quote_path(&path_clone, amount, &adapters_ref).await }
+                        },
+                    )
+                    .await,
             )
-            .await
+        };
+
+        match (best_classic_route, best_soroban_route) {
+            (Some(classic), Some(soroban)) => {
+                if classic.total_expected_out > soroban.total_expected_out {
+                    classic
+                } else {
+                    soroban
+                }
+            }
+            (Some(classic), None) => classic,
+            (None, Some(soroban)) => soroban,
+            (None, None) => OptimalRoute {
+                sub_orders: vec![],
+                total_amount_in: request.amount_in,
+                total_expected_out: 0,
+                price_impact_bps: 0,
+                is_split: false,
+                improvement_bps: 0,
+                minimum_out: 0,
+                compute_time_ms: start.elapsed().as_millis() as u64,
+                debug: None,
+            },
+        }
+    }
+
+    fn is_classic_only_path(path: &Path) -> bool {
+        !path.sources.is_empty() && path.sources.iter().all(|source| source == CLASSIC_SOURCE)
     }
 
     /// Quote a single path by simulating each hop sequentially.
@@ -404,6 +471,96 @@ impl QuoteEngine {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn token(id: &str) -> TokenId {
+        TokenId::Contract {
+            address: id.to_string(),
+        }
+    }
+
+    fn pair(source: &str, pool: &str, reserve_a: u128, reserve_b: u128) -> TradingPair {
+        TradingPair {
+            token_a: token("token-in"),
+            token_b: token("token-out"),
+            source: source.to_string(),
+            pool_address: pool.to_string(),
+            fee_bps: 0,
+            reserve_a: Some(reserve_a),
+            reserve_b: Some(reserve_b),
+        }
+    }
+
+    #[tokio::test]
+    async fn quote_prefers_best_classic_single_route_over_soroban_split() {
+        let engine = QuoteEngine::new(PathFinderConfig::default(), SplitConfig::default());
+        engine
+            .update_pairs_from_cache(
+                CLASSIC_SOURCE,
+                &[pair(CLASSIC_SOURCE, "classic-pool", 100_000, 100_000)],
+            )
+            .await;
+        engine
+            .update_pairs_from_cache("soroswap", &[pair("soroswap", "soro-pool", 10_000, 10_000)])
+            .await;
+        engine
+            .update_pairs_from_cache("aquarius", &[pair("aquarius", "aqua-pool", 10_000, 10_000)])
+            .await;
+
+        let route = engine
+            .get_route(&RouteRequest {
+                token_in: token("token-in"),
+                token_out: token("token-out"),
+                amount_in: 1_000,
+                slippage_bps: Some(50),
+                max_hops: Some(1),
+                max_splits: Some(5),
+            })
+            .await;
+
+        assert_eq!(route.sub_orders.len(), 1);
+        assert_eq!(route.sub_orders[0].path.sources, vec![CLASSIC_SOURCE.to_string()]);
+        assert!(!route.is_split);
+    }
+
+    #[tokio::test]
+    async fn quote_prefers_soroban_route_without_mixing_classic_legs() {
+        let engine = QuoteEngine::new(PathFinderConfig::default(), SplitConfig::default());
+        engine
+            .update_pairs_from_cache(
+                CLASSIC_SOURCE,
+                &[pair(CLASSIC_SOURCE, "classic-pool", 10_000, 8_000)],
+            )
+            .await;
+        engine
+            .update_pairs_from_cache("soroswap", &[pair("soroswap", "soro-pool", 10_000, 10_000)])
+            .await;
+        engine
+            .update_pairs_from_cache("aquarius", &[pair("aquarius", "aqua-pool", 10_000, 10_000)])
+            .await;
+
+        let route = engine
+            .get_route(&RouteRequest {
+                token_in: token("token-in"),
+                token_out: token("token-out"),
+                amount_in: 5_000,
+                slippage_bps: Some(50),
+                max_hops: Some(1),
+                max_splits: Some(5),
+            })
+            .await;
+
+        assert!(
+            route
+                .sub_orders
+                .iter()
+                .all(|order| order.path.sources.iter().all(|source| source != CLASSIC_SOURCE))
+        );
     }
 }
 
