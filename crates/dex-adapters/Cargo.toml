@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+market-snapshot = { path = "../market-snapshot" }
 stellar-xdr.workspace = true
 stellar-strkey.workspace = true
 soroban-client.workspace = true

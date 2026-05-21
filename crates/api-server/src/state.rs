@@ -159,6 +159,18 @@ fn build_empty_quote_engine(config: &AppConfig) -> Arc<QuoteEngine> {
     Arc::new(QuoteEngine::new(PathFinderConfig::default(), split_config))
 }
 
+async fn attach_snapshot_live_adapter(
+    engine: &Arc<QuoteEngine>,
+    adapter: Arc<dyn DexAdapter>,
+) -> Result<()> {
+    engine.register_adapter(adapter).await;
+    Ok(())
+}
+
+async fn attach_snapshot_live_classic_adapter(engine: &Arc<QuoteEngine>) -> Result<()> {
+    attach_snapshot_live_adapter(engine, Arc::new(ClassicDexAdapter::new(None))).await
+}
+
 async fn load_initial_snapshot_engine(
     config: &AppConfig,
     snapshot_store: &dyn SnapshotStore,
@@ -170,8 +182,10 @@ async fn load_initial_snapshot_engine(
     match snapshot_store.load_current_snapshot().await {
         Ok(snapshot) => {
             let version = snapshot.version.clone();
+            let engine = Arc::new(build_engine_from_snapshot(config, &snapshot).await?);
+            attach_snapshot_live_classic_adapter(&engine).await?;
             Ok((
-                Arc::new(build_engine_from_snapshot(config, &snapshot).await?),
+                engine,
                 Some(version),
                 Some(snapshot_token_metadata(&snapshot)),
             ))
@@ -358,6 +372,10 @@ impl AppState {
                 match build_engine_from_snapshot(&config, &snapshot).await {
                     Ok(engine) => {
                         let engine = Arc::new(engine);
+                        if let Err(error) = attach_snapshot_live_classic_adapter(&engine).await {
+                            warn!("Failed to attach snapshot live adapter: {}", error);
+                            continue;
+                        }
                         token_metadata
                             .replace_all(snapshot_token_metadata(&snapshot))
                             .await;
@@ -501,11 +519,14 @@ mod tests {
     use super::*;
     use anyhow::anyhow;
     use async_trait::async_trait;
+    use dex_adapters::{AdapterQuote, AdapterTradingPair, ProtocolType, SwapOperation};
     use router_engine::TokenId;
     use market_snapshot::store::SnapshotListenerEvent;
     use market_snapshot::MarketSnapshot;
 
     struct FailingSnapshotStore;
+
+    struct StaticQuoteAdapter;
 
     #[async_trait]
     impl SnapshotStore for FailingSnapshotStore {
@@ -515,6 +536,67 @@ mod tests {
 
         async fn publish_snapshot(&self, _snapshot: &MarketSnapshot) -> Result<()> {
             Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl DexAdapter for StaticQuoteAdapter {
+        fn id(&self) -> &str {
+            "classic_dex"
+        }
+
+        fn name(&self) -> &str {
+            "Static Classic"
+        }
+
+        fn protocol_type(&self) -> ProtocolType {
+            ProtocolType::ClassicDex
+        }
+
+        async fn get_trading_pairs(&self) -> Result<Vec<AdapterTradingPair>> {
+            Ok(vec![AdapterTradingPair {
+                token_a: TokenId::from_str_auto("token-a"),
+                token_b: TokenId::from_str_auto("token-b"),
+                pool_address: "classic-pool".to_string(),
+                fee_bps: 0,
+                reserve_a: None,
+                reserve_b: None,
+            }])
+        }
+
+        async fn get_quote(
+            &self,
+            _token_in: &TokenId,
+            _token_out: &TokenId,
+            amount_in: u128,
+            _pool_address: &str,
+        ) -> Result<Option<AdapterQuote>> {
+            Ok(Some(AdapterQuote {
+                amount_out: amount_in + 123,
+                fee_bps: 0,
+                price_impact_bps: 0,
+            }))
+        }
+
+        async fn build_swap_op(
+            &self,
+            _token_in: &TokenId,
+            _token_out: &TokenId,
+            _amount_in: u128,
+            _min_amount_out: u128,
+            _pool_address: &str,
+        ) -> Result<SwapOperation> {
+            Ok(SwapOperation::ClassicPathPayment {
+                send_asset: "native".to_string(),
+                dest_asset: "USDC".to_string(),
+                send_amount: 1,
+                dest_min: 1,
+                path: vec![],
+            })
+        }
+
+        async fn health_check(&self) -> bool {
+            true
         }
     }
 
@@ -566,5 +648,27 @@ mod tests {
         assert!(route.sub_orders.is_empty());
         assert_eq!(current_version, None);
         assert!(token_metadata.is_none());
+    }
+
+    #[tokio::test]
+    async fn attaches_live_snapshot_adapter_to_engine() {
+        let engine = build_empty_quote_engine(&AppConfig::default());
+        attach_snapshot_live_adapter(&engine, Arc::new(StaticQuoteAdapter))
+            .await
+            .unwrap();
+
+        let route = engine
+            .get_route(&router_engine::RouteRequest {
+                token_in: TokenId::from_str_auto("token-a"),
+                token_out: TokenId::from_str_auto("token-b"),
+                amount_in: 1_000,
+                slippage_bps: Some(50),
+                max_hops: Some(1),
+                max_splits: Some(1),
+            })
+            .await;
+
+        assert_eq!(route.sub_orders.len(), 1);
+        assert_eq!(route.total_expected_out, 1_123);
     }
 }

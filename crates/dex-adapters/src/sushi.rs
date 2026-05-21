@@ -18,12 +18,14 @@
 //!   - compressed_tick = tick / tick_spacing (floor division)
 
 use crate::clmm_math::{
-    self, bitmap, ClmmPoolState, TickDataStore, TickState, TICKS_PER_CHUNK, U256 as ClmmU256,
+    self, bitmap, clmm_pool_to_snapshot, loaded_tick_range, ClmmPoolState, TickDataStore,
+    TickState, TICKS_PER_CHUNK, U256 as ClmmU256,
 };
 use crate::rpc::{scval_to_address, scval_to_i128, scval_to_u128, SorobanRpc};
 use crate::traits::*;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use market_snapshot::{ClmmCoverageSnapshot, ClmmPoolSnapshot};
 use std::collections::HashMap;
 use std::sync::Arc;
 use stellar_xdr::curr as xdr;
@@ -82,6 +84,47 @@ impl SushiAdapter {
             pairs: RwLock::new(Vec::new()),
             pool_cache: RwLock::new(HashMap::new()),
         }
+    }
+
+    fn snapshot_pool(pool: &SushiPoolCache) -> ClmmPoolSnapshot {
+        let coverage_range = loaded_tick_range(&pool.tick_store, pool.tick_spacing);
+        let compressed_tick = floor_div(pool.tick, pool.tick_spacing);
+        let current_word = floor_div(compressed_tick, 256);
+        let scan_words = bitmap_scan_words(pool.tick_spacing);
+        let coverage = ClmmCoverageSnapshot {
+            is_complete: true,
+            min_loaded_tick: coverage_range.map(|(min_tick, _)| min_tick),
+            max_loaded_tick: coverage_range.map(|(_, max_tick)| max_tick),
+            scanned_word_start: Some(current_word - scan_words),
+            scanned_word_end: Some(current_word + scan_words),
+        };
+        let pool_state = ClmmPoolState {
+            sqrt_price_x96: pool.sqrt_price_x96,
+            tick: pool.tick,
+            liquidity: pool.liquidity,
+            fee_bps: pool.fee_bps / 100,
+            tick_spacing: pool.tick_spacing,
+            token0: pool.token0.clone(),
+            token1: pool.token1.clone(),
+        };
+        clmm_pool_to_snapshot(
+            "sushi",
+            pool.pool_address.clone(),
+            &pool_state,
+            &pool.tick_store,
+            Some(coverage),
+        )
+    }
+
+    pub async fn export_clmm_snapshots(&self) -> Vec<ClmmPoolSnapshot> {
+        let pools = self.pool_cache.read().await;
+        let mut snapshots = pools
+            .values()
+            .filter(|pool| loaded_tick_range(&pool.tick_store, pool.tick_spacing).is_some())
+            .map(Self::snapshot_pool)
+            .collect::<Vec<_>>();
+        snapshots.sort_by(|a, b| a.pool_address.cmp(&b.pool_address));
+        snapshots
     }
 
     /// Read pool state from the pool contract via simulate_call.

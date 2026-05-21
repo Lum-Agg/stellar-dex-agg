@@ -19,12 +19,14 @@
 //!   - DataKey::WordBitmap(i32) -> U256
 
 use crate::clmm_math::{
-    self, bitmap, ClmmPoolState, TickDataStore, TickState, TICKS_PER_CHUNK, U256 as ClmmU256,
+    self, bitmap, clmm_pool_to_snapshot, loaded_tick_range, ClmmPoolState, TickDataStore, TickState,
+    TICKS_PER_CHUNK, U256 as ClmmU256,
 };
 use crate::rpc::SorobanRpc;
 use crate::traits::*;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use market_snapshot::{ClmmCoverageSnapshot, ClmmPoolSnapshot};
 use std::collections::HashMap;
 use std::sync::Arc;
 use stellar_xdr::curr as xdr;
@@ -65,6 +67,42 @@ impl AquariusClmmAdapter {
             pools: RwLock::new(HashMap::new()),
             pairs: RwLock::new(Vec::new()),
         }
+    }
+
+    fn snapshot_pool(pool: &AquaClmmPool) -> ClmmPoolSnapshot {
+        let pool_state = ClmmPoolState {
+            sqrt_price_x96: pool.sqrt_price_x96,
+            tick: pool.tick,
+            liquidity: pool.liquidity,
+            fee_bps: pool.fee_bps,
+            tick_spacing: pool.tick_spacing,
+            token0: pool.token0.clone(),
+            token1: pool.token1.clone(),
+        };
+        clmm_pool_to_snapshot(
+            "aquarius_clmm",
+            pool.pool_address.clone(),
+            &pool_state,
+            &pool.tick_store,
+            Some(ClmmCoverageSnapshot {
+                is_complete: true,
+                min_loaded_tick: Some(pool.min_init_tick),
+                max_loaded_tick: Some(pool.max_init_tick),
+                scanned_word_start: None,
+                scanned_word_end: None,
+            }),
+        )
+    }
+
+    pub async fn export_clmm_snapshots(&self) -> Vec<ClmmPoolSnapshot> {
+        let pools = self.pools.read().await;
+        let mut snapshots = pools
+            .values()
+            .filter(|pool| loaded_tick_range(&pool.tick_store, pool.tick_spacing).is_some())
+            .map(Self::snapshot_pool)
+            .collect::<Vec<_>>();
+        snapshots.sort_by(|a, b| a.pool_address.cmp(&b.pool_address));
+        snapshots
     }
 
     /// Set known concentrated pool addresses (discovered externally or hardcoded).

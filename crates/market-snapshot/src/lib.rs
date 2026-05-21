@@ -15,6 +15,8 @@ pub struct MarketSnapshot {
     pub meta: SnapshotMeta,
     pub sources: Vec<SourceSnapshot>,
     pub token_metadata: Vec<TokenMetadataSnapshot>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub clmm_pools: Vec<ClmmPoolSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -53,6 +55,55 @@ pub struct TokenMetadataSnapshot {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub logo: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ClmmPoolSnapshot {
+    pub source: String,
+    pub pool_address: String,
+    pub token0: String,
+    pub token1: String,
+    /// Fee normalized to the 10_000 denominator used by local CLMM math.
+    pub fee_bps: u32,
+    pub tick_spacing: i32,
+    pub sqrt_price_x96: [u64; 4],
+    pub tick: i32,
+    pub liquidity: u128,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ticks: Vec<ClmmTickSnapshot>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chunk_bitmaps: Vec<ClmmBitmapWordSnapshot>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub word_bitmaps: Vec<ClmmBitmapWordSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coverage: Option<ClmmCoverageSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ClmmTickSnapshot {
+    pub tick: i32,
+    pub liquidity_gross: u128,
+    pub liquidity_net: i128,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ClmmBitmapWordSnapshot {
+    pub word_pos: i32,
+    pub word: [u8; 32],
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ClmmCoverageSnapshot {
+    #[serde(default)]
+    pub is_complete: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_loaded_tick: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_loaded_tick: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scanned_word_start: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scanned_word_end: Option<i32>,
 }
 
 pub fn load_snapshot_from_dir(snapshot_dir: &Path) -> anyhow::Result<MarketSnapshot> {
@@ -103,6 +154,7 @@ impl MarketSnapshot {
             },
             sources,
             token_metadata: Vec::new(),
+            clmm_pools: Vec::new(),
         }
     }
 
@@ -118,6 +170,11 @@ impl MarketSnapshot {
         self
     }
 
+    pub fn with_clmm_pools(mut self, clmm_pools: Vec<ClmmPoolSnapshot>) -> Self {
+        self.clmm_pools = clmm_pools;
+        self
+    }
+
     pub fn token_addresses(&self) -> std::collections::BTreeSet<String> {
         self.sources
             .iter()
@@ -130,6 +187,47 @@ impl MarketSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_clmm_pool() -> ClmmPoolSnapshot {
+        ClmmPoolSnapshot {
+            source: "sushi".to_string(),
+            pool_address: "pool-clmm".to_string(),
+            token0: "A".to_string(),
+            token1: "B".to_string(),
+            fee_bps: 30,
+            tick_spacing: 60,
+            sqrt_price_x96: [1, 2, 3, 4],
+            tick: 120,
+            liquidity: 1_234_567,
+            ticks: vec![
+                ClmmTickSnapshot {
+                    tick: 60,
+                    liquidity_gross: 10,
+                    liquidity_net: 5,
+                },
+                ClmmTickSnapshot {
+                    tick: 120,
+                    liquidity_gross: 20,
+                    liquidity_net: -5,
+                },
+            ],
+            chunk_bitmaps: vec![ClmmBitmapWordSnapshot {
+                word_pos: 1,
+                word: [7u8; 32],
+            }],
+            word_bitmaps: vec![ClmmBitmapWordSnapshot {
+                word_pos: 0,
+                word: [3u8; 32],
+            }],
+            coverage: Some(ClmmCoverageSnapshot {
+                is_complete: true,
+                min_loaded_tick: Some(60),
+                max_loaded_tick: Some(120),
+                scanned_word_start: Some(-1),
+                scanned_word_end: Some(2),
+            }),
+        }
+    }
 
     #[test]
     fn market_snapshot_round_trips_via_json() {
@@ -159,6 +257,7 @@ mod tests {
                 name: "Token A".to_string(),
                 logo: None,
             }],
+            clmm_pools: vec![sample_clmm_pool()],
         };
 
         let json = serde_json::to_string(&snapshot).unwrap();
@@ -166,6 +265,7 @@ mod tests {
         assert_eq!(restored.version, "v1");
         assert_eq!(restored.sources[0].pairs[0].pool_address, "POOL");
         assert_eq!(restored.token_metadata[0].symbol, "TOKA");
+        assert_eq!(restored.clmm_pools, vec![sample_clmm_pool()]);
     }
 
     #[test]
@@ -270,5 +370,59 @@ mod tests {
 
         assert_eq!(snapshot.token_metadata.len(), 1);
         assert_eq!(snapshot.token_metadata[0].name, "Stellar Lumens");
+    }
+
+    #[test]
+    fn market_snapshot_defaults_missing_clmm_state_for_legacy_json() {
+        let legacy_json = r#"{
+            "version":"v1",
+            "generated_at_ms":123,
+            "network":"mainnet",
+            "meta":{"source_count":1,"pair_count":1,"token_count":2},
+            "sources":[
+                {
+                    "source":"soroswap",
+                    "pairs":[
+                        {
+                            "token_a":"A",
+                            "token_b":"B",
+                            "pool_address":"POOL",
+                            "fee_bps":30,
+                            "reserve_a":100,
+                            "reserve_b":200
+                        }
+                    ]
+                }
+            ],
+            "token_metadata":[]
+        }"#;
+
+        let restored: MarketSnapshot = serde_json::from_str(legacy_json).unwrap();
+
+        assert!(restored.clmm_pools.is_empty());
+    }
+
+    #[test]
+    fn market_snapshot_can_attach_clmm_pools() {
+        let snapshot = MarketSnapshot::from_sources(
+            "v5",
+            1_234,
+            "mainnet",
+            vec![SourceSnapshot {
+                source: "sushi".to_string(),
+                pairs: vec![TradingPairSnapshot {
+                    token_a: "A".to_string(),
+                    token_b: "B".to_string(),
+                    pool_address: "pool-clmm".to_string(),
+                    fee_bps: 30,
+                    reserve_a: None,
+                    reserve_b: None,
+                }],
+            }],
+        )
+        .with_clmm_pools(vec![sample_clmm_pool()]);
+
+        assert_eq!(snapshot.clmm_pools.len(), 1);
+        assert_eq!(snapshot.clmm_pools[0].source, "sushi");
     }
 }

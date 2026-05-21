@@ -9,6 +9,9 @@
 //! - tick: i32, satisfies sqrt_ratio_at_tick(tick) <= sqrt_price_x96
 //! - liquidity: u128, active liquidity in the current tick range
 
+use market_snapshot::{
+    ClmmBitmapWordSnapshot, ClmmCoverageSnapshot, ClmmPoolSnapshot, ClmmTickSnapshot,
+};
 use std::fmt;
 
 // ============================================================================
@@ -1176,6 +1179,165 @@ impl TickDataStore {
     }
 }
 
+fn set_bitmap_bit(word: &mut [u8; 32], bit_pos: u32) {
+    let byte_idx = 31usize - (bit_pos / 8) as usize;
+    let bit_idx = (bit_pos % 8) as u8;
+    word[byte_idx] |= 1u8 << bit_idx;
+}
+
+fn derive_word_bitmap_entries(
+    chunk_bitmaps: &std::collections::HashMap<i32, [u8; 32]>,
+) -> Vec<ClmmBitmapWordSnapshot> {
+    let mut derived = std::collections::HashMap::<i32, [u8; 32]>::new();
+    for (chunk_word_pos, chunk_bitmap_word) in chunk_bitmaps {
+        if chunk_bitmap_word.iter().all(|byte| *byte == 0) {
+            continue;
+        }
+        let (l2_word_pos, l2_bit) = bitmap::word_bitmap_position(*chunk_word_pos);
+        let word = derived.entry(l2_word_pos).or_insert([0u8; 32]);
+        set_bitmap_bit(word, l2_bit);
+    }
+
+    let mut entries = derived
+        .into_iter()
+        .map(|(word_pos, word)| ClmmBitmapWordSnapshot { word_pos, word })
+        .collect::<Vec<_>>();
+    entries.sort_by_key(|entry| entry.word_pos);
+    entries
+}
+
+pub fn clmm_pool_to_snapshot(
+    source: impl Into<String>,
+    pool_address: impl Into<String>,
+    pool: &ClmmPoolState,
+    tick_store: &TickDataStore,
+    coverage: Option<ClmmCoverageSnapshot>,
+) -> ClmmPoolSnapshot {
+    let mut ticks = tick_store
+        .chunks
+        .iter()
+        .flat_map(|(chunk_pos, chunk)| {
+            chunk.iter().enumerate().filter_map(|(slot, state)| {
+                if state.liquidity_gross == 0 {
+                    return None;
+                }
+                let compressed_tick = chunk_pos.saturating_mul(TICKS_PER_CHUNK) + slot as i32;
+                Some(ClmmTickSnapshot {
+                    tick: bitmap::compressed_to_tick(compressed_tick, pool.tick_spacing),
+                    liquidity_gross: state.liquidity_gross,
+                    liquidity_net: state.liquidity_net,
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    ticks.sort_by_key(|tick| tick.tick);
+
+    let mut chunk_bitmaps = tick_store
+        .chunk_bitmap
+        .iter()
+        .map(|(word_pos, word)| ClmmBitmapWordSnapshot {
+            word_pos: *word_pos,
+            word: *word,
+        })
+        .collect::<Vec<_>>();
+    chunk_bitmaps.sort_by_key(|bitmap| bitmap.word_pos);
+
+    let mut word_bitmaps = if tick_store.word_bitmap.is_empty() {
+        derive_word_bitmap_entries(&tick_store.chunk_bitmap)
+    } else {
+        tick_store
+            .word_bitmap
+            .iter()
+            .map(|(word_pos, word)| ClmmBitmapWordSnapshot {
+                word_pos: *word_pos,
+                word: *word,
+            })
+            .collect::<Vec<_>>()
+    };
+    word_bitmaps.sort_by_key(|bitmap| bitmap.word_pos);
+
+    ClmmPoolSnapshot {
+        source: source.into(),
+        pool_address: pool_address.into(),
+        token0: pool.token0.clone(),
+        token1: pool.token1.clone(),
+        fee_bps: pool.fee_bps,
+        tick_spacing: pool.tick_spacing,
+        sqrt_price_x96: pool.sqrt_price_x96.0,
+        tick: pool.tick,
+        liquidity: pool.liquidity,
+        ticks,
+        chunk_bitmaps,
+        word_bitmaps,
+        coverage,
+    }
+}
+
+pub fn clmm_pool_from_snapshot(snapshot: &ClmmPoolSnapshot) -> (ClmmPoolState, TickDataStore) {
+    let pool = ClmmPoolState {
+        sqrt_price_x96: U256(snapshot.sqrt_price_x96),
+        tick: snapshot.tick,
+        liquidity: snapshot.liquidity,
+        fee_bps: snapshot.fee_bps,
+        tick_spacing: snapshot.tick_spacing,
+        token0: snapshot.token0.clone(),
+        token1: snapshot.token1.clone(),
+    };
+
+    let mut tick_store = TickDataStore::new();
+    for tick in &snapshot.ticks {
+        let compressed = bitmap::compress_tick(tick.tick, snapshot.tick_spacing);
+        let (chunk_pos, slot) = bitmap::chunk_address(compressed);
+        let chunk = tick_store.chunks.entry(chunk_pos).or_insert_with(|| {
+            vec![
+                TickState {
+                    liquidity_gross: 0,
+                    liquidity_net: 0,
+                };
+                TICKS_PER_CHUNK as usize
+            ]
+        });
+        chunk[slot as usize] = TickState {
+            liquidity_gross: tick.liquidity_gross,
+            liquidity_net: tick.liquidity_net,
+        };
+    }
+
+    for bitmap in &snapshot.chunk_bitmaps {
+        tick_store.chunk_bitmap.insert(bitmap.word_pos, bitmap.word);
+    }
+    if snapshot.word_bitmaps.is_empty() {
+        for bitmap in derive_word_bitmap_entries(&tick_store.chunk_bitmap) {
+            tick_store.word_bitmap.insert(bitmap.word_pos, bitmap.word);
+        }
+    } else {
+        for bitmap in &snapshot.word_bitmaps {
+            tick_store.word_bitmap.insert(bitmap.word_pos, bitmap.word);
+        }
+    }
+
+    (pool, tick_store)
+}
+
+pub fn loaded_tick_range(tick_store: &TickDataStore, tick_spacing: i32) -> Option<(i32, i32)> {
+    let mut min_tick: Option<i32> = None;
+    let mut max_tick: Option<i32> = None;
+
+    for (chunk_pos, chunk) in &tick_store.chunks {
+        for (slot, state) in chunk.iter().enumerate() {
+            if state.liquidity_gross == 0 {
+                continue;
+            }
+            let compressed_tick = chunk_pos.saturating_mul(TICKS_PER_CHUNK) + slot as i32;
+            let tick = bitmap::compressed_to_tick(compressed_tick, tick_spacing);
+            min_tick = Some(min_tick.map_or(tick, |current| current.min(tick)));
+            max_tick = Some(max_tick.map_or(tick, |current| current.max(tick)));
+        }
+    }
+
+    min_tick.zip(max_tick)
+}
+
 /// Simulate a swap on a CLMM pool (exact input, zero_for_one or one_for_zero).
 /// Returns (amount_out, final_sqrt_price, final_tick).
 /// This is the off-chain equivalent of the on-chain swap_loop with dry_run=true.
@@ -1284,6 +1446,7 @@ pub fn simulate_swap(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use market_snapshot::ClmmCoverageSnapshot;
 
     #[test]
     fn test_u256_basic_ops() {
@@ -1499,5 +1662,85 @@ mod tests {
         let byte_idx = 31usize - (bit_pos / 8) as usize;
         let bit_idx = (bit_pos % 8) as u8;
         word[byte_idx] |= 1u8 << bit_idx;
+    }
+
+    #[test]
+    fn test_clmm_pool_snapshot_round_trip() {
+        let pool = ClmmPoolState {
+            sqrt_price_x96: U256([11, 22, 33, 44]),
+            tick: -120,
+            liquidity: 9_999,
+            fee_bps: 30,
+            tick_spacing: 60,
+            token0: "TOKEN0".to_string(),
+            token1: "TOKEN1".to_string(),
+        };
+        let mut ticks = TickDataStore::new();
+        let compressed = bitmap::compress_tick(-120, 60);
+        let (chunk_pos, slot) = bitmap::chunk_address(compressed);
+        let mut chunk = vec![
+            TickState {
+                liquidity_gross: 0,
+                liquidity_net: 0,
+            };
+            TICKS_PER_CHUNK as usize
+        ];
+        chunk[slot as usize] = TickState {
+            liquidity_gross: 777,
+            liquidity_net: -333,
+        };
+        ticks.chunks.insert(chunk_pos, chunk);
+        ticks.chunk_bitmap.insert(0, [5u8; 32]);
+        ticks.word_bitmap.insert(-1, [9u8; 32]);
+
+        let snapshot = clmm_pool_to_snapshot(
+            "sushi",
+            "pool-1",
+            &pool,
+            &ticks,
+            Some(ClmmCoverageSnapshot {
+                is_complete: true,
+                min_loaded_tick: Some(-120),
+                max_loaded_tick: Some(-120),
+                scanned_word_start: Some(-2),
+                scanned_word_end: Some(2),
+            }),
+        );
+        let (restored_pool, restored_ticks) = clmm_pool_from_snapshot(&snapshot);
+
+        assert_eq!(snapshot.source, "sushi");
+        assert_eq!(snapshot.pool_address, "pool-1");
+        assert_eq!(restored_pool.sqrt_price_x96, pool.sqrt_price_x96);
+        assert_eq!(restored_pool.tick, pool.tick);
+        assert_eq!(restored_pool.liquidity, pool.liquidity);
+        assert_eq!(restored_pool.token0, pool.token0);
+        assert_eq!(restored_pool.token1, pool.token1);
+        assert_eq!(
+            restored_ticks.get_tick(-120, pool.tick_spacing).liquidity_gross,
+            777
+        );
+        assert_eq!(restored_ticks.chunk_bitmap.get(&0), Some(&[5u8; 32]));
+        assert_eq!(restored_ticks.word_bitmap.get(&-1), Some(&[9u8; 32]));
+    }
+
+    #[test]
+    fn test_clmm_pool_snapshot_derives_word_bitmap_when_missing() {
+        let pool = ClmmPoolState {
+            sqrt_price_x96: U256([1, 0, 0, 0]),
+            tick: 0,
+            liquidity: 100,
+            fee_bps: 30,
+            tick_spacing: 200,
+            token0: "TOKEN0".to_string(),
+            token1: "TOKEN1".to_string(),
+        };
+        let mut ticks = TickDataStore::new();
+        ticks.chunk_bitmap.insert(2, [1u8; 32]);
+
+        let snapshot = clmm_pool_to_snapshot("sushi", "pool-derive", &pool, &ticks, None);
+        let (_, restored_ticks) = clmm_pool_from_snapshot(&snapshot);
+
+        assert!(!snapshot.word_bitmaps.is_empty());
+        assert!(!restored_ticks.word_bitmap.is_empty());
     }
 }

@@ -1,4 +1,5 @@
 use anyhow::Result;
+use dex_adapters::clmm_math::clmm_pool_from_snapshot;
 use market_snapshot::{MarketSnapshot, TradingPairSnapshot};
 use router_engine::{path_finder::PathFinderConfig, split_optimizer::SplitConfig, QuoteEngine};
 
@@ -44,13 +45,31 @@ pub async fn build_engine_from_snapshot(
             .await;
     }
 
+    for clmm_pool in &snapshot.clmm_pools {
+        let (pool, ticks) = clmm_pool_from_snapshot(clmm_pool);
+        engine
+            .update_clmm_quote_state(
+                &clmm_pool.source,
+                &clmm_pool.pool_address,
+                pool,
+                ticks,
+                clmm_pool
+                    .coverage
+                    .as_ref()
+                    .map(|coverage| coverage.is_complete)
+                    .unwrap_or(false),
+            )
+            .await;
+    }
+
     Ok(engine)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use market_snapshot::{MarketSnapshot, SourceSnapshot, TradingPairSnapshot};
+    use dex_adapters::clmm_math::{bitmap, sqrt_ratio_at_tick};
+    use market_snapshot::{ClmmPoolSnapshot, MarketSnapshot, SourceSnapshot, TradingPairSnapshot};
     use router_engine::TokenId;
 
     fn sample_snapshot() -> MarketSnapshot {
@@ -70,6 +89,81 @@ mod tests {
                 }],
             }],
         )
+    }
+
+    fn sample_clmm_snapshot() -> MarketSnapshot {
+        MarketSnapshot::from_sources(
+            "v2",
+            456,
+            "mainnet",
+            vec![SourceSnapshot {
+                source: "sushi".to_string(),
+                pairs: vec![TradingPairSnapshot {
+                    token_a: "token-a".to_string(),
+                    token_b: "token-b".to_string(),
+                    pool_address: "pool-clmm".to_string(),
+                    fee_bps: 30,
+                    reserve_a: None,
+                    reserve_b: None,
+                }],
+            }],
+        )
+        .with_clmm_pools(vec![ClmmPoolSnapshot {
+            source: "sushi".to_string(),
+            pool_address: "pool-clmm".to_string(),
+            token0: "token-a".to_string(),
+            token1: "token-b".to_string(),
+            fee_bps: 30,
+            tick_spacing: 200,
+            sqrt_price_x96: sqrt_ratio_at_tick(0).0,
+            tick: 0,
+            liquidity: 10_000_000_000_000,
+            ticks: vec![
+                market_snapshot::ClmmTickSnapshot {
+                    tick: -1000,
+                    liquidity_gross: 10_000_000_000_000,
+                    liquidity_net: 10_000_000_000_000,
+                },
+                market_snapshot::ClmmTickSnapshot {
+                    tick: 1000,
+                    liquidity_gross: 10_000_000_000_000,
+                    liquidity_net: -10_000_000_000_000,
+                },
+            ],
+            chunk_bitmaps: vec![market_snapshot::ClmmBitmapWordSnapshot {
+                word_pos: bitmap::chunk_bitmap_position(bitmap::chunk_address(bitmap::compress_tick(-1000, 200)).0).0,
+                word: {
+                    let mut word = [0u8; 32];
+                    let lower_bit = bitmap::chunk_bitmap_position(bitmap::chunk_address(bitmap::compress_tick(-1000, 200)).0).1;
+                    let upper_bit = bitmap::chunk_bitmap_position(bitmap::chunk_address(bitmap::compress_tick(1000, 200)).0).1;
+                    word[31 - (lower_bit / 8) as usize] |= 1u8 << (lower_bit % 8);
+                    word[31 - (upper_bit / 8) as usize] |= 1u8 << (upper_bit % 8);
+                    word
+                },
+            }],
+            word_bitmaps: vec![market_snapshot::ClmmBitmapWordSnapshot {
+                word_pos: bitmap::word_bitmap_position(
+                    bitmap::chunk_bitmap_position(bitmap::chunk_address(bitmap::compress_tick(-1000, 200)).0).0,
+                )
+                .0,
+                word: {
+                    let mut word = [0u8; 32];
+                    let l2_bit = bitmap::word_bitmap_position(
+                        bitmap::chunk_bitmap_position(bitmap::chunk_address(bitmap::compress_tick(-1000, 200)).0).0,
+                    )
+                    .1;
+                    word[31 - (l2_bit / 8) as usize] |= 1u8 << (l2_bit % 8);
+                    word
+                },
+            }],
+            coverage: Some(market_snapshot::ClmmCoverageSnapshot {
+                is_complete: true,
+                min_loaded_tick: Some(-1000),
+                max_loaded_tick: Some(1000),
+                scanned_word_start: None,
+                scanned_word_end: None,
+            }),
+        }])
     }
 
     #[test]
@@ -108,6 +202,32 @@ mod tests {
                     address: "token-b".to_string(),
                 },
                 amount_in: 1_000,
+                slippage_bps: Some(50),
+                max_hops: Some(1),
+                max_splits: Some(1),
+            })
+            .await;
+
+        assert_eq!(route.sub_orders.len(), 1);
+        assert!(route.total_expected_out > 0);
+    }
+
+    #[tokio::test]
+    async fn builds_engine_with_snapshot_clmm_quote_state() {
+        let config = crate::config::AppConfig::default();
+        let engine = build_engine_from_snapshot(&config, &sample_clmm_snapshot())
+            .await
+            .unwrap();
+
+        let route = engine
+            .get_route(&router_engine::RouteRequest {
+                token_in: TokenId::Contract {
+                    address: "token-a".to_string(),
+                },
+                token_out: TokenId::Contract {
+                    address: "token-b".to_string(),
+                },
+                amount_in: 1_000_000,
                 slippage_bps: Some(50),
                 max_hops: Some(1),
                 max_splits: Some(1),

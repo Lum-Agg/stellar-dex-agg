@@ -6,12 +6,24 @@ use crate::{
     split_optimizer::{QuotedPath, SplitConfig, SplitOptimizer},
     types::*,
 };
-use dex_adapters::DexAdapter;
-use std::sync::Arc;
+use dex_adapters::{
+    clmm_math::{self, ClmmPoolState, TickDataStore},
+    DexAdapter,
+};
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 const CLASSIC_SOURCE: &str = "classic_dex";
+
+#[derive(Debug, Clone)]
+pub struct SnapshotClmmQuoteState {
+    pub source: String,
+    pub pool_address: String,
+    pub is_complete: bool,
+    pub pool: ClmmPoolState,
+    pub ticks: TickDataStore,
+}
 
 fn apply_slippage(amount: u128, slippage_bps: u32) -> u128 {
     amount * (10_000 - slippage_bps as u128) / 10_000
@@ -24,6 +36,7 @@ pub struct QuoteEngine {
     adapters: RwLock<Vec<Arc<dyn DexAdapter>>>,
     /// All cached pool edges (one entry per token pair per pool; same pool may appear many times).
     cached_pools: RwLock<Vec<TradingPair>>,
+    clmm_quote_states: RwLock<HashMap<String, SnapshotClmmQuoteState>>,
 }
 
 impl QuoteEngine {
@@ -33,7 +46,32 @@ impl QuoteEngine {
             split_optimizer: SplitOptimizer::new(split_config),
             adapters: RwLock::new(Vec::new()),
             cached_pools: RwLock::new(Vec::new()),
+            clmm_quote_states: RwLock::new(HashMap::new()),
         }
+    }
+
+    fn clmm_quote_key(source: &str, pool_address: &str) -> String {
+        format!("{source}:{pool_address}")
+    }
+
+    pub async fn update_clmm_quote_state(
+        &self,
+        source: &str,
+        pool_address: &str,
+        pool: ClmmPoolState,
+        ticks: TickDataStore,
+        is_complete: bool,
+    ) {
+        self.clmm_quote_states.write().await.insert(
+            Self::clmm_quote_key(source, pool_address),
+            SnapshotClmmQuoteState {
+                source: source.to_string(),
+                pool_address: pool_address.to_string(),
+                is_complete,
+                pool,
+                ticks,
+            },
+        );
     }
 
     fn find_pool_edge<'a>(
@@ -295,6 +333,7 @@ impl QuoteEngine {
         let mut total_fee_bps: u32 = 0;
         let mut max_impact_bps: u32 = 0;
         let cached_pools = self.cached_pools.read().await;
+        let clmm_quote_states = self.clmm_quote_states.read().await;
 
         for (i, source) in path.sources.iter().enumerate() {
             let token_in = &path.tokens[i];
@@ -317,6 +356,7 @@ impl QuoteEngine {
                     pool_address,
                     source,
                     &cached_pools,
+                    &clmm_quote_states,
                 )
             };
 
@@ -356,7 +396,14 @@ impl QuoteEngine {
         pool_address: &str,
         source: &str,
         cached_pools: &[TradingPair],
+        clmm_quote_states: &HashMap<String, SnapshotClmmQuoteState>,
     ) -> Option<dex_adapters::AdapterQuote> {
+        if let Some(clmm_quote) =
+            self.local_clmm_quote(token_in, token_out, amount_in, pool_address, source, clmm_quote_states)
+        {
+            return Some(clmm_quote);
+        }
+
         let pair = Self::find_pool_edge(cached_pools, pool_address, token_in, token_out)?;
 
         let (reserve_in, reserve_out) = if token_in.canonical() == pair.token_a.canonical() {
@@ -423,6 +470,48 @@ impl QuoteEngine {
         })
     }
 
+    fn local_clmm_quote(
+        &self,
+        token_in: &TokenId,
+        token_out: &TokenId,
+        amount_in: u128,
+        pool_address: &str,
+        source: &str,
+        clmm_quote_states: &HashMap<String, SnapshotClmmQuoteState>,
+    ) -> Option<dex_adapters::AdapterQuote> {
+        if source != "sushi" && source != "aquarius_clmm" {
+            return None;
+        }
+
+        let state = clmm_quote_states.get(&Self::clmm_quote_key(source, pool_address))?;
+        if !state.is_complete {
+            return None;
+        }
+        if state.ticks.chunks.is_empty()
+            || state.ticks.chunk_bitmap.is_empty()
+            || state.ticks.word_bitmap.is_empty()
+        {
+            return None;
+        }
+        let token_in_key = token_in.canonical();
+        let token_out_key = token_out.canonical();
+        let zero_for_one = if token_in_key == state.pool.token0 && token_out_key == state.pool.token1 {
+            true
+        } else if token_in_key == state.pool.token1 && token_out_key == state.pool.token0 {
+            false
+        } else {
+            return None;
+        };
+
+        let (amount_out, _, _) =
+            clmm_math::simulate_swap(&state.pool, &state.ticks, amount_in, zero_for_one)?;
+        Some(dex_adapters::AdapterQuote {
+            amount_out,
+            fee_bps: state.pool.fee_bps,
+            price_impact_bps: 0,
+        })
+    }
+
     /// Get the (in_idx, out_idx) for a pool and swap tokens.
     /// Returns Some((0, 1)) if token_in == token_a && token_out == token_b,
     /// Some((1, 0)) if token_in == token_b && token_out == token_a,
@@ -477,6 +566,7 @@ impl QuoteEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dex_adapters::clmm_math::{bitmap, sqrt_ratio_at_tick, ClmmPoolState, TickDataStore, TickState, TICKS_PER_CHUNK};
 
     fn token(id: &str) -> TokenId {
         TokenId::Contract {
@@ -494,6 +584,86 @@ mod tests {
             reserve_a: Some(reserve_a),
             reserve_b: Some(reserve_b),
         }
+    }
+
+    fn clmm_pair(source: &str, pool: &str) -> TradingPair {
+        TradingPair {
+            token_a: token("token-in"),
+            token_b: token("token-out"),
+            source: source.to_string(),
+            pool_address: pool.to_string(),
+            fee_bps: 30,
+            reserve_a: None,
+            reserve_b: None,
+        }
+    }
+
+    fn sample_clmm_state() -> (ClmmPoolState, TickDataStore) {
+        let pool = ClmmPoolState {
+            sqrt_price_x96: sqrt_ratio_at_tick(0),
+            tick: 0,
+            liquidity: 10_000_000_000_000u128,
+            fee_bps: 30,
+            tick_spacing: 200,
+            token0: "token-in".to_string(),
+            token1: "token-out".to_string(),
+        };
+        let mut ticks = TickDataStore::new();
+        let lower_compressed = bitmap::compress_tick(-1000, 200);
+        let upper_compressed = bitmap::compress_tick(1000, 200);
+        let (lower_chunk, lower_slot) = bitmap::chunk_address(lower_compressed);
+        let (upper_chunk, upper_slot) = bitmap::chunk_address(upper_compressed);
+
+        let mut lower_chunk_data = vec![
+            TickState {
+                liquidity_gross: 0,
+                liquidity_net: 0,
+            };
+            TICKS_PER_CHUNK as usize
+        ];
+        lower_chunk_data[lower_slot as usize] = TickState {
+            liquidity_gross: 10_000_000_000_000,
+            liquidity_net: 10_000_000_000_000,
+        };
+        ticks.chunks.insert(lower_chunk, lower_chunk_data);
+
+        let mut upper_chunk_data = vec![
+            TickState {
+                liquidity_gross: 0,
+                liquidity_net: 0,
+            };
+            TICKS_PER_CHUNK as usize
+        ];
+        upper_chunk_data[upper_slot as usize] = TickState {
+            liquidity_gross: 10_000_000_000_000,
+            liquidity_net: -10_000_000_000_000,
+        };
+        ticks.chunks.insert(upper_chunk, upper_chunk_data);
+
+        let (bm_word_lower, bm_bit_lower) = bitmap::chunk_bitmap_position(lower_chunk);
+        let (bm_word_upper, bm_bit_upper) = bitmap::chunk_bitmap_position(upper_chunk);
+        let mut word = [0u8; 32];
+        set_bit_in_word(&mut word, bm_bit_lower);
+        set_bit_in_word(&mut word, bm_bit_upper);
+        ticks.chunk_bitmap.insert(bm_word_lower, word);
+        if bm_word_upper != bm_word_lower {
+            let mut word2 = [0u8; 32];
+            set_bit_in_word(&mut word2, bm_bit_upper);
+            ticks.chunk_bitmap.insert(bm_word_upper, word2);
+        }
+
+        let (l2_pos, l2_bit) = bitmap::word_bitmap_position(bm_word_lower);
+        let mut l2_word = [0u8; 32];
+        set_bit_in_word(&mut l2_word, l2_bit);
+        ticks.word_bitmap.insert(l2_pos, l2_word);
+
+        (pool, ticks)
+    }
+
+    fn set_bit_in_word(word: &mut [u8; 32], bit_pos: u32) {
+        let byte_idx = 31usize - (bit_pos / 8) as usize;
+        let bit_idx = (bit_pos % 8) as u8;
+        word[byte_idx] |= 1u8 << bit_idx;
     }
 
     #[tokio::test]
@@ -561,6 +731,98 @@ mod tests {
                 .iter()
                 .all(|order| order.path.sources.iter().all(|source| source != CLASSIC_SOURCE))
         );
+    }
+
+    #[tokio::test]
+    async fn quote_uses_snapshot_clmm_state_when_reserves_are_missing() {
+        let engine = QuoteEngine::new(PathFinderConfig::default(), SplitConfig::default());
+        engine
+            .update_pairs_from_cache("sushi", &[clmm_pair("sushi", "sushi-pool")])
+            .await;
+        let (pool, ticks) = sample_clmm_state();
+        engine
+            .update_clmm_quote_state("sushi", "sushi-pool", pool, ticks, true)
+            .await;
+
+        let route = engine
+            .get_route(&RouteRequest {
+                token_in: token("token-in"),
+                token_out: token("token-out"),
+                amount_in: 1_000_000,
+                slippage_bps: Some(50),
+                max_hops: Some(1),
+                max_splits: Some(1),
+            })
+            .await;
+
+        assert_eq!(route.sub_orders.len(), 1);
+        assert!(route.total_expected_out > 0);
+        assert_eq!(route.sub_orders[0].path.sources, vec!["sushi".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn quote_rejects_snapshot_clmm_state_without_initialized_ticks() {
+        let engine = QuoteEngine::new(PathFinderConfig::default(), SplitConfig::default());
+        engine
+            .update_pairs_from_cache("sushi", &[clmm_pair("sushi", "sushi-empty")])
+            .await;
+        engine
+            .update_clmm_quote_state(
+                "sushi",
+                "sushi-empty",
+                ClmmPoolState {
+                    sqrt_price_x96: sqrt_ratio_at_tick(0),
+                    tick: 0,
+                    liquidity: 10_000_000_000_000u128,
+                    fee_bps: 30,
+                    tick_spacing: 200,
+                    token0: "token-in".to_string(),
+                    token1: "token-out".to_string(),
+                },
+                TickDataStore::new(),
+                true,
+            )
+            .await;
+
+        let route = engine
+            .get_route(&RouteRequest {
+                token_in: token("token-in"),
+                token_out: token("token-out"),
+                amount_in: 1_000_000,
+                slippage_bps: Some(50),
+                max_hops: Some(1),
+                max_splits: Some(1),
+            })
+            .await;
+
+        assert!(route.sub_orders.is_empty());
+        assert_eq!(route.total_expected_out, 0);
+    }
+
+    #[tokio::test]
+    async fn quote_rejects_incomplete_snapshot_clmm_state() {
+        let engine = QuoteEngine::new(PathFinderConfig::default(), SplitConfig::default());
+        engine
+            .update_pairs_from_cache("sushi", &[clmm_pair("sushi", "sushi-partial")])
+            .await;
+        let (pool, ticks) = sample_clmm_state();
+        engine
+            .update_clmm_quote_state("sushi", "sushi-partial", pool, ticks, false)
+            .await;
+
+        let route = engine
+            .get_route(&RouteRequest {
+                token_in: token("token-in"),
+                token_out: token("token-out"),
+                amount_in: 1_000_000,
+                slippage_bps: Some(50),
+                max_hops: Some(1),
+                max_splits: Some(1),
+            })
+            .await;
+
+        assert!(route.sub_orders.is_empty());
+        assert_eq!(route.total_expected_out, 0);
     }
 }
 
