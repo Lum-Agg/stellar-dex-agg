@@ -27,7 +27,9 @@ pub mod classic_dex;
 pub mod clmm_math;
 pub mod comet;
 pub mod comet_math;
+pub mod expert_api;
 pub mod phoenix;
+pub mod pool_index;
 pub mod rpc;
 pub mod soroswap;
 pub mod stable_math;
@@ -38,6 +40,7 @@ pub mod traits;
 pub mod utils;
 
 pub use cache::{default_cache_path, PoolCache};
+pub use comet::{quote_comet_pool, CometAdapter, CometPoolQuoteState, COMET_FACTORY_MAINNET};
 pub use rpc::SorobanRpc;
 pub use sushi::SushiAdapter;
 pub use token_registry::TokenRegistry;

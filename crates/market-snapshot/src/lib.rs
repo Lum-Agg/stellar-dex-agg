@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+pub mod pool_state_store;
 pub mod store;
 
 pub const DEFAULT_SNAPSHOT_DIR: &str = "data/snapshots";

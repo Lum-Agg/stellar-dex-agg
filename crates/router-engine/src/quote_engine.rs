@@ -7,9 +7,10 @@ use crate::{
     types::*,
 };
 use dex_adapters::{
-    clmm_math::{self, ClmmPoolState, TickDataStore},
+    clmm_math::{self, ClmmCoverageInput, ClmmPoolState, TickDataStore},
     DexAdapter,
 };
+use market_snapshot::{pool_state_store::XykPoolStateValue, ClmmCoverageSnapshot};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
@@ -23,10 +24,66 @@ pub struct SnapshotClmmQuoteState {
     pub is_complete: bool,
     pub pool: ClmmPoolState,
     pub ticks: TickDataStore,
+    pub coverage: Option<ClmmCoverageSnapshot>,
+}
+
+fn clmm_coverage_input(state: &SnapshotClmmQuoteState) -> ClmmCoverageInput {
+    if let Some(coverage) = &state.coverage {
+        return ClmmCoverageInput::from_snapshot(&state.pool, coverage);
+    }
+    let range = clmm_math::loaded_tick_range(&state.ticks, state.pool.tick_spacing);
+    ClmmCoverageInput {
+        pool_tick: state.pool.tick,
+        tick_spacing: state.pool.tick_spacing,
+        is_complete: state.is_complete,
+        min_loaded_tick: range.map(|(min_tick, _)| min_tick),
+        max_loaded_tick: range.map(|(_, max_tick)| max_tick),
+        scanned_word_start: None,
+        scanned_word_end: None,
+    }
 }
 
 fn apply_slippage(amount: u128, slippage_bps: u32) -> u128 {
     amount * (10_000 - slippage_bps as u128) / 10_000
+}
+
+fn reserves_for_edge(
+    token_in: &TokenId,
+    token_out: &TokenId,
+    hydrated: &XykPoolStateValue,
+) -> Option<(u128, u128)> {
+    let in_key = token_in.canonical();
+    let out_key = token_out.canonical();
+    if in_key == hydrated.token_a && out_key == hydrated.token_b {
+        Some((hydrated.reserve_a, hydrated.reserve_b))
+    } else if in_key == hydrated.token_b && out_key == hydrated.token_a {
+        Some((hydrated.reserve_b, hydrated.reserve_a))
+    } else {
+        None
+    }
+}
+
+/// Per-request pool state overlay (Redis hydrate + optional RPC fallback). Not cached across quotes.
+#[derive(Debug, Clone, Default)]
+pub struct QuoteHydration {
+    pub xyk_pools: HashMap<String, XykPoolStateValue>,
+    pub clmm_pools: HashMap<String, SnapshotClmmQuoteState>,
+    /// Comet weighted pools (full token records + fee).
+    pub comet_pools: HashMap<String, dex_adapters::CometPoolQuoteState>,
+}
+
+impl QuoteHydration {
+    pub fn xyk_pool_key(source: &str, pool_address: &str) -> String {
+        XykPoolStateValue::pool_key(source, pool_address)
+    }
+
+    pub fn clmm_pool_key(source: &str, pool_address: &str) -> String {
+        format!("{source}:{pool_address}")
+    }
+
+    pub fn comet_pool_key(pool_address: &str) -> String {
+        pool_address.to_string()
+    }
 }
 
 /// The main quote engine that coordinates all routing logic.
@@ -61,6 +118,7 @@ impl QuoteEngine {
         pool: ClmmPoolState,
         ticks: TickDataStore,
         is_complete: bool,
+        coverage: Option<ClmmCoverageSnapshot>,
     ) {
         self.clmm_quote_states.write().await.insert(
             Self::clmm_quote_key(source, pool_address),
@@ -70,6 +128,7 @@ impl QuoteEngine {
                 is_complete,
                 pool,
                 ticks,
+                coverage,
             },
         );
     }
@@ -169,6 +228,11 @@ impl QuoteEngine {
         pf.clear_cache();
     }
 
+    /// Snapshot of graph edges (for hydrate RPC orientation).
+    pub async fn cached_pool_edges(&self) -> Vec<TradingPair> {
+        self.cached_pools.read().await.clone()
+    }
+
     /// Get all unique token addresses known to the engine.
     pub async fn get_all_tokens(&self) -> Vec<String> {
         let pools = self.cached_pools.read().await;
@@ -182,10 +246,8 @@ impl QuoteEngine {
         result
     }
 
-    /// Get the optimal route for a trade.
-    pub async fn get_route(&self, request: &RouteRequest) -> OptimalRoute {
-        let start = std::time::Instant::now();
-        let slippage_bps = request.slippage_bps.unwrap_or(50);
+    /// Discover candidate paths for a route request (graph only).
+    pub async fn find_candidate_paths(&self, request: &RouteRequest) -> Vec<Path> {
         let (max_hops, max_paths) = {
             let pf = self.path_finder.read().await;
             (
@@ -193,12 +255,25 @@ impl QuoteEngine {
                 pf.default_max_paths(),
             )
         };
+        let pf = self.path_finder.read().await;
+        pf.find_paths_with_limits(&request.token_in, &request.token_out, max_hops, max_paths)
+    }
 
-        // 1. Discover paths (read lock — graph updates take write lock briefly)
-        let paths = {
-            let pf = self.path_finder.read().await;
-            pf.find_paths_with_limits(&request.token_in, &request.token_out, max_hops, max_paths)
-        };
+    /// Get the optimal route for a trade.
+    pub async fn get_route(&self, request: &RouteRequest) -> OptimalRoute {
+        let paths = self.find_candidate_paths(request).await;
+        self.get_route_with_paths(request, &paths, None).await
+    }
+
+    /// Quote using pre-discovered paths and optional per-request pool state hydration.
+    pub async fn get_route_with_paths(
+        &self,
+        request: &RouteRequest,
+        paths: &[Path],
+        hydration: Option<&QuoteHydration>,
+    ) -> OptimalRoute {
+        let start = std::time::Instant::now();
+        let slippage_bps = request.slippage_bps.unwrap_or(50);
 
         if paths.is_empty() {
             debug!(
@@ -225,8 +300,11 @@ impl QuoteEngine {
         let adapters = self.adapters.read().await;
         let mut quoted_paths: Vec<QuotedPath> = Vec::new();
 
-        for path in &paths {
-            if let Some(quote) = self.quote_path(path, request.amount_in, &adapters).await {
+        for path in paths {
+            if let Some(quote) = self
+                .quote_path(path, request.amount_in, &adapters, hydration)
+                .await
+            {
                 quoted_paths.push(QuotedPath {
                     path: path.clone(),
                     quote,
@@ -283,6 +361,7 @@ impl QuoteEngine {
             None
         } else {
             let adapters_clone = adapters.clone();
+            let hydration_owned = hydration.cloned();
             Some(
                 self.split_optimizer
                     .optimize(
@@ -293,7 +372,11 @@ impl QuoteEngine {
                         |path, amount| {
                             let adapters_ref = adapters_clone.clone();
                             let path_clone = path.clone();
-                            async move { self.quote_path(&path_clone, amount, &adapters_ref).await }
+                            let hydration_ref = hydration_owned.as_ref();
+                            async move {
+                                self.quote_path(&path_clone, amount, &adapters_ref, hydration_ref)
+                                    .await
+                            }
                         },
                     )
                     .await,
@@ -335,6 +418,7 @@ impl QuoteEngine {
         path: &Path,
         amount_in: u128,
         adapters: &[Arc<dyn DexAdapter>],
+        hydration: Option<&QuoteHydration>,
     ) -> Option<Quote> {
         let mut current_amount = amount_in;
         let mut total_fee_bps: u32 = 0;
@@ -349,15 +433,29 @@ impl QuoteEngine {
 
             let adapter = adapters.iter().find(|a| a.id() == source);
 
-            // CLMM: local math only during routing (fast). No per-path RPC simulate.
+            // CLMM: local math only during routing (fast). No per-hop RPC simulate.
             let hop_result = if matches!(source.as_str(), "sushi" | "aquarius_clmm") {
-                if let Some(q) = self.local_clmm_quote(
+                self.local_clmm_quote(
                     token_in,
                     token_out,
                     current_amount,
                     pool_address,
                     source,
                     &clmm_quote_states,
+                    hydration,
+                )
+            } else if source == "comet" {
+                self.local_comet_quote(token_in, token_out, current_amount, pool_address, hydration)
+            } else if source == CLASSIC_SOURCE {
+                if let Some(q) = self.local_quote(
+                    token_in,
+                    token_out,
+                    current_amount,
+                    pool_address,
+                    source,
+                    &cached_pools,
+                    &clmm_quote_states,
+                    hydration,
                 ) {
                     Some(q)
                 } else if let Some(adapter) = adapter {
@@ -369,12 +467,6 @@ impl QuoteEngine {
                 } else {
                     None
                 }
-            } else if let Some(adapter) = adapter {
-                adapter
-                    .get_quote(token_in, token_out, current_amount, pool_address)
-                    .await
-                    .ok()
-                    .flatten()
             } else {
                 self.local_quote(
                     token_in,
@@ -384,6 +476,7 @@ impl QuoteEngine {
                     source,
                     &cached_pools,
                     &clmm_quote_states,
+                    hydration,
                 )
             };
 
@@ -424,16 +517,32 @@ impl QuoteEngine {
         source: &str,
         cached_pools: &[TradingPair],
         clmm_quote_states: &HashMap<String, SnapshotClmmQuoteState>,
+        hydration: Option<&QuoteHydration>,
     ) -> Option<dex_adapters::AdapterQuote> {
-        if let Some(clmm_quote) =
-            self.local_clmm_quote(token_in, token_out, amount_in, pool_address, source, clmm_quote_states)
-        {
+        if let Some(clmm_quote) = self.local_clmm_quote(
+            token_in,
+            token_out,
+            amount_in,
+            pool_address,
+            source,
+            clmm_quote_states,
+            hydration,
+        ) {
             return Some(clmm_quote);
         }
 
-        let pair = Self::find_pool_edge(cached_pools, pool_address, token_in, token_out)?;
+        if source == "comet" {
+            return self.local_comet_quote(token_in, token_out, amount_in, pool_address, hydration);
+        }
 
-        let (reserve_in, reserve_out) = if token_in.canonical() == pair.token_a.canonical() {
+        let pair = Self::find_pool_edge(cached_pools, pool_address, token_in, token_out)?;
+        let fee_bps = pair.fee_bps;
+
+        let (reserve_in, reserve_out) = if let Some(hydrated) = hydration
+            .and_then(|h| h.xyk_pools.get(&QuoteHydration::xyk_pool_key(source, pool_address)))
+        {
+            reserves_for_edge(token_in, token_out, hydrated)?
+        } else if token_in.canonical() == pair.token_a.canonical() {
             (pair.reserve_a?, pair.reserve_b?)
         } else if token_in.canonical() == pair.token_b.canonical() {
             (pair.reserve_b?, pair.reserve_a?)
@@ -456,21 +565,18 @@ impl QuoteEngine {
             }
             "aquarius" => {
                 // Aquarius: in_after_fee = amount_in * (10000 - fee_bps) / 10000
-                let fee_bps = pair.fee_bps;
                 let in_after_fee = amount_in * (10_000 - fee_bps as u128) / 10_000;
                 let out = in_after_fee * reserve_out / (reserve_in + in_after_fee);
                 (out, fee_bps)
             }
             "phoenix" => {
                 // Phoenix: fee on output
-                let fee_bps = pair.fee_bps;
                 let gross = amount_in * reserve_out / (reserve_in + amount_in);
                 let commission = gross * fee_bps as u128 / 10_000;
                 (gross - commission, fee_bps)
             }
             _ => {
                 // Generic constant product
-                let fee_bps = pair.fee_bps;
                 let in_after_fee = amount_in * (10_000 - fee_bps as u128) / 10_000;
                 let out = in_after_fee * reserve_out / (reserve_in + in_after_fee);
                 (out, fee_bps)
@@ -497,6 +603,25 @@ impl QuoteEngine {
         })
     }
 
+    fn local_comet_quote(
+        &self,
+        token_in: &TokenId,
+        token_out: &TokenId,
+        amount_in: u128,
+        pool_address: &str,
+        hydration: Option<&QuoteHydration>,
+    ) -> Option<dex_adapters::AdapterQuote> {
+        let state = hydration?
+            .comet_pools
+            .get(&QuoteHydration::comet_pool_key(pool_address))?;
+        dex_adapters::quote_comet_pool(
+            state,
+            &token_in.canonical(),
+            &token_out.canonical(),
+            amount_in,
+        )
+    }
+
     fn local_clmm_quote(
         &self,
         token_in: &TokenId,
@@ -505,21 +630,17 @@ impl QuoteEngine {
         pool_address: &str,
         source: &str,
         clmm_quote_states: &HashMap<String, SnapshotClmmQuoteState>,
+        hydration: Option<&QuoteHydration>,
     ) -> Option<dex_adapters::AdapterQuote> {
         if source != "sushi" && source != "aquarius_clmm" {
             return None;
         }
 
-        let state = clmm_quote_states.get(&Self::clmm_quote_key(source, pool_address))?;
-        if !state.is_complete {
-            return None;
-        }
-        if state.ticks.chunks.is_empty()
-            || state.ticks.chunk_bitmap.is_empty()
-            || state.ticks.word_bitmap.is_empty()
-        {
-            return None;
-        }
+        let key = Self::clmm_quote_key(source, pool_address);
+        let state = hydration
+            .and_then(|h| h.clmm_pools.get(&key))
+            .or_else(|| clmm_quote_states.get(&key))?;
+        let coverage = clmm_coverage_input(state);
         let token_in_key = token_in.canonical();
         let token_out_key = token_out.canonical();
         let zero_for_one = if token_in_key == state.pool.token0 && token_out_key == state.pool.token1 {
@@ -529,6 +650,16 @@ impl QuoteEngine {
         } else {
             return None;
         };
+
+        if !clmm_math::clmm_swap_allowed(
+            &state.pool,
+            &state.ticks,
+            amount_in,
+            zero_for_one,
+            &coverage,
+        ) {
+            return None;
+        }
 
         let (amount_out, _, _) =
             clmm_math::simulate_swap(&state.pool, &state.ticks, amount_in, zero_for_one)?;
@@ -608,6 +739,29 @@ mod tests {
             source: source.to_string(),
             pool_address: pool.to_string(),
             fee_bps: 0,
+            reserve_a: Some(reserve_a),
+            reserve_b: Some(reserve_b),
+        }
+    }
+
+    fn pair_with_tokens(
+        source: &str,
+        pool: &str,
+        token_a: &str,
+        token_b: &str,
+        reserve_a: u128,
+        reserve_b: u128,
+    ) -> TradingPair {
+        TradingPair {
+            token_a: TokenId::Contract {
+                address: token_a.to_string(),
+            },
+            token_b: TokenId::Contract {
+                address: token_b.to_string(),
+            },
+            source: source.to_string(),
+            pool_address: pool.to_string(),
+            fee_bps: 30,
             reserve_a: Some(reserve_a),
             reserve_b: Some(reserve_b),
         }
@@ -768,7 +922,20 @@ mod tests {
             .await;
         let (pool, ticks) = sample_clmm_state();
         engine
-            .update_clmm_quote_state("sushi", "sushi-pool", pool, ticks, true)
+            .update_clmm_quote_state(
+                "sushi",
+                "sushi-pool",
+                pool,
+                ticks,
+                true,
+                Some(ClmmCoverageSnapshot {
+                    is_complete: true,
+                    min_loaded_tick: Some(-1000),
+                    max_loaded_tick: Some(1000),
+                    scanned_word_start: None,
+                    scanned_word_end: None,
+                }),
+            )
             .await;
 
         let route = engine
@@ -808,6 +975,7 @@ mod tests {
                 },
                 TickDataStore::new(),
                 true,
+                None,
             )
             .await;
 
@@ -827,6 +995,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn quote_rejects_clmm_when_active_tick_outside_scanned_window() {
+        let engine = QuoteEngine::new(PathFinderConfig::default(), SplitConfig::default());
+        engine
+            .update_pairs_from_cache("sushi", &[clmm_pair("sushi", "sushi-window")])
+            .await;
+        let (pool, ticks) = sample_clmm_state();
+        engine
+            .update_clmm_quote_state(
+                "sushi",
+                "sushi-window",
+                pool,
+                ticks,
+                true,
+                Some(ClmmCoverageSnapshot {
+                    is_complete: true,
+                    min_loaded_tick: Some(-1000),
+                    max_loaded_tick: Some(1000),
+                    scanned_word_start: Some(100),
+                    scanned_word_end: Some(101),
+                }),
+            )
+            .await;
+
+        let route = engine
+            .get_route(&RouteRequest {
+                token_in: token("token-in"),
+                token_out: token("token-out"),
+                amount_in: 1_000_000,
+                slippage_bps: Some(50),
+                max_hops: Some(1),
+                max_splits: Some(1),
+            })
+            .await;
+
+        assert!(route.sub_orders.is_empty());
+    }
+
+    #[tokio::test]
     async fn quote_rejects_incomplete_snapshot_clmm_state() {
         let engine = QuoteEngine::new(PathFinderConfig::default(), SplitConfig::default());
         engine
@@ -834,7 +1040,20 @@ mod tests {
             .await;
         let (pool, ticks) = sample_clmm_state();
         engine
-            .update_clmm_quote_state("sushi", "sushi-partial", pool, ticks, false)
+            .update_clmm_quote_state(
+                "sushi",
+                "sushi-partial",
+                pool,
+                ticks,
+                false,
+                Some(ClmmCoverageSnapshot {
+                    is_complete: false,
+                    min_loaded_tick: Some(-1000),
+                    max_loaded_tick: Some(1000),
+                    scanned_word_start: None,
+                    scanned_word_end: None,
+                }),
+            )
             .await;
 
         let route = engine
@@ -850,6 +1069,91 @@ mod tests {
 
         assert!(route.sub_orders.is_empty());
         assert_eq!(route.total_expected_out, 0);
+    }
+
+    #[tokio::test]
+    async fn quote_uses_weighted_comet_math_when_hydrated() {
+        use dex_adapters::comet_math::{CometRecord, STROOP_SCALAR};
+        use dex_adapters::CometPoolQuoteState;
+        use std::collections::HashMap;
+
+        let engine = QuoteEngine::new(PathFinderConfig::default(), SplitConfig::default());
+        let blnd = "CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV";
+        let usdc = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75";
+        engine
+            .update_pairs_from_cache(
+                "comet",
+                &[pair_with_tokens("comet", "comet-pool", blnd, usdc, 1_000_000, 2_000_000)],
+            )
+            .await;
+
+        let mut records = HashMap::new();
+        records.insert(
+            blnd.to_string(),
+            CometRecord {
+                balance: 1_000_000,
+                weight: 1,
+                scalar: STROOP_SCALAR,
+            },
+        );
+        records.insert(
+            usdc.to_string(),
+            CometRecord {
+                balance: 2_000_000,
+                weight: 4,
+                scalar: STROOP_SCALAR,
+            },
+        );
+        let hydration = QuoteHydration {
+            comet_pools: HashMap::from([(
+                "comet-pool".to_string(),
+                CometPoolQuoteState {
+                    records,
+                    swap_fee: 30_000,
+                },
+            )]),
+            ..Default::default()
+        };
+
+        let paths = engine
+            .find_candidate_paths(&RouteRequest {
+                token_in: TokenId::Contract {
+                    address: blnd.to_string(),
+                },
+                token_out: TokenId::Contract {
+                    address: usdc.to_string(),
+                },
+                amount_in: 100_000,
+                slippage_bps: Some(50),
+                max_hops: Some(1),
+                max_splits: Some(1),
+            })
+            .await;
+
+        let route = engine
+            .get_route_with_paths(
+                &RouteRequest {
+                    token_in: TokenId::Contract {
+                        address: blnd.to_string(),
+                    },
+                    token_out: TokenId::Contract {
+                        address: usdc.to_string(),
+                    },
+                    amount_in: 100_000,
+                    slippage_bps: Some(50),
+                    max_hops: Some(1),
+                    max_splits: Some(1),
+                },
+                &paths,
+                Some(&hydration),
+            )
+            .await;
+
+        assert!(!route.sub_orders.is_empty());
+        assert!(route.total_expected_out > 0);
+        // Weighted pool should not match naive xy=k on reserves alone.
+        let xy_k_out = 100_000u128 * 2_000_000 / (1_000_000 + 100_000);
+        assert_ne!(route.total_expected_out, xy_k_out);
     }
 }
 

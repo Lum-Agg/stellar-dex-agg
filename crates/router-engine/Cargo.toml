@@ -25,3 +25,4 @@ chrono.workspace = true
 reqwest.workspace = true
 
 dex-adapters = { path = "../dex-adapters" }
+market-snapshot = { path = "../market-snapshot" }

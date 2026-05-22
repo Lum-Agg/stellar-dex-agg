@@ -9,3 +9,6 @@ packages/frontend/out/
 justfile
 data
 .worktrees/
+PROJECT_STATUS.md
+docs
+thirdparty/

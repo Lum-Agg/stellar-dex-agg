@@ -147,6 +147,34 @@ impl PhoenixAdapter {
         Ok((address, amount))
     }
 
+    /// Refresh reserves for specific pools (one factory RPC, patch cached pairs).
+    pub async fn refresh_touched_pools(&self, pool_addresses: &[String]) -> Result<usize> {
+        if pool_addresses.is_empty() {
+            return Ok(0);
+        }
+        let wanted: std::collections::HashSet<&str> =
+            pool_addresses.iter().map(|s| s.as_str()).collect();
+        let results = self.fetch_pools_from_factory().await?;
+        let mut pairs = self.pairs.write().await;
+        let mut fees = self.pool_fees.write().await;
+        let mut updated = 0usize;
+        for (pair, fee_bps) in results {
+            if !wanted.contains(pair.pool_address.as_str()) {
+                continue;
+            }
+            if let Some(existing) = pairs
+                .iter_mut()
+                .find(|p| p.pool_address == pair.pool_address)
+            {
+                let pool_address = existing.pool_address.clone();
+                *existing = pair;
+                fees.insert(pool_address, fee_bps);
+                updated += 1;
+            }
+        }
+        Ok(updated)
+    }
+
     async fn resolve_token(&self, contract_address: &str) -> TokenId {
         match self.rpc.call_no_args(contract_address, "name").await {
             Ok(val) => {
@@ -267,6 +295,27 @@ impl DexAdapter for PhoenixAdapter {
             .call_no_args(PHOENIX_FACTORY, "query_all_pools_details")
             .await
             .is_ok()
+    }
+
+    async fn refresh_reserves(&self) -> Result<usize> {
+        let results = self.fetch_pools_from_factory().await?;
+        if results.is_empty() {
+            return Ok(0);
+        }
+        let mut pairs = Vec::new();
+        let mut fees = HashMap::new();
+        for (pair, fee_bps) in results {
+            fees.insert(pair.pool_address.clone(), fee_bps);
+            pairs.push(pair);
+        }
+        let updated = pairs.len();
+        *self.pairs.write().await = pairs;
+        *self.pool_fees.write().await = fees;
+        Ok(updated)
+    }
+
+    async fn get_cached_pairs(&self) -> Vec<AdapterTradingPair> {
+        self.pairs.read().await.clone()
     }
 }
 

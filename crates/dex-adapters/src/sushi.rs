@@ -18,15 +18,17 @@
 //!   - compressed_tick = tick / tick_spacing (floor division)
 
 use crate::clmm_math::{
-    self, bitmap, clmm_pool_to_snapshot, loaded_tick_range, tick_outside_word_scan,
-    ClmmPoolState, TickDataStore, TickState, TICKS_PER_CHUNK, U256 as ClmmU256,
+    self, bitmap, clmm_pool_to_snapshot, clmm_swap_allowed, loaded_tick_range,
+    tick_outside_word_scan, ClmmCoverageInput, ClmmPoolState, TickDataStore, TickState,
+    TICKS_PER_CHUNK, U256 as ClmmU256,
 };
+use crate::expert_api::{expert_http_client, STELLAR_EXPERT_API};
 use crate::rpc::{scval_to_address, scval_to_i128, scval_to_u128, SorobanRpc};
 use crate::traits::*;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use market_snapshot::{ClmmCoverageSnapshot, ClmmPoolSnapshot};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use stellar_xdr::curr as xdr;
 use tokio::sync::RwLock;
@@ -218,7 +220,11 @@ impl SushiAdapter {
 
     /// Read tick data via pool-lens get_populated_ticks_in_word.
     /// Scans bitmap words around the current tick.
-    async fn read_tick_data(&self, pool: &mut SushiPoolCache) -> Result<()> {
+    /// When `merge` is true, keeps existing ticks and only expands the scan window.
+    async fn read_tick_data(&self, pool: &mut SushiPoolCache, merge: bool) -> Result<()> {
+        if !merge {
+            pool.tick_store = TickDataStore::new();
+        }
         // Sushi V3 bitmap: word_pos = compressed_tick / 256
         // compressed_tick = tick / tick_spacing (floor division)
         let compressed_tick = floor_div(pool.tick, pool.tick_spacing);
@@ -313,6 +319,21 @@ impl SushiAdapter {
         Ok(())
     }
 
+    fn coverage_input(pool: &SushiPoolCache) -> ClmmCoverageInput {
+        let range = loaded_tick_range(&pool.tick_store, pool.tick_spacing);
+        let in_scan_window =
+            !tick_outside_word_scan(pool.tick, pool.tick_spacing, pool.scanned_word_start, pool.scanned_word_end);
+        ClmmCoverageInput {
+            pool_tick: pool.tick,
+            tick_spacing: pool.tick_spacing,
+            is_complete: in_scan_window && range.is_some(),
+            min_loaded_tick: range.map(|(min_tick, _)| min_tick),
+            max_loaded_tick: range.map(|(_, max_tick)| max_tick),
+            scanned_word_start: Some(pool.scanned_word_start),
+            scanned_word_end: Some(pool.scanned_word_end),
+        }
+    }
+
     /// Get a local CLMM quote.
     fn local_quote(&self, pool: &SushiPoolCache, token_in: &str, amount_in: u128) -> Option<u128> {
         if pool.liquidity == 0 {
@@ -346,78 +367,107 @@ impl SushiAdapter {
         result.map(|(amount_out, _, _)| amount_out)
     }
 
-    /// Discover pools by scanning Factory contract events for pool creation.
-    /// Falls back to brute-force token pair enumeration if events fail.
-    async fn discover_pools(&self) -> Result<Vec<AdapterTradingPair>> {
-        // Primary: check hardcoded known pool addresses (fastest, most reliable)
-        let pools = self.check_known_pools().await;
-        if !pools.is_empty() {
-            info!("Sushi: found {} pools from known addresses", pools.len());
-            return Ok(pools);
-        }
+    fn discovery_rpc(&self) -> SorobanRpc {
+        let url = std::env::var("SUSHI_DISCOVERY_RPC").unwrap_or_else(|_| {
+            "https://soroban-rpc.mainnet.stellar.gateway.fm".to_string()
+        });
+        SorobanRpc::new(&url, self.rpc.network_passphrase())
+    }
 
-        // Fallback 1: stellar.expert API
-        match self.discover_pools_from_factory_storage().await {
-            Ok(pools) if !pools.is_empty() => {
-                info!(
-                    "Sushi: discovered {} pools from factory storage",
-                    pools.len()
-                );
-                return Ok(pools);
+    fn merge_discovered_pools(
+        pools: &mut Vec<AdapterTradingPair>,
+        incoming: Vec<AdapterTradingPair>,
+    ) {
+        let mut seen: HashSet<String> = pools.iter().map(|p| p.pool_address.clone()).collect();
+        for pair in incoming {
+            if seen.insert(pair.pool_address.clone()) {
+                pools.push(pair);
             }
-            _ => {}
+        }
+    }
+
+    /// Discover pools: known addresses + factory storage + brute-force fallback.
+    async fn discover_pools(&self) -> Result<Vec<AdapterTradingPair>> {
+        let mut pools = self.check_known_pools().await;
+        info!("Sushi: {} pools from known addresses", pools.len());
+
+        match self.discover_pools_from_factory_storage().await {
+            Ok(factory_pools) => {
+                info!(
+                    "Sushi: {} pools from factory storage",
+                    factory_pools.len()
+                );
+                Self::merge_discovered_pools(&mut pools, factory_pools);
+            }
+            Err(e) => warn!("Sushi: factory storage discovery failed: {}", e),
         }
 
-        // Fallback 2: brute-force
-        self.discover_pools_brute_force().await
+        if pools.is_empty() {
+            pools = self.discover_pools_brute_force().await?;
+            info!("Sushi: {} pools from brute-force fallback", pools.len());
+        }
+
+        Ok(pools)
     }
 
     /// Discover all pools by reading the Factory's contract storage.
     /// The Factory stores pool addresses under GetPool(token0, token1, fee) keys.
     /// We read all storage entries and extract unique pool addresses.
     async fn discover_pools_from_factory_storage(&self) -> Result<Vec<AdapterTradingPair>> {
-        let client = reqwest::Client::new();
-        let url = format!(
-            "https://api.stellar.expert/explorer/public/contract-data/{}?limit=200",
-            SUSHI_FACTORY
-        );
+        let client = expert_http_client()?;
+        let mut url = format!("{STELLAR_EXPERT_API}/contract-data/{SUSHI_FACTORY}?limit=200");
+        let discovery_rpc = Arc::new(self.discovery_rpc());
 
-        let resp = client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| anyhow!("stellar.expert request failed: {}", e))?;
-        let data: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| anyhow!("stellar.expert response parse failed: {}", e))?;
+        let mut pool_hashes: HashSet<[u8; 32]> = HashSet::new();
+        loop {
+            let resp = client
+                .get(&url)
+                .send()
+                .await
+                .map_err(|e| anyhow!("stellar.expert request failed: {}", e))?;
+            if !resp.status().is_success() {
+                return Err(anyhow!(
+                    "stellar.expert contract-data status {}",
+                    resp.status()
+                ));
+            }
+            let data: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| anyhow!("stellar.expert response parse failed: {}", e))?;
 
-        let records = data
-            .get("_embedded")
-            .and_then(|e| e.get("records"))
-            .and_then(|r| r.as_array())
-            .ok_or_else(|| anyhow!("No records in response"))?;
+            let records = data
+                .get("_embedded")
+                .and_then(|e| e.get("records"))
+                .and_then(|r| r.as_array())
+                .ok_or_else(|| anyhow!("No records in response"))?;
 
-        // Extract unique pool addresses from storage values
-        let mut pool_hashes: std::collections::HashSet<[u8; 32]> = std::collections::HashSet::new();
-        for record in records {
-            let val_b64 = match record.get("value").and_then(|v| v.as_str()) {
-                Some(v) => v,
-                None => continue,
-            };
-
-            // Decode XDR: ScVal::Address(Contract(hash))
-            // Format: 00000012 00000001 <32 bytes hash>
             use base64::Engine;
-            let raw = match base64::engine::general_purpose::STANDARD.decode(val_b64) {
-                Ok(r) => r,
-                Err(_) => continue,
-            };
+            for record in records {
+                let val_b64 = match record.get("value").and_then(|v| v.as_str()) {
+                    Some(v) => v,
+                    None => continue,
+                };
+                let raw = match base64::engine::general_purpose::STANDARD.decode(val_b64) {
+                    Ok(r) => r,
+                    Err(_) => continue,
+                };
+                if raw.len() >= 40 && raw[3] == 0x12 && raw[7] == 0x01 {
+                    let mut hash = [0u8; 32];
+                    hash.copy_from_slice(&raw[8..40]);
+                    pool_hashes.insert(hash);
+                }
+            }
 
-            if raw.len() >= 40 && raw[3] == 0x12 && raw[7] == 0x01 {
-                let mut hash = [0u8; 32];
-                hash.copy_from_slice(&raw[8..40]);
-                pool_hashes.insert(hash);
+            url = data
+                .get("_links")
+                .and_then(|l| l.get("next"))
+                .and_then(|n| n.get("href"))
+                .and_then(|h| h.as_str())
+                .map(str::to_string)
+                .unwrap_or_default();
+            if url.is_empty() {
+                break;
             }
         }
 
@@ -426,29 +476,31 @@ impl SushiAdapter {
             pool_hashes.len()
         );
 
-        // Convert hashes to strkey addresses and read pool info concurrently
-        let mut pools = Vec::new();
         let pool_addrs: Vec<String> = pool_hashes
             .iter()
             .map(|hash| format!("{}", stellar_strkey::Contract(*hash)))
             .collect();
 
-        // Read pool info in batches of 10 (concurrent)
+        Ok(Self::load_sushi_pool_pairs(discovery_rpc.as_ref(), &pool_addrs).await)
+    }
+
+    async fn load_sushi_pool_pairs(
+        rpc: &SorobanRpc,
+        pool_addrs: &[String],
+    ) -> Vec<AdapterTradingPair> {
+        let mut pools = Vec::new();
         for chunk in pool_addrs.chunks(10) {
             let futures: Vec<_> = chunk
                 .iter()
                 .map(|pool_addr| {
-                    let rpc = self.rpc.clone();
                     let addr = pool_addr.clone();
                     async move {
-                        // Read token0, token1, fee, liquidity concurrently
                         let (t0, t1, fee_res, liq) = tokio::join!(
                             rpc.call_no_args(&addr, "token0"),
                             rpc.call_no_args(&addr, "token1"),
                             rpc.call_no_args(&addr, "fee"),
                             rpc.call_no_args(&addr, "liquidity"),
                         );
-
                         let token0 = t0.ok().and_then(|v| scval_to_address(&v).ok())?;
                         let token1 = t1.ok().and_then(|v| scval_to_address(&v).ok())?;
                         let fee = match fee_res.ok()? {
@@ -456,7 +508,6 @@ impl SushiAdapter {
                             _ => return None,
                         };
                         let liquidity = liq.ok().and_then(|v| scval_to_u128(&v).ok()).unwrap_or(0);
-
                         if liquidity > 0 {
                             Some(AdapterTradingPair {
                                 token_a: TokenId::Contract { address: token0 },
@@ -472,16 +523,13 @@ impl SushiAdapter {
                     }
                 })
                 .collect();
-
-            let results = futures::future::join_all(futures).await;
-            for result in results {
+            for result in futures::future::join_all(futures).await {
                 if let Some(pair) = result {
                     pools.push(pair);
                 }
             }
         }
-
-        Ok(pools)
+        pools
     }
 
     /// Fallback: brute-force discovery by trying known token pairs.
@@ -559,54 +607,9 @@ impl SushiAdapter {
             "Sushi: checking {} known pool addresses...",
             KNOWN_POOL_ADDRS.len()
         );
-        let mut pools = Vec::new();
-
-        // Use public RPC for discovery (server's local RPC may have issues with some contracts)
-        let discovery_rpc = SorobanRpc::new(
-            "https://soroban-rpc.mainnet.stellar.gateway.fm",
-            "Public Global Stellar Network ; September 2015",
-        );
-
-        // Check pools sequentially
-        for &addr in KNOWN_POOL_ADDRS {
-            let token0 = match discovery_rpc.call_no_args(addr, "token0").await {
-                Ok(v) => match scval_to_address(&v) {
-                    Ok(a) => a,
-                    Err(_) => continue,
-                },
-                Err(e) => {
-                    debug!("Sushi: pool {} token0 failed: {}", &addr[..12], e);
-                    continue;
-                }
-            };
-            let token1 = match discovery_rpc.call_no_args(addr, "token1").await {
-                Ok(v) => match scval_to_address(&v) {
-                    Ok(a) => a,
-                    Err(_) => continue,
-                },
-                Err(_) => continue,
-            };
-            let fee = match discovery_rpc.call_no_args(addr, "fee").await {
-                Ok(xdr::ScVal::U32(f)) => f,
-                _ => continue,
-            };
-            let liquidity = match discovery_rpc.call_no_args(addr, "liquidity").await {
-                Ok(v) => scval_to_u128(&v).unwrap_or(0),
-                Err(_) => continue,
-            };
-
-            if liquidity > 0 {
-                pools.push(AdapterTradingPair {
-                    token_a: TokenId::Contract { address: token0 },
-                    token_b: TokenId::Contract { address: token1 },
-                    pool_address: addr.to_string(),
-                    fee_bps: fee,
-                    reserve_a: None,
-                    reserve_b: None,
-                });
-            }
-        }
-
+        let discovery_rpc = Arc::new(self.discovery_rpc());
+        let addrs: Vec<String> = KNOWN_POOL_ADDRS.iter().map(|s| s.to_string()).collect();
+        let pools = Self::load_sushi_pool_pairs(discovery_rpc.as_ref(), &addrs).await;
         info!(
             "Sushi: {} pools with liquidity from known addresses",
             pools.len()
@@ -745,7 +748,7 @@ impl SushiAdapter {
             return Ok(());
         }
         let mut pool = self.read_pool_state(pool_address).await?;
-        if let Err(e) = self.read_tick_data(&mut pool).await {
+        if let Err(e) = self.read_tick_data(&mut pool, false).await {
             warn!("Sushi: tick data incomplete for {}: {}", pool_address, e);
         }
         let pair = AdapterTradingPair {
@@ -889,7 +892,7 @@ impl DexAdapter for SushiAdapter {
             match self.read_pool_state(&pair.pool_address).await {
                 Ok(mut pool) => {
                     // Read tick data via pool-lens
-                    if let Err(e) = self.read_tick_data(&mut pool).await {
+                    if let Err(e) = self.read_tick_data(&mut pool, false).await {
                         warn!(
                             "Sushi: failed to read tick data for {}: {}",
                             pair.pool_address, e
@@ -916,13 +919,40 @@ impl DexAdapter for SushiAdapter {
     async fn get_quote(
         &self,
         token_in: &TokenId,
-        _token_out: &TokenId,
+        token_out: &TokenId,
         amount_in: u128,
         pool_address: &str,
     ) -> Result<Option<AdapterQuote>> {
         let cache = self.pool_cache.read().await;
         if let Some(pool) = cache.get(pool_address) {
-            if let Some(amount_out) = self.local_quote(pool, &token_in.canonical(), amount_in) {
+            let token_in_addr = token_in.canonical();
+            let token_out_addr = token_out.canonical();
+            let zero_for_one =
+                token_in_addr == pool.token0 && token_out_addr == pool.token1;
+            let one_for_zero =
+                token_in_addr == pool.token1 && token_out_addr == pool.token0;
+            if !zero_for_one && !one_for_zero {
+                return Ok(None);
+            }
+            let pool_state = ClmmPoolState {
+                sqrt_price_x96: pool.sqrt_price_x96,
+                tick: pool.tick,
+                liquidity: pool.liquidity,
+                fee_bps: pool.fee_bps / 100,
+                tick_spacing: pool.tick_spacing,
+                token0: pool.token0.clone(),
+                token1: pool.token1.clone(),
+            };
+            if !clmm_swap_allowed(
+                &pool_state,
+                &pool.tick_store,
+                amount_in,
+                zero_for_one,
+                &Self::coverage_input(pool),
+            ) {
+                return Ok(None);
+            }
+            if let Some(amount_out) = self.local_quote(pool, &token_in_addr, amount_in) {
                 let impact_bps = if pool.liquidity > 0 {
                     ((amount_in as f64 / pool.liquidity as f64) * 10_000.0).min(10_000.0) as u32
                 } else {
@@ -990,7 +1020,7 @@ impl DexAdapter for SushiAdapter {
                         pool.scanned_word_start,
                         pool.scanned_word_end,
                     ) {
-                        if let Err(e) = self.read_tick_data(pool).await {
+                        if let Err(e) = self.read_tick_data(pool, true).await {
                             warn!("Sushi tick rescan failed for {}: {}", addr, e);
                         }
                     }

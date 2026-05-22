@@ -14,18 +14,24 @@ use dex_adapters::{
     DexAdapter,
 };
 use market_snapshot::{
+    pool_state_store::{build_pool_state_store, RedisPoolStateStore},
     store::{
         build_snapshot_store, should_reload_snapshot_version,
         subscribe_to_snapshot_events, SnapshotListenerEvent, SnapshotStore, SnapshotStoreBackend,
     },
     MarketSnapshot,
 };
-use router_engine::{path_finder::PathFinderConfig, split_optimizer::SplitConfig, QuoteEngine};
+use router_engine::{
+    path_finder::PathFinderConfig, split_optimizer::SplitConfig, OptimalRoute, QuoteEngine,
+    RouteRequest,
+};
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::{mpsc, RwLock};
 use tracing::{info, warn};
 
-use crate::{config::AppConfig, snapshot_loader::build_engine_from_snapshot};
+use crate::{
+    config::AppConfig, pool_hydrate::{self, PoolHydrateConfig}, snapshot_loader::build_engine_from_snapshot,
+};
 
 /// Shared application state.
 #[derive(Clone)]
@@ -33,6 +39,8 @@ pub struct AppState {
     pub engine: Arc<RwLock<Arc<QuoteEngine>>>,
     pub config: AppConfig,
     pub token_metadata: Arc<TokenMetadataStore>,
+    pub rpc: Arc<SorobanRpc>,
+    pub pool_state_store: Option<Arc<RedisPoolStateStore>>,
 }
 
 pub(crate) fn sanitize_cached_pairs(
@@ -101,6 +109,13 @@ fn configured_snapshot_backend(config: &AppConfig) -> Result<Option<SnapshotStor
         return Ok(Some(SnapshotStoreBackend::File));
     }
     Ok(None)
+}
+
+fn configured_pool_state_store(config: &AppConfig) -> Result<Option<Arc<RedisPoolStateStore>>> {
+    let Some(redis_url) = config.snapshot_redis_url.as_deref() else {
+        return Ok(None);
+    };
+    Ok(Some(Arc::new(build_pool_state_store(redis_url)?)))
 }
 
 fn configured_snapshot_store(config: &AppConfig) -> Result<Option<Arc<dyn SnapshotStore>>> {
@@ -290,6 +305,27 @@ impl AppState {
         self.engine.read().await.clone()
     }
 
+    /// Find paths, hydrate pool state from Redis (and batched RPC fallback), then quote.
+    pub async fn quote_route(&self, request: &RouteRequest) -> OptimalRoute {
+        let engine = self.current_engine().await;
+        let paths = engine.find_candidate_paths(request).await;
+        let hydration = if let Some(store) = &self.pool_state_store {
+            pool_hydrate::hydrate_paths(
+                &engine,
+                &paths,
+                store,
+                &self.rpc,
+                &PoolHydrateConfig::default(),
+            )
+            .await
+        } else {
+            router_engine::QuoteHydration::default()
+        };
+        engine
+            .get_route_with_paths(request, &paths, Some(&hydration))
+            .await
+    }
+
     fn spawn_snapshot_reloader(
         &self,
         snapshot_store: Arc<dyn SnapshotStore>,
@@ -402,10 +438,13 @@ impl AppState {
             if let Some(token_metadata_map) = initial_token_metadata {
                 token_metadata.replace_all(token_metadata_map).await;
             }
+            let pool_state_store = configured_pool_state_store(&config)?;
             let state = Self {
                 engine: Arc::new(RwLock::new(engine)),
                 config,
                 token_metadata,
+                rpc,
+                pool_state_store,
             };
             state.spawn_snapshot_reloader(snapshot_store, snapshot_events, initial_version);
             return Ok(state);
@@ -453,15 +492,16 @@ impl AppState {
         let refresh_interval = config.refresh_interval_secs;
         let discovery_interval = config.discovery_interval_secs;
 
+        let rpc_bg = rpc.clone();
         tokio::spawn(async move {
             let adapters: Vec<Arc<dyn DexAdapter>> = vec![
-                Arc::new(SoroswapAdapter::new(rpc.clone())),
-                Arc::new(AquariusAdapter::new(rpc.clone())),
-                Arc::new(PhoenixAdapter::new(rpc.clone())),
-                Arc::new(SushiAdapter::new(rpc.clone())),
-                Arc::new(CometAdapter::new(rpc.clone())),
+                Arc::new(SoroswapAdapter::new(rpc_bg.clone())),
+                Arc::new(AquariusAdapter::new(rpc_bg.clone())),
+                Arc::new(PhoenixAdapter::new(rpc_bg.clone())),
+                Arc::new(SushiAdapter::new(rpc_bg.clone())),
+                Arc::new(CometAdapter::new(rpc_bg.clone())),
                 Arc::new(ClassicDexAdapter::new(None)),
-                Arc::new(AquariusClmmAdapter::new(rpc.clone())),
+                Arc::new(AquariusClmmAdapter::new(rpc_bg.clone())),
             ];
 
             for adapter in &adapters {
@@ -506,10 +546,13 @@ impl AppState {
             }
         });
 
+        let pool_state_store = configured_pool_state_store(&config)?;
         Ok(Self {
             engine: Arc::new(RwLock::new(engine)),
             config,
             token_metadata,
+            rpc,
+            pool_state_store,
         })
     }
 }

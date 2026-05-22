@@ -58,6 +58,7 @@ pub async fn build_engine_from_snapshot(
                     .as_ref()
                     .map(|coverage| coverage.is_complete)
                     .unwrap_or(false),
+                clmm_pool.coverage.clone(),
             )
             .await;
     }

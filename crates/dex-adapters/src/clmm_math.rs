@@ -1331,6 +1331,109 @@ pub fn tick_outside_loaded_range(tick: i32, min_loaded: i32, max_loaded: i32) ->
     tick < min_loaded || tick > max_loaded
 }
 
+/// Inputs for deciding whether local CLMM math is safe to use for quoting.
+#[derive(Debug, Clone, Copy)]
+pub struct ClmmCoverageInput {
+    pub pool_tick: i32,
+    pub tick_spacing: i32,
+    pub is_complete: bool,
+    pub min_loaded_tick: Option<i32>,
+    pub max_loaded_tick: Option<i32>,
+    pub scanned_word_start: Option<i32>,
+    pub scanned_word_end: Option<i32>,
+}
+
+impl ClmmCoverageInput {
+    pub fn from_snapshot(pool: &ClmmPoolState, coverage: &ClmmCoverageSnapshot) -> Self {
+        Self {
+            pool_tick: pool.tick,
+            tick_spacing: pool.tick_spacing,
+            is_complete: coverage.is_complete,
+            min_loaded_tick: coverage.min_loaded_tick,
+            max_loaded_tick: coverage.max_loaded_tick,
+            scanned_word_start: coverage.scanned_word_start,
+            scanned_word_end: coverage.scanned_word_end,
+        }
+    }
+}
+
+pub fn clmm_has_initialized_ticks(tick_store: &TickDataStore) -> bool {
+    tick_store
+        .chunks
+        .values()
+        .any(|chunk| chunk.iter().any(|tick| tick.liquidity_gross > 0))
+}
+
+/// Pool metadata is present and the active tick sits inside declared coverage bounds.
+pub fn clmm_quote_allowed(tick_store: &TickDataStore, coverage: &ClmmCoverageInput) -> bool {
+    if !coverage.is_complete {
+        return false;
+    }
+    if !clmm_has_initialized_ticks(tick_store) {
+        return false;
+    }
+    if let (Some(start), Some(end)) = (coverage.scanned_word_start, coverage.scanned_word_end) {
+        if tick_outside_word_scan(coverage.pool_tick, coverage.tick_spacing, start, end) {
+            return false;
+        }
+    }
+    if let (Some(min_tick), Some(max_tick)) = (coverage.min_loaded_tick, coverage.max_loaded_tick) {
+        if tick_outside_loaded_range(coverage.pool_tick, min_tick, max_tick) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Whether a simulated swap stays within loaded tick boundaries (guards missing-tick math).
+pub fn swap_stays_within_loaded_ticks(
+    pool: &ClmmPoolState,
+    ticks: &TickDataStore,
+    amount_in: u128,
+    zero_for_one: bool,
+    min_loaded: i32,
+    max_loaded: i32,
+) -> bool {
+    if amount_in == 0 || pool.liquidity == 0 {
+        return false;
+    }
+    if tick_outside_loaded_range(pool.tick, min_loaded, max_loaded) {
+        return false;
+    }
+    let Some((amount_out, _, final_tick)) = simulate_swap(pool, ticks, amount_in, zero_for_one) else {
+        return false;
+    };
+    if amount_out == 0 {
+        return false;
+    }
+    !tick_outside_loaded_range(final_tick, min_loaded, max_loaded)
+}
+
+/// Full local quote guard: metadata + swap path stays inside loaded ticks.
+pub fn clmm_swap_allowed(
+    pool: &ClmmPoolState,
+    ticks: &TickDataStore,
+    amount_in: u128,
+    zero_for_one: bool,
+    coverage: &ClmmCoverageInput,
+) -> bool {
+    if !clmm_quote_allowed(ticks, coverage) {
+        return false;
+    }
+    let Some((range_min, range_max)) = loaded_tick_range(ticks, pool.tick_spacing) else {
+        return false;
+    };
+    let min_loaded = coverage
+        .min_loaded_tick
+        .unwrap_or(range_min)
+        .min(range_min);
+    let max_loaded = coverage
+        .max_loaded_tick
+        .unwrap_or(range_max)
+        .max(range_max);
+    swap_stays_within_loaded_ticks(pool, ticks, amount_in, zero_for_one, min_loaded, max_loaded)
+}
+
 pub fn loaded_tick_range(tick_store: &TickDataStore, tick_spacing: i32) -> Option<(i32, i32)> {
     let mut min_tick: Option<i32> = None;
     let mut max_tick: Option<i32> = None;
@@ -1360,6 +1463,13 @@ pub fn simulate_swap(
     zero_for_one: bool,
 ) -> Option<(u128, U256, i32)> {
     if amount_in == 0 || pool.liquidity == 0 {
+        return None;
+    }
+    if let Some((min_loaded, max_loaded)) = loaded_tick_range(ticks, pool.tick_spacing) {
+        if tick_outside_loaded_range(pool.tick, min_loaded, max_loaded) {
+            return None;
+        }
+    } else {
         return None;
     }
 
@@ -1674,6 +1784,95 @@ mod tests {
         let byte_idx = 31usize - (bit_pos / 8) as usize;
         let bit_idx = (bit_pos % 8) as u8;
         word[byte_idx] |= 1u8 << bit_idx;
+    }
+
+    #[test]
+    fn clmm_quote_allowed_requires_complete_and_in_range() {
+        let pool = ClmmPoolState {
+            sqrt_price_x96: sqrt_ratio_at_tick(-200),
+            tick: -200,
+            liquidity: 1_000_000,
+            fee_bps: 30,
+            tick_spacing: 200,
+            token0: "A".to_string(),
+            token1: "B".to_string(),
+        };
+        let mut ticks = TickDataStore::new();
+        let compressed = bitmap::compress_tick(-200, 200);
+        let (chunk_pos, slot) = bitmap::chunk_address(compressed);
+        let mut chunk = vec![
+            TickState {
+                liquidity_gross: 0,
+                liquidity_net: 0,
+            };
+            TICKS_PER_CHUNK as usize
+        ];
+        chunk[slot as usize] = TickState {
+            liquidity_gross: 1_000_000,
+            liquidity_net: 1_000_000,
+        };
+        ticks.chunks.insert(chunk_pos, chunk);
+        let upper_compressed = bitmap::compress_tick(1000, 200);
+        let (upper_chunk, upper_slot) = bitmap::chunk_address(upper_compressed);
+        let mut upper_chunk_data = vec![
+            TickState {
+                liquidity_gross: 0,
+                liquidity_net: 0,
+            };
+            TICKS_PER_CHUNK as usize
+        ];
+        upper_chunk_data[upper_slot as usize] = TickState {
+            liquidity_gross: 1_000_000,
+            liquidity_net: -1_000_000,
+        };
+        ticks.chunks.insert(upper_chunk, upper_chunk_data);
+
+        let coverage = ClmmCoverageInput {
+            pool_tick: -200,
+            tick_spacing: 200,
+            is_complete: true,
+            min_loaded_tick: Some(-200),
+            max_loaded_tick: Some(1000),
+            scanned_word_start: None,
+            scanned_word_end: None,
+        };
+        assert!(clmm_quote_allowed(&ticks, &coverage));
+
+        let incomplete = ClmmCoverageInput {
+            is_complete: false,
+            ..coverage
+        };
+        assert!(!clmm_quote_allowed(&ticks, &incomplete));
+    }
+
+    #[test]
+    fn simulate_swap_rejects_tick_outside_loaded_range() {
+        let pool = ClmmPoolState {
+            sqrt_price_x96: sqrt_ratio_at_tick(5000),
+            tick: 5000,
+            liquidity: 1_000_000,
+            fee_bps: 30,
+            tick_spacing: 200,
+            token0: "A".to_string(),
+            token1: "B".to_string(),
+        };
+        let mut ticks = TickDataStore::new();
+        let compressed = bitmap::compress_tick(-200, 200);
+        let (chunk_pos, slot) = bitmap::chunk_address(compressed);
+        let mut chunk = vec![
+            TickState {
+                liquidity_gross: 0,
+                liquidity_net: 0,
+            };
+            TICKS_PER_CHUNK as usize
+        ];
+        chunk[slot as usize] = TickState {
+            liquidity_gross: 1_000_000,
+            liquidity_net: 1_000_000,
+        };
+        ticks.chunks.insert(chunk_pos, chunk);
+
+        assert!(simulate_swap(&pool, &ticks, 1_000, true).is_none());
     }
 
     #[test]

@@ -1,5 +1,6 @@
 pub mod config;
 pub mod handlers;
+pub mod pool_hydrate;
 pub mod snapshot_loader;
 pub mod soroban_prepare;
 pub mod state;

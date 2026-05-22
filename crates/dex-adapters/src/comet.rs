@@ -1,49 +1,75 @@
 //! Comet DEX adapter: Balancer-style weighted pool AMM on Soroban.
 //!
-//! Comet pools are individually deployed (no factory). Each pool has:
-//! - Multiple tokens with different weights
-//! - Balancer V1 weighted math for swaps
-//!
-//! Known pools:
-//! - BLND/USDC: CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM (~$4M TVL)
-//!
-//! Quote approach: read pool state (balances, weights, fee) from chain via getLedgerEntries,
-//! then compute output locally using Balancer math (no simulate needed).
+//! Pools are deployed via the Comet factory (`new_c_pool` / `is_c_pool` / `NEW_POOL` events).
+//! Discovery enumerates factory persistent storage (stellar.expert contract-data API) and
+//! builds routing edges for every token pair in each pool (2–8 tokens).
 
 use crate::comet_math::{self, CometRecord, STROOP_SCALAR};
+use crate::expert_api::{expert_http_client, STELLAR_EXPERT_API};
+use crate::rpc::events::{EventFilterSpec, MAX_LEDGER_SCAN_PER_REQUEST};
 use crate::rpc::SorobanRpc;
 use crate::traits::*;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use std::collections::HashMap;
+use base64::Engine;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use stellar_xdr::curr as xdr;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-/// Known Comet pools on mainnet
-const COMET_POOLS: &[(&str, &str, &str)] = &[
-    // (pool_address, token_a_contract, token_b_contract)
-    (
-        "CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM",
-        "CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV", // BLND
-        "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75", // USDC
-    ),
+/// Mainnet Comet factory (Blend deployment — `blend-utils/mainnet.contracts.json`).
+pub const COMET_FACTORY_MAINNET: &str = "CA2LVIPU6HJHHPPD6EDDYJTV2QEUBPGOAVJ4VIYNTMFUCRM4LFK3TJKF";
+
+/// Seed pool(s) used when factory indexing is unavailable.
+pub const COMET_SEED_POOLS: &[&str] = &[
+    "CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM",
 ];
 
-/// Cached pool state for local computation
+/// Legacy hardcoded pair (BLND/USDC); kept for tests referencing the primary pool.
+pub const COMET_POOLS: &[(&str, &str, &str)] = &[(
+    COMET_SEED_POOLS[0],
+    "CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV",
+    "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+)];
+
+/// On-chain pool state used for local weighted-pool quotes.
 #[derive(Debug, Clone)]
-struct CometPoolState {
-    /// Token address -> (balance, weight, scalar)
-    records: HashMap<String, CometRecord>,
-    swap_fee: i128,
+pub struct CometPoolQuoteState {
+    pub records: HashMap<String, CometRecord>,
+    pub swap_fee: i128,
+}
+
+type CometPoolState = CometPoolQuoteState;
+
+/// Weighted-pool quote from hydrated state (Balancer V1 math).
+pub fn quote_comet_pool(
+    state: &CometPoolQuoteState,
+    token_in: &str,
+    token_out: &str,
+    amount_in: u128,
+) -> Option<AdapterQuote> {
+    let in_record = state.records.get(token_in)?;
+    let out_record = state.records.get(token_out)?;
+    let amount_out =
+        comet_math::calc_out_given_in(in_record, out_record, amount_in as i128, state.swap_fee);
+    if amount_out <= 0 {
+        return None;
+    }
+    let price_impact_bps =
+        (amount_in as i128 * 10_000 / (2 * in_record.balance)).min(10_000) as u32;
+    Some(AdapterQuote {
+        amount_out: amount_out as u128,
+        fee_bps: (state.swap_fee / 1000) as u32,
+        price_impact_bps,
+    })
 }
 
 pub struct CometAdapter {
     rpc: Arc<SorobanRpc>,
     pairs: RwLock<Vec<AdapterTradingPair>>,
-    /// Pool address -> pool state
     pool_states: RwLock<HashMap<String, CometPoolState>>,
+    tracked_pools: RwLock<Vec<String>>,
 }
 
 impl CometAdapter {
@@ -52,15 +78,236 @@ impl CometAdapter {
             rpc,
             pairs: RwLock::new(Vec::new()),
             pool_states: RwLock::new(HashMap::new()),
+            tracked_pools: RwLock::new(Vec::new()),
         }
     }
 
-    /// Read pool instance data from chain and parse records + fee.
-    async fn fetch_pool_state(&self, pool_address: &str) -> Result<CometPoolState> {
-        // Use simulate_call to read pool data (avoids XDR decode issues with U256)
-        // Comet pools have: get_swap_fee(), get_tokens(), get_balance(token), get_denorm_weight(token)
+    fn factory_address() -> String {
+        std::env::var("COMET_FACTORY").unwrap_or_else(|_| COMET_FACTORY_MAINNET.to_string())
+    }
 
-        // Get swap fee
+    fn extra_pool_addresses_from_env() -> Vec<String> {
+        std::env::var("COMET_EXTRA_POOLS")
+            .ok()
+            .map(|raw| {
+                raw.split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn address_scval(addr: &str) -> Result<xdr::ScVal> {
+        let hash = stellar_strkey::Contract::from_string(addr)
+            .map_err(|e| anyhow!("Invalid contract address {}: {:?}", addr, e))?
+            .0;
+        Ok(xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(
+            xdr::Hash(hash),
+        ))))
+    }
+
+    /// Discover pool contract IDs: factory registry + seeds + `COMET_EXTRA_POOLS`.
+    pub async fn discover_pool_addresses(&self) -> Vec<String> {
+        let mut addrs: HashSet<String> = HashSet::new();
+        for seed in COMET_SEED_POOLS {
+            addrs.insert(seed.to_string());
+        }
+        for extra in Self::extra_pool_addresses_from_env() {
+            addrs.insert(extra);
+        }
+
+        match self.discover_pools_from_factory_storage().await {
+            Ok(factory_pools) => {
+                info!(
+                    "Comet: factory storage listed {} candidate pool(s)",
+                    factory_pools.len()
+                );
+                addrs.extend(factory_pools);
+            }
+            Err(e) => {
+                warn!("Comet: factory storage discovery failed: {}", e);
+            }
+        }
+
+        match self.discover_pools_from_factory_events().await {
+            Ok(event_pools) => {
+                info!(
+                    "Comet: factory events listed {} candidate pool(s)",
+                    event_pools.len()
+                );
+                addrs.extend(event_pools);
+            }
+            Err(e) => {
+                debug!("Comet: factory event discovery failed: {}", e);
+            }
+        }
+
+        let factory = Self::factory_address();
+        let mut confirmed = Vec::new();
+        for addr in addrs {
+            if self.factory_confirms_pool(&factory, &addr).await {
+                confirmed.push(addr);
+            } else if COMET_SEED_POOLS.contains(&addr.as_str()) {
+                // Seed pool: still track if on-chain reads succeed (factory RPC may fail).
+                if self.probe_pool_contract(&addr).await {
+                    confirmed.push(addr);
+                }
+            }
+        }
+
+        confirmed.sort();
+        *self.tracked_pools.write().await = confirmed.clone();
+        confirmed
+    }
+
+    async fn factory_confirms_pool(&self, factory: &str, pool: &str) -> bool {
+        let args = match Self::address_scval(pool) {
+            Ok(v) => vec![v],
+            Err(_) => return false,
+        };
+        match self.rpc.simulate_call(factory, "is_c_pool", args).await {
+            Ok(xdr::ScVal::Bool(true)) => true,
+            Ok(_) => false,
+            Err(e) => {
+                debug!("Comet is_c_pool({}) failed: {}", pool, e);
+                false
+            }
+        }
+    }
+
+    async fn probe_pool_contract(&self, pool: &str) -> bool {
+        self.rpc.call_no_args(pool, "get_tokens").await.is_ok()
+    }
+
+    /// Read factory persistent `IsCpool` entries via stellar.expert (same approach as Sushi).
+    async fn discover_pools_from_factory_storage(&self) -> Result<Vec<String>> {
+        let factory = Self::factory_address();
+        let client = expert_http_client()?;
+
+        let mut pool_hashes: HashSet<[u8; 32]> = HashSet::new();
+        let mut url = format!("{STELLAR_EXPERT_API}/contract-data/{factory}?limit=200");
+
+        loop {
+            let resp = client
+                .get(&url)
+                .send()
+                .await
+                .map_err(|e| anyhow!("stellar.expert request failed: {}", e))?;
+            if !resp.status().is_success() {
+                return Err(anyhow!(
+                    "stellar.expert contract-data status {}",
+                    resp.status()
+                ));
+            }
+            let data: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| anyhow!("stellar.expert parse failed: {}", e))?;
+
+            let records = data
+                .get("_embedded")
+                .and_then(|e| e.get("records"))
+                .and_then(|r| r.as_array())
+                .ok_or_else(|| anyhow!("No records in stellar.expert response"))?;
+
+            for record in records {
+                for field in ["key", "value"] {
+                    if let Some(b64) = record.get(field).and_then(|v| v.as_str()) {
+                        if let Some(hash) = contract_hash_from_storage_xdr(b64) {
+                            pool_hashes.insert(hash);
+                        }
+                    }
+                }
+            }
+
+            url = data
+                .get("_links")
+                .and_then(|l| l.get("next"))
+                .and_then(|n| n.get("href"))
+                .and_then(|h| h.as_str())
+                .map(str::to_string)
+                .unwrap_or_default();
+            if url.is_empty() {
+                break;
+            }
+        }
+
+        Ok(pool_hashes
+            .iter()
+            .map(|hash| format!("{}", stellar_strkey::Contract(*hash)))
+            .collect())
+    }
+
+    /// Scan recent factory contract events for `NEW_POOL` payloads (RPC fallback).
+    async fn discover_pools_from_factory_events(&self) -> Result<Vec<String>> {
+        let factory = Self::factory_address();
+        let latest = self.rpc.get_latest_ledger().await?.sequence;
+        let window: u32 = std::env::var("COMET_FACTORY_EVENTS_LEDGER_WINDOW")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(50_000);
+        let start = latest.saturating_sub(window).max(1);
+
+        let mut pool_hashes: HashSet<[u8; 32]> = HashSet::new();
+        let mut cursor_start = start;
+        while cursor_start < latest {
+            let end = (cursor_start + MAX_LEDGER_SCAN_PER_REQUEST).min(latest);
+            let filters = vec![EventFilterSpec {
+                contract_ids: Some(vec![factory.clone()]),
+                topics: None,
+            }];
+            let events = self
+                .rpc
+                .get_contract_events(cursor_start, Some(end), &filters, 10_000)
+                .await?;
+            for event in &events {
+                if let Some(value_b64) = &event.value {
+                    if let Some(hash) = contract_hash_from_storage_xdr(value_b64) {
+                        pool_hashes.insert(hash);
+                    }
+                }
+            }
+            cursor_start = end;
+        }
+
+        Ok(pool_hashes
+            .iter()
+            .map(|hash| format!("{}", stellar_strkey::Contract(*hash)))
+            .collect())
+    }
+
+    /// Fetch pool state for quote-time hydration.
+    pub async fn fetch_pool_quote_state(&self, pool_address: &str) -> Result<CometPoolQuoteState> {
+        self.fetch_pool_state(pool_address).await
+    }
+
+    async fn fetch_token_weight(
+        &self,
+        pool_address: &str,
+        token_scval: xdr::ScVal,
+    ) -> Result<i128> {
+        let normalized = self
+            .rpc
+            .simulate_call(pool_address, "get_normalized_weight", vec![token_scval.clone()])
+            .await;
+        if let Ok(val) = normalized {
+            if let Ok(w) = extract_i128(&val) {
+                if w > 0 {
+                    return Ok(w);
+                }
+            }
+        }
+        let denorm = self
+            .rpc
+            .simulate_call(pool_address, "get_denorm_weight", vec![token_scval])
+            .await
+            .map_err(|e| anyhow!("get_denorm_weight failed: {}", e))?;
+        extract_i128(&denorm)
+    }
+
+    async fn fetch_pool_state(&self, pool_address: &str) -> Result<CometPoolState> {
         let fee_val = self
             .rpc
             .call_no_args(pool_address, "get_swap_fee")
@@ -68,7 +315,6 @@ impl CometAdapter {
             .map_err(|e| anyhow!("get_swap_fee failed: {}", e))?;
         let swap_fee = extract_i128(&fee_val).unwrap_or(30_000);
 
-        // Get tokens
         let tokens_val = self
             .rpc
             .call_no_args(pool_address, "get_tokens")
@@ -88,15 +334,9 @@ impl CometAdapter {
             return Err(anyhow!("Pool has fewer than 2 tokens"));
         }
 
-        // For each token, get balance and weight
         let mut records = HashMap::new();
         for token_addr in &token_addrs {
-            let token_hash = stellar_strkey::Contract::from_string(token_addr)
-                .map_err(|e| anyhow!("Invalid token: {:?}", e))?
-                .0;
-            let token_scval = xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(
-                xdr::Hash(token_hash),
-            )));
+            let token_scval = Self::address_scval(token_addr)?;
 
             let balance_val = self
                 .rpc
@@ -104,14 +344,11 @@ impl CometAdapter {
                 .await
                 .map_err(|e| anyhow!("get_balance failed: {}", e))?;
 
-            let weight_val = self
-                .rpc
-                .simulate_call(pool_address, "get_denorm_weight", vec![token_scval])
+            let weight = self
+                .fetch_token_weight(pool_address, token_scval)
                 .await
-                .map_err(|e| anyhow!("get_denorm_weight failed: {}", e))?;
-
+                .unwrap_or(0);
             let balance = extract_i128(&balance_val).unwrap_or(0);
-            let weight = extract_i128(&weight_val).unwrap_or(0);
 
             if balance > 0 && weight > 0 {
                 records.insert(
@@ -137,112 +374,85 @@ impl CometAdapter {
         );
         Ok(CometPoolState { records, swap_fee })
     }
-    //     /// Parse the instance storage to extract AllRecordData and SwapFee.
-    //     fn parse_pool_instance(&self, xdr_b64: &str) -> Result<CometPoolState> {
-    //         // Try decoding as different types (RPC returns LedgerEntryData or ContractDataEntry)
-    //         let data = if let Ok(entry) = xdr::LedgerEntry::from_xdr_base64(xdr_b64, Limits::none()) {
-    //             entry.data
-    //         } else if let Ok(data) = xdr::LedgerEntryData::from_xdr_base64(xdr_b64, Limits::none()) {
-    //             data
-    //         } else if let Ok(cd) = xdr::ContractDataEntry::from_xdr_base64(xdr_b64, Limits::none()) {
-    //             xdr::LedgerEntryData::ContractData(cd)
-    //         } else {
-    //             return Err(anyhow!("Cannot decode XDR"));
-    //         };
-    //
-    //         let contract_data = match &data {
-    //             xdr::LedgerEntryData::ContractData(cd) => cd,
-    //             _ => return Err(anyhow!("Not ContractData")),
-    //         };
-    //
-    //         let instance = match &contract_data.val {
-    //             xdr::ScVal::ContractInstance(inst) => inst,
-    //             _ => return Err(anyhow!("Not ContractInstance")),
-    //         };
-    //
-    //         let storage = match &instance.storage {
-    //             Some(map) => map,
-    //             None => return Err(anyhow!("No storage")),
-    //         };
-    //
-    //         let mut swap_fee: i128 = 30_000; // default 0.3%
-    //         let mut records: HashMap<String, CometRecord> = HashMap::new();
-    //
-    //         for entry in storage.0.iter() {
-    //             // DataKey::SwapFee is encoded as Vec([Symbol("SwapFee")])
-    //             if is_data_key(&entry.key, "SwapFee") {
-    //                 if let Ok(fee) = extract_i128(&entry.val) {
-    //                     swap_fee = fee;
-    //                 }
-    //             }
-    //
-    //             // DataKey::AllRecordData is encoded as Vec([Symbol("AllRecordData")])
-    //             if is_data_key(&entry.key, "AllRecordData") {
-    //                 if let xdr::ScVal::Map(Some(map)) = &entry.val {
-    //                     for record_entry in map.0.iter() {
-    //                         if let Ok(addr) = crate::rpc::scval_to_address(&record_entry.key) {
-    //                             if let Some(record) = parse_record(&record_entry.val) {
-    //                                 records.insert(addr, record);
-    //                             }
-    //                         }
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //
-    //         if records.is_empty() {
-    //             return Err(anyhow!("No records found in pool instance"));
-    //         }
-    //
-    //         debug!("Comet pool: {} tokens, fee={}", records.len(), swap_fee);
-    //         Ok(CometPoolState { records, swap_fee })
-    //     }
-}
 
-/// Check if a ScVal key matches a DataKey enum variant name.
-/// Comet DataKey is encoded as Vec([Symbol("VariantName")]) in soroban-sdk v22+
-fn is_data_key(key: &xdr::ScVal, name: &str) -> bool {
-    match key {
-        xdr::ScVal::Vec(Some(vec)) if !vec.0.is_empty() => match &vec.0[0] {
-            xdr::ScVal::Symbol(s) => s.to_string() == name,
-            _ => false,
-        },
-        // Also try direct Symbol (older encoding)
-        xdr::ScVal::Symbol(s) => s.to_string() == name,
-        _ => false,
+    /// One graph edge per unordered token pair with liquidity in the pool.
+    pub fn trading_pairs_from_state(
+        pool_address: &str,
+        state: &CometPoolState,
+    ) -> Vec<AdapterTradingPair> {
+        let tokens: Vec<String> = state.records.keys().cloned().collect();
+        let fee_bps = (state.swap_fee / 1000) as u32;
+        let mut pairs = Vec::new();
+        for i in 0..tokens.len() {
+            for j in (i + 1)..tokens.len() {
+                let token_a = &tokens[i];
+                let token_b = &tokens[j];
+                let reserve_a = state.records.get(token_a).map(|r| r.balance as u128);
+                let reserve_b = state.records.get(token_b).map(|r| r.balance as u128);
+                pairs.push(AdapterTradingPair {
+                    token_a: TokenId::Contract {
+                        address: token_a.clone(),
+                    },
+                    token_b: TokenId::Contract {
+                        address: token_b.clone(),
+                    },
+                    pool_address: pool_address.to_string(),
+                    fee_bps,
+                    reserve_a,
+                    reserve_b,
+                });
+            }
+        }
+        pairs
     }
-}
 
-/// Parse a Record from ScVal (Map with balance, weight, scalar, index fields)
-fn parse_record(val: &xdr::ScVal) -> Option<CometRecord> {
-    let map = match val {
-        xdr::ScVal::Map(Some(m)) => m,
-        _ => return None,
-    };
+    async fn apply_pool_state(&self, pool_address: &str, state: CometPoolState) -> usize {
+        let new_pairs = Self::trading_pairs_from_state(pool_address, &state);
+        if new_pairs.is_empty() {
+            return 0;
+        }
+        self.pool_states
+            .write()
+            .await
+            .insert(pool_address.to_string(), state);
+        let mut pairs = self.pairs.write().await;
+        pairs.retain(|p| p.pool_address != pool_address);
+        let n = new_pairs.len();
+        pairs.extend(new_pairs);
+        n
+    }
 
-    let mut balance: Option<i128> = None;
-    let mut weight: Option<i128> = None;
-    let mut scalar: Option<i128> = None;
+    pub async fn refresh_pool(&self, pool_address: &str) -> Result<bool> {
+        let state = self.fetch_pool_state(pool_address).await?;
+        Ok(self.apply_pool_state(pool_address, state).await > 0)
+    }
 
-    for entry in map.0.iter() {
-        let key_name = match &entry.key {
-            xdr::ScVal::Symbol(s) => s.to_string(),
-            _ => continue,
-        };
-
-        match key_name.as_str() {
-            "balance" => balance = extract_i128(&entry.val).ok(),
-            "weight" => weight = extract_i128(&entry.val).ok(),
-            "scalar" => scalar = extract_i128(&entry.val).ok(),
-            _ => {}
+    pub async fn known_pool_addresses(&self) -> Vec<String> {
+        let tracked = self.tracked_pools.read().await;
+        if tracked.is_empty() {
+            COMET_SEED_POOLS.iter().map(|s| s.to_string()).collect()
+        } else {
+            tracked.clone()
         }
     }
+}
 
-    Some(CometRecord {
-        balance: balance?,
-        weight: weight?,
-        scalar: scalar.unwrap_or(STROOP_SCALAR),
-    })
+/// Extract a Soroban contract hash from base64-encoded storage/event XDR.
+fn contract_hash_from_storage_xdr(b64: &str) -> Option<[u8; 32]> {
+    let raw = base64::engine::general_purpose::STANDARD.decode(b64).ok()?;
+    contract_hash_from_xdr_bytes(&raw)
+}
+
+fn contract_hash_from_xdr_bytes(raw: &[u8]) -> Option<[u8; 32]> {
+    const MARKER: [u8; 8] = [0, 0, 0, 0x12, 0, 0, 0, 1];
+    for i in 0..=raw.len().saturating_sub(40) {
+        if raw[i..].starts_with(&MARKER) {
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(&raw[i + 8..i + 40]);
+            return Some(hash);
+        }
+    }
+    None
 }
 
 fn extract_i128(val: &xdr::ScVal) -> Result<i128> {
@@ -272,30 +482,15 @@ impl DexAdapter for CometAdapter {
     }
 
     async fn get_trading_pairs(&self) -> Result<Vec<AdapterTradingPair>> {
+        let pool_addrs = self.discover_pool_addresses().await;
         let mut pairs = Vec::new();
         let mut states = HashMap::new();
 
-        for (pool_addr, token_a, token_b) in COMET_POOLS {
+        for pool_addr in &pool_addrs {
             match self.fetch_pool_state(pool_addr).await {
                 Ok(state) => {
-                    // Get balances from state for the pair
-                    let reserve_a = state.records.get(*token_a).map(|r| r.balance as u128);
-                    let reserve_b = state.records.get(*token_b).map(|r| r.balance as u128);
-
-                    pairs.push(AdapterTradingPair {
-                        token_a: TokenId::Contract {
-                            address: token_a.to_string(),
-                        },
-                        token_b: TokenId::Contract {
-                            address: token_b.to_string(),
-                        },
-                        pool_address: pool_addr.to_string(),
-                        fee_bps: (state.swap_fee / 1000) as u32, // convert from stroops to bps
-                        reserve_a,
-                        reserve_b,
-                    });
-
-                    states.insert(pool_addr.to_string(), state);
+                    pairs.extend(Self::trading_pairs_from_state(pool_addr, &state));
+                    states.insert(pool_addr.clone(), state);
                 }
                 Err(e) => {
                     warn!("Comet pool {} fetch failed: {}", pool_addr, e);
@@ -303,7 +498,11 @@ impl DexAdapter for CometAdapter {
             }
         }
 
-        info!("Comet: {} pools loaded with state", pairs.len());
+        info!(
+            "Comet: {} pools, {} pair edges loaded",
+            states.len(),
+            pairs.len()
+        );
         *self.pairs.write().await = pairs.clone();
         *self.pool_states.write().await = states;
         Ok(pairs)
@@ -322,33 +521,12 @@ impl DexAdapter for CometAdapter {
             None => return Ok(None),
         };
 
-        let token_in_addr = token_in.canonical();
-        let token_out_addr = token_out.canonical();
-
-        let in_record = match state.records.get(&token_in_addr) {
-            Some(r) => r,
-            None => return Ok(None),
-        };
-        let out_record = match state.records.get(&token_out_addr) {
-            Some(r) => r,
-            None => return Ok(None),
-        };
-
-        let amount_out =
-            comet_math::calc_out_given_in(in_record, out_record, amount_in as i128, state.swap_fee);
-
-        if amount_out <= 0 {
-            return Ok(None);
-        }
-
-        let price_impact_bps =
-            (amount_in as i128 * 10_000 / (2 * in_record.balance)).min(10_000) as u32;
-
-        Ok(Some(AdapterQuote {
-            amount_out: amount_out as u128,
-            fee_bps: (state.swap_fee / 1000) as u32,
-            price_impact_bps,
-        }))
+        Ok(quote_comet_pool(
+            state,
+            &token_in.canonical(),
+            &token_out.canonical(),
+            amount_in,
+        ))
     }
 
     async fn build_swap_op(
@@ -367,28 +545,97 @@ impl DexAdapter for CometAdapter {
     }
 
     async fn health_check(&self) -> bool {
-        if let Some((pool, _, _)) = COMET_POOLS.first() {
-            self.fetch_pool_state(pool).await.is_ok()
+        if let Some(seed) = COMET_SEED_POOLS.first() {
+            self.fetch_pool_state(seed).await.is_ok()
         } else {
             false
         }
     }
 
     async fn refresh_reserves(&self) -> Result<usize> {
-        let mut updated = 0;
-        let mut new_states = HashMap::new();
-
-        for (pool_addr, _, _) in COMET_POOLS {
-            if let Ok(state) = self.fetch_pool_state(pool_addr).await {
-                new_states.insert(pool_addr.to_string(), state);
+        let pools = self.known_pool_addresses().await;
+        let mut updated = 0usize;
+        for pool_addr in &pools {
+            if self.refresh_pool(pool_addr).await? {
                 updated += 1;
             }
         }
-
-        if updated > 0 {
-            *self.pool_states.write().await = new_states;
-        }
-
         Ok(updated)
+    }
+
+    async fn get_cached_pairs(&self) -> Vec<AdapterTradingPair> {
+        self.pairs.read().await.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trading_pairs_from_state_emits_all_token_pairs() {
+        let pool = COMET_SEED_POOLS[0];
+        let mut records = HashMap::new();
+        records.insert(
+            "CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV".to_string(),
+            CometRecord {
+                balance: 1_000_000,
+                weight: 1,
+                scalar: STROOP_SCALAR,
+            },
+        );
+        records.insert(
+            "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75".to_string(),
+            CometRecord {
+                balance: 2_000_000,
+                weight: 4,
+                scalar: STROOP_SCALAR,
+            },
+        );
+        let state = CometPoolState {
+            records,
+            swap_fee: 30_000,
+        };
+        let pairs = CometAdapter::trading_pairs_from_state(pool, &state);
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].pool_address, pool);
+        assert_eq!(pairs[0].reserve_a, Some(1_000_000));
+        assert_eq!(pairs[0].reserve_b, Some(2_000_000));
+        assert_eq!(pairs[0].fee_bps, 30);
+    }
+
+    #[test]
+    fn three_token_pool_has_three_edges() {
+        let mut records = HashMap::new();
+        for (addr, bal) in [
+            ("A", 100),
+            ("B", 200),
+            ("C", 300),
+        ] {
+            records.insert(
+                addr.to_string(),
+                CometRecord {
+                    balance: bal,
+                    weight: 1,
+                    scalar: STROOP_SCALAR,
+                },
+            );
+        }
+        let state = CometPoolState {
+            records,
+            swap_fee: 30_000,
+        };
+        let pairs = CometAdapter::trading_pairs_from_state("POOL", &state);
+        assert_eq!(pairs.len(), 3);
+    }
+
+    #[test]
+    fn contract_hash_from_storage_xdr_finds_embedded_contract() {
+        let hash = [7u8; 32];
+        let mut raw = vec![0u8; 48];
+        raw[8..8 + 8].copy_from_slice(&[0, 0, 0, 0x12, 0, 0, 0, 1]);
+        raw[16..48].copy_from_slice(&hash);
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&raw);
+        assert_eq!(contract_hash_from_storage_xdr(&b64), Some(hash));
     }
 }

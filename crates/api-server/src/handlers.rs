@@ -141,7 +141,7 @@ pub async fn get_quote(
     };
 
     let engine = state.current_engine().await;
-    let route = engine.get_route(&request).await;
+    let route = state.quote_route(&request).await;
 
     if route.sub_orders.is_empty() {
         return (
@@ -391,7 +391,7 @@ pub async fn build_swap(
     };
 
     let engine = state.current_engine().await;
-    let route = engine.get_route(&request).await;
+    let route = state.quote_route(&request).await;
 
     if route.sub_orders.is_empty() {
         return (

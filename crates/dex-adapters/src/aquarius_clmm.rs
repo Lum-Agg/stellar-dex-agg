@@ -19,8 +19,8 @@
 //!   - DataKey::WordBitmap(i32) -> U256
 
 use crate::clmm_math::{
-    self, bitmap, clmm_pool_to_snapshot, loaded_tick_range, tick_outside_loaded_range,
-    ClmmPoolState, TickDataStore, TickState,
+    self, bitmap, clmm_pool_to_snapshot, clmm_swap_allowed, loaded_tick_range,
+    tick_outside_loaded_range, ClmmCoverageInput, ClmmPoolState, TickDataStore, TickState,
     TICKS_PER_CHUNK, U256 as ClmmU256,
 };
 use crate::rpc::SorobanRpc;
@@ -48,6 +48,8 @@ pub struct AquaClmmPool {
     pub min_init_tick: i32,
     pub max_init_tick: i32,
     pub tick_store: TickDataStore,
+    /// True when chunk bitmap batch loading did not cover the full pool range.
+    pub bitmap_truncated: bool,
 }
 
 pub struct AquariusClmmAdapter {
@@ -85,18 +87,20 @@ impl AquariusClmmAdapter {
             pool.pool_address.clone(),
             &pool_state,
             &pool.tick_store,
-            Some(ClmmCoverageSnapshot {
-                is_complete: loaded_tick_range(&pool.tick_store, pool.tick_spacing)
-                    .map(|(min_tick, max_tick)| {
-                        !tick_outside_loaded_range(pool.tick, min_tick, max_tick)
-                    })
-                    .unwrap_or(false),
-                min_loaded_tick: loaded_tick_range(&pool.tick_store, pool.tick_spacing)
-                    .map(|(min_tick, _)| min_tick),
-                max_loaded_tick: loaded_tick_range(&pool.tick_store, pool.tick_spacing)
-                    .map(|(_, max_tick)| max_tick),
-                scanned_word_start: None,
-                scanned_word_end: None,
+            Some({
+                let range = loaded_tick_range(&pool.tick_store, pool.tick_spacing);
+                ClmmCoverageSnapshot {
+                    is_complete: !pool.bitmap_truncated
+                        && range
+                            .map(|(min_tick, max_tick)| {
+                                !tick_outside_loaded_range(pool.tick, min_tick, max_tick)
+                            })
+                            .unwrap_or(false),
+                    min_loaded_tick: range.map(|(min_tick, _)| min_tick),
+                    max_loaded_tick: range.map(|(_, max_tick)| max_tick),
+                    scanned_word_start: None,
+                    scanned_word_end: None,
+                }
             }),
         )
     }
@@ -295,7 +299,26 @@ impl AquariusClmmAdapter {
             min_init_tick: clmm_math::MIN_TICK,
             max_init_tick: clmm_math::MAX_TICK,
             tick_store: TickDataStore::new(),
+            bitmap_truncated: false,
         })
+    }
+
+    fn coverage_input(pool: &AquaClmmPool) -> ClmmCoverageInput {
+        let range = loaded_tick_range(&pool.tick_store, pool.tick_spacing);
+        ClmmCoverageInput {
+            pool_tick: pool.tick,
+            tick_spacing: pool.tick_spacing,
+            is_complete: !pool.bitmap_truncated
+                && range
+                    .map(|(min_tick, max_tick)| {
+                        !tick_outside_loaded_range(pool.tick, min_tick, max_tick)
+                    })
+                    .unwrap_or(false),
+            min_loaded_tick: range.map(|(min_tick, _)| min_tick),
+            max_loaded_tick: range.map(|(_, max_tick)| max_tick),
+            scanned_word_start: None,
+            scanned_word_end: None,
+        }
     }
 
     /// Try to read Slot0 from instance storage via getLedgerEntries.
@@ -347,7 +370,11 @@ impl AquariusClmmAdapter {
 
     /// Read tick chunks and bitmaps from persistent storage for a pool.
     /// Uses simulate_call on pool's getter functions (avoids XDR decode issues with U256).
-    async fn read_tick_data(&self, pool: &mut AquaClmmPool) -> Result<()> {
+    async fn read_tick_data(&self, pool: &mut AquaClmmPool, merge: bool) -> Result<()> {
+        if !merge {
+            pool.tick_store = TickDataStore::new();
+            pool.bitmap_truncated = false;
+        }
         // 1. Read tick bounds
         let bounds_val = self
             .rpc
@@ -374,7 +401,7 @@ impl AquariusClmmAdapter {
             return Ok(());
         }
 
-        // 2. Read chunk bitmap via get_chunk_bitmap_batch(start_word, count)
+        // 2. Read chunk bitmap via get_chunk_bitmap_batch (paginated)
         let min_compressed = bitmap::compress_tick(pool.min_init_tick, pool.tick_spacing);
         let max_compressed = bitmap::compress_tick(pool.max_init_tick, pool.tick_spacing);
         let (min_chunk, _) = bitmap::chunk_address(min_compressed);
@@ -382,52 +409,63 @@ impl AquariusClmmAdapter {
         let min_bm_word = min_chunk >> 8;
         let max_bm_word = max_chunk >> 8;
         let bm_word_count = (max_bm_word - min_bm_word + 1) as u32;
+        const BM_WORDS_PER_BATCH: u32 = 50;
+        if !merge {
+            pool.bitmap_truncated = false;
+            pool.tick_store.chunk_bitmap.clear();
+        }
 
-        let start_word_val = xdr::ScVal::I32(min_bm_word);
-        let count_val = xdr::ScVal::U32(bm_word_count.min(50)); // Cap at 50 words
+        for batch_start in (0..bm_word_count).step_by(BM_WORDS_PER_BATCH as usize) {
+            let batch_count = BM_WORDS_PER_BATCH.min(bm_word_count - batch_start);
+            let start_word = min_bm_word + batch_start as i32;
+            let start_word_val = xdr::ScVal::I32(start_word);
+            let count_val = xdr::ScVal::U32(batch_count);
 
-        match self
-            .rpc
-            .simulate_call(
-                &pool.pool_address,
-                "get_chunk_bitmap_batch",
-                vec![start_word_val, count_val],
-            )
-            .await
-        {
-            Ok(result) => {
-                if let xdr::ScVal::Vec(Some(vec)) = &result {
-                    for (i, val) in vec.0.iter().enumerate() {
-                        let word_pos = min_bm_word + i as i32;
-                        if let Some(u256) = parse_u256_from_scval_any(val) {
-                            let bytes = u256_to_be_bytes(&u256);
-                            pool.tick_store.chunk_bitmap.insert(word_pos, bytes);
+            match self
+                .rpc
+                .simulate_call(
+                    &pool.pool_address,
+                    "get_chunk_bitmap_batch",
+                    vec![start_word_val, count_val],
+                )
+                .await
+            {
+                Ok(result) => {
+                    if let xdr::ScVal::Vec(Some(vec)) = &result {
+                        for (i, val) in vec.0.iter().enumerate() {
+                            let word_pos = start_word + i as i32;
+                            if let Some(u256) = parse_u256_from_scval_any(val) {
+                                let bytes = u256_to_be_bytes(&u256);
+                                pool.tick_store.chunk_bitmap.insert(word_pos, bytes);
+                            }
                         }
                     }
                 }
-            }
-            Err(e) => {
-                debug!("get_chunk_bitmap_batch failed: {}", e);
+                Err(e) => {
+                    pool.bitmap_truncated = true;
+                    debug!("get_chunk_bitmap_batch failed: {}", e);
+                    break;
+                }
             }
         }
 
-        // 3. Find all initialized ticks from bitmap and read them via get_ticks_batch
+        // 3. Collect initialized ticks only for chunks with a set bitmap bit
         let mut initialized_ticks = Vec::new();
         for chunk_pos in min_chunk..=max_chunk {
             let (bm_word, bm_bit) = bitmap::chunk_bitmap_position(chunk_pos);
-            if let Some(word) = pool.tick_store.chunk_bitmap.get(&bm_word) {
-                let byte_idx = 31 - (bm_bit / 8) as usize;
-                let bit_idx = bm_bit % 8;
-                if (word[byte_idx] >> bit_idx) & 1 == 1 {
-                    // This chunk has initialized ticks — we need to find which ones
-                    // For each slot in the chunk, compute the actual tick
-                    for slot in 0..TICKS_PER_CHUNK {
-                        let compressed = chunk_pos * TICKS_PER_CHUNK + slot;
-                        let actual_tick = bitmap::compressed_to_tick(compressed, pool.tick_spacing);
-                        if actual_tick >= pool.min_init_tick && actual_tick <= pool.max_init_tick {
-                            initialized_ticks.push(actual_tick);
-                        }
-                    }
+            let Some(word) = pool.tick_store.chunk_bitmap.get(&bm_word) else {
+                continue;
+            };
+            let byte_idx = 31 - (bm_bit / 8) as usize;
+            let bit_idx = bm_bit % 8;
+            if (word[byte_idx] >> bit_idx) & 1 != 1 {
+                continue;
+            }
+            for slot in 0..TICKS_PER_CHUNK {
+                let compressed = chunk_pos * TICKS_PER_CHUNK + slot;
+                let actual_tick = bitmap::compressed_to_tick(compressed, pool.tick_spacing);
+                if actual_tick >= pool.min_init_tick && actual_tick <= pool.max_init_tick {
+                    initialized_ticks.push(actual_tick);
                 }
             }
         }
@@ -510,12 +548,12 @@ impl AquariusClmmAdapter {
         Ok(())
     }
 
-    async fn ensure_pool_loaded(&self, pool_address: &str) -> Result<()> {
+    pub async fn ensure_pool_loaded(&self, pool_address: &str) -> Result<()> {
         if self.pools.read().await.contains_key(pool_address) {
             return Ok(());
         }
         let mut pool = self.read_pool_instance(pool_address).await?;
-        if let Err(e) = self.read_tick_data(&mut pool).await {
+        if let Err(e) = self.read_tick_data(&mut pool, false).await {
             warn!("Aquarius CLMM tick load incomplete for {}: {}", pool_address, e);
         }
         let pair = AdapterTradingPair {
@@ -642,7 +680,7 @@ impl DexAdapter for AquariusClmmAdapter {
             match self.read_pool_instance(addr).await {
                 Ok(mut pool) => {
                     // Read tick data
-                    if let Err(e) = self.read_tick_data(&mut pool).await {
+                    if let Err(e) = self.read_tick_data(&mut pool, false).await {
                         warn!(
                             "Aquarius CLMM: failed to read tick data for {}: {}",
                             addr, e
@@ -680,7 +718,7 @@ impl DexAdapter for AquariusClmmAdapter {
     async fn get_quote(
         &self,
         token_in: &TokenId,
-        _token_out: &TokenId,
+        token_out: &TokenId,
         amount_in: u128,
         pool_address: &str,
     ) -> Result<Option<AdapterQuote>> {
@@ -691,7 +729,31 @@ impl DexAdapter for AquariusClmmAdapter {
         };
 
         let token_in_addr = token_in.canonical();
-        if token_in_addr != pool.token0 && token_in_addr != pool.token1 {
+        let token_out_addr = token_out.canonical();
+        let zero_for_one =
+            token_in_addr == pool.token0 && token_out_addr == pool.token1;
+        let one_for_zero =
+            token_in_addr == pool.token1 && token_out_addr == pool.token0;
+        if !zero_for_one && !one_for_zero {
+            return Ok(None);
+        }
+        let coverage = Self::coverage_input(pool);
+        let pool_state = ClmmPoolState {
+            sqrt_price_x96: pool.sqrt_price_x96,
+            tick: pool.tick,
+            liquidity: pool.liquidity,
+            fee_bps: pool.fee_bps,
+            tick_spacing: pool.tick_spacing,
+            token0: pool.token0.clone(),
+            token1: pool.token1.clone(),
+        };
+        if !clmm_swap_allowed(
+            &pool_state,
+            &pool.tick_store,
+            amount_in,
+            zero_for_one,
+            &coverage,
+        ) {
             return Ok(None);
         }
 
@@ -766,7 +828,7 @@ impl DexAdapter for AquariusClmmAdapter {
         for addr in rescan_addrs {
             let mut pools = self.pools.write().await;
             if let Some(pool) = pools.get_mut(&addr) {
-                if let Err(e) = self.read_tick_data(pool).await {
+                if let Err(e) = self.read_tick_data(pool, true).await {
                     warn!("Aquarius CLMM tick rescan failed for {}: {}", addr, e);
                 }
             }

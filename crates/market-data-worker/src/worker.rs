@@ -13,6 +13,7 @@ use dex_adapters::{
     DexAdapter,
 };
 use market_snapshot::{
+    pool_state_store::build_pool_state_store,
     store::{
         build_snapshot_store, DEFAULT_REDIS_EVENTS_CHANNEL, DEFAULT_REDIS_SNAPSHOT_HISTORY,
         SnapshotStoreBackend,
@@ -34,6 +35,8 @@ pub struct WorkerConfig {
     pub snapshot_redis_keep_latest: usize,
     pub refresh_interval_secs: u64,
     pub discovery_interval_secs: u64,
+    pub ledger_poll_secs: u64,
+    pub ledger_watcher_enabled: bool,
 }
 
 impl WorkerConfig {
@@ -66,6 +69,8 @@ impl WorkerConfig {
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(600),
+            ledger_poll_secs: crate::ledger_watcher::ledger_poll_secs_from_env(),
+            ledger_watcher_enabled: crate::ledger_watcher::ledger_watcher_enabled_from_env(),
         })
     }
 }
@@ -223,7 +228,40 @@ async fn collect_clmm_snapshots(
             .cmp(&b.source)
             .then_with(|| a.pool_address.cmp(&b.pool_address))
     });
+    log_clmm_coverage_stats(&clmm_pools);
     clmm_pools
+}
+
+fn log_clmm_coverage_stats(clmm_pools: &[ClmmPoolSnapshot]) {
+    let mut complete = 0usize;
+    let mut incomplete = 0usize;
+    let mut no_coverage = 0usize;
+    for pool in clmm_pools {
+        match pool.coverage.as_ref() {
+            Some(c) if c.is_complete => complete += 1,
+            Some(_) => incomplete += 1,
+            None => no_coverage += 1,
+        }
+    }
+    info!(
+        clmm_pools = clmm_pools.len(),
+        complete,
+        incomplete,
+        no_coverage,
+        "CLMM snapshot coverage"
+    );
+}
+
+async fn publish_snapshot_and_pool_state(
+    snapshot_store: &dyn market_snapshot::store::SnapshotStore,
+    pool_state_store: Option<&market_snapshot::pool_state_store::RedisPoolStateStore>,
+    snapshot: &MarketSnapshot,
+) -> Result<()> {
+    snapshot_store.publish_snapshot(snapshot).await?;
+    if let Some(pool_store) = pool_state_store {
+        pool_store.publish_from_snapshot(snapshot).await?;
+    }
+    Ok(())
 }
 
 pub async fn run(config: WorkerConfig) -> Result<()> {
@@ -234,6 +272,11 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
         Some(config.snapshot_redis_channel.as_str()),
         Some(config.snapshot_redis_keep_latest),
     )?;
+    let pool_state_store = config
+        .snapshot_redis_url
+        .as_deref()
+        .map(build_pool_state_store)
+        .transpose()?;
     let rpc = Arc::new(SorobanRpc::new(&config.rpc_url, &config.network_passphrase));
     let token_metadata = TokenMetadataStore::new(rpc.clone());
     let soroswap = Arc::new(SoroswapAdapter::new(rpc.clone()));
@@ -242,7 +285,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
     let sushi = Arc::new(SushiAdapter::new(rpc.clone()));
     let comet = Arc::new(CometAdapter::new(rpc.clone()));
     let classic = Arc::new(ClassicDexAdapter::new(None));
-    let aquarius_clmm = Arc::new(AquariusClmmAdapter::new(rpc));
+    let aquarius_clmm = Arc::new(AquariusClmmAdapter::new(rpc.clone()));
     let adapters: Vec<Arc<dyn DexAdapter>> = vec![
         soroswap.clone(),
         aquarius.clone(),
@@ -263,6 +306,24 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
     refresh_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     refresh_interval.tick().await;
 
+    let ledger_watcher_enabled =
+        config.ledger_watcher_enabled && pool_state_store.is_some();
+    let mut ledger_watcher = if ledger_watcher_enabled {
+        let mut watcher = crate::ledger_watcher::LedgerWatcher::new(SorobanRpc::new(
+            &config.rpc_url,
+            &config.network_passphrase,
+        ));
+        watcher.bootstrap().await?;
+        Some(watcher)
+    } else {
+        None
+    };
+    let mut ledger_interval = tokio::time::interval(std::time::Duration::from_secs(
+        config.ledger_poll_secs,
+    ));
+    ledger_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    ledger_interval.tick().await;
+
     let mut current_sources = collect_sources_from_discovery(&adapters).await;
     let mut current_clmm_pools = collect_clmm_snapshots(&sushi, &aquarius_clmm).await;
     let snapshot = snapshot_from_sources(
@@ -272,7 +333,12 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
         &token_metadata,
     )
     .await?;
-    snapshot_store.publish_snapshot(&snapshot).await?;
+    publish_snapshot_and_pool_state(
+        snapshot_store.as_ref(),
+        pool_state_store.as_ref(),
+        &snapshot,
+    )
+    .await?;
     info!(
         "Published snapshot {} with {} sources to {}",
         snapshot.version,
@@ -287,8 +353,44 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
                 current_clmm_pools = collect_clmm_snapshots(&sushi, &aquarius_clmm).await;
             }
             _ = refresh_interval.tick() => {
+                // Fast path: xy=k reserves + CLMM slot0; adapters rescan ticks when price drifts.
                 current_sources = refresh_sources(&adapters, current_sources).await;
                 current_clmm_pools = collect_clmm_snapshots(&sushi, &aquarius_clmm).await;
+            }
+            _ = ledger_interval.tick(), if ledger_watcher.is_some() && pool_state_store.is_some() => {
+                let watcher = ledger_watcher.as_mut().unwrap();
+                let store = pool_state_store.as_ref().unwrap();
+                let index = crate::ledger_watcher::rebuild_pool_index(
+                    &current_sources,
+                    &current_clmm_pools,
+                );
+                match watcher.poll_touched_pools(&index).await {
+                    Ok(touched) if !touched.is_empty() => {
+                        let rpc = SorobanRpc::new(&config.rpc_url, &config.network_passphrase);
+                        match crate::touched_refresh::refresh_touched_pools(
+                            crate::touched_refresh::TouchedRefreshContext {
+                                rpc: &rpc,
+                                pool_store: store,
+                                _soroswap: &soroswap,
+                                _aquarius: &aquarius,
+                                phoenix: &phoenix,
+                                comet: &comet,
+                                sushi: &sushi,
+                                aquarius_clmm: &aquarius_clmm,
+                                sources: &mut current_sources,
+                                clmm_pools: &mut current_clmm_pools,
+                            },
+                            touched,
+                        )
+                        .await
+                        {
+                            Ok(n) => info!(updated = n, "Ledger-touched pool refresh"),
+                            Err(error) => warn!("Ledger-touched pool refresh failed: {}", error),
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(error) => warn!("Ledger watcher poll failed: {}", error),
+                }
             }
         }
 
@@ -299,7 +401,12 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
             &token_metadata,
         )
         .await?;
-        snapshot_store.publish_snapshot(&snapshot).await?;
+        publish_snapshot_and_pool_state(
+            snapshot_store.as_ref(),
+            pool_state_store.as_ref(),
+            &snapshot,
+        )
+        .await?;
         info!(
             "Published snapshot {} with {} sources to {}",
             snapshot.version,
