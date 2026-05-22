@@ -18,8 +18,8 @@
 //!   - compressed_tick = tick / tick_spacing (floor division)
 
 use crate::clmm_math::{
-    self, bitmap, clmm_pool_to_snapshot, loaded_tick_range, ClmmPoolState, TickDataStore,
-    TickState, TICKS_PER_CHUNK, U256 as ClmmU256,
+    self, bitmap, clmm_pool_to_snapshot, loaded_tick_range, tick_outside_word_scan,
+    ClmmPoolState, TickDataStore, TickState, TICKS_PER_CHUNK, U256 as ClmmU256,
 };
 use crate::rpc::{scval_to_address, scval_to_i128, scval_to_u128, SorobanRpc};
 use crate::traits::*;
@@ -69,6 +69,9 @@ struct SushiPoolCache {
     tick: i32,
     liquidity: u128,
     tick_store: TickDataStore,
+    /// Bitmap word window from the last `read_tick_data` (see `bitmap_scan_words`).
+    scanned_word_start: i32,
+    scanned_word_end: i32,
 }
 
 pub struct SushiAdapter {
@@ -91,12 +94,16 @@ impl SushiAdapter {
         let compressed_tick = floor_div(pool.tick, pool.tick_spacing);
         let current_word = floor_div(compressed_tick, 256);
         let scan_words = bitmap_scan_words(pool.tick_spacing);
+        let word_start = pool.scanned_word_start;
+        let word_end = pool.scanned_word_end;
+        let in_scan_window =
+            !tick_outside_word_scan(pool.tick, pool.tick_spacing, word_start, word_end);
         let coverage = ClmmCoverageSnapshot {
-            is_complete: true,
+            is_complete: in_scan_window && coverage_range.is_some(),
             min_loaded_tick: coverage_range.map(|(min_tick, _)| min_tick),
             max_loaded_tick: coverage_range.map(|(_, max_tick)| max_tick),
-            scanned_word_start: Some(current_word - scan_words),
-            scanned_word_end: Some(current_word + scan_words),
+            scanned_word_start: Some(word_start),
+            scanned_word_end: Some(word_end),
         };
         let pool_state = ClmmPoolState {
             sqrt_price_x96: pool.sqrt_price_x96,
@@ -196,7 +203,17 @@ impl SushiAdapter {
             tick,
             liquidity,
             tick_store: TickDataStore::new(),
+            scanned_word_start: 0,
+            scanned_word_end: 0,
         })
+    }
+
+    fn record_tick_scan_window(pool: &mut SushiPoolCache) {
+        let compressed_tick = floor_div(pool.tick, pool.tick_spacing);
+        let current_word = floor_div(compressed_tick, 256);
+        let scan_words = bitmap_scan_words(pool.tick_spacing);
+        pool.scanned_word_start = current_word - scan_words;
+        pool.scanned_word_end = current_word + scan_words;
     }
 
     /// Read tick data via pool-lens get_populated_ticks_in_word.
@@ -292,6 +309,7 @@ impl SushiAdapter {
             end_word - start_word + 1
         );
 
+        Self::record_tick_scan_window(pool);
         Ok(())
     }
 
@@ -903,11 +921,8 @@ impl DexAdapter for SushiAdapter {
         pool_address: &str,
     ) -> Result<Option<AdapterQuote>> {
         let cache = self.pool_cache.read().await;
-
-        // Try local CLMM quote first
         if let Some(pool) = cache.get(pool_address) {
             if let Some(amount_out) = self.local_quote(pool, &token_in.canonical(), amount_in) {
-                // Estimate price impact from liquidity
                 let impact_bps = if pool.liquidity > 0 {
                     ((amount_in as f64 / pool.liquidity as f64) * 10_000.0).min(10_000.0) as u32
                 } else {
@@ -969,6 +984,16 @@ impl DexAdapter for SushiAdapter {
                     pool.sqrt_price_x96 = sqrt_price;
                     pool.tick = tick;
                     pool.liquidity = liquidity;
+                    if tick_outside_word_scan(
+                        tick,
+                        pool.tick_spacing,
+                        pool.scanned_word_start,
+                        pool.scanned_word_end,
+                    ) {
+                        if let Err(e) = self.read_tick_data(pool).await {
+                            warn!("Sushi tick rescan failed for {}: {}", addr, e);
+                        }
+                    }
                     updated += 1;
                 }
             }

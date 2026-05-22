@@ -134,6 +134,13 @@ impl QuoteEngine {
         self.adapters.write().await.push(adapter);
     }
 
+    /// Register an adapter used only for on-chain `get_quote` (no graph refresh).
+    /// Snapshot mode attaches CLMM adapters this way while the graph stays on Redis snapshots.
+    pub async fn register_quote_adapter(&self, adapter: Arc<dyn DexAdapter>) {
+        info!(source = %adapter.id(), "Registering quote-only DEX adapter");
+        self.adapters.write().await.push(adapter);
+    }
+
     /// Update the path finder directly from cached pairs (no RPC needed).
     /// Used for instant startup from disk cache.
     /// Also stores pairs in cached_pools for local quote computation.
@@ -342,7 +349,27 @@ impl QuoteEngine {
 
             let adapter = adapters.iter().find(|a| a.id() == source);
 
-            let hop_result = if let Some(adapter) = adapter {
+            // CLMM: local math only during routing (fast). No per-path RPC simulate.
+            let hop_result = if matches!(source.as_str(), "sushi" | "aquarius_clmm") {
+                if let Some(q) = self.local_clmm_quote(
+                    token_in,
+                    token_out,
+                    current_amount,
+                    pool_address,
+                    source,
+                    &clmm_quote_states,
+                ) {
+                    Some(q)
+                } else if let Some(adapter) = adapter {
+                    adapter
+                        .get_quote(token_in, token_out, current_amount, pool_address)
+                        .await
+                        .ok()
+                        .flatten()
+                } else {
+                    None
+                }
+            } else if let Some(adapter) = adapter {
                 adapter
                     .get_quote(token_in, token_out, current_amount, pool_address)
                     .await

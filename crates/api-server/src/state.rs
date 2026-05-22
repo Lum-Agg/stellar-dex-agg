@@ -632,7 +632,9 @@ mod tests {
     async fn initial_snapshot_load_failure_uses_empty_engine() {
         let config = AppConfig::default();
         let (engine, current_version, token_metadata) =
-            load_initial_snapshot_engine(&config, &FailingSnapshotStore).await.unwrap();
+            load_initial_snapshot_engine(&config, &FailingSnapshotStore)
+                .await
+                .unwrap();
 
         let route = engine
             .get_route(&router_engine::RouteRequest {

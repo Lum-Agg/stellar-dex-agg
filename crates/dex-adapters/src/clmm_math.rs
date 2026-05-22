@@ -1319,6 +1319,18 @@ pub fn clmm_pool_from_snapshot(snapshot: &ClmmPoolSnapshot) -> (ClmmPoolState, T
     (pool, tick_store)
 }
 
+/// True when the active tick moved outside a prior Sushi-style bitmap word scan window.
+pub fn tick_outside_word_scan(tick: i32, tick_spacing: i32, word_start: i32, word_end: i32) -> bool {
+    let compressed = tick.div_euclid(tick_spacing);
+    let word = compressed.div_euclid(256);
+    word < word_start || word > word_end
+}
+
+/// True when the active tick is outside initialized ticks we have loaded locally.
+pub fn tick_outside_loaded_range(tick: i32, min_loaded: i32, max_loaded: i32) -> bool {
+    tick < min_loaded || tick > max_loaded
+}
+
 pub fn loaded_tick_range(tick_store: &TickDataStore, tick_spacing: i32) -> Option<(i32, i32)> {
     let mut min_tick: Option<i32> = None;
     let mut max_tick: Option<i32> = None;

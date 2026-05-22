@@ -19,7 +19,8 @@
 //!   - DataKey::WordBitmap(i32) -> U256
 
 use crate::clmm_math::{
-    self, bitmap, clmm_pool_to_snapshot, loaded_tick_range, ClmmPoolState, TickDataStore, TickState,
+    self, bitmap, clmm_pool_to_snapshot, loaded_tick_range, tick_outside_loaded_range,
+    ClmmPoolState, TickDataStore, TickState,
     TICKS_PER_CHUNK, U256 as ClmmU256,
 };
 use crate::rpc::SorobanRpc;
@@ -85,9 +86,15 @@ impl AquariusClmmAdapter {
             &pool_state,
             &pool.tick_store,
             Some(ClmmCoverageSnapshot {
-                is_complete: true,
-                min_loaded_tick: Some(pool.min_init_tick),
-                max_loaded_tick: Some(pool.max_init_tick),
+                is_complete: loaded_tick_range(&pool.tick_store, pool.tick_spacing)
+                    .map(|(min_tick, max_tick)| {
+                        !tick_outside_loaded_range(pool.tick, min_tick, max_tick)
+                    })
+                    .unwrap_or(false),
+                min_loaded_tick: loaded_tick_range(&pool.tick_store, pool.tick_spacing)
+                    .map(|(min_tick, _)| min_tick),
+                max_loaded_tick: loaded_tick_range(&pool.tick_store, pool.tick_spacing)
+                    .map(|(_, max_tick)| max_tick),
                 scanned_word_start: None,
                 scanned_word_end: None,
             }),
@@ -503,6 +510,77 @@ impl AquariusClmmAdapter {
         Ok(())
     }
 
+    async fn ensure_pool_loaded(&self, pool_address: &str) -> Result<()> {
+        if self.pools.read().await.contains_key(pool_address) {
+            return Ok(());
+        }
+        let mut pool = self.read_pool_instance(pool_address).await?;
+        if let Err(e) = self.read_tick_data(&mut pool).await {
+            warn!("Aquarius CLMM tick load incomplete for {}: {}", pool_address, e);
+        }
+        let pair = AdapterTradingPair {
+            token_a: TokenId::Contract {
+                address: pool.token0.clone(),
+            },
+            token_b: TokenId::Contract {
+                address: pool.token1.clone(),
+            },
+            pool_address: pool_address.to_string(),
+            fee_bps: pool.fee_bps,
+            reserve_a: None,
+            reserve_b: None,
+        };
+        self.pools
+            .write()
+            .await
+            .insert(pool_address.to_string(), pool);
+        let mut pairs = self.pairs.write().await;
+        if !pairs.iter().any(|p| p.pool_address == pool_address) {
+            pairs.push(pair);
+        }
+        Ok(())
+    }
+
+    /// On-chain quote via pool `estimate_swap`.
+    async fn quote_on_chain(
+        &self,
+        pool: &AquaClmmPool,
+        token_in: &str,
+        amount_in: u128,
+    ) -> Result<Option<u128>> {
+        let (in_idx, out_idx) = if token_in == pool.token0 {
+            (0u32, 1u32)
+        } else if token_in == pool.token1 {
+            (1u32, 0u32)
+        } else {
+            return Ok(None);
+        };
+
+        let args = vec![
+            xdr::ScVal::U32(in_idx),
+            xdr::ScVal::U32(out_idx),
+            xdr::ScVal::U128(xdr::UInt128Parts {
+                hi: (amount_in >> 64) as u64,
+                lo: amount_in as u64,
+            }),
+        ];
+
+        match self
+            .rpc
+            .simulate_call(&pool.pool_address, "estimate_swap", args)
+            .await
+        {
+            Ok(result) => Ok(crate::rpc::scval_to_u128(&result).ok()),
+            Err(e) => {
+                debug!(
+                    "Aquarius CLMM estimate_swap failed for {}: {}",
+                    pool.pool_address, e
+                );
+                Ok(None)
+            }
+        }
+    }
+
     /// Get a local quote using the CLMM math.
     fn local_quote(&self, pool: &AquaClmmPool, token_in: &str, amount_in: u128) -> Option<u128> {
         let zero_for_one = token_in == pool.token0;
@@ -618,13 +696,11 @@ impl DexAdapter for AquariusClmmAdapter {
         }
 
         match self.local_quote(pool, &token_in_addr, amount_in) {
-            Some(amount_out) if amount_out > 0 => {
-                Ok(Some(AdapterQuote {
-                    amount_out,
-                    fee_bps: pool.fee_bps,
-                    price_impact_bps: 0, // Complex for CLMM, skip
-                }))
-            }
+            Some(amount_out) if amount_out > 0 => Ok(Some(AdapterQuote {
+                amount_out,
+                fee_bps: pool.fee_bps,
+                price_impact_bps: 0,
+            })),
             _ => Ok(None),
         }
     }
@@ -657,19 +733,42 @@ impl DexAdapter for AquariusClmmAdapter {
         // Re-read Slot0 + Liquidity for all pools (fast: just instance storage)
         let addresses = self.pool_addresses.read().await.clone();
         let mut updated = 0;
+        let mut rescan_addrs = Vec::new();
 
         for addr in &addresses {
             match self.read_pool_instance(addr).await {
                 Ok(new_pool) => {
+                    let needs_rescan = {
+                        let pools = self.pools.read().await;
+                        pools.get(addr).and_then(|pool| {
+                            loaded_tick_range(&pool.tick_store, pool.tick_spacing).map(
+                                |(min_tick, max_tick)| {
+                                    tick_outside_loaded_range(new_pool.tick, min_tick, max_tick)
+                                },
+                            )
+                        })
+                    };
                     let mut pools = self.pools.write().await;
                     if let Some(pool) = pools.get_mut(addr) {
                         pool.sqrt_price_x96 = new_pool.sqrt_price_x96;
                         pool.tick = new_pool.tick;
                         pool.liquidity = new_pool.liquidity;
                         updated += 1;
+                        if needs_rescan == Some(true) {
+                            rescan_addrs.push(addr.clone());
+                        }
                     }
                 }
                 Err(_) => {}
+            }
+        }
+
+        for addr in rescan_addrs {
+            let mut pools = self.pools.write().await;
+            if let Some(pool) = pools.get_mut(&addr) {
+                if let Err(e) = self.read_tick_data(pool).await {
+                    warn!("Aquarius CLMM tick rescan failed for {}: {}", addr, e);
+                }
             }
         }
 
