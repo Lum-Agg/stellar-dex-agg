@@ -44,6 +44,50 @@ impl SorobanRpc {
         &self.url
     }
 
+    async fn post_json_with_retry(&self, body: Value) -> Result<Value> {
+        const MAX_ATTEMPTS: usize = 5;
+        let mut last_err = anyhow!("RPC request not attempted");
+
+        for attempt in 1..=MAX_ATTEMPTS {
+            let resp = match self.client.post(&self.url).json(&body).send().await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    last_err = anyhow!("RPC request failed: {}", e);
+                    if attempt < MAX_ATTEMPTS {
+                        tokio::time::sleep(std::time::Duration::from_millis(200 * attempt as u64))
+                            .await;
+                    }
+                    continue;
+                }
+            };
+
+            let text = match resp.text().await {
+                Ok(text) => text,
+                Err(e) => {
+                    last_err = anyhow!("RPC response read failed: {}", e);
+                    if attempt < MAX_ATTEMPTS {
+                        tokio::time::sleep(std::time::Duration::from_millis(200 * attempt as u64))
+                            .await;
+                    }
+                    continue;
+                }
+            };
+
+            match serde_json::from_str::<Value>(&text) {
+                Ok(json) => return Ok(json),
+                Err(e) => {
+                    last_err = anyhow!("RPC response parse failed: {}", e);
+                    if attempt < MAX_ATTEMPTS {
+                        tokio::time::sleep(std::time::Duration::from_millis(200 * attempt as u64))
+                            .await;
+                    }
+                }
+            }
+        }
+
+        Err(last_err)
+    }
+
     /// Simulate a contract call (read-only, no submission).
     /// Returns the ScVal result.
     pub async fn simulate_call(
@@ -109,18 +153,7 @@ impl SorobanRpc {
             }
         });
 
-        let resp = self
-            .client
-            .post(&self.url)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| anyhow!("RPC request failed: {}", e))?;
-
-        let resp_json: Value = resp
-            .json()
-            .await
-            .map_err(|e| anyhow!("RPC response parse failed: {}", e))?;
+        let resp_json = self.post_json_with_retry(body).await?;
 
         // Check for error
         if let Some(error) = resp_json.get("error") {
@@ -184,18 +217,7 @@ impl SorobanRpc {
             }
         });
 
-        let resp = self
-            .client
-            .post(&self.url)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| anyhow!("RPC request failed: {}", e))?;
-
-        let resp_json: Value = resp
-            .json()
-            .await
-            .map_err(|e| anyhow!("RPC response parse failed: {}", e))?;
+        let resp_json = self.post_json_with_retry(body).await?;
 
         if let Some(error) = resp_json.get("error") {
             return Err(anyhow!("RPC error: {}", error));

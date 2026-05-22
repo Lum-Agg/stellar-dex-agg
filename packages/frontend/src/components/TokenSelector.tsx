@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { displayTokenSymbol } from '@/lib/tokenDisplay';
 
 export interface Token {
   id: string;
@@ -63,7 +64,7 @@ export function useTokenList() {
             .filter((t: any) => t.name !== 'Unknown')
             .map((t: any) => ({
               id: t.id,
-              symbol: t.symbol,
+              symbol: displayTokenSymbol(t.symbol, t.id),
               name: t.name,
               decimals: 7,
               color: getColor(t.symbol),
@@ -75,7 +76,7 @@ export function useTokenList() {
           const mergedPriority = PRIORITY_TOKENS.map((p) => {
             const api = byId.get(p.id);
             const logo = api?.logo ?? p.logo ?? WELL_KNOWN_CONTRACT_LOGOS[p.id];
-            const symbol = api?.symbol ?? p.symbol;
+            const symbol = displayTokenSymbol(api?.symbol ?? p.symbol, p.id);
             return {
               ...p,
               symbol,

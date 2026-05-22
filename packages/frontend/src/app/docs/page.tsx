@@ -1,6 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
+import { DisclaimerBanner } from '@/components/DisclaimerBanner';
+import { BuildTxCodeSample } from '@/components/BuildTxCodeSample';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
 
@@ -17,6 +19,8 @@ export default function DocsPage() {
       <p className="text-gray-400 mb-8">
         LumAgg aggregates liquidity across Soroswap, Aquarius, Phoenix, Sushi V3, Comet and Stellar Classic DEX.
       </p>
+
+      <DisclaimerBanner className="mb-6" />
 
       <div className="mb-6 p-4 rounded-lg bg-white/5 border border-white/10">
         <p className="text-sm text-gray-300">
@@ -63,7 +67,7 @@ export default function DocsPage() {
         <EndpointSection
           method="POST"
           path="/api/v1/build_tx"
-          description="Build an unsigned transaction calling aggregator.swap with sub_routes from the quote (single or split)."
+          description="Optional helper: LumAgg can simulate and return unsigned XDR for you. If you assemble txs yourself, only GET /quote is required — see the sample below (uses @stellar/stellar-sdk + Soroban RPC simulate, not this endpoint)."
           params={[
             { name: 'user_public_key', type: 'string', required: true, desc: 'User Stellar public key (G...)' },
             { name: 'token_in', type: 'string', required: true, desc: 'Input token contract address' },
@@ -72,6 +76,12 @@ export default function DocsPage() {
             { name: 'min_amount_out', type: 'string', required: true, desc: 'Minimum acceptable output' },
             { name: 'sub_routes', type: 'array', required: true, desc: 'Legs: [{amount_in, steps: [{dex_type, pool_address, token_in, token_out, in_idx, out_idx}]}]' },
           ]}
+          beforeTryIt={
+            <BuildTxCodeSample
+              apiUrl={API_URL}
+              rpcUrl={process.env.NEXT_PUBLIC_SOROBAN_RPC_URL || 'https://soroban-rpc.mainnet.stellar.gateway.fm'}
+            />
+          }
           tryIt={<BuildTxTryIt />}
         />
       </div>
@@ -105,13 +115,15 @@ function EndpointSection({
   path,
   description,
   params,
+  beforeTryIt,
   tryIt,
 }: {
   method: string;
   path: string;
   description: string;
   params: { name: string; type: string; required: boolean; desc: string }[];
-  tryIt?: React.ReactNode;
+  beforeTryIt?: ReactNode;
+  tryIt?: ReactNode;
 }) {
   return (
     <div className="p-6 rounded-lg bg-white/5 border border-white/10">
@@ -137,6 +149,8 @@ function EndpointSection({
           </div>
         </div>
       )}
+
+      {beforeTryIt}
 
       {tryIt}
     </div>

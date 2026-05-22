@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { getQuote, type QuoteData } from '@/lib/aggregator';
 import { fetchSpendableBalanceStroops } from '@/lib/balance';
 import { useWallet } from '@/lib/wallet-context';
 import { RouteDisplay } from './RouteDisplay';
-import { TokenSelector, type Token, TOKENS } from './TokenSelector';
+import { TokenSelector, type Token, TOKENS, useTokenList } from './TokenSelector';
+import { displayTokenSymbol, NATIVE_CONTRACT } from '@/lib/tokenDisplay';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
 
@@ -19,6 +20,16 @@ export function SwapCard() {
   const [error, setError] = useState<string | null>(null);
   const { address: walletAddress, signTx, connect, connecting } = useWallet();
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const tokenList = useTokenList();
+  const resolveTokenSymbol = useMemo(() => {
+    const byId = new Map(tokenList.map((t) => [t.id, t.symbol]));
+    return (contractId: string) => {
+      const sym = byId.get(contractId);
+      if (sym) return displayTokenSymbol(sym, contractId);
+      if (contractId === NATIVE_CONTRACT || contractId === 'native') return 'XLM';
+      return `${contractId.slice(0, 4)}…${contractId.slice(-4)}`;
+    };
+  }, [tokenList]);
 
   // Auto-fetch quote when amount changes (debounced)
   useEffect(() => {
@@ -354,8 +365,10 @@ export function SwapCard() {
       {quote && (
         <RouteDisplay
           quote={quote}
-          tokenInSymbol={tokenIn.symbol}
           tokenOutSymbol={tokenOut.symbol}
+          tokenInDecimals={tokenIn.decimals}
+          tokenOutDecimals={tokenOut.decimals}
+          resolveTokenSymbol={resolveTokenSymbol}
         />
       )}
     </div>

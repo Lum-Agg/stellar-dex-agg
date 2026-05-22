@@ -1,0 +1,23 @@
+[Unit]
+Description=LumAgg Market Data Worker
+After=network.target stellar-rpc.service redis-server.service
+Requires=redis-server.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/stellar-dex-aggregator
+Environment=RPC_URL=http://127.0.0.1:8003
+Environment=SNAPSHOT_BACKEND=redis
+Environment=SNAPSHOT_REDIS_URL=redis://:REDISzlg153@127.0.0.1:6379/
+Environment=SNAPSHOT_REDIS_CHANNEL=lumagg:snapshot:events
+Environment=SNAPSHOT_REDIS_KEEP_LATEST=3
+Environment=REFRESH_INTERVAL_SECS=5
+Environment=DISCOVERY_INTERVAL_SECS=600
+Environment=RUST_LOG=info
+ExecStart=/opt/stellar-dex-aggregator/target/release/market-data-worker
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
