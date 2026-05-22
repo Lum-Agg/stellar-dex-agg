@@ -11,6 +11,5 @@ data
 .worktrees/
 PROJECT_STATUS.md
 docs
-thirdparty/
 agent/
 deploy/
