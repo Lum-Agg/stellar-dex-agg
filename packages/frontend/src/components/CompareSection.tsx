@@ -65,13 +65,15 @@ export function CompareSection() {
         </div>
 
         {/* LumAgg split */}
-        <div className="rounded-2xl border border-blue-500/30 bg-gradient-to-br from-blue-500/10 via-slate-900/60 to-violet-500/10 p-5 flex flex-col gap-4 relative overflow-hidden">
-          <div className="absolute top-3 right-3 rounded-full bg-emerald-500/15 border border-emerald-400/30 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
-            +{IMPROVEMENT_PCT}% output
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-blue-300">LumAgg split</span>
-            <span className="text-[10px] text-slate-500">Example only</span>
+        <div className="rounded-2xl border border-blue-500/30 bg-gradient-to-br from-blue-500/10 via-slate-900/60 to-violet-500/10 p-5 flex flex-col gap-4">
+          <div className="flex items-start justify-between gap-3">
+            <span className="text-xs font-medium text-blue-300 shrink-0">LumAgg split</span>
+            <div className="flex flex-col items-end gap-1 min-w-0">
+              <span className="rounded-full bg-emerald-500/15 border border-emerald-400/30 px-2 py-0.5 text-[10px] font-medium text-emerald-300 whitespace-nowrap">
+                +{IMPROVEMENT_PCT}% output
+              </span>
+              <span className="text-[10px] text-slate-500">Example only</span>
+            </div>
           </div>
           <div>
             <div className="text-[11px] text-slate-500 mb-1">{EXAMPLE_IN} → USDC</div>
