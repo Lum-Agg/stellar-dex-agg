@@ -96,7 +96,13 @@ impl SorobanRpc {
         let mut cursor: Option<String> = None;
         loop {
             let page = self
-                .get_contract_events_page(start_ledger, end_ledger, filters, limit, cursor.as_deref())
+                .get_contract_events_page(
+                    start_ledger,
+                    end_ledger,
+                    filters,
+                    limit,
+                    cursor.as_deref(),
+                )
                 .await?;
             let mut seen_ids = HashSet::new();
             for event in page.events {

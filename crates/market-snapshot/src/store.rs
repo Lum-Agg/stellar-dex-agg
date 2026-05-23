@@ -7,9 +7,7 @@ use redis::{AsyncCommands, Script};
 use tokio::sync::mpsc;
 use tracing::warn;
 
-use crate::{
-    load_snapshot_from_dir, write_snapshot_to_dir, MarketSnapshot,
-};
+use crate::{load_snapshot_from_dir, write_snapshot_to_dir, MarketSnapshot};
 
 pub const DEFAULT_REDIS_EVENTS_CHANNEL: &str = "lumagg:snapshot:events";
 pub const DEFAULT_REDIS_SNAPSHOT_HISTORY: usize = 10;
@@ -50,8 +48,9 @@ pub fn build_snapshot_store(
             Ok(Arc::new(FileSnapshotStore::new(snapshot_dir)))
         }
         SnapshotStoreBackend::Redis => {
-            let redis_url = redis_url
-                .ok_or_else(|| anyhow!("snapshot_redis_url is required for redis snapshot backend"))?;
+            let redis_url = redis_url.ok_or_else(|| {
+                anyhow!("snapshot_redis_url is required for redis snapshot backend")
+            })?;
             Ok(Arc::new(RedisSnapshotStore::with_options(
                 redis_url,
                 redis_channel.unwrap_or(DEFAULT_REDIS_EVENTS_CHANNEL),
@@ -127,7 +126,10 @@ pub fn subscribe_to_snapshot_events(
             }
 
             if listener_healthy {
-                if sender.send(SnapshotListenerEvent::ListenerDegraded).is_err() {
+                if sender
+                    .send(SnapshotListenerEvent::ListenerDegraded)
+                    .is_err()
+                {
                     return;
                 }
                 listener_healthy = false;
@@ -255,9 +257,7 @@ fn build_retention_plan(
     candidate_versions.push(current_version.to_string());
 
     let deduped_candidates = dedupe_versions_by_latest(&candidate_versions);
-    let keep_from = deduped_candidates
-        .len()
-        .saturating_sub(keep_latest.max(1));
+    let keep_from = deduped_candidates.len().saturating_sub(keep_latest.max(1));
     let retained_versions = deduped_candidates[keep_from..].to_vec();
     let retained_set: std::collections::HashSet<&str> =
         retained_versions.iter().map(String::as_str).collect();
@@ -265,8 +265,7 @@ fn build_retention_plan(
         .iter()
         .filter(|version| !retained_set.contains(version.as_str()))
         .cloned()
-        .collect()
-;
+        .collect();
 
     RetentionPlan {
         retained_versions,
@@ -437,10 +436,7 @@ mod tests {
             store.versioned_snapshot_key("v1"),
             "lumagg:snapshot:data:v1"
         );
-        assert_eq!(
-            store.versioned_meta_key("v1"),
-            "lumagg:snapshot:meta:v1"
-        );
+        assert_eq!(store.versioned_meta_key("v1"), "lumagg:snapshot:meta:v1");
         assert_eq!(store.events_channel(), "lumagg:snapshot:events");
         assert_eq!(store.versions_index_key(), "lumagg:snapshot:versions");
     }
@@ -483,11 +479,7 @@ mod tests {
 
     #[test]
     fn retention_plan_never_deletes_current_version() {
-        let versions = vec![
-            "v1".to_string(),
-            "v2".to_string(),
-            "v3".to_string(),
-        ];
+        let versions = vec!["v1".to_string(), "v2".to_string(), "v3".to_string()];
         let plan = build_retention_plan(&versions, 0, "v3");
 
         assert_eq!(plan.retained_versions, vec!["v3".to_string()]);

@@ -90,16 +90,20 @@ impl TokenGraph {
         self.adjacency.values().map(|v| v.len()).sum()
     }
 
-    /// BFS: find all paths from `start` to `end` with at most `max_hops` hops.
+    /// Discover swap paths from `start` to `end`.
+    ///
+    /// - **Direct (1-hop)**: every pool edge between the pair (optional `max_direct_paths` cap;
+    ///   `0` = no cap).
+    /// - **Multi-hop (2+ hops)**: BFS up to `max_hops`, capped at `max_multi_hop_paths`.
     ///
     /// Returns paths sorted by hop count (shortest first).
-    /// To avoid combinatorial explosion, limits total paths returned.
     pub fn find_paths(
         &self,
         start: &TokenId,
         end: &TokenId,
         max_hops: usize,
-        max_paths: usize,
+        max_multi_hop_paths: usize,
+        max_direct_paths: usize,
     ) -> Vec<Path> {
         let start_key = start.canonical();
         let end_key = end.canonical();
@@ -110,7 +114,27 @@ impl TokenGraph {
 
         let mut results: Vec<Path> = Vec::new();
 
-        // BFS state: (current_token_key, token_path, source_path, pool_path, visited_pools)
+        if let Some(edges) = self.adjacency.get(&start_key) {
+            for edge in edges {
+                if edge.target.canonical() != end_key {
+                    continue;
+                }
+                results.push(Path {
+                    hops: 1,
+                    tokens: vec![start.clone(), edge.target.clone()],
+                    sources: vec![edge.source.clone()],
+                    pool_addresses: vec![edge.pool_address.clone()],
+                });
+            }
+        }
+
+        if max_direct_paths > 0 && results.len() > max_direct_paths {
+            results.truncate(max_direct_paths);
+        }
+
+        let mut multi_hop_count = 0usize;
+
+        // BFS for indirect paths only (direct pools already in `results`).
         let mut queue: VecDeque<(
             String,
             Vec<TokenId>,
@@ -130,11 +154,10 @@ impl TokenGraph {
         while let Some((current_key, token_path, source_path, pool_path, visited_pools)) =
             queue.pop_front()
         {
-            if results.len() >= max_paths {
+            if multi_hop_count >= max_multi_hop_paths {
                 break;
             }
 
-            // Limit queue size to prevent combinatorial explosion
             if queue.len() > 10_000 {
                 break;
             }
@@ -151,13 +174,16 @@ impl TokenGraph {
             for edge in edges {
                 let target_key = edge.target.canonical();
 
-                // Don't reuse the same pool in one path
                 if visited_pools.contains(&edge.pool_address) {
                     continue;
                 }
 
-                // Found the destination
+                let next_hops = pool_path.len() + 1;
+
                 if target_key == end_key {
+                    if next_hops < 2 {
+                        continue;
+                    }
                     let mut new_tokens = token_path.clone();
                     new_tokens.push(edge.target.clone());
 
@@ -173,19 +199,18 @@ impl TokenGraph {
                         sources: new_sources,
                         pool_addresses: new_pools,
                     });
+                    multi_hop_count += 1;
 
-                    if results.len() >= max_paths {
+                    if multi_hop_count >= max_multi_hop_paths {
                         break;
                     }
                     continue;
                 }
 
-                // Don't revisit tokens already in path (avoid cycles that don't end at target)
                 if token_path.iter().any(|t| t.canonical() == target_key) {
                     continue;
                 }
 
-                // Extend path
                 let mut new_tokens = token_path.clone();
                 new_tokens.push(edge.target.clone());
 
@@ -202,7 +227,6 @@ impl TokenGraph {
             }
         }
 
-        // Sort by hop count (prefer shorter paths)
         results.sort_by_key(|p| p.hops);
         results
     }
@@ -232,7 +256,7 @@ mod tests {
         let mut graph = TokenGraph::new();
         graph.add_pair(&xlm(), &usdc(), "soroswap", "pool_1", 30);
 
-        let paths = graph.find_paths(&xlm(), &usdc(), 4, 100);
+        let paths = graph.find_paths(&xlm(), &usdc(), 4, 100, 0);
         assert_eq!(paths.len(), 1);
         assert_eq!(paths[0].hops, 1);
         assert_eq!(paths[0].tokens.len(), 2);
@@ -244,7 +268,7 @@ mod tests {
         graph.add_pair(&xlm(), &usdc(), "soroswap", "pool_1", 30);
         graph.add_pair(&usdc(), &eth(), "aquarius", "pool_2", 30);
 
-        let paths = graph.find_paths(&xlm(), &eth(), 4, 100);
+        let paths = graph.find_paths(&xlm(), &eth(), 4, 100, 0);
         // Should find: XLM -> USDC -> ETH (2 hops)
         assert!(paths.iter().any(|p| p.hops == 2));
     }
@@ -257,9 +281,35 @@ mod tests {
         graph.add_pair(&xlm(), &eth(), "soroswap", "pool_3", 30);
         graph.add_pair(&eth(), &usdc(), "aquarius", "pool_4", 30);
 
-        let paths = graph.find_paths(&xlm(), &usdc(), 4, 100);
+        let paths = graph.find_paths(&xlm(), &usdc(), 4, 100, 0);
         // Direct: pool_1, pool_2; Indirect: XLM->ETH->USDC
         assert!(paths.len() >= 3);
+    }
+
+    #[test]
+    fn test_all_direct_paths_included_when_many_pools() {
+        let mut graph = TokenGraph::new();
+        for i in 0..15 {
+            graph.add_pair(&xlm(), &usdc(), "aquarius", &format!("pool_{i}"), 30);
+        }
+        let paths = graph.find_paths(&xlm(), &usdc(), 3, 5, 0);
+        assert_eq!(paths.len(), 15);
+        assert!(paths.iter().all(|p| p.hops == 1));
+    }
+
+    #[test]
+    fn test_multi_hop_capped_separately_from_direct() {
+        let mut graph = TokenGraph::new();
+        for i in 0..12 {
+            graph.add_pair(&xlm(), &usdc(), "aquarius", &format!("direct_{i}"), 30);
+        }
+        graph.add_pair(&xlm(), &eth(), "soroswap", "bridge", 30);
+        graph.add_pair(&eth(), &usdc(), "aquarius", "indirect", 30);
+
+        let paths = graph.find_paths(&xlm(), &usdc(), 3, 2, 0);
+        assert_eq!(paths.iter().filter(|p| p.hops == 1).count(), 12);
+        assert_eq!(paths.iter().filter(|p| p.hops == 2).count(), 1);
+        assert_eq!(paths.len(), 13);
     }
 
     #[test]
@@ -267,7 +317,7 @@ mod tests {
         let mut graph = TokenGraph::new();
         graph.add_pair(&xlm(), &usdc(), "soroswap", "pool_1", 30);
 
-        let paths = graph.find_paths(&xlm(), &eth(), 4, 100);
+        let paths = graph.find_paths(&xlm(), &eth(), 4, 100, 0);
         assert!(paths.is_empty());
     }
 
@@ -286,11 +336,11 @@ mod tests {
         graph.add_pair(&d, &e, "dex", "p4", 30);
 
         // max_hops=3 should NOT find A->B->C->D->E (4 hops)
-        let paths = graph.find_paths(&a, &e, 3, 100);
+        let paths = graph.find_paths(&a, &e, 3, 100, 0);
         assert!(paths.is_empty());
 
         // max_hops=4 should find it
-        let paths = graph.find_paths(&a, &e, 4, 100);
+        let paths = graph.find_paths(&a, &e, 4, 100, 0);
         assert_eq!(paths.len(), 1);
         assert_eq!(paths[0].hops, 4);
     }

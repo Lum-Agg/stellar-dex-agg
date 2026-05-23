@@ -58,7 +58,10 @@ impl KnownPoolIndex {
 }
 
 /// Pools whose contract emitted a contract event in the indexed ledger range.
-pub fn touched_pools_from_events(events: &[ContractEvent], index: &KnownPoolIndex) -> HashSet<PoolRef> {
+pub fn touched_pools_from_events(
+    events: &[ContractEvent],
+    index: &KnownPoolIndex,
+) -> HashSet<PoolRef> {
     let mut touched = HashSet::new();
     for event in events {
         if event.event_type != "contract" {
@@ -83,7 +86,8 @@ mod tests {
             pairs: vec![TradingPairSnapshot {
                 token_a: "A".to_string(),
                 token_b: "B".to_string(),
-                pool_address: "CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2".to_string(),
+                pool_address: "CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2"
+                    .to_string(),
                 fee_bps: 30,
             }],
         }];

@@ -321,8 +321,12 @@ impl SushiAdapter {
 
     fn coverage_input(pool: &SushiPoolCache) -> ClmmCoverageInput {
         let range = loaded_tick_range(&pool.tick_store, pool.tick_spacing);
-        let in_scan_window =
-            !tick_outside_word_scan(pool.tick, pool.tick_spacing, pool.scanned_word_start, pool.scanned_word_end);
+        let in_scan_window = !tick_outside_word_scan(
+            pool.tick,
+            pool.tick_spacing,
+            pool.scanned_word_start,
+            pool.scanned_word_end,
+        );
         ClmmCoverageInput {
             pool_tick: pool.tick,
             tick_spacing: pool.tick_spacing,
@@ -368,9 +372,8 @@ impl SushiAdapter {
     }
 
     fn discovery_rpc(&self) -> SorobanRpc {
-        let url = std::env::var("SUSHI_DISCOVERY_RPC").unwrap_or_else(|_| {
-            "https://soroban-rpc.mainnet.stellar.gateway.fm".to_string()
-        });
+        let url = std::env::var("SUSHI_DISCOVERY_RPC")
+            .unwrap_or_else(|_| "https://soroban-rpc.mainnet.stellar.gateway.fm".to_string());
         SorobanRpc::new(&url, self.rpc.network_passphrase())
     }
 
@@ -393,10 +396,7 @@ impl SushiAdapter {
 
         match self.discover_pools_from_factory_storage().await {
             Ok(factory_pools) => {
-                info!(
-                    "Sushi: {} pools from factory storage",
-                    factory_pools.len()
-                );
+                info!("Sushi: {} pools from factory storage", factory_pools.len());
                 Self::merge_discovered_pools(&mut pools, factory_pools);
             }
             Err(e) => warn!("Sushi: factory storage discovery failed: {}", e),
@@ -927,10 +927,8 @@ impl DexAdapter for SushiAdapter {
         if let Some(pool) = cache.get(pool_address) {
             let token_in_addr = token_in.canonical();
             let token_out_addr = token_out.canonical();
-            let zero_for_one =
-                token_in_addr == pool.token0 && token_out_addr == pool.token1;
-            let one_for_zero =
-                token_in_addr == pool.token1 && token_out_addr == pool.token0;
+            let zero_for_one = token_in_addr == pool.token0 && token_out_addr == pool.token1;
+            let one_for_zero = token_in_addr == pool.token1 && token_out_addr == pool.token0;
             if !zero_for_one && !one_for_zero {
                 return Ok(None);
             }

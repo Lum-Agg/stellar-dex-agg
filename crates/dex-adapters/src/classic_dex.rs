@@ -21,6 +21,17 @@ use tracing::{debug, info};
 /// Default public Horizon endpoint
 const DEFAULT_HORIZON_URL: &str = "https://horizon.stellar.org";
 
+/// Rough effective reserve (input-token stroops) for major classic paths when Horizon
+/// does not expose pool reserves. Used for impact ≈ amount_in * 10_000 / (2 * reserve).
+fn estimate_classic_impact_bps(amount_in: u128) -> u32 {
+    if amount_in == 0 {
+        return 0;
+    }
+    // ~500k XLM depth order-of-magnitude for XLM/USDC-class books (7-decimal stroops).
+    const ESTIMATED_RESERVE_STROOPS: u128 = 5_000_000_000_000;
+    (amount_in.saturating_mul(10_000) / (2 * ESTIMATED_RESERVE_STROOPS)).min(10_000) as u32
+}
+
 /// Well-known assets for Classic DEX path finding
 const CLASSIC_ASSETS: &[(&str, &str, &str)] = &[
     // (contract_address, asset_code_for_horizon, issuer_or_native)
@@ -281,9 +292,7 @@ impl DexAdapter for ClassicDexAdapter {
                 Ok(Some(AdapterQuote {
                     amount_out,
                     fee_bps: 0, // fees are baked into the output
-                    // Estimate impact: assume ~$1M total liquidity for XLM/USDC on classic DEX
-                    // impact ≈ amount_in / (2 * total_liquidity_in_stroops)
-                    price_impact_bps: (amount_in / 2_000_000_0000000).min(10_000) as u32,
+                    price_impact_bps: estimate_classic_impact_bps(amount_in),
                 }))
             }
             Ok(None) => Ok(None),
@@ -327,6 +336,21 @@ mod tests {
         assert_eq!(parse_stellar_amount("100.0000000").unwrap(), 1000000000);
         assert_eq!(parse_stellar_amount("0.0000001").unwrap(), 1);
         assert_eq!(parse_stellar_amount("1000").unwrap(), 10000000000);
+    }
+
+    #[test]
+    fn test_classic_impact_uses_bps_scaling() {
+        // Old formula omitted *10_000 and used a huge divisor → always 0.
+        let hundred_xlm = 1_000_000_000u128;
+        assert!(
+            estimate_classic_impact_bps(hundred_xlm) > 0,
+            "meaningful trade should have non-zero impact bps"
+        );
+        let one_xlm = 10_000_000u128;
+        assert!(
+            estimate_classic_impact_bps(one_xlm) <= 10_000,
+            "impact must stay within bps range"
+        );
     }
 
     #[test]

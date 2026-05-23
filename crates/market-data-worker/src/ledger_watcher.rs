@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use anyhow::Result;
 use dex_adapters::{
-    pool_index::{KnownPoolIndex, PoolRef, touched_pools_from_events},
+    pool_index::{touched_pools_from_events, KnownPoolIndex, PoolRef},
     rpc::{
         events::{EventFilterSpec, MAX_LEDGER_SCAN_PER_REQUEST},
         SorobanRpc,
@@ -98,10 +98,7 @@ impl LedgerWatcher {
     }
 
     /// Poll for new ledgers and return pools that emitted contract events.
-    pub async fn poll_touched_pools(
-        &mut self,
-        index: &KnownPoolIndex,
-    ) -> Result<HashSet<PoolRef>> {
+    pub async fn poll_touched_pools(&mut self, index: &KnownPoolIndex) -> Result<HashSet<PoolRef>> {
         let latest = self.rpc.get_latest_ledger().await?.sequence;
         let Some(cursor) = self.last_ledger else {
             self.last_ledger = Some(latest.saturating_sub(1));
@@ -120,8 +117,7 @@ impl LedgerWatcher {
             // blocks the worker for minutes. Only ingest the latest ledger window.
             warn!(
                 skipped = span - 1,
-                latest,
-                "Ledger backlog skipped after restart — ingesting latest ledger only"
+                latest, "Ledger backlog skipped after restart — ingesting latest ledger only"
             );
             start = latest;
             end = latest + 1;
@@ -142,7 +138,12 @@ impl LedgerWatcher {
 
         let events = self
             .rpc
-            .get_contract_events(start, Some(end), &filters, dex_adapters::rpc::events::DEFAULT_EVENTS_PAGE_LIMIT)
+            .get_contract_events(
+                start,
+                Some(end),
+                &filters,
+                dex_adapters::rpc::events::DEFAULT_EVENTS_PAGE_LIMIT,
+            )
             .await?;
 
         self.last_ledger = Some(latest);

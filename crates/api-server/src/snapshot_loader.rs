@@ -4,6 +4,15 @@ use router_engine::{path_finder::PathFinderConfig, split_optimizer::SplitConfig,
 
 use crate::{config::AppConfig, state::sanitize_cached_pairs};
 
+pub fn path_finder_config_from_app(config: &AppConfig) -> PathFinderConfig {
+    PathFinderConfig {
+        max_hops: config.path_finder_max_hops,
+        max_multi_hop_paths: config.path_finder_max_multi_hop_paths,
+        max_direct_paths: config.path_finder_max_direct_paths,
+        bridge_tokens: PathFinderConfig::default().bridge_tokens,
+    }
+}
+
 fn snapshot_pair_to_trading(
     pair: &TradingPairSnapshot,
     source: &str,
@@ -30,7 +39,7 @@ pub async fn build_engine_from_snapshot(
         max_splits: config.max_splits,
         ..SplitConfig::default()
     };
-    let engine = QuoteEngine::new(PathFinderConfig::default(), split_config);
+    let engine = QuoteEngine::new(path_finder_config_from_app(config), split_config);
 
     for source in &snapshot.sources {
         let trading_pairs = source
@@ -95,11 +104,20 @@ mod tests {
                 },
             ],
             chunk_bitmaps: vec![market_snapshot::ClmmBitmapWordSnapshot {
-                word_pos: bitmap::chunk_bitmap_position(bitmap::chunk_address(bitmap::compress_tick(-1000, 200)).0).0,
+                word_pos: bitmap::chunk_bitmap_position(
+                    bitmap::chunk_address(bitmap::compress_tick(-1000, 200)).0,
+                )
+                .0,
                 word: {
                     let mut word = [0u8; 32];
-                    let lower_bit = bitmap::chunk_bitmap_position(bitmap::chunk_address(bitmap::compress_tick(-1000, 200)).0).1;
-                    let upper_bit = bitmap::chunk_bitmap_position(bitmap::chunk_address(bitmap::compress_tick(1000, 200)).0).1;
+                    let lower_bit = bitmap::chunk_bitmap_position(
+                        bitmap::chunk_address(bitmap::compress_tick(-1000, 200)).0,
+                    )
+                    .1;
+                    let upper_bit = bitmap::chunk_bitmap_position(
+                        bitmap::chunk_address(bitmap::compress_tick(1000, 200)).0,
+                    )
+                    .1;
                     word[31 - (lower_bit / 8) as usize] |= 1u8 << (lower_bit % 8);
                     word[31 - (upper_bit / 8) as usize] |= 1u8 << (upper_bit % 8);
                     word
@@ -107,13 +125,19 @@ mod tests {
             }],
             word_bitmaps: vec![market_snapshot::ClmmBitmapWordSnapshot {
                 word_pos: bitmap::word_bitmap_position(
-                    bitmap::chunk_bitmap_position(bitmap::chunk_address(bitmap::compress_tick(-1000, 200)).0).0,
+                    bitmap::chunk_bitmap_position(
+                        bitmap::chunk_address(bitmap::compress_tick(-1000, 200)).0,
+                    )
+                    .0,
                 )
                 .0,
                 word: {
                     let mut word = [0u8; 32];
                     let l2_bit = bitmap::word_bitmap_position(
-                        bitmap::chunk_bitmap_position(bitmap::chunk_address(bitmap::compress_tick(-1000, 200)).0).0,
+                        bitmap::chunk_bitmap_position(
+                            bitmap::chunk_address(bitmap::compress_tick(-1000, 200)).0,
+                        )
+                        .0,
                     )
                     .1;
                     word[31 - (l2_bit / 8) as usize] |= 1u8 << (l2_bit % 8);
@@ -149,7 +173,10 @@ mod tests {
         .with_clmm_pool_refs(vec![market_snapshot::ClmmPoolRefSnapshot::from_pool(&pool)])
     }
 
-    async fn seed_clmm_quote_states(engine: &router_engine::QuoteEngine, pools: &[ClmmPoolSnapshot]) {
+    async fn seed_clmm_quote_states(
+        engine: &router_engine::QuoteEngine,
+        pools: &[ClmmPoolSnapshot],
+    ) {
         use dex_adapters::clmm_math::clmm_pool_from_snapshot;
         for pool in pools {
             let (state, ticks) = clmm_pool_from_snapshot(pool);

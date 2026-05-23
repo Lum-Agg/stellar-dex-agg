@@ -8,11 +8,11 @@ use std::{
 use anyhow::Result;
 use api_server::{config::AppConfig, snapshot_loader::build_engine_from_snapshot};
 use async_trait::async_trait;
+use dex_adapters::clmm_math::clmm_pool_from_snapshot;
 use dex_adapters::{
     clmm_math::{bitmap, sqrt_ratio_at_tick},
     AdapterQuote, AdapterTradingPair, DexAdapter, ProtocolType, SwapOperation, TokenId,
 };
-use dex_adapters::clmm_math::clmm_pool_from_snapshot;
 use market_snapshot::{
     store::{build_snapshot_store, SnapshotStoreBackend},
     ClmmBitmapWordSnapshot, ClmmCoverageSnapshot, ClmmPoolRefSnapshot, ClmmPoolSnapshot,
@@ -34,7 +34,12 @@ fn clmm_word_for_bits(bits: &[u32]) -> [u8; 32] {
     word
 }
 
-fn clmm_pool_snapshot(source: &str, token0: &str, token1: &str, pool_address: &str) -> ClmmPoolSnapshot {
+fn clmm_pool_snapshot(
+    source: &str,
+    token0: &str,
+    token1: &str,
+    pool_address: &str,
+) -> ClmmPoolSnapshot {
     let lower_chunk = bitmap::chunk_address(bitmap::compress_tick(-1000, 200)).0;
     let upper_chunk = bitmap::chunk_address(bitmap::compress_tick(1000, 200)).0;
     let (chunk_word_pos, lower_bit) = bitmap::chunk_bitmap_position(lower_chunk);
@@ -131,10 +136,7 @@ fn smoke_snapshot() -> MarketSnapshot {
     .with_clmm_pool_refs(clmm_refs)
 }
 
-async fn seed_clmm_quote_states(
-    engine: &router_engine::QuoteEngine,
-    pools: &[ClmmPoolSnapshot],
-) {
+async fn seed_clmm_quote_states(engine: &router_engine::QuoteEngine, pools: &[ClmmPoolSnapshot]) {
     for pool in pools {
         let (state, ticks) = clmm_pool_from_snapshot(pool);
         engine
@@ -279,7 +281,9 @@ async fn redis_snapshot_store_smoke_quotes_sushi_aquarius_clmm_and_classic() {
     let config = AppConfig::default();
     let engine = build_engine_from_snapshot(&config, &loaded).await.unwrap();
     seed_clmm_quote_states(&engine, &smoke_clmm_pools()).await;
-    engine.register_adapter(Arc::new(StaticClassicAdapter)).await;
+    engine
+        .register_adapter(Arc::new(StaticClassicAdapter))
+        .await;
 
     let sushi_route = engine
         .get_route(&RouteRequest {

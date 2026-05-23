@@ -29,6 +29,12 @@ pub struct AppConfig {
     pub min_split_fraction_bps: u32,
     /// Maximum number of candidate paths to consider for split optimization.
     pub max_splits: usize,
+    /// Path finder: max hops per path (direct pools are always enumerated separately).
+    pub path_finder_max_hops: usize,
+    /// Path finder: cap on 2+ hop paths per quote.
+    pub path_finder_max_multi_hop_paths: usize,
+    /// Path finder: cap on 1-hop pools (`0` = all direct pools in graph).
+    pub path_finder_max_direct_paths: usize,
     /// Optional snapshot backend selector (`file` or `redis`). When unset, snapshot mode
     /// is enabled only if `snapshot_dir` is set.
     pub snapshot_backend: Option<String>,
@@ -57,6 +63,9 @@ impl Default for AppConfig {
             split_competitive_delta_bps: 50,
             min_split_fraction_bps: 5,
             max_splits: 5,
+            path_finder_max_hops: 3,
+            path_finder_max_multi_hop_paths: 50,
+            path_finder_max_direct_paths: 0,
             snapshot_backend: None,
             snapshot_dir: None,
             snapshot_redis_url: None,
@@ -101,6 +110,19 @@ impl AppConfig {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(Self::default().max_splits),
+            path_finder_max_hops: std::env::var("PATH_FINDER_MAX_HOPS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(Self::default().path_finder_max_hops),
+            path_finder_max_multi_hop_paths: std::env::var("PATH_FINDER_MAX_MULTI_HOP_PATHS")
+                .or_else(|_| std::env::var("PATH_FINDER_MAX_PATHS"))
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(Self::default().path_finder_max_multi_hop_paths),
+            path_finder_max_direct_paths: std::env::var("PATH_FINDER_MAX_DIRECT_PATHS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(Self::default().path_finder_max_direct_paths),
             snapshot_backend: std::env::var("SNAPSHOT_BACKEND").ok(),
             snapshot_dir: std::env::var("SNAPSHOT_DIR").ok(),
             snapshot_redis_url: std::env::var("SNAPSHOT_REDIS_URL").ok(),

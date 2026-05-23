@@ -18,11 +18,7 @@ pub struct MarketSnapshot {
     #[serde(default)]
     pub token_metadata: Vec<TokenMetadataSnapshot>,
     /// CLMM pool topology only (no slot0 / ticks / liquidity). Live state is in Redis `lumagg:pool:clmm:*`.
-    #[serde(
-        default,
-        skip_serializing_if = "Vec::is_empty",
-        alias = "clmm_pools"
-    )]
+    #[serde(default, skip_serializing_if = "Vec::is_empty", alias = "clmm_pools")]
     pub clmm_pool_refs: Vec<ClmmPoolRefSnapshot>,
 }
 
@@ -153,7 +149,10 @@ pub fn write_snapshot_to_dir(snapshot_dir: &Path, snapshot: &MarketSnapshot) -> 
     std::fs::write(&snapshot_tmp_path, serde_json::to_vec_pretty(snapshot)?)?;
     std::fs::rename(&snapshot_tmp_path, &snapshot_path)?;
 
-    std::fs::write(&meta_tmp_path, serde_json::to_vec_pretty(&snapshot.current_meta())?)?;
+    std::fs::write(
+        &meta_tmp_path,
+        serde_json::to_vec_pretty(&snapshot.current_meta())?,
+    )?;
     std::fs::rename(&meta_tmp_path, &meta_path)?;
 
     Ok(())
@@ -366,10 +365,8 @@ mod tests {
 
         write_snapshot_to_dir(&dir, &snapshot).unwrap();
         let restored = load_snapshot_from_dir(&dir).unwrap();
-        let meta: CurrentSnapshotMeta = serde_json::from_slice(
-            &std::fs::read(dir.join(CURRENT_META_FILE)).unwrap(),
-        )
-        .unwrap();
+        let meta: CurrentSnapshotMeta =
+            serde_json::from_slice(&std::fs::read(dir.join(CURRENT_META_FILE)).unwrap()).unwrap();
 
         assert_eq!(restored.version, "v3");
         assert_eq!(meta.version, "v3");

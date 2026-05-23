@@ -1320,7 +1320,12 @@ pub fn clmm_pool_from_snapshot(snapshot: &ClmmPoolSnapshot) -> (ClmmPoolState, T
 }
 
 /// True when the active tick moved outside a prior Sushi-style bitmap word scan window.
-pub fn tick_outside_word_scan(tick: i32, tick_spacing: i32, word_start: i32, word_end: i32) -> bool {
+pub fn tick_outside_word_scan(
+    tick: i32,
+    tick_spacing: i32,
+    word_start: i32,
+    word_end: i32,
+) -> bool {
     let compressed = tick.div_euclid(tick_spacing);
     let word = compressed.div_euclid(256);
     word < word_start || word > word_end
@@ -1400,7 +1405,8 @@ pub fn swap_stays_within_loaded_ticks(
     if tick_outside_loaded_range(pool.tick, min_loaded, max_loaded) {
         return false;
     }
-    let Some((amount_out, _, final_tick)) = simulate_swap(pool, ticks, amount_in, zero_for_one) else {
+    let Some((amount_out, _, final_tick)) = simulate_swap(pool, ticks, amount_in, zero_for_one)
+    else {
         return false;
     };
     if amount_out == 0 {
@@ -1423,14 +1429,8 @@ pub fn clmm_swap_allowed(
     let Some((range_min, range_max)) = loaded_tick_range(ticks, pool.tick_spacing) else {
         return false;
     };
-    let min_loaded = coverage
-        .min_loaded_tick
-        .unwrap_or(range_min)
-        .min(range_min);
-    let max_loaded = coverage
-        .max_loaded_tick
-        .unwrap_or(range_max)
-        .max(range_max);
+    let min_loaded = coverage.min_loaded_tick.unwrap_or(range_min).min(range_min);
+    let max_loaded = coverage.max_loaded_tick.unwrap_or(range_max).max(range_max);
     swap_stays_within_loaded_ticks(pool, ticks, amount_in, zero_for_one, min_loaded, max_loaded)
 }
 
@@ -1927,7 +1927,9 @@ mod tests {
         assert_eq!(restored_pool.token0, pool.token0);
         assert_eq!(restored_pool.token1, pool.token1);
         assert_eq!(
-            restored_ticks.get_tick(-120, pool.tick_spacing).liquidity_gross,
+            restored_ticks
+                .get_tick(-120, pool.tick_spacing)
+                .liquidity_gross,
             777
         );
         assert_eq!(restored_ticks.chunk_bitmap.get(&0), Some(&[5u8; 32]));

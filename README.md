@@ -195,7 +195,7 @@ See [`docs/pool-state-architecture.md`](docs/pool-state-architecture.md) for imp
 ## Key Features
 
 - **Multi-source aggregation**: Soroswap, Aquarius, Phoenix, Sushi V3, Comet weighted pools
-- **Split orders**: Greedy split across paths when price impact exceeds threshold
+- **Split orders**: Brent split across paths when impact exceeds threshold (or paths are competitive)
 - **Multi-hop routing**: BFS through intermediate tokens (configurable max hops)
 - **Snapshot + Redis pool state**: Horizontally scalable API tier; single worker writer
 - **Sub-10s pool freshness**: 8s Redis TTL + 5s refresh + ~3s ledger touch updates
@@ -276,6 +276,21 @@ cargo run -p api-server --bin api-server
 | `SUSHI_DISCOVERY_RPC` | public gateway | worker | RPC used for Sushi pool probes |
 | `COMET_FACTORY` | Blend mainnet factory | worker | Comet factory contract |
 | `COMET_EXTRA_POOLS` | — | worker | Comma-separated extra Comet pool IDs |
+| `SPLIT_THRESHOLD_BPS` | `5` | API | Min single-path **price impact (bps)** before split is attempted (5 = **0.05%**) |
+| `SPLIT_COMPETITIVE_DELTA_BPS` | `50` | API | Also try split when 2nd-best path is within this many bps of the best |
+| `MIN_SPLIT_FRACTION_BPS` | `5` | API | Drop split legs below this share of total output (bps) |
+| `MAX_SPLITS` | `5` | API | Max candidate paths for split optimization |
+| `PATH_FINDER_MAX_HOPS` | `3` | API | Max hops per path |
+| `PATH_FINDER_MAX_MULTI_HOP_PATHS` | `50` | API | Cap on 2+ hop paths per quote (direct pools are separate) |
+| `PATH_FINDER_MAX_DIRECT_PATHS` | `0` | API | Cap on 1-hop pools (`0` = quote **all** direct pools in graph) |
+
+### Split routing (API)
+
+Production `deploy/lumagg-api@.service` sets the split env vars explicitly (see table above).
+
+- **`SPLIT_THRESHOLD_BPS=5` (0.05%)** — recommended default. Split runs only when estimated impact is at least 5 bps, or when paths are “competitive” (within `SPLIT_COMPETITIVE_DELTA_BPS` and impact > 0).
+- **`SPLIT_THRESHOLD_BPS=1` (0.01%)** — usually **not** worth it globally: more Brent work and latency on shallow-impact quotes, while many trades still end with `split_rejected_reason: "no_improvement"` (optimizer found no better allocation). Lowering the threshold does **not** fix “no split” when impact is already high (e.g. 100 USDC→XLM often already attempts split).
+- **Not the same as 0.01% elsewhere**: Brent uses ~`0.0001` tolerance on **split ratios**; JSON `price_impact` is a **fraction** (e.g. `0.01` = 1% = 100 bps). Use `?debug=1` on `/quote` to see `split_attempted`, `split_threshold_bps`, and `split_rejected_reason`.
 
 ## License
 

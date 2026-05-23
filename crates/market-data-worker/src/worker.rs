@@ -8,15 +8,15 @@ use dex_adapters::{
     rpc::SorobanRpc,
     soroswap::SoroswapAdapter,
     sushi::SushiAdapter,
-    traits::AdapterTradingPair,
     token_metadata::{TokenMetadata, TokenMetadataStore},
+    traits::AdapterTradingPair,
     DexAdapter,
 };
 use market_snapshot::{
     pool_state_store::build_pool_state_store,
     store::{
-        build_snapshot_store, SnapshotStore, DEFAULT_REDIS_EVENTS_CHANNEL,
-        DEFAULT_REDIS_SNAPSHOT_HISTORY, SnapshotStoreBackend,
+        build_snapshot_store, SnapshotStore, SnapshotStoreBackend, DEFAULT_REDIS_EVENTS_CHANNEL,
+        DEFAULT_REDIS_SNAPSHOT_HISTORY,
     },
     ClmmPoolSnapshot, MarketSnapshot, SourceSnapshot, TokenMetadataSnapshot, TradingPairSnapshot,
     DEFAULT_SNAPSHOT_DIR,
@@ -111,7 +111,10 @@ fn trading_pair_snapshot(pair: &AdapterTradingPair) -> TradingPairSnapshot {
     }
 }
 
-fn sanitize_source_pairs(source: &str, pairs: Vec<TradingPairSnapshot>) -> Vec<TradingPairSnapshot> {
+fn sanitize_source_pairs(
+    source: &str,
+    pairs: Vec<TradingPairSnapshot>,
+) -> Vec<TradingPairSnapshot> {
     if source != "aquarius" {
         return pairs;
     }
@@ -185,7 +188,9 @@ fn spawn_token_metadata_enrichment(
         if token_addresses.is_empty() {
             return;
         }
-        token_metadata.resolve_unknown(token_addresses.clone()).await;
+        token_metadata
+            .resolve_unknown(token_addresses.clone())
+            .await;
         let metadata = token_metadata.get_all().await;
         let enriched: Vec<TokenMetadataSnapshot> = token_addresses
             .into_iter()
@@ -299,10 +304,7 @@ fn log_clmm_coverage_stats(clmm_pools: &[ClmmPoolSnapshot]) {
     }
     info!(
         clmm_pools = clmm_pools.len(),
-        complete,
-        incomplete,
-        no_coverage,
-        "CLMM snapshot coverage"
+        complete, incomplete, no_coverage, "CLMM snapshot coverage"
     );
 }
 
@@ -360,12 +362,13 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
         Some(config.snapshot_redis_channel.as_str()),
         Some(config.snapshot_redis_keep_latest),
     )?);
-    let pool_state_store: Option<Arc<market_snapshot::pool_state_store::RedisPoolStateStore>> = config
-        .snapshot_redis_url
-        .as_deref()
-        .map(build_pool_state_store)
-        .transpose()?
-        .map(Arc::new);
+    let pool_state_store: Option<Arc<market_snapshot::pool_state_store::RedisPoolStateStore>> =
+        config
+            .snapshot_redis_url
+            .as_deref()
+            .map(build_pool_state_store)
+            .transpose()?
+            .map(Arc::new);
     let rpc = Arc::new(SorobanRpc::new(&config.rpc_url, &config.network_passphrase));
     let token_metadata = Arc::new(TokenMetadataStore::new(rpc.clone()));
     let soroswap = Arc::new(SoroswapAdapter::new(rpc.clone()));
@@ -400,8 +403,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
     pool_publish_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     pool_publish_interval.tick().await;
 
-    let ledger_watcher_enabled =
-        config.ledger_watcher_enabled && pool_state_store.is_some();
+    let ledger_watcher_enabled = config.ledger_watcher_enabled && pool_state_store.is_some();
     let mut ledger_watcher = if ledger_watcher_enabled {
         let mut watcher = crate::ledger_watcher::LedgerWatcher::new(SorobanRpc::new(
             &config.rpc_url,
@@ -448,20 +450,16 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
             guard.clmm_pools = clmm_pools.clone();
         }
         let clmm_refs = MarketSnapshot::clmm_pool_refs_from_states(&clmm_pools);
-        let snapshot = match snapshot_from_sources(
-            sources,
-            clmm_refs,
-            &network_passphrase,
-            seeded_metadata,
-        )
-        .await
-        {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                warn!("Background bootstrap snapshot build failed: {}", error);
-                return;
-            }
-        };
+        let snapshot =
+            match snapshot_from_sources(sources, clmm_refs, &network_passphrase, seeded_metadata)
+                .await
+            {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    warn!("Background bootstrap snapshot build failed: {}", error);
+                    return;
+                }
+            };
         if let Err(error) = publish_snapshot_and_pool_state(
             snapshot_store_boot.as_ref(),
             pool_state_boot.as_ref(),
@@ -480,11 +478,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
             snapshot.sources.len(),
             destination
         );
-        spawn_token_metadata_enrichment(
-            snapshot_store_boot,
-            token_metadata_boot,
-            snapshot,
-        );
+        spawn_token_metadata_enrichment(snapshot_store_boot, token_metadata_boot, snapshot);
     });
 
     if let (Some(mut watcher), Some(pool_store)) = (ledger_watcher, pool_state_store.clone()) {
@@ -507,8 +501,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
                     let guard = shared_ledger.read().await;
                     (guard.sources.clone(), guard.clmm_pools.clone())
                 };
-                let index =
-                    crate::ledger_watcher::rebuild_pool_index(&index_sources, &index_clmm);
+                let index = crate::ledger_watcher::rebuild_pool_index(&index_sources, &index_clmm);
                 match watcher.poll_touched_pools(&index).await {
                     Ok(touched) if !touched.is_empty() => {
                         let rpc = SorobanRpc::new(&rpc_url, &network_passphrase);
@@ -566,8 +559,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
 
         match tick {
             WorkerTick::PoolPublish => {
-                publish_pool_state_only(pool_state_store.as_ref(), &adapters, &clmm_pools)
-                    .await?;
+                publish_pool_state_only(pool_state_store.as_ref(), &adapters, &clmm_pools).await?;
             }
             WorkerTick::Refresh => {
                 let shared_refresh = shared.clone();
@@ -599,8 +591,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
                 let destination_disc = snapshot_destination(&config);
                 tokio::spawn(async move {
                     let sources = collect_sources_from_discovery(&adapters_disc).await;
-                    let clmm_pools =
-                        collect_clmm_snapshots(&sushi_disc, &aquarius_clmm_disc).await;
+                    let clmm_pools = collect_clmm_snapshots(&sushi_disc, &aquarius_clmm_disc).await;
                     {
                         let mut guard = shared_disc.write().await;
                         guard.sources = sources.clone();
@@ -802,7 +793,10 @@ mod tests {
             infer_snapshot_backend(None, Some("redis://127.0.0.1/")).unwrap(),
             SnapshotStoreBackend::Redis
         );
-        assert_eq!(infer_snapshot_backend(None, None).unwrap(), SnapshotStoreBackend::File);
+        assert_eq!(
+            infer_snapshot_backend(None, None).unwrap(),
+            SnapshotStoreBackend::File
+        );
     }
 
     #[tokio::test]
@@ -859,7 +853,9 @@ mod tests {
                     fee_bps: 30,
                 }],
             }],
-            vec![market_snapshot::ClmmPoolRefSnapshot::from_pool(&sample_clmm_pool())],
+            vec![market_snapshot::ClmmPoolRefSnapshot::from_pool(
+                &sample_clmm_pool(),
+            )],
             "mainnet",
             seeded,
         )
@@ -868,7 +864,9 @@ mod tests {
 
         assert_eq!(
             snapshot.clmm_pool_refs,
-            vec![market_snapshot::ClmmPoolRefSnapshot::from_pool(&sample_clmm_pool())]
+            vec![market_snapshot::ClmmPoolRefSnapshot::from_pool(
+                &sample_clmm_pool()
+            )]
         );
         assert_eq!(snapshot.token_metadata.len(), 2);
     }

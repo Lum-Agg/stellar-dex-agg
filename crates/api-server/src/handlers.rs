@@ -7,9 +7,9 @@ use axum::{
 use router_engine::types::{RouteRequest, TokenId};
 use router_engine::QuoteEngine;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use stellar_xdr::curr as xdr;
 use stellar_xdr::curr::{Limits, WriteXdr};
-use std::sync::Arc;
 
 use crate::soroban_prepare::prepare_transaction_xdr;
 use crate::state::AppState;
@@ -162,10 +162,7 @@ pub async fn get_quote(
             let token_in = &so.path.tokens[i];
             let token_out = &so.path.tokens[i + 1];
             let pool = &so.path.pool_addresses[i];
-            let (in_idx, out_idx) = match engine
-                .get_pool_indices(pool, token_in, token_out)
-                .await
-            {
+            let (in_idx, out_idx) = match engine.get_pool_indices(pool, token_in, token_out).await {
                 Some(indices) => indices,
                 None => {
                     return (
@@ -1312,6 +1309,10 @@ pub async fn build_tx(
             {
                 "Insufficient balance: your wallet does not hold enough of the input token \
                  for this swap amount. Lower the amount and refresh the quote."
+                    .to_string()
+            } else if e.contains("Error(Auth, InvalidAction)") && e.contains("approve") {
+                "Swap failed: Comet pool token approval was rejected by simulation. \
+                 The on-chain aggregator may need an upgrade; try refreshing the quote or a route without Comet."
                     .to_string()
             } else {
                 format!("Swap simulation failed: {}", e)

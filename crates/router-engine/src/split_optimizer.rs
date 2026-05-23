@@ -959,10 +959,7 @@ mod tests {
             .await;
 
         assert!(
-            route
-                .debug
-                .as_ref()
-                .is_some_and(|d| !d.split_attempted),
+            route.debug.as_ref().is_some_and(|d| !d.split_attempted),
             "zero impact should not trigger competitive split"
         );
     }

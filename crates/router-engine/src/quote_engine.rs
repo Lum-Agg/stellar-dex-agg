@@ -248,15 +248,22 @@ impl QuoteEngine {
 
     /// Discover candidate paths for a route request (graph only).
     pub async fn find_candidate_paths(&self, request: &RouteRequest) -> Vec<Path> {
-        let (max_hops, max_paths) = {
+        let (max_hops, max_multi_hop_paths, max_direct_paths) = {
             let pf = self.path_finder.read().await;
             (
                 request.max_hops.unwrap_or(pf.default_max_hops()),
-                pf.default_max_paths(),
+                pf.default_max_multi_hop_paths(),
+                pf.default_max_direct_paths(),
             )
         };
         let pf = self.path_finder.read().await;
-        pf.find_paths_with_limits(&request.token_in, &request.token_out, max_hops, max_paths)
+        pf.find_paths_with_limits(
+            &request.token_in,
+            &request.token_out,
+            max_hops,
+            max_multi_hop_paths,
+            max_direct_paths,
+        )
     }
 
     /// Get the optimal route for a trade.
@@ -333,29 +340,28 @@ impl QuoteEngine {
                 .into_iter()
                 .partition(|quoted| Self::is_classic_only_path(&quoted.path));
 
-        let best_classic_route =
-            classic_quoted_paths
-                .iter()
-                .max_by_key(|quoted| quoted.quote.amount_out)
-                .map(|quoted| {
-                    let minimum_out = apply_slippage(quoted.quote.amount_out, slippage_bps);
-                    OptimalRoute {
-                        sub_orders: vec![SubOrder {
-                            path: quoted.path.clone(),
-                            amount_in: request.amount_in,
-                            expected_amount_out: quoted.quote.amount_out,
-                            fraction: 1.0,
-                        }],
-                        total_amount_in: request.amount_in,
-                        total_expected_out: quoted.quote.amount_out,
-                        price_impact_bps: quoted.quote.price_impact_bps,
-                        is_split: false,
-                        improvement_bps: 0,
-                        minimum_out,
-                        compute_time_ms: start.elapsed().as_millis() as u64,
-                        debug: None,
-                    }
-                });
+        let best_classic_route = classic_quoted_paths
+            .iter()
+            .max_by_key(|quoted| quoted.quote.amount_out)
+            .map(|quoted| {
+                let minimum_out = apply_slippage(quoted.quote.amount_out, slippage_bps);
+                OptimalRoute {
+                    sub_orders: vec![SubOrder {
+                        path: quoted.path.clone(),
+                        amount_in: request.amount_in,
+                        expected_amount_out: quoted.quote.amount_out,
+                        fraction: 1.0,
+                    }],
+                    total_amount_in: request.amount_in,
+                    total_expected_out: quoted.quote.amount_out,
+                    price_impact_bps: quoted.quote.price_impact_bps,
+                    is_split: false,
+                    improvement_bps: 0,
+                    minimum_out,
+                    compute_time_ms: start.elapsed().as_millis() as u64,
+                    debug: None,
+                }
+            });
 
         let best_soroban_route = if soroban_quoted_paths.is_empty() {
             None
@@ -538,9 +544,10 @@ impl QuoteEngine {
         let pair = Self::find_pool_edge(cached_pools, pool_address, token_in, token_out)?;
         let fee_bps = pair.fee_bps;
 
-        let (reserve_in, reserve_out) = if let Some(hydrated) = hydration
-            .and_then(|h| h.xyk_pools.get(&QuoteHydration::xyk_pool_key(source, pool_address)))
-        {
+        let (reserve_in, reserve_out) = if let Some(hydrated) = hydration.and_then(|h| {
+            h.xyk_pools
+                .get(&QuoteHydration::xyk_pool_key(source, pool_address))
+        }) {
             reserves_for_edge(token_in, token_out, hydrated)?
         } else if token_in.canonical() == pair.token_a.canonical() {
             (pair.reserve_a?, pair.reserve_b?)
@@ -643,13 +650,14 @@ impl QuoteEngine {
         let coverage = clmm_coverage_input(state);
         let token_in_key = token_in.canonical();
         let token_out_key = token_out.canonical();
-        let zero_for_one = if token_in_key == state.pool.token0 && token_out_key == state.pool.token1 {
-            true
-        } else if token_in_key == state.pool.token1 && token_out_key == state.pool.token0 {
-            false
-        } else {
-            return None;
-        };
+        let zero_for_one =
+            if token_in_key == state.pool.token0 && token_out_key == state.pool.token1 {
+                true
+            } else if token_in_key == state.pool.token1 && token_out_key == state.pool.token0 {
+                false
+            } else {
+                return None;
+            };
 
         if !clmm_math::clmm_swap_allowed(
             &state.pool,
@@ -663,10 +671,20 @@ impl QuoteEngine {
 
         let (amount_out, _, _) =
             clmm_math::simulate_swap(&state.pool, &state.ticks, amount_in, zero_for_one)?;
+
+        let price_impact_bps = if state.pool.liquidity > 0 {
+            (amount_in
+                .saturating_mul(10_000)
+                .saturating_div(2 * state.pool.liquidity))
+            .min(10_000) as u32
+        } else {
+            0
+        };
+
         Some(dex_adapters::AdapterQuote {
             amount_out,
             fee_bps: state.pool.fee_bps,
-            price_impact_bps: 0,
+            price_impact_bps,
         })
     }
 
@@ -724,7 +742,9 @@ impl QuoteEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dex_adapters::clmm_math::{bitmap, sqrt_ratio_at_tick, ClmmPoolState, TickDataStore, TickState, TICKS_PER_CHUNK};
+    use dex_adapters::clmm_math::{
+        bitmap, sqrt_ratio_at_tick, ClmmPoolState, TickDataStore, TickState, TICKS_PER_CHUNK,
+    };
 
     fn token(id: &str) -> TokenId {
         TokenId::Contract {
@@ -875,7 +895,10 @@ mod tests {
             .await;
 
         assert_eq!(route.sub_orders.len(), 1);
-        assert_eq!(route.sub_orders[0].path.sources, vec![CLASSIC_SOURCE.to_string()]);
+        assert_eq!(
+            route.sub_orders[0].path.sources,
+            vec![CLASSIC_SOURCE.to_string()]
+        );
         assert!(!route.is_split);
     }
 
@@ -906,12 +929,11 @@ mod tests {
             })
             .await;
 
-        assert!(
-            route
-                .sub_orders
-                .iter()
-                .all(|order| order.path.sources.iter().all(|source| source != CLASSIC_SOURCE))
-        );
+        assert!(route.sub_orders.iter().all(|order| order
+            .path
+            .sources
+            .iter()
+            .all(|source| source != CLASSIC_SOURCE)));
     }
 
     #[tokio::test]
@@ -1083,7 +1105,14 @@ mod tests {
         engine
             .update_pairs_from_cache(
                 "comet",
-                &[pair_with_tokens("comet", "comet-pool", blnd, usdc, 1_000_000, 2_000_000)],
+                &[pair_with_tokens(
+                    "comet",
+                    "comet-pool",
+                    blnd,
+                    usdc,
+                    1_000_000,
+                    2_000_000,
+                )],
             )
             .await;
 

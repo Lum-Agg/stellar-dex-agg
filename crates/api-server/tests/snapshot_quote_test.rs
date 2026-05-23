@@ -3,11 +3,11 @@ use std::sync::Arc;
 use anyhow::Result;
 use api_server::{config::AppConfig, snapshot_loader::build_engine_from_snapshot};
 use async_trait::async_trait;
+use dex_adapters::clmm_math::clmm_pool_from_snapshot;
 use dex_adapters::{
     clmm_math::{bitmap, sqrt_ratio_at_tick},
     AdapterQuote, AdapterTradingPair, DexAdapter, ProtocolType, SwapOperation, TokenId,
 };
-use dex_adapters::clmm_math::clmm_pool_from_snapshot;
 use market_snapshot::{
     ClmmBitmapWordSnapshot, ClmmCoverageSnapshot, ClmmPoolRefSnapshot, ClmmPoolSnapshot,
     ClmmTickSnapshot, MarketSnapshot, SourceSnapshot, TradingPairSnapshot,
@@ -95,10 +95,7 @@ fn sample_clmm_topology_snapshot(source: &str) -> (MarketSnapshot, ClmmPoolSnaps
     (snapshot, pool)
 }
 
-async fn seed_clmm_quote_states(
-    engine: &router_engine::QuoteEngine,
-    pools: &[ClmmPoolSnapshot],
-) {
+async fn seed_clmm_quote_states(engine: &router_engine::QuoteEngine, pools: &[ClmmPoolSnapshot]) {
     for pool in pools {
         let (state, ticks) = clmm_pool_from_snapshot(pool);
         engine
@@ -251,7 +248,9 @@ async fn snapshot_quote_succeeds_for_classic_when_live_adapter_is_attached() {
     let engine = build_engine_from_snapshot(&config, &sample_classic_snapshot())
         .await
         .unwrap();
-    engine.register_adapter(Arc::new(StaticClassicAdapter)).await;
+    engine
+        .register_adapter(Arc::new(StaticClassicAdapter))
+        .await;
 
     let route = engine
         .get_route(&RouteRequest {

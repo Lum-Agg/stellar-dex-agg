@@ -4,15 +4,9 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use dex_adapters::{
-    aquarius::AquariusAdapter,
-    aquarius_clmm::AquariusClmmAdapter,
-    batch_refresh::batch_refresh_soroswap_reserves,
-    comet::CometAdapter,
-    phoenix::PhoenixAdapter,
-    pool_index::PoolRef,
-    rpc::SorobanRpc,
-    soroswap::SoroswapAdapter,
-    sushi::SushiAdapter,
+    aquarius::AquariusAdapter, aquarius_clmm::AquariusClmmAdapter,
+    batch_refresh::batch_refresh_soroswap_reserves, comet::CometAdapter, phoenix::PhoenixAdapter,
+    pool_index::PoolRef, rpc::SorobanRpc, soroswap::SoroswapAdapter, sushi::SushiAdapter,
     DexAdapter,
 };
 use market_snapshot::{
@@ -81,23 +75,34 @@ pub async fn refresh_touched_pools(
         } else if source == PHOENIX_SOURCE {
             let n = ctx.phoenix.refresh_touched_pools(addresses).await?;
             if n > 0 {
-                merge_xyk_topology_from_adapter(ctx.sources, PHOENIX_SOURCE, ctx.phoenix as &dyn DexAdapter)
-                    .await;
-                updated += n;
-                xyk_writeback.extend(collect_xyk_from_adapter(
+                merge_xyk_topology_from_adapter(
                     ctx.sources,
                     PHOENIX_SOURCE,
-                    addresses,
                     ctx.phoenix as &dyn DexAdapter,
                 )
-                .await);
+                .await;
+                updated += n;
+                xyk_writeback.extend(
+                    collect_xyk_from_adapter(
+                        ctx.sources,
+                        PHOENIX_SOURCE,
+                        addresses,
+                        ctx.phoenix as &dyn DexAdapter,
+                    )
+                    .await,
+                );
             }
         } else if source == COMET_SOURCE {
             let n = refresh_comet_touched(ctx.comet, ctx.sources, addresses).await?;
             updated += n;
             xyk_writeback.extend(
-                collect_xyk_from_adapter(ctx.sources, COMET_SOURCE, addresses, ctx.comet as &dyn DexAdapter)
-                    .await,
+                collect_xyk_from_adapter(
+                    ctx.sources,
+                    COMET_SOURCE,
+                    addresses,
+                    ctx.comet as &dyn DexAdapter,
+                )
+                .await,
             );
         } else if CLMM_SOURCES.contains(&source.as_str()) {
             let (n, snaps) = refresh_clmm_pools(
@@ -111,7 +116,11 @@ pub async fn refresh_touched_pools(
             updated += n;
             clmm_writeback.extend(snaps);
         } else {
-            debug!(source, pools = addresses.len(), "Ledger touch: no partial refresh handler");
+            debug!(
+                source,
+                pools = addresses.len(),
+                "Ledger touch: no partial refresh handler"
+            );
         }
     }
 

@@ -22,9 +22,7 @@ use tracing::{debug, info, warn};
 pub const COMET_FACTORY_MAINNET: &str = "CA2LVIPU6HJHHPPD6EDDYJTV2QEUBPGOAVJ4VIYNTMFUCRM4LFK3TJKF";
 
 /// Seed pool(s) used when factory indexing is unavailable.
-pub const COMET_SEED_POOLS: &[&str] = &[
-    "CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM",
-];
+pub const COMET_SEED_POOLS: &[&str] = &["CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM"];
 
 /// Legacy hardcoded pair (BLND/USDC); kept for tests referencing the primary pool.
 pub const COMET_POOLS: &[(&str, &str, &str)] = &[(
@@ -103,9 +101,9 @@ impl CometAdapter {
         let hash = stellar_strkey::Contract::from_string(addr)
             .map_err(|e| anyhow!("Invalid contract address {}: {:?}", addr, e))?
             .0;
-        Ok(xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(
-            xdr::Hash(hash),
-        ))))
+        Ok(xdr::ScVal::Address(xdr::ScAddress::Contract(
+            xdr::ContractId(xdr::Hash(hash)),
+        )))
     }
 
     /// Discover pool contract IDs: factory registry + seeds + `COMET_EXTRA_POOLS`.
@@ -290,7 +288,11 @@ impl CometAdapter {
     ) -> Result<i128> {
         let normalized = self
             .rpc
-            .simulate_call(pool_address, "get_normalized_weight", vec![token_scval.clone()])
+            .simulate_call(
+                pool_address,
+                "get_normalized_weight",
+                vec![token_scval.clone()],
+            )
             .await;
         if let Ok(val) = normalized {
             if let Ok(w) = extract_i128(&val) {
@@ -607,11 +609,7 @@ mod tests {
     #[test]
     fn three_token_pool_has_three_edges() {
         let mut records = HashMap::new();
-        for (addr, bal) in [
-            ("A", 100),
-            ("B", 200),
-            ("C", 300),
-        ] {
+        for (addr, bal) in [("A", 100), ("B", 200), ("C", 300)] {
             records.insert(
                 addr.to_string(),
                 CometRecord {

@@ -554,7 +554,10 @@ impl AquariusClmmAdapter {
         }
         let mut pool = self.read_pool_instance(pool_address).await?;
         if let Err(e) = self.read_tick_data(&mut pool, false).await {
-            warn!("Aquarius CLMM tick load incomplete for {}: {}", pool_address, e);
+            warn!(
+                "Aquarius CLMM tick load incomplete for {}: {}",
+                pool_address, e
+            );
         }
         let pair = AdapterTradingPair {
             token_a: TokenId::Contract {
@@ -730,10 +733,8 @@ impl DexAdapter for AquariusClmmAdapter {
 
         let token_in_addr = token_in.canonical();
         let token_out_addr = token_out.canonical();
-        let zero_for_one =
-            token_in_addr == pool.token0 && token_out_addr == pool.token1;
-        let one_for_zero =
-            token_in_addr == pool.token1 && token_out_addr == pool.token0;
+        let zero_for_one = token_in_addr == pool.token0 && token_out_addr == pool.token1;
+        let one_for_zero = token_in_addr == pool.token1 && token_out_addr == pool.token0;
         if !zero_for_one && !one_for_zero {
             return Ok(None);
         }

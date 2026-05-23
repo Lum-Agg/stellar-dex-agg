@@ -109,8 +109,13 @@ impl RedisPoolStateStore {
             .iter()
             .filter(|pool| should_publish_clmm_to_redis(pool))
             .collect();
-        self.set_clmm_batch(&complete_clmm.iter().map(|p| (*p).clone()).collect::<Vec<_>>())
-            .await?;
+        self.set_clmm_batch(
+            &complete_clmm
+                .iter()
+                .map(|p| (*p).clone())
+                .collect::<Vec<_>>(),
+        )
+        .await?;
         tracing::debug!(
             xyk_written = xyk_values.len(),
             clmm_written = complete_clmm.len(),

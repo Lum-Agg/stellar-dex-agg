@@ -3,17 +3,17 @@
 use std::collections::{HashMap, HashSet};
 
 use dex_adapters::{
-    batch_refresh::batch_refresh_soroswap_reserves,
-    clmm_math::clmm_pool_from_snapshot,
-    comet::CometAdapter,
-    rpc::SorobanRpc,
+    batch_refresh::batch_refresh_soroswap_reserves, clmm_math::clmm_pool_from_snapshot,
+    comet::CometAdapter, rpc::SorobanRpc,
 };
-use std::sync::Arc;
 use market_snapshot::{
-    pool_state_store::{parse_quote_hydrate_max_pools_from_env, RedisPoolStateStore, XykPoolStateValue},
+    pool_state_store::{
+        parse_quote_hydrate_max_pools_from_env, RedisPoolStateStore, XykPoolStateValue,
+    },
     ClmmPoolSnapshot,
 };
 use router_engine::{Path, QuoteEngine, QuoteHydration, SnapshotClmmQuoteState};
+use std::sync::Arc;
 use tracing::debug;
 
 const CLMM_SOURCES: &[&str] = &["sushi", "aquarius_clmm"];
@@ -31,7 +31,9 @@ impl Default for PoolHydrateConfig {
     }
 }
 
-fn collect_pool_refs(paths: &[Path]) -> (Vec<(String, String)>, Vec<(String, String)>, Vec<String>) {
+fn collect_pool_refs(
+    paths: &[Path],
+) -> (Vec<(String, String)>, Vec<(String, String)>, Vec<String>) {
     let mut xyk = HashSet::new();
     let mut clmm = HashSet::new();
     let mut comet = HashSet::new();
@@ -122,9 +124,10 @@ pub async fn hydrate_paths(
                     let Some((r0, r1)) = *reserves else {
                         continue;
                     };
-                    let Some(edge) = cached.iter().find(|p| {
-                        p.source == *source && p.pool_address == *pool_address
-                    }) else {
+                    let Some(edge) = cached
+                        .iter()
+                        .find(|p| p.source == *source && p.pool_address == *pool_address)
+                    else {
                         continue;
                     };
                     let value = xyk_value_from_batch(edge, r0, r1, source, pool_address);

@@ -16,21 +16,20 @@ use dex_adapters::{
 use market_snapshot::{
     pool_state_store::{build_pool_state_store, RedisPoolStateStore},
     store::{
-        build_snapshot_store, should_reload_snapshot_version,
-        subscribe_to_snapshot_events, SnapshotListenerEvent, SnapshotStore, SnapshotStoreBackend,
+        build_snapshot_store, should_reload_snapshot_version, subscribe_to_snapshot_events,
+        SnapshotListenerEvent, SnapshotStore, SnapshotStoreBackend,
     },
     MarketSnapshot,
 };
-use router_engine::{
-    path_finder::PathFinderConfig, split_optimizer::SplitConfig, OptimalRoute, QuoteEngine,
-    RouteRequest,
-};
+use router_engine::{split_optimizer::SplitConfig, OptimalRoute, QuoteEngine, RouteRequest};
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::{mpsc, RwLock};
 use tracing::{info, warn};
 
 use crate::{
-    config::AppConfig, pool_hydrate::{self, PoolHydrateConfig}, snapshot_loader::build_engine_from_snapshot,
+    config::AppConfig,
+    pool_hydrate::{self, PoolHydrateConfig},
+    snapshot_loader::{build_engine_from_snapshot, path_finder_config_from_app},
 };
 
 /// Shared application state.
@@ -65,7 +64,9 @@ pub(crate) fn sanitize_cached_pairs(
         .collect()
 }
 
-fn snapshot_token_metadata(snapshot: &MarketSnapshot) -> std::collections::HashMap<String, TokenMetadata> {
+fn snapshot_token_metadata(
+    snapshot: &MarketSnapshot,
+) -> std::collections::HashMap<String, TokenMetadata> {
     snapshot
         .token_metadata
         .iter()
@@ -171,7 +172,10 @@ fn build_empty_quote_engine(config: &AppConfig) -> Arc<QuoteEngine> {
         max_splits: config.max_splits,
         ..SplitConfig::default()
     };
-    Arc::new(QuoteEngine::new(PathFinderConfig::default(), split_config))
+    Arc::new(QuoteEngine::new(
+        path_finder_config_from_app(config),
+        split_config,
+    ))
 }
 
 async fn attach_snapshot_live_adapter(
@@ -328,10 +332,7 @@ impl AppState {
         let soroban_path_count = paths
             .iter()
             .filter(|p| {
-                !p.sources.is_empty()
-                    && p.sources
-                        .iter()
-                        .all(|s| s.as_str() != "classic_dex")
+                !p.sources.is_empty() && p.sources.iter().all(|s| s.as_str() != "classic_dex")
             })
             .count();
         let hydrate_ms = hydrate_started.elapsed().as_millis();
@@ -370,10 +371,9 @@ impl AppState {
 
         tokio::spawn(async move {
             let mut current_version = initial_version;
-            let mut interval =
-                tokio::time::interval(std::time::Duration::from_millis(normalize_snapshot_poll_interval_ms(
-                    config.snapshot_poll_interval_ms,
-                )));
+            let mut interval = tokio::time::interval(std::time::Duration::from_millis(
+                normalize_snapshot_poll_interval_ms(config.snapshot_poll_interval_ms),
+            ));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             let mut snapshot_events = snapshot_events;
             let mut reload_mode = if snapshot_events.is_some() {
@@ -408,7 +408,9 @@ impl AppState {
                     SnapshotReloadTrigger::ListenerClosed => {
                         snapshot_events = None;
                         reload_mode = SnapshotReloadMode::PollingOnly;
-                        warn!("Snapshot pub/sub listener stopped, continuing with polling fallback");
+                        warn!(
+                            "Snapshot pub/sub listener stopped, continuing with polling fallback"
+                        );
                         continue;
                     }
                     SnapshotReloadTrigger::ListenerEvent(event) => {
@@ -417,7 +419,10 @@ impl AppState {
                             SnapshotListenerEvent::ListenerHealthy => continue,
                             SnapshotListenerEvent::ListenerDegraded => continue,
                             SnapshotListenerEvent::SnapshotVersion(version) => {
-                                if !should_reload_snapshot_version(current_version.as_deref(), &version) {
+                                if !should_reload_snapshot_version(
+                                    current_version.as_deref(),
+                                    &version,
+                                ) {
                                     continue;
                                 }
                             }
@@ -452,7 +457,10 @@ impl AppState {
                         info!("Reloaded market snapshot version {}", snapshot.version);
                     }
                     Err(e) => {
-                        warn!("Failed to build engine from snapshot {}: {}", snapshot.version, e);
+                        warn!(
+                            "Failed to build engine from snapshot {}: {}",
+                            snapshot.version, e
+                        );
                     }
                 }
             }
@@ -595,9 +603,9 @@ mod tests {
     use anyhow::anyhow;
     use async_trait::async_trait;
     use dex_adapters::{AdapterQuote, AdapterTradingPair, ProtocolType, SwapOperation};
-    use router_engine::TokenId;
     use market_snapshot::store::SnapshotListenerEvent;
     use market_snapshot::MarketSnapshot;
+    use router_engine::TokenId;
 
     struct FailingSnapshotStore;
 
@@ -678,7 +686,9 @@ mod tests {
     #[test]
     fn healthy_pubsub_mode_does_not_poll() {
         assert!(!reload_mode_uses_polling(SnapshotReloadMode::PubSubHealthy));
-        assert!(reload_mode_uses_polling(SnapshotReloadMode::PollingFallback));
+        assert!(reload_mode_uses_polling(
+            SnapshotReloadMode::PollingFallback
+        ));
         assert!(reload_mode_uses_polling(SnapshotReloadMode::PollingOnly));
     }
 

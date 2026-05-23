@@ -11,10 +11,12 @@ use tracing::info;
 /// Configuration for path finding.
 #[derive(Debug, Clone)]
 pub struct PathFinderConfig {
-    /// Maximum hops per path (default: 4)
+    /// Maximum hops per path (default: 3)
     pub max_hops: usize,
-    /// Maximum paths to return per query (default: 20)
-    pub max_paths: usize,
+    /// Maximum indirect paths (2+ hops). Direct pools between token_in/out are enumerated separately.
+    pub max_multi_hop_paths: usize,
+    /// Cap on direct (1-hop) pools between the pair (`0` = include all direct pools in the graph).
+    pub max_direct_paths: usize,
     /// Bridge tokens used to improve multi-hop discovery
     /// (high-liquidity tokens like XLM, USDC that connect many pairs)
     pub bridge_tokens: Vec<TokenId>,
@@ -24,7 +26,8 @@ impl Default for PathFinderConfig {
     fn default() -> Self {
         Self {
             max_hops: 3,
-            max_paths: 10,
+            max_multi_hop_paths: 50,
+            max_direct_paths: 0,
             bridge_tokens: vec![
                 TokenId::Native, // XLM
                 TokenId::Classic {
@@ -52,6 +55,9 @@ struct CachedPaths {
 /// Cache TTL: paths are valid for 30 seconds
 const CACHE_TTL_MS: u64 = 30_000;
 
+/// Excluded from quote path discovery (aggregator Comet execution not deployed yet).
+const QUOTE_EXCLUDED_SOURCES: &[&str] = &["comet"];
+
 impl PathFinder {
     pub fn new(config: PathFinderConfig) -> Self {
         Self {
@@ -66,6 +72,16 @@ impl PathFinder {
     pub fn update_from_source(&mut self, source: &str, pairs: &[TradingPair]) {
         // Remove old edges from this source
         self.graph.remove_source(source);
+
+        if QUOTE_EXCLUDED_SOURCES.contains(&source) {
+            self.cache.lock().unwrap().clear();
+            info!(
+                source = source,
+                pairs = pairs.len(),
+                "Skipping quote graph edges for excluded DEX source"
+            );
+            return;
+        }
 
         // Add new edges
         for pair in pairs {
@@ -96,7 +112,8 @@ impl PathFinder {
             token_in,
             token_out,
             self.config.max_hops,
-            self.config.max_paths,
+            self.config.max_multi_hop_paths,
+            self.config.max_direct_paths,
         )
     }
 
@@ -104,8 +121,12 @@ impl PathFinder {
         self.config.max_hops
     }
 
-    pub fn default_max_paths(&self) -> usize {
-        self.config.max_paths
+    pub fn default_max_multi_hop_paths(&self) -> usize {
+        self.config.max_multi_hop_paths
+    }
+
+    pub fn default_max_direct_paths(&self) -> usize {
+        self.config.max_direct_paths
     }
 
     pub fn find_paths_with_limits(
@@ -113,12 +134,15 @@ impl PathFinder {
         token_in: &TokenId,
         token_out: &TokenId,
         max_hops: usize,
-        max_paths: usize,
+        max_multi_hop_paths: usize,
+        max_direct_paths: usize,
     ) -> Vec<Path> {
         let cache_key = (token_in.canonical(), token_out.canonical());
         let now = chrono::Utc::now().timestamp_millis() as u64;
 
-        let use_cache = max_hops == self.config.max_hops && max_paths == self.config.max_paths;
+        let use_cache = max_hops == self.config.max_hops
+            && max_multi_hop_paths == self.config.max_multi_hop_paths
+            && max_direct_paths == self.config.max_direct_paths;
         if use_cache {
             if let Ok(cache) = self.cache.lock() {
                 if let Some(cached) = cache.get(&cache_key) {
@@ -129,9 +153,13 @@ impl PathFinder {
             }
         }
 
-        let paths = self
-            .graph
-            .find_paths(token_in, token_out, max_hops, max_paths);
+        let paths = self.graph.find_paths(
+            token_in,
+            token_out,
+            max_hops,
+            max_multi_hop_paths,
+            max_direct_paths,
+        );
 
         if use_cache {
             if let Ok(mut cache) = self.cache.lock() {
