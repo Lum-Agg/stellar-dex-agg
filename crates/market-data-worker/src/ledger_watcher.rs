@@ -113,14 +113,18 @@ impl LedgerWatcher {
         }
 
         let mut start = cursor + 1;
-        let end = latest + 1; // exclusive
+        let mut end = latest + 1; // exclusive
         let span = end - start;
         if span > self.max_catchup_ledgers {
-            start = end.saturating_sub(self.max_catchup_ledgers);
+            // After restart we may be hundreds of ledgers behind; scanning the full backlog
+            // blocks the worker for minutes. Only ingest the latest ledger window.
             warn!(
-                skipped = span - self.max_catchup_ledgers,
-                "Ledger catch-up truncated to max_catchup"
+                skipped = span - 1,
+                latest,
+                "Ledger backlog skipped after restart — ingesting latest ledger only"
             );
+            start = latest;
+            end = latest + 1;
         }
         if span > MAX_LEDGER_SCAN_PER_REQUEST {
             start = end.saturating_sub(MAX_LEDGER_SCAN_PER_REQUEST);

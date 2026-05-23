@@ -46,8 +46,7 @@ ssh -o StrictHostKeyChecking=no $SERVER "\
   for port in ${API_PORTS[*]}; do systemctl enable --now lumagg-api@\$port; done \
 "
 
-echo "=== Waiting for worker snapshot + pool publish (first cycle) ==="
-sleep 15
+echo "=== Waiting for worker pool publish (verify script polls Redis) ==="
 
 echo "=== Worker logs (last 15 lines) ==="
 ssh -o StrictHostKeyChecking=no $SERVER "journalctl -u lumagg-worker -n 15 --no-pager" || true

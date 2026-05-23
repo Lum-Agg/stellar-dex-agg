@@ -651,6 +651,10 @@ impl DexAdapter for AquariusAdapter {
 
         Ok(updated)
     }
+
+    async fn get_cached_pairs(&self) -> Vec<AdapterTradingPair> {
+        self.pairs.read().await.clone()
+    }
 }
 
 /// Check if both tokens are stablecoins (by contract address)

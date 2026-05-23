@@ -12,6 +12,7 @@ market-snapshot = { path = "../market-snapshot" }
 dex-adapters = { path = "../dex-adapters" }
 
 tokio.workspace = true
+futures.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

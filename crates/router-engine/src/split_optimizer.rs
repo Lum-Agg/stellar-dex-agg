@@ -41,7 +41,7 @@ impl Default for SplitConfig {
             min_split_fraction_bps: 5,       // 0.05% minimum share of total output
             max_splits: 5,
             tolerance: 0.0001, // 0.01% precision
-            max_iterations: 50,
+            max_iterations: 25,
         }
     }
 }
@@ -145,7 +145,10 @@ impl SplitOptimizer {
             };
         }
 
-        if best_single_impact < self.config.split_threshold_bps && !competitive_enough {
+        // Competitive second path only triggers split when there is measurable impact.
+        // Otherwise XLM/USDC-style pairs (impact ≈ 0, many similar paths) run Brent for ~10s+ with no gain.
+        let competitive_split = competitive_enough && best_single_impact > 0;
+        if best_single_impact < self.config.split_threshold_bps && !competitive_split {
             let minimum_out = apply_slippage(best_single_out, slippage_bps);
             return OptimalRoute {
                 sub_orders: vec![SubOrder {
@@ -925,6 +928,42 @@ mod tests {
         assert!(
             route.debug.as_ref().is_some_and(|d| d.split_attempted),
             "expected competitive path trigger to attempt split"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_split_skipped_when_competitive_but_zero_impact() {
+        let config = SplitConfig {
+            split_threshold_bps: 100,
+            split_competitive_delta_bps: 50,
+            ..SplitConfig::default()
+        };
+        let optimizer = SplitOptimizer::new(config);
+        let path_a = test_path("a");
+        let path_b = test_path("b");
+        let quoted_paths = vec![
+            QuotedPath {
+                path: path_a.clone(),
+                quote: test_quote(&path_a, 1_000, 800, 0),
+            },
+            QuotedPath {
+                path: path_b.clone(),
+                quote: test_quote(&path_b, 1_000, 798, 0),
+            },
+        ];
+
+        let route = optimizer
+            .optimize(&quoted_paths, 1_000, 50, None, |_path, _amount| async {
+                panic!("split optimizer should not re-quote when impact is zero");
+            })
+            .await;
+
+        assert!(
+            route
+                .debug
+                .as_ref()
+                .is_some_and(|d| !d.split_attempted),
+            "zero impact should not trigger competitive split"
         );
     }
 

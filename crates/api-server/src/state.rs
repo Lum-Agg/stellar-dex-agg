@@ -307,8 +307,11 @@ impl AppState {
 
     /// Find paths, hydrate pool state from Redis (and batched RPC fallback), then quote.
     pub async fn quote_route(&self, request: &RouteRequest) -> OptimalRoute {
+        let started = std::time::Instant::now();
         let engine = self.current_engine().await;
         let paths = engine.find_candidate_paths(request).await;
+        let paths_ms = started.elapsed().as_millis();
+        let hydrate_started = std::time::Instant::now();
         let hydration = if let Some(store) = &self.pool_state_store {
             pool_hydrate::hydrate_paths(
                 &engine,
@@ -319,11 +322,40 @@ impl AppState {
             )
             .await
         } else {
+            tracing::warn!("pool_state_store missing — Soroban quotes will not hydrate from Redis");
             router_engine::QuoteHydration::default()
         };
-        engine
+        let soroban_path_count = paths
+            .iter()
+            .filter(|p| {
+                !p.sources.is_empty()
+                    && p.sources
+                        .iter()
+                        .all(|s| s.as_str() != "classic_dex")
+            })
+            .count();
+        let hydrate_ms = hydrate_started.elapsed().as_millis();
+        tracing::info!(
+            paths = paths.len(),
+            soroban_paths = soroban_path_count,
+            xyk_hydrated = hydration.xyk_pools.len(),
+            clmm_hydrated = hydration.clmm_pools.len(),
+            paths_ms,
+            hydrate_ms,
+            "quote_route hydration"
+        );
+        let quote_started = std::time::Instant::now();
+        let route = engine
             .get_route_with_paths(request, &paths, Some(&hydration))
-            .await
+            .await;
+        tracing::info!(
+            quote_ms = quote_started.elapsed().as_millis(),
+            total_ms = started.elapsed().as_millis(),
+            engine_compute_ms = route.compute_time_ms,
+            is_split = route.is_split,
+            "quote_route complete"
+        );
+        route
     }
 
     fn spawn_snapshot_reloader(

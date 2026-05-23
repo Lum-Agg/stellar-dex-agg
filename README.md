@@ -269,7 +269,7 @@ cargo run -p api-server --bin api-server
 | `SNAPSHOT_POLL_INTERVAL_MS` | `1000` | API | Polling fallback if Pub/Sub missed |
 | `DISCOVERY_INTERVAL_SECS` | `600` | worker | Full graph rediscovery |
 | `REFRESH_INTERVAL_SECS` | `5` | worker | Reserve / CLMM refresh |
-| `POOL_STATE_TTL_SECS` | `8` | worker, API | Redis EX on pool keys |
+| `POOL_STATE_TTL_SECS` | `30` | worker, API | Redis EX on pool keys (should exceed refresh cycle) |
 | `QUOTE_HYDRATE_MAX_POOLS` | `32` | API | Max xy=k RPC hydrates per quote |
 | `LEDGER_WATCHER_ENABLED` | `true` | worker | Requires Redis pool store |
 | `LEDGER_POLL_SECS` | `0.5` | worker | Ledger poll interval (fractional seconds, min `0.1`) |
