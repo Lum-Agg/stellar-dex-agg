@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from 'react';
 import { DisclaimerBanner } from '@/components/DisclaimerBanner';
 import { BuildTxCodeSample } from '@/components/BuildTxCodeSample';
+import { GITHUB_REPO_URL } from '@/lib/site';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
 
@@ -16,8 +17,19 @@ export default function DocsPage() {
   return (
     <div className="max-w-4xl mx-auto">
       <h1 className="text-3xl font-bold mb-2">API Documentation</h1>
-      <p className="text-gray-400 mb-8">
+      <p className="text-gray-400 mb-4">
         LumAgg aggregates liquidity across Soroswap, Aquarius, Phoenix, Sushi V3, Comet and Stellar Classic DEX.
+      </p>
+      <p className="text-sm text-gray-500 mb-8">
+        Source code and architecture docs:{' '}
+        <a
+          href={GITHUB_REPO_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-blue-400 hover:text-blue-300 underline underline-offset-2"
+        >
+          github.com/ligulfzhou/stellar-dex-agg
+        </a>
       </p>
 
       <DisclaimerBanner className="mb-6" />

@@ -1,6 +1,10 @@
 # Stellar DEX Aggregator (LumAgg)
 
+[![GitHub](https://img.shields.io/badge/GitHub-ligulfzhou%2Fstellar--dex--agg-181717?logo=github)](https://github.com/ligulfzhou/stellar-dex-agg)
+
 Multi-source liquidity aggregation router for Stellar's Soroban DEX ecosystem.
+
+**Repository:** https://github.com/ligulfzhou/stellar-dex-agg
 
 Aggregates liquidity across **Soroswap**, **Aquarius**, **Phoenix**, **Sushi V3**, **Comet**, and compares against **Classic DEX** (Horizon PathPayment) to find optimal swap execution — including multi-hop paths and split orders across venues.
 
