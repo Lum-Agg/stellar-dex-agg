@@ -1,11 +1,12 @@
 'use client';
 
 import { useState, type ReactNode } from 'react';
-import { DisclaimerBanner } from '@/components/DisclaimerBanner';
 import { BuildTxCodeSample } from '@/components/BuildTxCodeSample';
 import { GITHUB_REPO_URL } from '@/lib/site';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
+const AGGREGATOR =
+  'CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K';
 
 const TOKENS: Record<string, string> = {
   XLM: 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA',
@@ -13,159 +14,192 @@ const TOKENS: Record<string, string> = {
   EURC: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
 };
 
+type Param = { name: string; type: string; required: boolean; desc: string };
+
 export default function DocsPage() {
   return (
-    <div className="max-w-4xl mx-auto">
-      <h1 className="text-3xl font-bold mb-2">API Documentation</h1>
-      <p className="text-gray-400 mb-4">
-        LumAgg aggregates liquidity across Soroswap, Aquarius, Phoenix, Sushi V3, Comet and Stellar Classic DEX.
-      </p>
-      <p className="text-sm text-gray-500 mb-8">
-        Source code and architecture docs:{' '}
-        <a
-          href={GITHUB_REPO_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-blue-400 hover:text-blue-300 underline underline-offset-2"
-        >
-          github.com/ligulfzhou/stellar-dex-agg
-        </a>
-      </p>
-
-      <DisclaimerBanner className="mb-6" />
-
-      <div className="mb-6 p-4 rounded-lg bg-white/5 border border-white/10">
-        <p className="text-sm text-gray-300">
-          <span className="font-mono text-blue-400">Base URL:</span>{' '}
-          <code className="bg-black/30 px-2 py-0.5 rounded">{API_URL}</code>
+    <article className="docs-page">
+      <header className="docs-intro">
+        <h1 className="docs-title">API Documentation</h1>
+        <p className="docs-lead">
+          Liquidity aggregator across Soroswap, Aquarius, Phoenix, Sushi V3, Comet and Classic
+          DEX.
         </p>
-        <p className="text-sm text-gray-300 mt-1">
-          <span className="font-mono text-blue-400">Contract:</span>{' '}
-          <code className="bg-black/30 px-2 py-0.5 rounded text-xs">CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K</code>
+        <p className="docs-meta">
+          <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer">
+            github.com/ligulfzhou/stellar-dex-agg
+          </a>
         </p>
-      </div>
+        <dl className="docs-ref">
+          <div className="docs-ref-row">
+            <dt>Base URL</dt>
+            <dd>
+              <code>{API_URL}</code>
+            </dd>
+          </div>
+          <div className="docs-ref-row">
+            <dt>Contract</dt>
+            <dd>
+              <code>{AGGREGATOR}</code>
+            </dd>
+          </div>
+        </dl>
+      </header>
 
-      {/* Endpoints */}
-      <div className="space-y-8">
-         <EndpointSection
+      <div className="docs-list">
+        <Endpoint
           method="GET"
           path="/api/v1/health"
-          description="Check API health and adapter status."
-          params={[]}
-          tryIt={<HealthTryIt />}
+          description="Health check."
+          tryIt={<PingTryIt path="/api/v1/health" />}
         />
 
-         <EndpointSection
+        <Endpoint
           method="GET"
           path="/api/v1/tokens"
-          description="List supported tokens with their contract addresses."
-          params={[]}
-          tryIt={<TokensTryIt />}
+          description="Supported tokens."
+          tryIt={<PingTryIt path="/api/v1/tokens" />}
         />
 
-        <EndpointSection
+        <Endpoint
           method="GET"
           path="/api/v1/quote"
-          description="Get the best swap route and expected output amount."
+          description="Best route and expected output."
           params={[
-            { name: 'token_in', type: 'string', required: true, desc: 'Input token contract address' },
-            { name: 'token_out', type: 'string', required: true, desc: 'Output token contract address' },
-            { name: 'amount_in', type: 'string', required: true, desc: 'Input amount in stroops (7 decimals)' },
-            { name: 'slippage', type: 'number', required: false, desc: 'Slippage tolerance (e.g. 0.5 = 0.5%)' },
+            { name: 'token_in', type: 'string', required: true, desc: 'Input token (contract id)' },
+            { name: 'token_out', type: 'string', required: true, desc: 'Output token (contract id)' },
+            { name: 'amount_in', type: 'string', required: true, desc: 'Stroops, 7 decimals' },
+            { name: 'slippage', type: 'number', required: false, desc: 'Percent, e.g. 0.5' },
           ]}
           tryIt={<QuoteTryIt />}
         />
-       
-        <EndpointSection
+
+        <Endpoint
           method="POST"
           path="/api/v1/build_tx"
-          description="Optional helper: LumAgg can simulate and return unsigned XDR for you. If you assemble txs yourself, only GET /quote is required — see the sample below (uses @stellar/stellar-sdk + Soroban RPC simulate, not this endpoint)."
+          description="Optional: unsigned XDR from a quote. You can also assemble txs locally (see sample)."
           params={[
-            { name: 'user_public_key', type: 'string', required: true, desc: 'User Stellar public key (G...)' },
-            { name: 'token_in', type: 'string', required: true, desc: 'Input token contract address' },
-            { name: 'token_out', type: 'string', required: true, desc: 'Final output token contract address' },
-            { name: 'amount_in', type: 'string', required: true, desc: 'Total input in stroops (sum of sub-route amounts)' },
-            { name: 'min_amount_out', type: 'string', required: true, desc: 'Minimum acceptable output' },
-            { name: 'sub_routes', type: 'array', required: true, desc: 'Legs: [{amount_in, steps: [{dex_type, pool_address, token_in, token_out, in_idx, out_idx}]}]' },
+            { name: 'user_public_key', type: 'string', required: true, desc: 'G... address' },
+            { name: 'token_in', type: 'string', required: true, desc: 'Input token' },
+            { name: 'token_out', type: 'string', required: true, desc: 'Output token' },
+            { name: 'amount_in', type: 'string', required: true, desc: 'Total stroops in' },
+            { name: 'min_amount_out', type: 'string', required: true, desc: 'Min stroops out' },
+            { name: 'sub_routes', type: 'array', required: true, desc: 'From GET /quote response' },
           ]}
-          beforeTryIt={
+          extra={
             <BuildTxCodeSample
               apiUrl={API_URL}
-              rpcUrl={process.env.NEXT_PUBLIC_SOROBAN_RPC_URL || 'https://soroban-rpc.mainnet.stellar.gateway.fm'}
+              rpcUrl={
+                process.env.NEXT_PUBLIC_SOROBAN_RPC_URL ||
+                'https://soroban-rpc.mainnet.stellar.gateway.fm'
+              }
             />
           }
           tryIt={<BuildTxTryIt />}
         />
       </div>
 
-      {/* Supported DEXes */}
-      <div className="mt-12 p-6 rounded-lg bg-white/5 border border-white/10">
-        <h2 className="text-xl font-bold mb-4">Supported DEXes</h2>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
+      <footer className="docs-card docs-dexes">
+        <h2 className="docs-section-label">Supported DEXes</h2>
+        <ul className="docs-dex-list">
           {[
-            { name: 'Soroswap', pools: '192', type: 'AMM (xy=k)' },
-            { name: 'Aquarius', pools: '282', type: 'AMM + Stable + CLMM' },
-            { name: 'Phoenix', pools: '11', type: 'AMM' },
-            { name: 'Sushi V3', pools: '20', type: 'CLMM (tick-based)' },
-            { name: 'Comet', pools: '1', type: 'Weighted (Balancer)' },
-            { name: 'Classic DEX', pools: '∞', type: 'Orderbook + LP' },
-          ].map((dex) => (
-            <div key={dex.name} className="p-3 rounded bg-white/5">
-              <div className="font-medium text-white">{dex.name}</div>
-              <div className="text-gray-500 text-xs">{dex.type}</div>
-              <div className="text-gray-400 text-xs mt-1">{dex.pools} pools</div>
-            </div>
+            ['Soroswap', 'AMM'],
+            ['Aquarius', 'AMM · Stable · CLMM'],
+            ['Phoenix', 'AMM'],
+            ['Sushi V3', 'CLMM'],
+            ['Comet', 'Weighted'],
+            ['Classic', 'SDEX'],
+          ].map(([name, type]) => (
+            <li key={name}>
+              <strong>{name}</strong>
+              <span>{type}</span>
+            </li>
           ))}
-        </div>
-      </div>
-    </div>
+        </ul>
+      </footer>
+    </article>
   );
 }
 
-function EndpointSection({
+function Endpoint({
   method,
   path,
   description,
-  params,
-  beforeTryIt,
+  params = [],
+  extra,
   tryIt,
 }: {
   method: string;
   path: string;
   description: string;
-  params: { name: string; type: string; required: boolean; desc: string }[];
-  beforeTryIt?: ReactNode;
+  params?: Param[];
+  extra?: ReactNode;
   tryIt?: ReactNode;
 }) {
+  const isGet = method === 'GET';
+
   return (
-    <div className="p-6 rounded-lg bg-white/5 border border-white/10">
-      <div className="flex items-center gap-3 mb-2">
-        <span className={`px-2 py-0.5 rounded text-xs font-bold ${method === 'GET' ? 'bg-green-500/20 text-green-400' : 'bg-blue-500/20 text-blue-400'}`}>
+    <section className="docs-card">
+      <div className="docs-endpoint-head">
+        <span className={isGet ? 'docs-method docs-method--get' : 'docs-method docs-method--post'}>
           {method}
         </span>
-        <code className="text-white font-mono">{path}</code>
+        <code className="docs-path">{path}</code>
       </div>
-      <p className="text-gray-400 text-sm mb-4">{description}</p>
+      <p className="docs-desc">{description}</p>
 
       {params.length > 0 && (
-        <div className="mb-4">
-          <h4 className="text-xs font-bold text-gray-500 uppercase mb-2">Parameters</h4>
-          <div className="space-y-1">
+        <div className="docs-params">
+          <p className="docs-section-label">Query / body</p>
+          <ul>
             {params.map((p) => (
-              <div key={p.name} className="flex items-start gap-2 text-sm">
-                <code className="text-blue-300 font-mono text-xs bg-black/30 px-1.5 py-0.5 rounded">{p.name}</code>
-                <span className="text-gray-500 text-xs">{p.type}{p.required ? '' : '?'}</span>
-                <span className="text-gray-400 text-xs">— {p.desc}</span>
-              </div>
+              <li key={p.name} className="docs-param">
+                <code>{p.name}</code>
+                <span className="docs-param-type">
+                  {p.type}
+                  {p.required ? '' : '?'}
+                </span>
+                <span className="docs-param-desc">{p.desc}</span>
+              </li>
             ))}
-          </div>
+          </ul>
         </div>
       )}
 
-      {beforeTryIt}
+      {extra && <div className="docs-extra">{extra}</div>}
 
-      {tryIt}
-    </div>
+      {tryIt && (
+        <div className="docs-try">
+          <p className="docs-section-label">Try it</p>
+          {tryIt}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function PingTryIt({ path }: { path: string }) {
+  const [result, setResult] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const run = async () => {
+    setLoading(true);
+    try {
+      const resp = await fetch(`${API_URL}${path}`);
+      setResult(JSON.stringify(await resp.json(), null, 2));
+    } catch (e: unknown) {
+      setResult(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    setLoading(false);
+  };
+
+  return (
+    <>
+      <button type="button" className="docs-btn" onClick={run} disabled={loading}>
+        {loading ? '…' : 'Send'}
+      </button>
+      {result && <pre className="docs-out">{result}</pre>}
+    </>
   );
 }
 
@@ -180,127 +214,87 @@ function QuoteTryIt() {
   const run = async () => {
     setLoading(true);
     setResult(null);
-    const amountStroops = (parseFloat(amount) * 10_000_000).toFixed(0);
-    const url = `${API_URL}/api/v1/quote?token_in=${TOKENS[tokenIn]}&token_out=${TOKENS[tokenOut]}&amount_in=${amountStroops}&slippage=${slippage}`;
+    const stroops = (parseFloat(amount) * 10_000_000).toFixed(0);
+    const q = new URLSearchParams({
+      token_in: TOKENS[tokenIn],
+      token_out: TOKENS[tokenOut],
+      amount_in: stroops,
+      slippage,
+    });
     try {
-      const resp = await fetch(url);
-      const data = await resp.json();
-      setResult(JSON.stringify(data, null, 2));
-    } catch (e: any) {
-      setResult(`Error: ${e.message}`);
+      const resp = await fetch(`${API_URL}/api/v1/quote?${q}`);
+      setResult(JSON.stringify(await resp.json(), null, 2));
+    } catch (e: unknown) {
+      setResult(`Error: ${e instanceof Error ? e.message : String(e)}`);
     }
     setLoading(false);
   };
 
   return (
-    <div className="mt-4 pt-4 border-t border-white/10">
-      <h4 className="text-xs font-bold text-gray-500 uppercase mb-3">Try it</h4>
-      <div className="flex flex-wrap gap-2 items-end mb-3">
-        <div>
-          <label className="text-xs text-gray-500 block mb-1">From</label>
-          <select value={tokenIn} onChange={(e) => setTokenIn(e.target.value)} className="bg-black/40 border border-white/10 rounded px-2 py-1 text-sm">
-            {Object.keys(TOKENS).map((t) => <option key={t} value={t}>{t}</option>)}
+    <>
+      <div className="docs-form-row">
+        <Field label="From">
+          <select className="docs-input" value={tokenIn} onChange={(e) => setTokenIn(e.target.value)}>
+            {Object.keys(TOKENS).map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
           </select>
-        </div>
-        <div>
-          <label className="text-xs text-gray-500 block mb-1">To</label>
-          <select value={tokenOut} onChange={(e) => setTokenOut(e.target.value)} className="bg-black/40 border border-white/10 rounded px-2 py-1 text-sm">
-            {Object.keys(TOKENS).map((t) => <option key={t} value={t}>{t}</option>)}
+        </Field>
+        <Field label="To">
+          <select className="docs-input" value={tokenOut} onChange={(e) => setTokenOut(e.target.value)}>
+            {Object.keys(TOKENS).map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
           </select>
-        </div>
-        <div>
-          <label className="text-xs text-gray-500 block mb-1">Amount</label>
-          <input value={amount} onChange={(e) => setAmount(e.target.value)} className="bg-black/40 border border-white/10 rounded px-2 py-1 text-sm w-24" />
-        </div>
-        <div>
-          <label className="text-xs text-gray-500 block mb-1">Slippage %</label>
-          <input value={slippage} onChange={(e) => setSlippage(e.target.value)} className="bg-black/40 border border-white/10 rounded px-2 py-1 text-sm w-16" />
-        </div>
-        <button onClick={run} disabled={loading} className="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded text-sm font-medium disabled:opacity-50">
-          {loading ? '...' : 'Send'}
+        </Field>
+        <Field label="Amount">
+          <input className="docs-input docs-input--narrow" value={amount} onChange={(e) => setAmount(e.target.value)} />
+        </Field>
+        <Field label="Slippage %">
+          <input className="docs-input docs-input--narrow" value={slippage} onChange={(e) => setSlippage(e.target.value)} />
+        </Field>
+        <button type="button" className="docs-btn" onClick={run} disabled={loading}>
+          {loading ? '…' : 'Send'}
         </button>
       </div>
-      {result && (
-        <pre className="bg-black/60 rounded p-3 text-xs text-green-300 overflow-x-auto max-h-64 overflow-y-auto">{result}</pre>
-      )}
-    </div>
-  );
-}
-
-function TokensTryIt() {
-  const [result, setResult] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const run = async () => {
-    setLoading(true);
-    try {
-      const resp = await fetch(`${API_URL}/api/v1/tokens`);
-      const data = await resp.json();
-      setResult(JSON.stringify(data, null, 2));
-    } catch (e: any) {
-      setResult(`Error: ${e.message}`);
-    }
-    setLoading(false);
-  };
-
-  return (
-    <div className="mt-4 pt-4 border-t border-white/10">
-      <button onClick={run} disabled={loading} className="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded text-sm font-medium disabled:opacity-50">
-        {loading ? '...' : 'Try it'}
-      </button>
-      {result && (
-        <pre className="mt-3 bg-black/60 rounded p-3 text-xs text-green-300 overflow-x-auto max-h-48 overflow-y-auto">{result}</pre>
-      )}
-    </div>
-  );
-}
-
-function HealthTryIt() {
-  const [result, setResult] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const run = async () => {
-    setLoading(true);
-    try {
-      const resp = await fetch(`${API_URL}/api/v1/health`);
-      const data = await resp.json();
-      setResult(JSON.stringify(data, null, 2));
-    } catch (e: any) {
-      setResult(`Error: ${e.message}`);
-    }
-    setLoading(false);
-  };
-
-  return (
-    <div className="mt-4 pt-4 border-t border-white/10">
-      <button onClick={run} disabled={loading} className="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded text-sm font-medium disabled:opacity-50">
-        {loading ? '...' : 'Try it'}
-      </button>
-      {result && (
-        <pre className="mt-3 bg-black/60 rounded p-3 text-xs text-green-300 overflow-x-auto">{result}</pre>
-      )}
-    </div>
+      {result && <pre className="docs-out">{result}</pre>}
+    </>
   );
 }
 
 function BuildTxTryIt() {
-  const [reqJson, setReqJson] = useState(JSON.stringify({
-    user_public_key: "GA6RKSBPI2TSP52OW2IJTPK7LRMX24DF42KF3FBGBNMBYCV6NPDMOCBY",
-    token_in: "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
-    token_out: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
-    amount_in: "1000000000",
-    min_amount_out: "140000000",
-    sub_routes: [{
-      amount_in: "1000000000",
-      steps: [{
-        dex_type: "aquarius",
-        pool_address: "CDKVJYMN34ZIEXSLNFYHVAFF6M6FM5E2U6OHXOTBKH2WLBULXOE53YDP",
-        token_in: "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
-        token_out: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
-        in_idx: 0, out_idx: 1
-      }]
-    }]
-  }, null, 2));
+  const [body, setBody] = useState(
+    JSON.stringify(
+      {
+        user_public_key: 'GA6RKSBPI2TSP52OW2IJTPK7LRMX24DF42KF3FBGBNMBYCV6NPDMOCBY',
+        token_in: TOKENS.XLM,
+        token_out: TOKENS.USDC,
+        amount_in: '1000000000',
+        min_amount_out: '140000000',
+        sub_routes: [
+          {
+            amount_in: '1000000000',
+            steps: [
+              {
+                dex_type: 'aquarius',
+                pool_address: 'CDKVJYMN34ZIEXSLNFYHVAFF6M6FM5E2U6OHXOTBKH2WLBULXOE53YDP',
+                token_in: TOKENS.XLM,
+                token_out: TOKENS.USDC,
+                in_idx: 0,
+                out_idx: 1,
+              },
+            ],
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+  );
   const [result, setResult] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -308,35 +302,34 @@ function BuildTxTryIt() {
     setLoading(true);
     setResult(null);
     try {
-      const body = JSON.parse(reqJson);
       const resp = await fetch(`${API_URL}/api/v1/build_tx`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body,
       });
-      const data = await resp.json();
-      setResult(JSON.stringify(data, null, 2));
-    } catch (e: any) {
-      setResult(`Error: ${e.message}`);
+      setResult(JSON.stringify(await resp.json(), null, 2));
+    } catch (e: unknown) {
+      setResult(`Error: ${e instanceof Error ? e.message : String(e)}`);
     }
     setLoading(false);
   };
 
   return (
-    <div className="mt-4 pt-4 border-t border-white/10">
-      <h4 className="text-xs font-bold text-gray-500 uppercase mb-3">Try it</h4>
-      <div className="space-y-2 mb-3">
-        <div>
-          <label className="text-xs text-gray-500 block mb-1">Request Body (JSON)</label>
-          <textarea value={reqJson} onChange={(e) => setReqJson(e.target.value)} rows={12} className="bg-black/40 border border-white/10 rounded px-2 py-1 text-xs w-full font-mono" />
-        </div>
-        <button onClick={run} disabled={loading} className="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded text-sm font-medium disabled:opacity-50">
-          {loading ? '...' : 'Build TX'}
-        </button>
-      </div>
-      {result && (
-        <pre className="bg-black/60 rounded p-3 text-xs text-green-300 overflow-x-auto max-h-48 overflow-y-auto">{result}</pre>
-      )}
-    </div>
+    <>
+      <textarea className="docs-textarea" value={body} onChange={(e) => setBody(e.target.value)} rows={8} />
+      <button type="button" className="docs-btn docs-btn--spaced" onClick={run} disabled={loading}>
+        {loading ? '…' : 'Send'}
+      </button>
+      {result && <pre className="docs-out">{result}</pre>}
+    </>
+  );
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="docs-field">
+      <span>{label}</span>
+      {children}
+    </label>
   );
 }

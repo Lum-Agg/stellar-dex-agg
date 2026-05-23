@@ -7,6 +7,8 @@
   --card-strong: #101726;
   --border-soft: #ffffff1a;
   --text-dim: #94a3b8;
+  --docs-gap: 1.75rem;
+  --docs-card-pad: 1.5rem;
 }
 
 html,
@@ -19,4 +21,343 @@ body {
 * {
   scrollbar-width: thin;
   scrollbar-color: #334155 #0b1220;
+}
+
+/* ——— Docs page (all layout here; do not rely on Tailwind space-y-* on /docs) ——— */
+
+.docs-page {
+  color: #cbd5e1;
+  font-size: 0.9375rem;
+  line-height: 1.55;
+}
+
+.docs-intro {
+  margin-bottom: var(--docs-gap);
+}
+
+.docs-title {
+  margin: 0 0 0.5rem;
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.docs-lead {
+  margin: 0 0 0.5rem;
+  color: #94a3b8;
+}
+
+.docs-meta {
+  margin: 0 0 1.25rem;
+  font-size: 0.875rem;
+}
+
+.docs-meta a {
+  color: #60a5fa;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.docs-meta a:hover {
+  color: #93c5fd;
+}
+
+.docs-ref {
+  margin: 0;
+  padding: 1rem 1.125rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.docs-ref-row {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr;
+  gap: 0.75rem;
+  align-items: baseline;
+}
+
+.docs-ref-row + .docs-ref-row {
+  margin-top: 0.625rem;
+}
+
+.docs-ref dt {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #64748b;
+}
+
+.docs-ref dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.docs-ref code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.8125rem;
+  color: #e2e8f0;
+  word-break: break-all;
+}
+
+.docs-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--docs-gap);
+}
+
+.docs-card {
+  padding: var(--docs-card-pad);
+  border-radius: 0.625rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.docs-dexes {
+  margin-top: var(--docs-gap);
+}
+
+.docs-endpoint-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.625rem;
+  margin-bottom: 0.5rem;
+}
+
+.docs-method {
+  flex-shrink: 0;
+  padding: 0.125rem 0.5rem;
+  border-radius: 0.25rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.docs-method--get {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+}
+
+.docs-method--post {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+}
+
+.docs-path {
+  font-family: ui-monospace, monospace;
+  font-size: 0.875rem;
+  color: #f8fafc;
+  word-break: break-all;
+}
+
+.docs-desc {
+  margin: 0;
+  font-size: 0.875rem;
+  color: #94a3b8;
+}
+
+.docs-section-label {
+  margin: 0 0 0.625rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #64748b;
+}
+
+.docs-params,
+.docs-extra,
+.docs-try {
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.docs-params ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.docs-param {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.375rem 0.5rem;
+  padding: 0.375rem 0;
+  font-size: 0.8125rem;
+}
+
+.docs-param + .docs-param {
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.docs-param code {
+  font-family: ui-monospace, monospace;
+  color: #7dd3fc;
+}
+
+.docs-param-type {
+  font-family: ui-monospace, monospace;
+  color: #64748b;
+}
+
+.docs-param-desc {
+  color: #94a3b8;
+}
+
+.docs-param-desc::before {
+  content: '— ';
+  color: #475569;
+}
+
+.docs-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem 1rem;
+}
+
+.docs-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.docs-field > span {
+  font-size: 0.6875rem;
+  color: #64748b;
+}
+
+.docs-input {
+  min-width: 5rem;
+  padding: 0.375rem 0.5rem;
+  border-radius: 0.375rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.35);
+  color: #f1f5f9;
+  font-size: 0.875rem;
+  outline: none;
+}
+
+.docs-input:focus {
+  border-color: rgba(96, 165, 250, 0.45);
+}
+
+.docs-input--narrow {
+  width: 5.5rem;
+}
+
+.docs-textarea {
+  display: block;
+  width: 100%;
+  min-height: 10rem;
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.375rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.35);
+  color: #e2e8f0;
+  font-family: ui-monospace, monospace;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+}
+
+.docs-btn {
+  padding: 0.4375rem 1rem;
+  border: none;
+  border-radius: 0.375rem;
+  background: #2563eb;
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.docs-btn:hover:not(:disabled) {
+  background: #3b82f6;
+}
+
+.docs-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.docs-btn--spaced {
+  margin-top: 0.75rem;
+}
+
+.docs-out {
+  margin: 0.75rem 0 0;
+  padding: 0.75rem;
+  max-height: 16rem;
+  overflow: auto;
+  border-radius: 0.375rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.45);
+  font-family: ui-monospace, monospace;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: #86efac;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.docs-dex-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: 0.5rem 1rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.docs-dex-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  font-size: 0.8125rem;
+}
+
+.docs-dex-list strong {
+  color: #f1f5f9;
+  font-weight: 600;
+}
+
+.docs-dex-list span {
+  color: #64748b;
+  font-size: 0.75rem;
+}
+
+/* BuildTxCodeSample inside docs-extra */
+.docs-extra p {
+  margin: 0 0 0.5rem;
+  font-size: 0.8125rem;
+  color: #94a3b8;
+}
+
+.docs-extra button {
+  padding: 0.25rem 0.625rem;
+  border-radius: 0.25rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: #cbd5e1;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.docs-extra pre {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  overflow-x: auto;
+  border-radius: 0.375rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.4);
+  font-size: 0.6875rem;
+  line-height: 1.45;
+  color: #cbd5e1;
 }

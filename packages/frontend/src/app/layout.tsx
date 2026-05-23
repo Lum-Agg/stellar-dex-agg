@@ -21,7 +21,7 @@ export default function RootLayout({
           <div className="fixed inset-0 pointer-events-none bg-[linear-gradient(to_bottom,rgba(148,163,184,0.06)_1px,transparent_1px)] bg-[size:100%_24px] opacity-20" />
 
           <header className="sticky top-0 z-40 shrink-0 border-b border-white/10 bg-[#0a0f1be6] backdrop-blur-xl">
-            <div className="max-w-2xl mx-auto px-6 py-4 flex items-center justify-between">
+            <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
               <a href="/" className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-violet-500 flex items-center justify-center text-sm font-bold shadow-lg shadow-blue-500/20">
                   L
@@ -62,12 +62,12 @@ export default function RootLayout({
             </div>
           </header>
 
-          <main className="relative max-w-2xl w-full mx-auto px-6 py-8 md:py-10">
+          <main className="relative max-w-4xl w-full mx-auto px-6 py-8 md:py-10 min-w-0">
             {children}
           </main>
 
           <footer className="relative border-t border-white/10 mt-12 bg-[#0a0f1b80]">
-            <div className="max-w-2xl mx-auto px-6 py-6 flex flex-col sm:flex-row items-center justify-center gap-2 sm:gap-4 text-xs text-slate-500">
+            <div className="max-w-4xl mx-auto px-6 py-6 flex flex-col sm:flex-row items-center justify-center gap-2 sm:gap-4 text-xs text-slate-500">
               <span className="text-center">
                 Mainnet routing across Aquarius, Phoenix, Soroswap, Sushi V3, Comet and Stellar Classic DEX.
               </span>

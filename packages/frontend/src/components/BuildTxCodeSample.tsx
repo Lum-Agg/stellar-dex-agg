@@ -120,29 +120,11 @@ export function BuildTxCodeSample({
   const code = buildSampleCode(apiUrl, rpcUrl);
 
   return (
-    <div className="mb-4">
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-        <h4 className="text-xs font-bold text-gray-500 uppercase">本地组装交易</h4>
-        <button
-          type="button"
-          onClick={() => setShow((v) => !v)}
-          className="px-3 py-1 rounded-md text-xs font-medium border border-white/15 bg-white/5 hover:bg-white/10 text-slate-200 transition-colors"
-        >
-          {show ? '隐藏代码' : '展示代码'}
-        </button>
-      </div>
-      <p className="text-xs text-gray-500 mb-2 leading-relaxed">
-        只调用 <code className="text-blue-300/90">GET /quote</code> 拿路由；在你自己的服务里用{' '}
-        <code className="text-blue-300/90">@stellar/stellar-sdk</code> 组装{' '}
-        <code className="text-blue-300/90">aggregator.swap</code>。不需要{' '}
-        <code className="text-blue-300/90">POST /build_tx</code>，但 Soroban 仍要对任意 RPC 做{' '}
-        <code className="text-blue-300/90">simulateTransaction</code>（与是否用 LumAgg build_tx 无关）。
-      </p>
-      {show && (
-        <pre className="bg-black/70 rounded-lg p-4 text-[11px] leading-relaxed text-slate-300 overflow-x-auto border border-white/10 font-mono whitespace-pre">
-          {code}
-        </pre>
-      )}
+    <div>
+      <button type="button" onClick={() => setShow((v) => !v)}>
+        {show ? 'Hide SDK sample' : 'Show SDK sample (local tx)'}
+      </button>
+      {show && <pre>{code}</pre>}
     </div>
   );
 }
