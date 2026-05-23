@@ -35,7 +35,7 @@ pub struct WorkerConfig {
     pub snapshot_redis_keep_latest: usize,
     pub refresh_interval_secs: u64,
     pub discovery_interval_secs: u64,
-    pub ledger_poll_secs: u64,
+    pub ledger_poll: std::time::Duration,
     pub ledger_watcher_enabled: bool,
 }
 
@@ -69,7 +69,7 @@ impl WorkerConfig {
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(600),
-            ledger_poll_secs: crate::ledger_watcher::ledger_poll_secs_from_env(),
+            ledger_poll: crate::ledger_watcher::ledger_poll_duration_from_env(),
             ledger_watcher_enabled: crate::ledger_watcher::ledger_watcher_enabled_from_env(),
         })
     }
@@ -94,8 +94,6 @@ fn trading_pair_snapshot(pair: &AdapterTradingPair) -> TradingPairSnapshot {
         token_b: pair.token_b.canonical(),
         pool_address: pair.pool_address.clone(),
         fee_bps: pair.fee_bps,
-        reserve_a: pair.reserve_a,
-        reserve_b: pair.reserve_b,
     }
 }
 
@@ -137,7 +135,7 @@ async fn collect_sources_from_discovery(adapters: &[Arc<dyn DexAdapter>]) -> Vec
 
 async fn snapshot_from_sources(
     sources: Vec<SourceSnapshot>,
-    clmm_pools: Vec<ClmmPoolSnapshot>,
+    clmm_pool_refs: Vec<market_snapshot::ClmmPoolRefSnapshot>,
     network_passphrase: &str,
     token_metadata: &TokenMetadataStore,
 ) -> Result<MarketSnapshot> {
@@ -161,7 +159,7 @@ async fn snapshot_from_sources(
 
     Ok(snapshot
         .with_token_metadata(token_metadata)
-        .with_clmm_pools(clmm_pools))
+        .with_clmm_pool_refs(clmm_pool_refs))
 }
 
 fn upsert_source_snapshot(
@@ -255,12 +253,16 @@ fn log_clmm_coverage_stats(clmm_pools: &[ClmmPoolSnapshot]) {
 async fn publish_snapshot_and_pool_state(
     snapshot_store: &dyn market_snapshot::store::SnapshotStore,
     pool_state_store: Option<&market_snapshot::pool_state_store::RedisPoolStateStore>,
-    snapshot: &MarketSnapshot,
+    topology: &MarketSnapshot,
+    xyk_values: &[market_snapshot::pool_state_store::XykPoolStateValue],
+    clmm_states: &[ClmmPoolSnapshot],
 ) -> Result<()> {
-    snapshot_store.publish_snapshot(snapshot).await?;
     if let Some(pool_store) = pool_state_store {
-        pool_store.publish_from_snapshot(snapshot).await?;
+        pool_store
+            .publish_pool_state(xyk_values, clmm_states)
+            .await?;
     }
+    snapshot_store.publish_snapshot(topology).await?;
     Ok(())
 }
 
@@ -318,25 +320,27 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
     } else {
         None
     };
-    let mut ledger_interval = tokio::time::interval(std::time::Duration::from_secs(
-        config.ledger_poll_secs,
-    ));
+    let mut ledger_interval = tokio::time::interval(config.ledger_poll);
     ledger_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     ledger_interval.tick().await;
 
     let mut current_sources = collect_sources_from_discovery(&adapters).await;
     let mut current_clmm_pools = collect_clmm_snapshots(&sushi, &aquarius_clmm).await;
+    let clmm_refs = MarketSnapshot::clmm_pool_refs_from_states(&current_clmm_pools);
     let snapshot = snapshot_from_sources(
         current_sources.clone(),
-        current_clmm_pools.clone(),
+        clmm_refs,
         &config.network_passphrase,
         &token_metadata,
     )
     .await?;
+    let xyk_values = crate::pool_state_publish::collect_xyk_pool_state(&adapters).await;
     publish_snapshot_and_pool_state(
         snapshot_store.as_ref(),
         pool_state_store.as_ref(),
         &snapshot,
+        &xyk_values,
+        &current_clmm_pools,
     )
     .await?;
     info!(
@@ -394,17 +398,21 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
             }
         }
 
+        let clmm_refs = MarketSnapshot::clmm_pool_refs_from_states(&current_clmm_pools);
         let snapshot = snapshot_from_sources(
             current_sources.clone(),
-            current_clmm_pools.clone(),
+            clmm_refs,
             &config.network_passphrase,
             &token_metadata,
         )
         .await?;
+        let xyk_values = crate::pool_state_publish::collect_xyk_pool_state(&adapters).await;
         publish_snapshot_and_pool_state(
             snapshot_store.as_ref(),
             pool_state_store.as_ref(),
             &snapshot,
+            &xyk_values,
+            &current_clmm_pools,
         )
         .await?;
         info!(
@@ -465,24 +473,18 @@ mod tests {
                     token_b: "B".to_string(),
                     pool_address: "pool-1".to_string(),
                     fee_bps: 30,
-                    reserve_a: Some(1),
-                    reserve_b: Some(2),
                 },
                 TradingPairSnapshot {
                     token_a: "B".to_string(),
                     token_b: "C".to_string(),
                     pool_address: "pool-1".to_string(),
                     fee_bps: 30,
-                    reserve_a: Some(2),
-                    reserve_b: Some(3),
                 },
                 TradingPairSnapshot {
                     token_a: "X".to_string(),
                     token_b: "Y".to_string(),
                     pool_address: "pool-2".to_string(),
                     fee_bps: 30,
-                    reserve_a: Some(4),
-                    reserve_b: Some(5),
                 },
             ],
         );
@@ -501,8 +503,6 @@ mod tests {
                     token_b: "B".to_string(),
                     pool_address: "old".to_string(),
                     fee_bps: 30,
-                    reserve_a: Some(1),
-                    reserve_b: Some(2),
                 }],
             },
             SourceSnapshot {
@@ -512,8 +512,6 @@ mod tests {
                     token_b: "D".to_string(),
                     pool_address: "keep".to_string(),
                     fee_bps: 30,
-                    reserve_a: Some(3),
-                    reserve_b: Some(4),
                 }],
             },
         ];
@@ -527,8 +525,6 @@ mod tests {
                     token_b: "B".to_string(),
                     pool_address: "new".to_string(),
                     fee_bps: 30,
-                    reserve_a: Some(10),
-                    reserve_b: Some(20),
                 }],
             },
         );
@@ -579,7 +575,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn snapshot_from_sources_preserves_clmm_pools() {
+    async fn snapshot_from_sources_preserves_clmm_pool_refs() {
         let rpc = Arc::new(SorobanRpc::new(
             "https://soroban-rpc.mainnet.stellar.gateway.fm",
             "Public Global Stellar Network ; September 2015",
@@ -616,18 +612,19 @@ mod tests {
                     token_b: "B".to_string(),
                     pool_address: "pool-clmm".to_string(),
                     fee_bps: 30,
-                    reserve_a: None,
-                    reserve_b: None,
                 }],
             }],
-            vec![sample_clmm_pool()],
+            vec![market_snapshot::ClmmPoolRefSnapshot::from_pool(&sample_clmm_pool())],
             "mainnet",
             &token_metadata,
         )
         .await
         .unwrap();
 
-        assert_eq!(snapshot.clmm_pools, vec![sample_clmm_pool()]);
+        assert_eq!(
+            snapshot.clmm_pool_refs,
+            vec![market_snapshot::ClmmPoolRefSnapshot::from_pool(&sample_clmm_pool())]
+        );
         assert_eq!(snapshot.token_metadata.len(), 2);
     }
 }

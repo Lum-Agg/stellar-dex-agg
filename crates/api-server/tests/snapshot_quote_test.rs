@@ -7,9 +7,10 @@ use dex_adapters::{
     clmm_math::{bitmap, sqrt_ratio_at_tick},
     AdapterQuote, AdapterTradingPair, DexAdapter, ProtocolType, SwapOperation, TokenId,
 };
+use dex_adapters::clmm_math::clmm_pool_from_snapshot;
 use market_snapshot::{
-    ClmmBitmapWordSnapshot, ClmmCoverageSnapshot, ClmmPoolSnapshot, ClmmTickSnapshot,
-    MarketSnapshot, SourceSnapshot, TradingPairSnapshot,
+    ClmmBitmapWordSnapshot, ClmmCoverageSnapshot, ClmmPoolRefSnapshot, ClmmPoolSnapshot,
+    ClmmTickSnapshot, MarketSnapshot, SourceSnapshot, TradingPairSnapshot,
 };
 use router_engine::RouteRequest;
 
@@ -27,30 +28,14 @@ fn clmm_word_for_bits(bits: &[u32]) -> [u8; 32] {
     word
 }
 
-fn sample_clmm_snapshot(source: &str) -> MarketSnapshot {
+fn sample_clmm_pool_state(source: &str) -> ClmmPoolSnapshot {
     let lower_chunk = bitmap::chunk_address(bitmap::compress_tick(-1000, 200)).0;
     let upper_chunk = bitmap::chunk_address(bitmap::compress_tick(1000, 200)).0;
     let (chunk_word_pos, lower_bit) = bitmap::chunk_bitmap_position(lower_chunk);
     let (_, upper_bit) = bitmap::chunk_bitmap_position(upper_chunk);
     let (l2_word_pos, l2_bit) = bitmap::word_bitmap_position(chunk_word_pos);
 
-    MarketSnapshot::from_sources(
-        format!("{source}-snapshot"),
-        123,
-        "mainnet",
-        vec![SourceSnapshot {
-            source: source.to_string(),
-            pairs: vec![TradingPairSnapshot {
-                token_a: "token-a".to_string(),
-                token_b: "token-b".to_string(),
-                pool_address: "pool-clmm".to_string(),
-                fee_bps: 30,
-                reserve_a: None,
-                reserve_b: None,
-            }],
-        }],
-    )
-    .with_clmm_pools(vec![ClmmPoolSnapshot {
+    ClmmPoolSnapshot {
         source: source.to_string(),
         pool_address: "pool-clmm".to_string(),
         token0: "token-a".to_string(),
@@ -87,7 +72,49 @@ fn sample_clmm_snapshot(source: &str) -> MarketSnapshot {
             scanned_word_start: None,
             scanned_word_end: None,
         }),
-    }])
+    }
+}
+
+fn sample_clmm_topology_snapshot(source: &str) -> (MarketSnapshot, ClmmPoolSnapshot) {
+    let pool = sample_clmm_pool_state(source);
+    let snapshot = MarketSnapshot::from_sources(
+        format!("{source}-snapshot"),
+        123,
+        "mainnet",
+        vec![SourceSnapshot {
+            source: source.to_string(),
+            pairs: vec![TradingPairSnapshot {
+                token_a: "token-a".to_string(),
+                token_b: "token-b".to_string(),
+                pool_address: "pool-clmm".to_string(),
+                fee_bps: 30,
+            }],
+        }],
+    )
+    .with_clmm_pool_refs(vec![ClmmPoolRefSnapshot::from_pool(&pool)]);
+    (snapshot, pool)
+}
+
+async fn seed_clmm_quote_states(
+    engine: &router_engine::QuoteEngine,
+    pools: &[ClmmPoolSnapshot],
+) {
+    for pool in pools {
+        let (state, ticks) = clmm_pool_from_snapshot(pool);
+        engine
+            .update_clmm_quote_state(
+                &pool.source,
+                &pool.pool_address,
+                state,
+                ticks,
+                pool.coverage
+                    .as_ref()
+                    .map(|coverage| coverage.is_complete)
+                    .unwrap_or(false),
+                pool.coverage.clone(),
+            )
+            .await;
+    }
 }
 
 fn sample_classic_snapshot() -> MarketSnapshot {
@@ -102,8 +129,6 @@ fn sample_classic_snapshot() -> MarketSnapshot {
                 token_b: "token-b".to_string(),
                 pool_address: "classic-pool".to_string(),
                 fee_bps: 0,
-                reserve_a: None,
-                reserve_b: None,
             }],
         }],
     )
@@ -175,9 +200,11 @@ impl DexAdapter for StaticClassicAdapter {
 #[tokio::test]
 async fn snapshot_quote_succeeds_for_sushi_clmm_pool() {
     let config = AppConfig::default();
-    let engine = build_engine_from_snapshot(&config, &sample_clmm_snapshot("sushi"))
+    let (snapshot, pool) = sample_clmm_topology_snapshot("sushi");
+    let engine = build_engine_from_snapshot(&config, &snapshot)
         .await
         .unwrap();
+    seed_clmm_quote_states(&engine, std::slice::from_ref(&pool)).await;
 
     let route = engine
         .get_route(&RouteRequest {
@@ -197,9 +224,11 @@ async fn snapshot_quote_succeeds_for_sushi_clmm_pool() {
 #[tokio::test]
 async fn snapshot_quote_succeeds_for_aquarius_clmm_pool() {
     let config = AppConfig::default();
-    let engine = build_engine_from_snapshot(&config, &sample_clmm_snapshot("aquarius_clmm"))
+    let (snapshot, pool) = sample_clmm_topology_snapshot("aquarius_clmm");
+    let engine = build_engine_from_snapshot(&config, &snapshot)
         .await
         .unwrap();
+    seed_clmm_quote_states(&engine, std::slice::from_ref(&pool)).await;
 
     let route = engine
         .get_route(&RouteRequest {

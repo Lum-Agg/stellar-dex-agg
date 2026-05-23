@@ -13,16 +13,42 @@ use dex_adapters::{
 use market_snapshot::{ClmmPoolSnapshot, SourceSnapshot};
 use tracing::{debug, info, warn};
 
-pub const DEFAULT_LEDGER_POLL_SECS: u64 = 3;
+/// Default ledger poll interval (seconds, fractional OK via env).
+pub const DEFAULT_LEDGER_POLL_SECS: f64 = 0.5;
+pub const MIN_LEDGER_POLL_SECS: f64 = 0.1;
 pub const DEFAULT_LEDGER_MAX_CATCHUP: u32 = 32;
 pub const DEFAULT_LEDGER_MAX_TOUCHED_REFRESH: usize = 64;
 
-pub fn ledger_poll_secs_from_env() -> u64 {
-    std::env::var("LEDGER_POLL_SECS")
+pub fn ledger_poll_duration_from_env() -> std::time::Duration {
+    let secs = std::env::var("LEDGER_POLL_SECS")
         .ok()
-        .and_then(|v| v.parse().ok())
+        .and_then(|v| v.parse::<f64>().ok())
         .unwrap_or(DEFAULT_LEDGER_POLL_SECS)
-        .max(1)
+        .max(MIN_LEDGER_POLL_SECS);
+    std::time::Duration::from_secs_f64(secs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn ledger_poll_duration_parses_fractional_seconds() {
+        let _guard = env_lock().lock().unwrap();
+        let original = std::env::var("LEDGER_POLL_SECS").ok();
+        std::env::set_var("LEDGER_POLL_SECS", "0.5");
+        assert_eq!(ledger_poll_duration_from_env().as_millis(), 500);
+        match original {
+            Some(value) => std::env::set_var("LEDGER_POLL_SECS", value),
+            None => std::env::remove_var("LEDGER_POLL_SECS"),
+        }
+    }
 }
 
 pub fn ledger_watcher_enabled_from_env() -> bool {
@@ -133,5 +159,6 @@ pub fn rebuild_pool_index(
     sources: &[SourceSnapshot],
     clmm_pools: &[ClmmPoolSnapshot],
 ) -> KnownPoolIndex {
-    KnownPoolIndex::rebuild(sources, clmm_pools)
+    let refs = market_snapshot::MarketSnapshot::clmm_pool_refs_from_states(clmm_pools);
+    KnownPoolIndex::rebuild(sources, &refs)
 }

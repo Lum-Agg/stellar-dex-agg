@@ -62,8 +62,8 @@ flowchart TB
 
 | Layer | Contents | Where it lives | Update cadence |
 |-------|----------|----------------|----------------|
-| **Graph (topology)** | Token pairs, pool contract IDs, fee tiers, multi-token edges | `MarketSnapshot` in Redis (`lumagg:snapshot:current` + version history) or `data/snapshots/current.json` | **Discovery ~600s** — full `get_trading_pairs()` per adapter, replace edges per source |
-| **Pool state (reserves / ticks)** | xy=k `reserve_a/b`; CLMM slot0, liquidity, ticks + **coverage**; Comet balances/weights at quote time | Redis `lumagg:pool:xyk:*` / `lumagg:pool:clmm:*` (**TTL 8s**) | **Refresh ~5s** on worker; **ledger watcher ~3s** for touched pools; **quote hydrate** for Redis misses |
+| **Graph (topology)** | Token pairs, pool contract IDs, fee tiers; CLMM pool refs (no ticks) | `MarketSnapshot` in Redis (`lumagg:snapshot:current` + version history) or `data/snapshots/current.json` — **no reserves** | **Discovery ~600s** — full `get_trading_pairs()` per adapter, replace edges per source |
+| **Pool state (reserves / ticks)** | xy=k `reserve_a/b`; CLMM slot0, liquidity, ticks + **coverage**; Comet balances/weights at quote time | Redis `lumagg:pool:xyk:*` / `lumagg:pool:clmm:*` (**TTL 8s**) | **Refresh ~5s** on worker (from adapter caches); **ledger watcher ~3s** for touched pools; **quote hydrate** for Redis misses |
 
 The API does **not** keep a long-lived in-process pool cache (no 120s memory layer). Each `/quote` loads the graph from the last snapshot reload, then overlays fresh pool state via Redis + bounded RPC.
 
@@ -101,7 +101,7 @@ The API does **not** keep a long-lived in-process pool cache (no 120s memory lay
 │  │ Loop B — refresh (REFRESH_INTERVAL_SECS, default 5)                  │ │
 │  │   adapter.refresh_reserves() → update snapshot reserves + Redis    │ │
 │  ├─────────────────────────────────────────────────────────────────────┤ │
-│  │ Loop C — ledger watcher (LEDGER_POLL_SECS, default 3, needs Redis)   │ │
+│  │ Loop C — ledger watcher (LEDGER_POLL_SECS, default 0.5, needs Redis) │ │
 │  │   getLatestLedger + getEvents → touched known pools → partial refresh│ │
 │  │   → Redis writeback only (no extra snapshot publish)                 │ │
 │  └─────────────────────────────────────────────────────────────────────┘ │
@@ -272,7 +272,7 @@ cargo run -p api-server --bin api-server
 | `POOL_STATE_TTL_SECS` | `8` | worker, API | Redis EX on pool keys |
 | `QUOTE_HYDRATE_MAX_POOLS` | `32` | API | Max xy=k RPC hydrates per quote |
 | `LEDGER_WATCHER_ENABLED` | `true` | worker | Requires Redis pool store |
-| `LEDGER_POLL_SECS` | `3` | worker | Ledger poll interval |
+| `LEDGER_POLL_SECS` | `0.5` | worker | Ledger poll interval (fractional seconds, min `0.1`) |
 | `SUSHI_DISCOVERY_RPC` | public gateway | worker | RPC used for Sushi pool probes |
 | `COMET_FACTORY` | Blend mainnet factory | worker | Comet factory contract |
 | `COMET_EXTRA_POOLS` | — | worker | Comma-separated extra Comet pool IDs |

@@ -72,22 +72,33 @@ pub async fn refresh_touched_pools(
 
     for (source, addresses) in &by_source {
         if BATCH_XYK_SOURCES.contains(&source.as_str()) {
-            if let Some(n) = refresh_xyk_batch(ctx.rpc, ctx.sources, source, addresses).await? {
+            if let Some((n, values)) =
+                refresh_xyk_batch(ctx.rpc, ctx.sources, source, addresses).await?
+            {
                 updated += n;
-                xyk_writeback.extend(collect_xyk_values(ctx.sources, source, addresses));
+                xyk_writeback.extend(values);
             }
         } else if source == PHOENIX_SOURCE {
             let n = ctx.phoenix.refresh_touched_pools(addresses).await?;
             if n > 0 {
-                merge_xyk_pairs_into_sources(ctx.sources, PHOENIX_SOURCE, ctx.phoenix as &dyn DexAdapter)
+                merge_xyk_topology_from_adapter(ctx.sources, PHOENIX_SOURCE, ctx.phoenix as &dyn DexAdapter)
                     .await;
                 updated += n;
-                xyk_writeback.extend(collect_xyk_values(ctx.sources, PHOENIX_SOURCE, addresses));
+                xyk_writeback.extend(collect_xyk_from_adapter(
+                    ctx.sources,
+                    PHOENIX_SOURCE,
+                    addresses,
+                    ctx.phoenix as &dyn DexAdapter,
+                )
+                .await);
             }
         } else if source == COMET_SOURCE {
             let n = refresh_comet_touched(ctx.comet, ctx.sources, addresses).await?;
             updated += n;
-            xyk_writeback.extend(collect_xyk_values(ctx.sources, COMET_SOURCE, addresses));
+            xyk_writeback.extend(
+                collect_xyk_from_adapter(ctx.sources, COMET_SOURCE, addresses, ctx.comet as &dyn DexAdapter)
+                    .await,
+            );
         } else if CLMM_SOURCES.contains(&source.as_str()) {
             let (n, snaps) = refresh_clmm_pools(
                 source,
@@ -116,37 +127,47 @@ pub async fn refresh_touched_pools(
 
 async fn refresh_xyk_batch(
     rpc: &SorobanRpc,
-    sources: &mut [SourceSnapshot],
+    sources: &[SourceSnapshot],
     source: &str,
     pool_addresses: &[String],
-) -> Result<Option<usize>> {
+) -> Result<Option<(usize, Vec<XykPoolStateValue>)>> {
     if pool_addresses.is_empty() {
         return Ok(None);
     }
     let results = batch_refresh_soroswap_reserves(rpc, pool_addresses).await?;
-    let source_snapshot = sources.iter_mut().find(|s| s.source == source);
+    let source_snapshot = sources.iter().find(|s| s.source == source);
     let Some(source_snapshot) = source_snapshot else {
         return Ok(None);
     };
 
     let mut updated = 0usize;
+    let mut values = Vec::new();
     for (addr, reserves) in results {
         let Some((r0, r1)) = reserves else {
             continue;
         };
-        for pair in source_snapshot.pairs.iter_mut() {
-            if pair.pool_address != addr {
-                continue;
-            }
-            pair.reserve_a = Some(r0);
-            pair.reserve_b = Some(r1);
-            updated += 1;
-        }
+        let Some(pair) = source_snapshot
+            .pairs
+            .iter()
+            .find(|p| p.pool_address == addr)
+        else {
+            continue;
+        };
+        values.push(XykPoolStateValue::new(
+            source,
+            &addr,
+            &pair.token_a,
+            &pair.token_b,
+            pair.fee_bps,
+            r0,
+            r1,
+        ));
+        updated += 1;
     }
-    Ok(Some(updated))
+    Ok(Some((updated, values)))
 }
 
-async fn merge_xyk_pairs_into_sources(
+async fn merge_xyk_topology_from_adapter(
     sources: &mut [SourceSnapshot],
     source: &str,
     adapter: &dyn DexAdapter,
@@ -161,11 +182,48 @@ async fn merge_xyk_pairs_into_sources(
             .iter_mut()
             .find(|p| p.pool_address == pair.pool_address)
         {
-            snap.reserve_a = pair.reserve_a;
-            snap.reserve_b = pair.reserve_b;
             snap.fee_bps = pair.fee_bps;
         }
     }
+}
+
+async fn collect_xyk_from_adapter(
+    sources: &[SourceSnapshot],
+    source: &str,
+    pool_addresses: &[String],
+    adapter: &dyn DexAdapter,
+) -> Vec<XykPoolStateValue> {
+    let wanted: HashSet<&str> = pool_addresses.iter().map(|s| s.as_str()).collect();
+    let topology: HashMap<String, _> = sources
+        .iter()
+        .find(|s| s.source == source)
+        .into_iter()
+        .flat_map(|s| &s.pairs)
+        .map(|p| (p.pool_address.clone(), p))
+        .collect();
+
+    let mut out = Vec::new();
+    for pair in adapter.get_cached_pairs().await {
+        if !wanted.contains(pair.pool_address.as_str()) {
+            continue;
+        }
+        let (Some(reserve_a), Some(reserve_b)) = (pair.reserve_a, pair.reserve_b) else {
+            continue;
+        };
+        let Some(topo) = topology.get(&pair.pool_address) else {
+            continue;
+        };
+        out.push(XykPoolStateValue::new(
+            source,
+            &pair.pool_address,
+            &topo.token_a,
+            &topo.token_b,
+            topo.fee_bps,
+            reserve_a,
+            reserve_b,
+        ));
+    }
+    out
 }
 
 async fn refresh_comet_touched(
@@ -187,38 +245,17 @@ async fn refresh_comet_touched(
             .collect();
         if let Some(existing) = sources.iter_mut().find(|s| s.source == COMET_SOURCE) {
             for pair in refreshed {
-                if let Some(snap) = existing
-                    .pairs
-                    .iter_mut()
-                    .find(|p| p.pool_address == pair.pool_address && p.token_a == pair.token_a.canonical() && p.token_b == pair.token_b.canonical())
-                {
-                    snap.reserve_a = pair.reserve_a;
-                    snap.reserve_b = pair.reserve_b;
+                if let Some(snap) = existing.pairs.iter_mut().find(|p| {
+                    p.pool_address == pair.pool_address
+                        && p.token_a == pair.token_a.canonical()
+                        && p.token_b == pair.token_b.canonical()
+                }) {
                     snap.fee_bps = pair.fee_bps;
                 }
             }
         }
     }
     Ok(updated)
-}
-
-fn collect_xyk_values(
-    sources: &[SourceSnapshot],
-    source: &str,
-    pool_addresses: &[String],
-) -> Vec<XykPoolStateValue> {
-    let mut out = Vec::new();
-    let Some(source_snapshot) = sources.iter().find(|s| s.source == source) else {
-        return out;
-    };
-    for addr in pool_addresses {
-        if let Some(pair) = source_snapshot.pairs.iter().find(|p| &p.pool_address == addr) {
-            if let Some(value) = XykPoolStateValue::from_pair_snapshot(source, pair) {
-                out.push(value);
-            }
-        }
-    }
-    out
 }
 
 async fn refresh_clmm_pools(

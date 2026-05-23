@@ -406,8 +406,6 @@ mod tests {
                     token_b: "USDC:issuer".to_string(),
                     pool_address: "pool".to_string(),
                     fee_bps: 30,
-                    reserve_a: Some(1),
-                    reserve_b: Some(2),
                 }],
             }],
         )

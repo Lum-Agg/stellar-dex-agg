@@ -15,9 +15,15 @@ pub struct MarketSnapshot {
     pub network: String,
     pub meta: SnapshotMeta,
     pub sources: Vec<SourceSnapshot>,
+    #[serde(default)]
     pub token_metadata: Vec<TokenMetadataSnapshot>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub clmm_pools: Vec<ClmmPoolSnapshot>,
+    /// CLMM pool topology only (no slot0 / ticks / liquidity). Live state is in Redis `lumagg:pool:clmm:*`.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        alias = "clmm_pools"
+    )]
+    pub clmm_pool_refs: Vec<ClmmPoolRefSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -39,14 +45,24 @@ pub struct SourceSnapshot {
     pub pairs: Vec<TradingPairSnapshot>,
 }
 
+/// Routing-graph edge (topology only). Reserves live in Redis `lumagg:pool:xyk:*`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TradingPairSnapshot {
     pub token_a: String,
     pub token_b: String,
     pub pool_address: String,
     pub fee_bps: u32,
-    pub reserve_a: Option<u128>,
-    pub reserve_b: Option<u128>,
+}
+
+/// CLMM pool identity for routing / pool index (no tick data).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ClmmPoolRefSnapshot {
+    pub source: String,
+    pub pool_address: String,
+    pub token0: String,
+    pub token1: String,
+    pub fee_bps: u32,
+    pub tick_spacing: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -58,6 +74,20 @@ pub struct TokenMetadataSnapshot {
     pub logo: Option<String>,
 }
 
+impl ClmmPoolRefSnapshot {
+    pub fn from_pool(pool: &ClmmPoolSnapshot) -> Self {
+        Self {
+            source: pool.source.clone(),
+            pool_address: pool.pool_address.clone(),
+            token0: pool.token0.clone(),
+            token1: pool.token1.clone(),
+            fee_bps: pool.fee_bps,
+            tick_spacing: pool.tick_spacing,
+        }
+    }
+}
+
+/// Full CLMM pool state (Redis `lumagg:pool:clmm:*` only — not stored in topology snapshot).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ClmmPoolSnapshot {
     pub source: String,
@@ -155,7 +185,7 @@ impl MarketSnapshot {
             },
             sources,
             token_metadata: Vec::new(),
-            clmm_pools: Vec::new(),
+            clmm_pool_refs: Vec::new(),
         }
     }
 
@@ -171,9 +201,14 @@ impl MarketSnapshot {
         self
     }
 
-    pub fn with_clmm_pools(mut self, clmm_pools: Vec<ClmmPoolSnapshot>) -> Self {
-        self.clmm_pools = clmm_pools;
+    pub fn with_clmm_pool_refs(mut self, clmm_pool_refs: Vec<ClmmPoolRefSnapshot>) -> Self {
+        self.clmm_pool_refs = clmm_pool_refs;
         self
+    }
+
+    /// Build topology refs from in-memory CLMM state (worker publish path).
+    pub fn clmm_pool_refs_from_states(pools: &[ClmmPoolSnapshot]) -> Vec<ClmmPoolRefSnapshot> {
+        pools.iter().map(ClmmPoolRefSnapshot::from_pool).collect()
     }
 
     pub fn token_addresses(&self) -> std::collections::BTreeSet<String> {
@@ -248,8 +283,6 @@ mod tests {
                     token_b: "B".to_string(),
                     pool_address: "POOL".to_string(),
                     fee_bps: 30,
-                    reserve_a: Some(100),
-                    reserve_b: Some(200),
                 }],
             }],
             token_metadata: vec![TokenMetadataSnapshot {
@@ -258,15 +291,19 @@ mod tests {
                 name: "Token A".to_string(),
                 logo: None,
             }],
-            clmm_pools: vec![sample_clmm_pool()],
+            clmm_pool_refs: vec![ClmmPoolRefSnapshot::from_pool(&sample_clmm_pool())],
         };
 
         let json = serde_json::to_string(&snapshot).unwrap();
+        assert!(!json.contains("reserve_a"));
         let restored: MarketSnapshot = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.version, "v1");
         assert_eq!(restored.sources[0].pairs[0].pool_address, "POOL");
         assert_eq!(restored.token_metadata[0].symbol, "TOKA");
-        assert_eq!(restored.clmm_pools, vec![sample_clmm_pool()]);
+        assert_eq!(
+            restored.clmm_pool_refs,
+            vec![ClmmPoolRefSnapshot::from_pool(&sample_clmm_pool())]
+        );
     }
 
     #[test]
@@ -283,8 +320,6 @@ mod tests {
                         token_b: "USDC".to_string(),
                         pool_address: "pool-1".to_string(),
                         fee_bps: 30,
-                        reserve_a: Some(10),
-                        reserve_b: Some(20),
                     }],
                 },
                 SourceSnapshot {
@@ -294,8 +329,6 @@ mod tests {
                         token_b: "AQUA".to_string(),
                         pool_address: "pool-2".to_string(),
                         fee_bps: 5,
-                        reserve_a: Some(30),
-                        reserve_b: Some(40),
                     }],
                 },
             ],
@@ -327,8 +360,6 @@ mod tests {
                     token_b: "B".to_string(),
                     pool_address: "pool".to_string(),
                     fee_bps: 10,
-                    reserve_a: Some(5),
-                    reserve_b: Some(6),
                 }],
             }],
         );
@@ -357,8 +388,6 @@ mod tests {
                     token_b: "USDC:issuer".to_string(),
                     pool_address: "pool".to_string(),
                     fee_bps: 30,
-                    reserve_a: Some(1),
-                    reserve_b: Some(2),
                 }],
             }],
         )
@@ -400,11 +429,41 @@ mod tests {
 
         let restored: MarketSnapshot = serde_json::from_str(legacy_json).unwrap();
 
-        assert!(restored.clmm_pools.is_empty());
+        assert!(restored.clmm_pool_refs.is_empty());
+        assert_eq!(restored.sources[0].pairs[0].pool_address, "POOL");
     }
 
     #[test]
-    fn market_snapshot_can_attach_clmm_pools() {
+    fn legacy_json_with_full_clmm_pools_deserializes_to_refs() {
+        let legacy_json = r#"{
+            "version":"v1",
+            "generated_at_ms":123,
+            "network":"mainnet",
+            "meta":{"source_count":1,"pair_count":1,"token_count":2},
+            "sources":[{"source":"sushi","pairs":[{"token_a":"A","token_b":"B","pool_address":"pool-clmm","fee_bps":30}]}],
+            "clmm_pools":[{
+                "source":"sushi",
+                "pool_address":"pool-clmm",
+                "token0":"A",
+                "token1":"B",
+                "fee_bps":30,
+                "tick_spacing":60,
+                "sqrt_price_x96":[1,2,3,4],
+                "tick":120,
+                "liquidity":999,
+                "ticks":[]
+            }],
+            "token_metadata":[]
+        }"#;
+
+        let restored: MarketSnapshot = serde_json::from_str(legacy_json).unwrap();
+        assert_eq!(restored.clmm_pool_refs.len(), 1);
+        assert_eq!(restored.clmm_pool_refs[0].pool_address, "pool-clmm");
+        assert_eq!(restored.clmm_pool_refs[0].tick_spacing, 60);
+    }
+
+    #[test]
+    fn market_snapshot_can_attach_clmm_pool_refs() {
         let snapshot = MarketSnapshot::from_sources(
             "v5",
             1_234,
@@ -416,14 +475,12 @@ mod tests {
                     token_b: "B".to_string(),
                     pool_address: "pool-clmm".to_string(),
                     fee_bps: 30,
-                    reserve_a: None,
-                    reserve_b: None,
                 }],
             }],
         )
-        .with_clmm_pools(vec![sample_clmm_pool()]);
+        .with_clmm_pool_refs(vec![ClmmPoolRefSnapshot::from_pool(&sample_clmm_pool())]);
 
-        assert_eq!(snapshot.clmm_pools.len(), 1);
-        assert_eq!(snapshot.clmm_pools[0].source, "sushi");
+        assert_eq!(snapshot.clmm_pool_refs.len(), 1);
+        assert_eq!(snapshot.clmm_pool_refs[0].source, "sushi");
     }
 }

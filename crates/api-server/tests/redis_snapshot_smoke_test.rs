@@ -12,10 +12,11 @@ use dex_adapters::{
     clmm_math::{bitmap, sqrt_ratio_at_tick},
     AdapterQuote, AdapterTradingPair, DexAdapter, ProtocolType, SwapOperation, TokenId,
 };
+use dex_adapters::clmm_math::clmm_pool_from_snapshot;
 use market_snapshot::{
     store::{build_snapshot_store, SnapshotStoreBackend},
-    ClmmBitmapWordSnapshot, ClmmCoverageSnapshot, ClmmPoolSnapshot, ClmmTickSnapshot,
-    MarketSnapshot, SourceSnapshot, TradingPairSnapshot,
+    ClmmBitmapWordSnapshot, ClmmCoverageSnapshot, ClmmPoolRefSnapshot, ClmmPoolSnapshot,
+    ClmmTickSnapshot, MarketSnapshot, SourceSnapshot, TradingPairSnapshot,
 };
 use router_engine::RouteRequest;
 
@@ -80,7 +81,19 @@ fn clmm_pool_snapshot(source: &str, token0: &str, token1: &str, pool_address: &s
     }
 }
 
+fn smoke_clmm_pools() -> Vec<ClmmPoolSnapshot> {
+    vec![
+        clmm_pool_snapshot("sushi", "token-a", "token-b", "pool-sushi"),
+        clmm_pool_snapshot("aquarius_clmm", "token-c", "token-d", "pool-aqua"),
+    ]
+}
+
 fn smoke_snapshot() -> MarketSnapshot {
+    let clmm_pools = smoke_clmm_pools();
+    let clmm_refs: Vec<ClmmPoolRefSnapshot> = clmm_pools
+        .iter()
+        .map(ClmmPoolRefSnapshot::from_pool)
+        .collect();
     MarketSnapshot::from_sources(
         "redis-smoke",
         123,
@@ -93,8 +106,6 @@ fn smoke_snapshot() -> MarketSnapshot {
                     token_b: "token-b".to_string(),
                     pool_address: "pool-sushi".to_string(),
                     fee_bps: 30,
-                    reserve_a: None,
-                    reserve_b: None,
                 }],
             },
             SourceSnapshot {
@@ -104,8 +115,6 @@ fn smoke_snapshot() -> MarketSnapshot {
                     token_b: "token-d".to_string(),
                     pool_address: "pool-aqua".to_string(),
                     fee_bps: 30,
-                    reserve_a: None,
-                    reserve_b: None,
                 }],
             },
             SourceSnapshot {
@@ -115,16 +124,33 @@ fn smoke_snapshot() -> MarketSnapshot {
                     token_b: "token-f".to_string(),
                     pool_address: "classic-pool".to_string(),
                     fee_bps: 0,
-                    reserve_a: None,
-                    reserve_b: None,
                 }],
             },
         ],
     )
-    .with_clmm_pools(vec![
-        clmm_pool_snapshot("sushi", "token-a", "token-b", "pool-sushi"),
-        clmm_pool_snapshot("aquarius_clmm", "token-c", "token-d", "pool-aqua"),
-    ])
+    .with_clmm_pool_refs(clmm_refs)
+}
+
+async fn seed_clmm_quote_states(
+    engine: &router_engine::QuoteEngine,
+    pools: &[ClmmPoolSnapshot],
+) {
+    for pool in pools {
+        let (state, ticks) = clmm_pool_from_snapshot(pool);
+        engine
+            .update_clmm_quote_state(
+                &pool.source,
+                &pool.pool_address,
+                state,
+                ticks,
+                pool.coverage
+                    .as_ref()
+                    .map(|coverage| coverage.is_complete)
+                    .unwrap_or(false),
+                pool.coverage.clone(),
+            )
+            .await;
+    }
 }
 
 struct StaticClassicAdapter;
@@ -248,10 +274,11 @@ async fn redis_snapshot_store_smoke_quotes_sushi_aquarius_clmm_and_classic() {
     store.publish_snapshot(&snapshot).await.unwrap();
     let loaded = store.load_current_snapshot().await.unwrap();
     assert_eq!(loaded.version, "redis-smoke");
-    assert_eq!(loaded.clmm_pools.len(), 2);
+    assert_eq!(loaded.clmm_pool_refs.len(), 2);
 
     let config = AppConfig::default();
     let engine = build_engine_from_snapshot(&config, &loaded).await.unwrap();
+    seed_clmm_quote_states(&engine, &smoke_clmm_pools()).await;
     engine.register_adapter(Arc::new(StaticClassicAdapter)).await;
 
     let sushi_route = engine

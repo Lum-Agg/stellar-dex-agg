@@ -2,13 +2,13 @@
 //!
 //! See `docs/pool-state-architecture.md`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use anyhow::Result;
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 
-use crate::{ClmmPoolSnapshot, MarketSnapshot, TradingPairSnapshot};
+use crate::ClmmPoolSnapshot;
 
 pub const DEFAULT_POOL_STATE_TTL_SECS: u64 = 8;
 pub const DEFAULT_QUOTE_HYDRATE_MAX_POOLS: usize = 32;
@@ -37,16 +37,24 @@ impl XykPoolStateValue {
         format!("{source}:{pool_address}")
     }
 
-    pub fn from_pair_snapshot(source: &str, pair: &TradingPairSnapshot) -> Option<Self> {
-        Some(Self {
-            source: source.to_string(),
-            pool_address: pair.pool_address.clone(),
-            token_a: pair.token_a.clone(),
-            token_b: pair.token_b.clone(),
-            fee_bps: pair.fee_bps,
-            reserve_a: pair.reserve_a?,
-            reserve_b: pair.reserve_b?,
-        })
+    pub fn new(
+        source: impl Into<String>,
+        pool_address: impl Into<String>,
+        token_a: impl Into<String>,
+        token_b: impl Into<String>,
+        fee_bps: u32,
+        reserve_a: u128,
+        reserve_b: u128,
+    ) -> Self {
+        Self {
+            source: source.into(),
+            pool_address: pool_address.into(),
+            token_a: token_a.into(),
+            token_b: token_b.into(),
+            fee_bps,
+            reserve_a,
+            reserve_b,
+        }
     }
 }
 
@@ -89,42 +97,22 @@ impl RedisPoolStateStore {
         self.ttl_secs
     }
 
-    /// Worker hot path: publish xy=k and complete CLMM pools from a market snapshot.
-    pub async fn publish_from_snapshot(&self, snapshot: &MarketSnapshot) -> Result<()> {
-        let mut conn = self.client.get_multiplexed_async_connection().await?;
-        let mut xyk_written = 0usize;
-        let mut clmm_written = 0usize;
-        let mut seen_xyk: HashSet<String> = HashSet::new();
-
-        for source in &snapshot.sources {
-            for pair in &source.pairs {
-                let Some(value) = XykPoolStateValue::from_pair_snapshot(&source.source, pair) else {
-                    continue;
-                };
-                let pool_key = XykPoolStateValue::pool_key(&value.source, &value.pool_address);
-                if !seen_xyk.insert(pool_key) {
-                    continue;
-                }
-                let key = XykPoolStateValue::redis_key(&value.source, &value.pool_address);
-                let bytes = serde_json::to_vec(&value)?;
-                conn.set_ex::<_, _, ()>(key, bytes, self.ttl_secs).await?;
-                xyk_written += 1;
-            }
-        }
-
-        for pool in &snapshot.clmm_pools {
-            if !should_publish_clmm_to_redis(pool) {
-                continue;
-            }
-            let key = ClmmPoolSnapshot::redis_key(&pool.source, &pool.pool_address);
-            let bytes = serde_json::to_vec(pool)?;
-            conn.set_ex::<_, _, ()>(key, bytes, self.ttl_secs).await?;
-            clmm_written += 1;
-        }
-
+    /// Worker hot path: publish xy=k reserves and complete CLMM state (not in topology snapshot).
+    pub async fn publish_pool_state(
+        &self,
+        xyk_values: &[XykPoolStateValue],
+        clmm_pools: &[ClmmPoolSnapshot],
+    ) -> Result<()> {
+        self.set_xyk_batch(xyk_values).await?;
+        let complete_clmm: Vec<&ClmmPoolSnapshot> = clmm_pools
+            .iter()
+            .filter(|pool| should_publish_clmm_to_redis(pool))
+            .collect();
+        self.set_clmm_batch(&complete_clmm.iter().map(|p| (*p).clone()).collect::<Vec<_>>())
+            .await?;
         tracing::debug!(
-            xyk_written,
-            clmm_written,
+            xyk_written = xyk_values.len(),
+            clmm_written = complete_clmm.len(),
             ttl_secs = self.ttl_secs,
             "Published per-pool state to Redis"
         );

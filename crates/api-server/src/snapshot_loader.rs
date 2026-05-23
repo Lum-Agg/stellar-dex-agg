@@ -1,5 +1,4 @@
 use anyhow::Result;
-use dex_adapters::clmm_math::clmm_pool_from_snapshot;
 use market_snapshot::{MarketSnapshot, TradingPairSnapshot};
 use router_engine::{path_finder::PathFinderConfig, split_optimizer::SplitConfig, QuoteEngine};
 
@@ -15,8 +14,8 @@ fn snapshot_pair_to_trading(
         source: source.to_string(),
         pool_address: pair.pool_address.clone(),
         fee_bps: pair.fee_bps,
-        reserve_a: pair.reserve_a,
-        reserve_b: pair.reserve_b,
+        reserve_a: None,
+        reserve_b: None,
     }
 }
 
@@ -45,24 +44,6 @@ pub async fn build_engine_from_snapshot(
             .await;
     }
 
-    for clmm_pool in &snapshot.clmm_pools {
-        let (pool, ticks) = clmm_pool_from_snapshot(clmm_pool);
-        engine
-            .update_clmm_quote_state(
-                &clmm_pool.source,
-                &clmm_pool.pool_address,
-                pool,
-                ticks,
-                clmm_pool
-                    .coverage
-                    .as_ref()
-                    .map(|coverage| coverage.is_complete)
-                    .unwrap_or(false),
-                clmm_pool.coverage.clone(),
-            )
-            .await;
-    }
-
     Ok(engine)
 }
 
@@ -85,31 +66,13 @@ mod tests {
                     token_b: "token-b".to_string(),
                     pool_address: "pool-1".to_string(),
                     fee_bps: 30,
-                    reserve_a: Some(1_000_000),
-                    reserve_b: Some(2_000_000),
                 }],
             }],
         )
     }
 
-    fn sample_clmm_snapshot() -> MarketSnapshot {
-        MarketSnapshot::from_sources(
-            "v2",
-            456,
-            "mainnet",
-            vec![SourceSnapshot {
-                source: "sushi".to_string(),
-                pairs: vec![TradingPairSnapshot {
-                    token_a: "token-a".to_string(),
-                    token_b: "token-b".to_string(),
-                    pool_address: "pool-clmm".to_string(),
-                    fee_bps: 30,
-                    reserve_a: None,
-                    reserve_b: None,
-                }],
-            }],
-        )
-        .with_clmm_pools(vec![ClmmPoolSnapshot {
+    fn sample_clmm_pool_state() -> ClmmPoolSnapshot {
+        ClmmPoolSnapshot {
             source: "sushi".to_string(),
             pool_address: "pool-clmm".to_string(),
             token0: "token-a".to_string(),
@@ -164,7 +127,46 @@ mod tests {
                 scanned_word_start: None,
                 scanned_word_end: None,
             }),
-        }])
+        }
+    }
+
+    fn sample_clmm_snapshot() -> MarketSnapshot {
+        let pool = sample_clmm_pool_state();
+        MarketSnapshot::from_sources(
+            "v2",
+            456,
+            "mainnet",
+            vec![SourceSnapshot {
+                source: "sushi".to_string(),
+                pairs: vec![TradingPairSnapshot {
+                    token_a: "token-a".to_string(),
+                    token_b: "token-b".to_string(),
+                    pool_address: "pool-clmm".to_string(),
+                    fee_bps: 30,
+                }],
+            }],
+        )
+        .with_clmm_pool_refs(vec![market_snapshot::ClmmPoolRefSnapshot::from_pool(&pool)])
+    }
+
+    async fn seed_clmm_quote_states(engine: &router_engine::QuoteEngine, pools: &[ClmmPoolSnapshot]) {
+        use dex_adapters::clmm_math::clmm_pool_from_snapshot;
+        for pool in pools {
+            let (state, ticks) = clmm_pool_from_snapshot(pool);
+            engine
+                .update_clmm_quote_state(
+                    &pool.source,
+                    &pool.pool_address,
+                    state,
+                    ticks,
+                    pool.coverage
+                        .as_ref()
+                        .map(|coverage| coverage.is_complete)
+                        .unwrap_or(false),
+                    pool.coverage.clone(),
+                )
+                .await;
+        }
     }
 
     #[test]
@@ -193,6 +195,24 @@ mod tests {
         let engine = build_engine_from_snapshot(&config, &sample_snapshot())
             .await
             .unwrap();
+        engine
+            .update_pairs_from_cache(
+                "soroswap",
+                &[router_engine::TradingPair {
+                    token_a: TokenId::Contract {
+                        address: "token-a".to_string(),
+                    },
+                    token_b: TokenId::Contract {
+                        address: "token-b".to_string(),
+                    },
+                    source: "soroswap".to_string(),
+                    pool_address: "pool-1".to_string(),
+                    fee_bps: 30,
+                    reserve_a: Some(1_000_000),
+                    reserve_b: Some(2_000_000),
+                }],
+            )
+            .await;
 
         let route = engine
             .get_route(&router_engine::RouteRequest {
@@ -216,9 +236,11 @@ mod tests {
     #[tokio::test]
     async fn builds_engine_with_snapshot_clmm_quote_state() {
         let config = crate::config::AppConfig::default();
+        let pool = sample_clmm_pool_state();
         let engine = build_engine_from_snapshot(&config, &sample_clmm_snapshot())
             .await
             .unwrap();
+        seed_clmm_quote_states(&engine, std::slice::from_ref(&pool)).await;
 
         let route = engine
             .get_route(&router_engine::RouteRequest {

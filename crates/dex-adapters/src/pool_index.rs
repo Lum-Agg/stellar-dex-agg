@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use market_snapshot::{ClmmPoolSnapshot, SourceSnapshot};
+use market_snapshot::{ClmmPoolRefSnapshot, SourceSnapshot};
 
 use crate::rpc::events::ContractEvent;
 use crate::utils::is_contract_address;
@@ -19,7 +19,7 @@ pub struct KnownPoolIndex {
 }
 
 impl KnownPoolIndex {
-    pub fn rebuild(sources: &[SourceSnapshot], clmm_pools: &[ClmmPoolSnapshot]) -> Self {
+    pub fn rebuild(sources: &[SourceSnapshot], clmm_pool_refs: &[ClmmPoolRefSnapshot]) -> Self {
         let mut by_contract = HashMap::new();
         for source in sources {
             for pair in &source.pairs {
@@ -34,7 +34,7 @@ impl KnownPoolIndex {
                 }
             }
         }
-        for pool in clmm_pools {
+        for pool in clmm_pool_refs {
             if is_contract_address(&pool.pool_address) {
                 by_contract.insert(
                     pool.pool_address.clone(),
@@ -85,8 +85,6 @@ mod tests {
                 token_b: "B".to_string(),
                 pool_address: "CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2".to_string(),
                 fee_bps: 30,
-                reserve_a: Some(1),
-                reserve_b: Some(2),
             }],
         }];
         let index = KnownPoolIndex::rebuild(&sources, &[]);
