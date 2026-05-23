@@ -1296,9 +1296,12 @@ pub async fn build_tx(
             // Simulate failed — do NOT return a broken raw XDR.
             // A Soroban tx without sorobanData cannot be signed by any wallet.
             // Categorize the error for a better UX message.
-            let user_msg = if e.contains("Output below minimum") || e.contains("below minimum") {
-                "Swap failed: price moved unfavorably since the quote was generated. \
-                 Please click Refresh or increase your slippage tolerance and try again."
+            let user_msg = if e.contains("Output below minimum")
+                || e.contains("below minimum")
+                || (e.contains("UnreachableCodeReached") && e.contains("swap"))
+            {
+                "Swap failed: on-chain output was below your minimum (quote vs execution drift, \
+                 common on split routes). Refresh the quote, increase slippage, or retry with a single-path route."
                     .to_string()
             } else if e.contains("EmptyPool") || e.contains("empty") {
                 "Swap failed: one of the pools has insufficient liquidity. \

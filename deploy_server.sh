@@ -29,17 +29,27 @@ rsync -az --delete \
 echo "=== Building on server (api-server + market-data-worker) ==="
 ssh -o StrictHostKeyChecking=no $SERVER "source ~/.cargo/env && cd ${REMOTE_SRC} && cargo build --release -p api-server -p market-data-worker 2>&1 | tail -8"
 
+echo "=== Telegram alerts config (server-only) ==="
+TELEGRAM_ENV_FILE="$(dirname "$0")/scripts/telegram.env.local"
+if [[ -f "$TELEGRAM_ENV_FILE" ]]; then
+  ssh -o StrictHostKeyChecking=no $SERVER "mkdir -p ${REMOTE_APP_DIR}/deploy"
+  scp -o StrictHostKeyChecking=no "$TELEGRAM_ENV_FILE" "${SERVER}:${REMOTE_APP_DIR}/deploy/telegram.env"
+  ssh -o StrictHostKeyChecking=no $SERVER "chmod 600 ${REMOTE_APP_DIR}/deploy/telegram.env"
+else
+  echo "WARN: ${TELEGRAM_ENV_FILE} missing — copy scripts/telegram.env.example and add tokens"
+fi
+
 echo "=== Deploying binaries + systemd units ==="
 ssh -o StrictHostKeyChecking=no $SERVER "\
   set -euo pipefail; \
-  mkdir -p ${REMOTE_APP_DIR}/target/release; \
+  mkdir -p ${REMOTE_APP_DIR}/target/release ${REMOTE_APP_DIR}/deploy; \
+  cp ${REMOTE_SRC}/deploy/lumagg-api@.service /etc/systemd/system/lumagg-api@.service; \
+  cp ${REMOTE_SRC}/deploy/lumagg-worker.service /etc/systemd/system/lumagg-worker.service; \
   systemctl disable --now lumagg-api >/dev/null 2>&1 || true; \
   for port in ${API_PORTS[*]}; do systemctl stop lumagg-api@\$port >/dev/null 2>&1 || true; done; \
   systemctl stop lumagg-worker >/dev/null 2>&1 || true; \
   cp ${REMOTE_SRC}/target/release/api-server ${REMOTE_API_BIN}; \
   cp ${REMOTE_SRC}/target/release/market-data-worker ${REMOTE_WORKER_BIN}; \
-  cp ${REMOTE_SRC}/deploy/lumagg-api@.service /etc/systemd/system/lumagg-api@.service; \
-  cp ${REMOTE_SRC}/deploy/lumagg-worker.service /etc/systemd/system/lumagg-worker.service; \
   rm -f /etc/systemd/system/lumagg-api.service; \
   systemctl daemon-reload; \
   systemctl enable --now lumagg-worker; \

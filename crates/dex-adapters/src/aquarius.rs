@@ -633,9 +633,16 @@ impl DexAdapter for AquariusAdapter {
         drop(pairs);
 
         // Reuse the same batch refresh as Soroswap (same instance storage layout)
-        let results =
-            crate::batch_refresh::batch_refresh_soroswap_reserves(&self.rpc, &pool_addresses)
-                .await?;
+        let concurrency = std::env::var("POOL_STATE_REFRESH_CONCURRENCY")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4);
+        let results = crate::batch_refresh::batch_refresh_soroswap_reserves_parallel(
+            &self.rpc,
+            &pool_addresses,
+            concurrency,
+        )
+        .await?;
 
         let mut updated = 0;
         let mut pairs = self.pairs.write().await;

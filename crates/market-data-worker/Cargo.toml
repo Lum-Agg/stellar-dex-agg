@@ -10,8 +10,10 @@ path = "src/main.rs"
 [dependencies]
 market-snapshot = { path = "../market-snapshot" }
 dex-adapters = { path = "../dex-adapters" }
+lumagg-alerts = { path = "../lumagg-alerts" }
 
 tokio.workspace = true
+reqwest.workspace = true
 futures.workspace = true
 anyhow.workspace = true
 tracing.workspace = true

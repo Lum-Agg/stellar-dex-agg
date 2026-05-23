@@ -35,6 +35,10 @@ pub struct AppConfig {
     pub path_finder_max_multi_hop_paths: usize,
     /// Path finder: cap on 1-hop pools (`0` = all direct pools in graph).
     pub path_finder_max_direct_paths: usize,
+    /// Allow API to RPC-fetch xy=k pool misses (default false — worker writes Redis).
+    pub quote_rpc_hydrate_enabled: bool,
+    /// Max xy=k pools to RPC-fetch per quote when `quote_rpc_hydrate_enabled` is true.
+    pub quote_hydrate_max_pools: usize,
     /// Optional snapshot backend selector (`file` or `redis`). When unset, snapshot mode
     /// is enabled only if `snapshot_dir` is set.
     pub snapshot_backend: Option<String>,
@@ -66,6 +70,8 @@ impl Default for AppConfig {
             path_finder_max_hops: 3,
             path_finder_max_multi_hop_paths: 50,
             path_finder_max_direct_paths: 0,
+            quote_rpc_hydrate_enabled: false,
+            quote_hydrate_max_pools: 12,
             snapshot_backend: None,
             snapshot_dir: None,
             snapshot_redis_url: None,
@@ -123,6 +129,14 @@ impl AppConfig {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(Self::default().path_finder_max_direct_paths),
+            quote_rpc_hydrate_enabled: std::env::var("QUOTE_RPC_HYDRATE_ENABLED")
+                .ok()
+                .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+                .unwrap_or(Self::default().quote_rpc_hydrate_enabled),
+            quote_hydrate_max_pools: std::env::var("QUOTE_HYDRATE_MAX_POOLS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(Self::default().quote_hydrate_max_pools),
             snapshot_backend: std::env::var("SNAPSHOT_BACKEND").ok(),
             snapshot_dir: std::env::var("SNAPSHOT_DIR").ok(),
             snapshot_redis_url: std::env::var("SNAPSHOT_REDIS_URL").ok(),

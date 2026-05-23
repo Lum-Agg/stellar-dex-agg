@@ -1,0 +1,11 @@
+[package]
+name = "lumagg-alerts"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+reqwest.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
+serde_json.workspace = true

@@ -35,6 +35,39 @@ pub async fn batch_refresh_soroswap_reserves(
     Ok(all_results)
 }
 
+/// Same as [`batch_refresh_soroswap_reserves`] but runs up to `max_in_flight` ledger batches concurrently.
+pub async fn batch_refresh_soroswap_reserves_parallel(
+    rpc: &SorobanRpc,
+    pool_addresses: &[String],
+    max_in_flight: usize,
+) -> Result<Vec<(String, Option<(u128, u128)>)>> {
+    if pool_addresses.is_empty() {
+        return Ok(Vec::new());
+    }
+    let concurrency = max_in_flight.max(1);
+    let chunks: Vec<Vec<String>> = pool_addresses
+        .chunks(MAX_KEYS_PER_CALL)
+        .map(|c| c.to_vec())
+        .collect();
+    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
+    let mut tasks = Vec::with_capacity(chunks.len());
+    for chunk in chunks {
+        let sem = semaphore.clone();
+        let rpc_url = rpc.url().to_string();
+        let passphrase = rpc.network_passphrase().to_string();
+        tasks.push(tokio::spawn(async move {
+            let _permit = sem.acquire().await.expect("semaphore");
+            let rpc = SorobanRpc::new(&rpc_url, &passphrase);
+            fetch_instance_data_batch(&rpc, &chunk).await
+        }));
+    }
+    let mut all_results = Vec::with_capacity(pool_addresses.len());
+    for task in tasks {
+        all_results.extend(task.await??);
+    }
+    Ok(all_results)
+}
+
 /// Fetch contract instance data for a batch of contracts.
 async fn fetch_instance_data_batch(
     rpc: &SorobanRpc,

@@ -1,4 +1,4 @@
-//! Batched pool-state hydration for `/quote` (Redis MGET + xy=k RPC fallback).
+//! Batched pool-state hydration for `/quote` (Redis MGET; optional RPC fallback).
 
 use std::collections::{HashMap, HashSet};
 
@@ -14,18 +14,21 @@ use market_snapshot::{
 };
 use router_engine::{Path, QuoteEngine, QuoteHydration, SnapshotClmmQuoteState};
 use std::sync::Arc;
-use tracing::debug;
+use tracing::{debug, warn};
 
 const CLMM_SOURCES: &[&str] = &["sushi", "aquarius_clmm"];
 const BATCH_XYK_SOURCES: &[&str] = &["soroswap", "aquarius"];
 
 pub struct PoolHydrateConfig {
+    /// When false, `/quote` uses Redis only (worker is the sole writer).
+    pub rpc_hydrate_enabled: bool,
     pub max_rpc_pools: usize,
 }
 
 impl Default for PoolHydrateConfig {
     fn default() -> Self {
         Self {
+            rpc_hydrate_enabled: false,
             max_rpc_pools: parse_quote_hydrate_max_pools_from_env(),
         }
     }
@@ -78,17 +81,17 @@ fn clmm_state_from_snapshot(snapshot: &ClmmPoolSnapshot) -> SnapshotClmmQuoteSta
     }
 }
 
-/// Load per-pool state for candidate paths: Redis first, then batched xy=k RPC for misses.
+/// Load per-pool state for candidate paths from Redis; optional batched xy=k RPC for misses.
 pub async fn hydrate_paths(
     engine: &QuoteEngine,
     paths: &[Path],
     store: &RedisPoolStateStore,
     rpc: &SorobanRpc,
     config: &PoolHydrateConfig,
-) -> QuoteHydration {
+) -> (QuoteHydration, usize) {
     let (xyk_refs, clmm_refs, comet_pools) = collect_pool_refs(paths);
     if xyk_refs.is_empty() && clmm_refs.is_empty() && comet_pools.is_empty() {
-        return QuoteHydration::default();
+        return (QuoteHydration::default(), 0);
     }
 
     let mut xyk_pools = store.fetch_xyk(&xyk_refs).await.unwrap_or_default();
@@ -99,55 +102,66 @@ pub async fn hydrate_paths(
         .map(|(key, snapshot)| (key, clmm_state_from_snapshot(&snapshot)))
         .collect();
 
-    let mut rpc_candidates: Vec<(String, String)> = Vec::new();
-    for (source, pool_address) in &xyk_refs {
-        let key = XykPoolStateValue::pool_key(source, pool_address);
-        if !xyk_pools.contains_key(&key) && BATCH_XYK_SOURCES.contains(&source.as_str()) {
-            rpc_candidates.push((source.clone(), pool_address.clone()));
+    let mut redis_miss_xyk = 0usize;
+    if config.rpc_hydrate_enabled {
+        let mut rpc_candidates: Vec<(String, String)> = Vec::new();
+        for (source, pool_address) in &xyk_refs {
+            let key = XykPoolStateValue::pool_key(source, pool_address);
+            if !xyk_pools.contains_key(&key) && BATCH_XYK_SOURCES.contains(&source.as_str()) {
+                redis_miss_xyk += 1;
+                rpc_candidates.push((source.clone(), pool_address.clone()));
+            }
         }
-    }
-    rpc_candidates.truncate(config.max_rpc_pools);
+        rpc_candidates.truncate(config.max_rpc_pools);
 
-    if !rpc_candidates.is_empty() {
-        let pool_addresses: Vec<String> = rpc_candidates
-            .iter()
-            .map(|(_, pool)| pool.clone())
-            .collect();
-        match batch_refresh_soroswap_reserves(rpc, &pool_addresses).await {
-            Ok(results) => {
-                let cached = engine.cached_pool_edges().await;
-                let mut writeback: Vec<XykPoolStateValue> = Vec::new();
+        if !rpc_candidates.is_empty() {
+            let pool_addresses: Vec<String> = rpc_candidates
+                .iter()
+                .map(|(_, pool)| pool.clone())
+                .collect();
+            match batch_refresh_soroswap_reserves(rpc, &pool_addresses).await {
+                Ok(results) => {
+                    let cached = engine.cached_pool_edges().await;
+                    let mut writeback: Vec<XykPoolStateValue> = Vec::new();
 
-                for ((source, pool_address), (_, reserves)) in
-                    rpc_candidates.iter().zip(results.iter())
-                {
-                    let Some((r0, r1)) = *reserves else {
-                        continue;
-                    };
-                    let Some(edge) = cached
-                        .iter()
-                        .find(|p| p.source == *source && p.pool_address == *pool_address)
-                    else {
-                        continue;
-                    };
-                    let value = xyk_value_from_batch(edge, r0, r1, source, pool_address);
-                    let key = XykPoolStateValue::pool_key(source, pool_address);
-                    xyk_pools.insert(key, value.clone());
-                    writeback.push(value);
-                }
+                    for ((source, pool_address), (_, reserves)) in
+                        rpc_candidates.iter().zip(results.iter())
+                    {
+                        let Some((r0, r1)) = *reserves else {
+                            continue;
+                        };
+                        let Some(edge) = cached
+                            .iter()
+                            .find(|p| p.source == *source && p.pool_address == *pool_address)
+                        else {
+                            continue;
+                        };
+                        let value = xyk_value_from_batch(edge, r0, r1, source, pool_address);
+                        let key = XykPoolStateValue::pool_key(source, pool_address);
+                        xyk_pools.insert(key, value.clone());
+                        writeback.push(value);
+                    }
 
-                if !writeback.is_empty() {
-                    if let Err(error) = store.set_xyk_batch(&writeback).await {
-                        debug!("xy=k hydrate writeback failed: {}", error);
+                    if !writeback.is_empty() {
+                        if let Err(error) = store.set_xyk_batch(&writeback).await {
+                            debug!("xy=k hydrate writeback failed: {}", error);
+                        }
                     }
                 }
+                Err(error) => debug!("xy=k batch hydrate RPC failed: {}", error),
             }
-            Err(error) => debug!("xy=k batch hydrate RPC failed: {}", error),
+        }
+    } else {
+        for (source, pool_address) in &xyk_refs {
+            let key = XykPoolStateValue::pool_key(source, pool_address);
+            if !xyk_pools.contains_key(&key) && BATCH_XYK_SOURCES.contains(&source.as_str()) {
+                redis_miss_xyk += 1;
+            }
         }
     }
 
     let mut comet_states = HashMap::new();
-    if !comet_pools.is_empty() {
+    if config.rpc_hydrate_enabled && !comet_pools.is_empty() {
         let comet = CometAdapter::new(Arc::new(SorobanRpc::new(
             rpc.url(),
             rpc.network_passphrase(),
@@ -164,35 +178,47 @@ pub async fn hydrate_paths(
         }
     }
 
+    if redis_miss_xyk > 0 {
+        warn!(
+            redis_miss_xyk,
+            paths = paths.len(),
+            rpc_hydrate_enabled = config.rpc_hydrate_enabled,
+            "quote hydration: xy=k Redis misses (worker should publish these pools)"
+        );
+    }
+
     debug!(
         xyk = xyk_pools.len(),
         clmm = clmm_pools.len(),
         comet = comet_states.len(),
-        "Quote pool hydration ready"
+        redis_miss_xyk,
+        "hydrated pools for quote"
     );
 
-    QuoteHydration {
-        xyk_pools,
-        clmm_pools,
-        comet_pools: comet_states,
-    }
+    (
+        QuoteHydration {
+            xyk_pools,
+            clmm_pools,
+            comet_pools: comet_states,
+        },
+        redis_miss_xyk,
+    )
 }
 
 fn xyk_value_from_batch(
     edge: &router_engine::TradingPair,
-    reserve0: u128,
-    reserve1: u128,
+    r0: u128,
+    r1: u128,
     source: &str,
     pool_address: &str,
 ) -> XykPoolStateValue {
-    // Matches soroswap/aquarius batch refresh: contract reserve0/1 → pair reserve_a/b.
-    XykPoolStateValue {
-        source: source.to_string(),
-        pool_address: pool_address.to_string(),
-        token_a: edge.token_a.canonical(),
-        token_b: edge.token_b.canonical(),
-        fee_bps: edge.fee_bps,
-        reserve_a: reserve0,
-        reserve_b: reserve1,
-    }
+    XykPoolStateValue::new(
+        source,
+        pool_address,
+        &edge.token_a.canonical(),
+        &edge.token_b.canonical(),
+        edge.fee_bps,
+        r0,
+        r1,
+    )
 }

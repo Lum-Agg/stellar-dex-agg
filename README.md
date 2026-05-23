@@ -145,10 +145,10 @@ sequenceDiagram
 
 Steps in code (`state::quote_route` → `pool_hydrate` → `quote_engine`):
 
-1. **Path discovery (graph only)** — BFS on cached `TradingPair` edges from last snapshot reload.
-2. **Collect pool keys** — unique `(source, pool_address)` across candidate paths.
-3. **Redis MGET** — one round trip for `lumagg:pool:xyk:*` and `lumagg:pool:clmm:*`.
-4. **xy=k RPC fallback** — batch `getLedgerEntries` for Soroswap/Aquarius misses (cap `QUOTE_HYDRATE_MAX_POOLS`, default 32); write back to Redis with EX=8.
+1. **Path discovery (graph only)** — all candidate paths (no liquidity prune).
+2. **Collect pool keys** — unique `(source, pool_address)` across paths.
+3. **Redis MGET** — xy=k + CLMM pool state (worker publishes every ~2s).
+4. **Quote** — local math; API does not RPC by default (`QUOTE_RPC_HYDRATE_ENABLED=false`).
 5. **Comet hydrate** — per Comet pool on path: read tokens, balances, normalized/denorm weights; held in `QuoteHydration.comet_pools` for this request only.
 6. **Route + split** — simulate hops with local math; compare best Soroban route vs Classic single-path (Horizon) when both exist.
 7. **CLMM guard** — hops skip or fail when tick coverage is incomplete (`coverage.is_complete`).
@@ -270,7 +270,10 @@ cargo run -p api-server --bin api-server
 | `DISCOVERY_INTERVAL_SECS` | `600` | worker | Full graph rediscovery |
 | `REFRESH_INTERVAL_SECS` | `5` | worker | Reserve / CLMM refresh |
 | `POOL_STATE_TTL_SECS` | `30` | worker, API | Redis EX on pool keys (should exceed refresh cycle) |
-| `QUOTE_HYDRATE_MAX_POOLS` | `32` | API | Max xy=k RPC hydrates per quote |
+| `POOL_PUBLISH_INTERVAL_SECS` | `2` | worker | Parallel on-chain refresh + Redis publish |
+| `POOL_STATE_REFRESH_CONCURRENCY` | `4` | worker | Concurrent getLedgerEntries batches |
+| `QUOTE_RPC_HYDRATE_ENABLED` | `false` | API | RPC fallback on Redis miss (emergency) |
+| `QUOTE_HYDRATE_MAX_POOLS` | `12` | API | Max xy=k RPC hydrates when enabled |
 | `LEDGER_WATCHER_ENABLED` | `true` | worker | Requires Redis pool store |
 | `LEDGER_POLL_SECS` | `0.5` | worker | Ledger poll interval (fractional seconds, min `0.1`) |
 | `SUSHI_DISCOVERY_RPC` | public gateway | worker | RPC used for Sushi pool probes |

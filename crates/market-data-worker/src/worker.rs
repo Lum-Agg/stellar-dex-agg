@@ -21,14 +21,20 @@ use market_snapshot::{
     ClmmPoolSnapshot, MarketSnapshot, SourceSnapshot, TokenMetadataSnapshot, TradingPairSnapshot,
     DEFAULT_SNAPSHOT_DIR,
 };
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// Shared graph + CLMM state (main loop and background bootstrap).
-struct WorkerShared {
-    sources: Vec<SourceSnapshot>,
-    clmm_pools: Vec<ClmmPoolSnapshot>,
+pub(crate) struct WorkerShared {
+    pub(crate) sources: Vec<SourceSnapshot>,
+    pub(crate) clmm_pools: Vec<ClmmPoolSnapshot>,
 }
 
 #[derive(Debug, Clone)]
@@ -44,6 +50,8 @@ pub struct WorkerConfig {
     pub refresh_interval_secs: u64,
     /// Fast Redis pool-state publish from adapter caches (independent of refresh duration).
     pub pool_publish_interval_secs: u64,
+    /// Concurrent getLedgerEntries batches during xy=k refresh (Soroswap/Aquarius).
+    pub pool_state_refresh_concurrency: usize,
     pub discovery_interval_secs: u64,
     pub ledger_poll: std::time::Duration,
     pub ledger_watcher_enabled: bool,
@@ -78,7 +86,11 @@ impl WorkerConfig {
             pool_publish_interval_secs: std::env::var("POOL_PUBLISH_INTERVAL_SECS")
                 .ok()
                 .and_then(|value| value.parse().ok())
-                .unwrap_or(5),
+                .unwrap_or(2),
+            pool_state_refresh_concurrency: std::env::var("POOL_STATE_REFRESH_CONCURRENCY")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(4),
             discovery_interval_secs: std::env::var("DISCOVERY_INTERVAL_SECS")
                 .ok()
                 .and_then(|value| value.parse().ok())
@@ -242,29 +254,114 @@ async fn refresh_sources(
     adapters: &[Arc<dyn DexAdapter>],
     current_sources: Vec<SourceSnapshot>,
 ) -> Vec<SourceSnapshot> {
-    let mut sources = current_sources;
-    for adapter in adapters {
+    refresh_sources_parallel(adapters, current_sources).await
+}
+
+/// Refresh every adapter concurrently (each may batch RPC internally).
+async fn refresh_sources_parallel(
+    adapters: &[Arc<dyn DexAdapter>],
+    mut sources: Vec<SourceSnapshot>,
+) -> Vec<SourceSnapshot> {
+    let snapshots = futures::future::join_all(adapters.iter().map(|adapter| async move {
+        let source_id = adapter.id().to_string();
         match adapter.refresh_reserves().await {
             Ok(updated) if updated > 0 => {
                 let pairs = adapter.get_cached_pairs().await;
                 if pairs.is_empty() {
-                    continue;
+                    return None;
                 }
                 let pairs = pairs.iter().map(trading_pair_snapshot).collect::<Vec<_>>();
-                let pairs = sanitize_source_pairs(adapter.id(), pairs);
-                sources = upsert_source_snapshot(
-                    sources,
-                    SourceSnapshot {
-                        source: adapter.id().to_string(),
-                        pairs,
-                    },
-                );
+                let pairs = sanitize_source_pairs(&source_id, pairs);
+                Some(SourceSnapshot {
+                    source: source_id,
+                    pairs,
+                })
             }
-            Ok(_) => {}
-            Err(error) => warn!("Reserve refresh failed for {}: {}", adapter.id(), error),
+            Ok(_) => None,
+            Err(error) => {
+                warn!("Reserve refresh failed for {}: {}", source_id, error);
+                None
+            }
         }
+    }))
+    .await;
+
+    for snapshot in snapshots.into_iter().flatten() {
+        sources = upsert_source_snapshot(sources, snapshot);
     }
     sources
+}
+
+struct PoolRefreshInFlight(AtomicBool);
+
+impl PoolRefreshInFlight {
+    fn new() -> Self {
+        Self(AtomicBool::new(false))
+    }
+
+    fn try_start(&self) -> bool {
+        self.0
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+            .is_ok()
+    }
+
+    fn finish(&self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+fn spawn_parallel_pool_state_refresh(
+    in_flight: Arc<PoolRefreshInFlight>,
+    shared: Arc<RwLock<WorkerShared>>,
+    adapters: Vec<Arc<dyn DexAdapter>>,
+    sushi: Arc<SushiAdapter>,
+    aquarius_clmm: Arc<AquariusClmmAdapter>,
+    pool_state_store: Option<Arc<market_snapshot::pool_state_store::RedisPoolStateStore>>,
+    metrics: Option<Arc<crate::monitor::WorkerMonitorMetrics>>,
+    telegram: Option<Arc<lumagg_alerts::TelegramAlerter>>,
+) {
+    if !in_flight.try_start() {
+        debug!("pool state refresh skipped (previous cycle still running)");
+        return;
+    }
+
+    tokio::spawn(async move {
+        struct Guard(Arc<PoolRefreshInFlight>);
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                self.0.finish();
+            }
+        }
+        let _guard = Guard(in_flight);
+
+        let sources = {
+            let guard = shared.read().await;
+            guard.sources.clone()
+        };
+        let refreshed = refresh_sources_parallel(&adapters, sources).await;
+        let clmm_pools = collect_clmm_snapshots(sushi.as_ref(), aquarius_clmm.as_ref()).await;
+        {
+            let mut guard = shared.write().await;
+            guard.sources = refreshed;
+            guard.clmm_pools = clmm_pools.clone();
+        }
+        if let Err(error) = publish_pool_state_only(
+            pool_state_store.as_ref(),
+            &adapters,
+            &clmm_pools,
+            metrics.as_ref(),
+        )
+        .await
+        {
+            warn!("pool state Redis publish failed: {}", error);
+            crate::monitor::alert_failure(
+                telegram.as_ref(),
+                "pool_publish_failed",
+                &format!("Redis publish failed: {error}"),
+            )
+            .await;
+        }
+    });
 }
 
 fn token_metadata_snapshot(meta: TokenMetadata) -> TokenMetadataSnapshot {
@@ -280,8 +377,12 @@ async fn collect_clmm_snapshots(
     sushi: &SushiAdapter,
     aquarius_clmm: &AquariusClmmAdapter,
 ) -> Vec<ClmmPoolSnapshot> {
-    let mut clmm_pools = sushi.export_clmm_snapshots().await;
-    clmm_pools.extend(aquarius_clmm.export_clmm_snapshots().await);
+    let (sushi_pools, aquarius_pools) = tokio::join!(
+        sushi.export_clmm_snapshots(),
+        aquarius_clmm.export_clmm_snapshots(),
+    );
+    let mut clmm_pools = sushi_pools;
+    clmm_pools.extend(aquarius_pools);
     clmm_pools.sort_by(|a, b| {
         a.source
             .cmp(&b.source)
@@ -312,6 +413,7 @@ async fn publish_pool_state_only(
     pool_state_store: Option<&Arc<market_snapshot::pool_state_store::RedisPoolStateStore>>,
     adapters: &[Arc<dyn DexAdapter>],
     clmm_states: &[ClmmPoolSnapshot],
+    metrics: Option<&Arc<crate::monitor::WorkerMonitorMetrics>>,
 ) -> Result<()> {
     let Some(pool_store) = pool_state_store.map(|s| s.as_ref()) else {
         return Ok(());
@@ -324,6 +426,9 @@ async fn publish_pool_state_only(
     pool_store
         .publish_pool_state(&xyk_values, clmm_states)
         .await?;
+    if let Some(m) = metrics {
+        m.record_publish(xyk_values.len(), clmm_complete);
+    }
     info!(
         xyk_pools = xyk_values.len(),
         clmm_pools = clmm_complete,
@@ -340,7 +445,7 @@ async fn publish_snapshot_and_pool_state(
     topology: &MarketSnapshot,
     clmm_states: &[ClmmPoolSnapshot],
 ) -> Result<()> {
-    publish_pool_state_only(pool_state_store, adapters, clmm_states).await?;
+    publish_pool_state_only(pool_state_store, adapters, clmm_states, None).await?;
     snapshot_store.publish_snapshot(topology).await?;
     Ok(())
 }
@@ -350,7 +455,7 @@ enum WorkerTick {
     Discovery,
     /// Periodic adapter.refresh_reserves() (slow).
     Refresh,
-    /// Fast Redis publish from last adapter caches (every few seconds).
+    /// Parallel on-chain refresh + Redis publish (every 1–2s; skips if prior cycle still running).
     PoolPublish,
 }
 
@@ -546,8 +651,32 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
         });
     }
 
+    let pool_refresh_in_flight = Arc::new(PoolRefreshInFlight::new());
+    let monitor_metrics = Arc::new(crate::monitor::WorkerMonitorMetrics::new());
+    let telegram = lumagg_alerts::TelegramAlerter::from_env().map(Arc::new);
+    if let Some(ref alerter) = telegram {
+        let api_health_url = std::env::var("MONITOR_API_HEALTH_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:3100/api/v1/health".to_string());
+        crate::monitor::spawn_telegram_monitor(
+            alerter.clone(),
+            monitor_metrics.clone(),
+            shared.clone(),
+            pool_state_store.clone(),
+            api_health_url,
+        );
+        info!("Telegram monitoring enabled (heartbeat + alerts)");
+        let _ = alerter
+            .send("🚀 LumAgg worker started (pool refresh + Telegram monitoring)")
+            .await;
+    }
+    info!(
+        pool_publish_interval_secs = config.pool_publish_interval_secs,
+        pool_state_refresh_concurrency = config.pool_state_refresh_concurrency,
+        "Pool state refresh loop: parallel adapter RPC + Redis publish"
+    );
+
     loop {
-        // Never await slow adapter work inside `select!` — it starves pool publish (5s).
+        // Never await slow adapter work inside `select!` — it starves the pool publish tick.
         let tick = tokio::select! {
             biased;
             _ = pool_publish_interval.tick() => WorkerTick::PoolPublish,
@@ -555,11 +684,18 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
             _ = discovery_interval.tick() => WorkerTick::Discovery,
         };
 
-        let clmm_pools = shared.read().await.clmm_pools.clone();
-
         match tick {
             WorkerTick::PoolPublish => {
-                publish_pool_state_only(pool_state_store.as_ref(), &adapters, &clmm_pools).await?;
+                spawn_parallel_pool_state_refresh(
+                    pool_refresh_in_flight.clone(),
+                    shared.clone(),
+                    adapters.clone(),
+                    sushi.clone(),
+                    aquarius_clmm.clone(),
+                    pool_state_store.clone(),
+                    Some(monitor_metrics.clone()),
+                    telegram.clone(),
+                );
             }
             WorkerTick::Refresh => {
                 let shared_refresh = shared.clone();

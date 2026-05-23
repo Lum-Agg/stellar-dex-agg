@@ -41,7 +41,7 @@ impl Default for SplitConfig {
             min_split_fraction_bps: 5,       // 0.05% minimum share of total output
             max_splits: 5,
             tolerance: 0.0001, // 0.01% precision
-            max_iterations: 25,
+            max_iterations: 18,
         }
     }
 }
@@ -266,7 +266,7 @@ impl SplitOptimizer {
             .collect();
 
         let improvement_bps = ((total_out - best_single_out) * 10_000 / best_single_out) as u32;
-        let minimum_out = apply_slippage(total_out, slippage_bps);
+        let minimum_out = apply_split_minimum_slippage(total_out, slippage_bps);
         let compute_time_ms = start.elapsed().as_millis() as u64;
 
         debug!(
@@ -690,8 +690,18 @@ impl SplitOptimizer {
     }
 }
 
+/// Extra slippage on `minimum_out` for split routes (local quotes vs on-chain multi-leg drift).
+const SPLIT_MIN_OUTPUT_EXTRA_BPS: u32 = 150;
+
 fn apply_slippage(amount: u128, slippage_bps: u32) -> u128 {
     amount * (10_000 - slippage_bps as u128) / 10_000
+}
+
+fn apply_split_minimum_slippage(amount: u128, slippage_bps: u32) -> u128 {
+    apply_slippage(
+        amount,
+        slippage_bps.saturating_add(SPLIT_MIN_OUTPUT_EXTRA_BPS),
+    )
 }
 
 fn empty_route(total_amount: u128, compute_time_ms: u64) -> OptimalRoute {

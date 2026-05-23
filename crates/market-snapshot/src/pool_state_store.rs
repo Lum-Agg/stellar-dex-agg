@@ -12,7 +12,7 @@ use crate::ClmmPoolSnapshot;
 
 /// Default Redis EX for pool keys. Should exceed worker refresh duration (often 15–30s on mainnet).
 pub const DEFAULT_POOL_STATE_TTL_SECS: u64 = 30;
-pub const DEFAULT_QUOTE_HYDRATE_MAX_POOLS: usize = 32;
+pub const DEFAULT_QUOTE_HYDRATE_MAX_POOLS: usize = 12;
 
 const XYK_KEY_PREFIX: &str = "lumagg:pool:xyk";
 const CLMM_KEY_PREFIX: &str = "lumagg:pool:clmm";
@@ -96,6 +96,16 @@ impl RedisPoolStateStore {
 
     pub fn ttl_secs(&self) -> u64 {
         self.ttl_secs
+    }
+
+    /// Whether the topology snapshot key exists in Redis.
+    pub async fn snapshot_exists(&self) -> Result<bool> {
+        let mut conn = self.client.get_multiplexed_async_connection().await?;
+        let exists: bool = redis::cmd("EXISTS")
+            .arg("lumagg:snapshot:current")
+            .query_async(&mut conn)
+            .await?;
+        Ok(exists)
     }
 
     /// Worker hot path: publish xy=k reserves and complete CLMM state (not in topology snapshot).

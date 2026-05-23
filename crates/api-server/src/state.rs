@@ -40,6 +40,7 @@ pub struct AppState {
     pub token_metadata: Arc<TokenMetadataStore>,
     pub rpc: Arc<SorobanRpc>,
     pub pool_state_store: Option<Arc<RedisPoolStateStore>>,
+    pub telegram: Option<Arc<lumagg_alerts::TelegramAlerter>>,
 }
 
 pub(crate) fn sanitize_cached_pairs(
@@ -309,26 +310,43 @@ impl AppState {
         self.engine.read().await.clone()
     }
 
-    /// Find paths, hydrate pool state from Redis (and batched RPC fallback), then quote.
+    /// Find paths, hydrate pool state from Redis, then quote (no path prune; no RPC by default).
     pub async fn quote_route(&self, request: &RouteRequest) -> OptimalRoute {
         let started = std::time::Instant::now();
         let engine = self.current_engine().await;
         let paths = engine.find_candidate_paths(request).await;
         let paths_ms = started.elapsed().as_millis();
+
+        let hydrate_config = PoolHydrateConfig {
+            rpc_hydrate_enabled: self.config.quote_rpc_hydrate_enabled,
+            max_rpc_pools: self.config.quote_hydrate_max_pools,
+        };
+
         let hydrate_started = std::time::Instant::now();
-        let hydration = if let Some(store) = &self.pool_state_store {
+        let (hydration, redis_miss_xyk) = if let Some(store) = &self.pool_state_store {
             pool_hydrate::hydrate_paths(
                 &engine,
                 &paths,
                 store,
                 &self.rpc,
-                &PoolHydrateConfig::default(),
+                &hydrate_config,
             )
             .await
         } else {
             tracing::warn!("pool_state_store missing — Soroban quotes will not hydrate from Redis");
-            router_engine::QuoteHydration::default()
+            (router_engine::QuoteHydration::default(), 0)
         };
+        if redis_miss_xyk > 0 {
+            if let Some(alerter) = &self.telegram {
+                let detail = format!(
+                    "quote Redis xy=k misses={redis_miss_xyk} paths={} (worker should publish pools)",
+                    paths.len()
+                );
+                let _ = alerter
+                    .alert("quote_redis_miss", &format!("⚠️ LumAgg API\n{detail}"))
+                    .await;
+            }
+        }
         let soroban_path_count = paths
             .iter()
             .filter(|p| {
@@ -343,6 +361,8 @@ impl AppState {
             clmm_hydrated = hydration.clmm_pools.len(),
             paths_ms,
             hydrate_ms,
+            redis_miss_xyk,
+            rpc_hydrate_enabled = hydrate_config.rpc_hydrate_enabled,
             "quote_route hydration"
         );
         let quote_started = std::time::Instant::now();
@@ -479,12 +499,17 @@ impl AppState {
                 token_metadata.replace_all(token_metadata_map).await;
             }
             let pool_state_store = configured_pool_state_store(&config)?;
+            let telegram = lumagg_alerts::TelegramAlerter::from_env_api_primary().map(Arc::new);
+            if telegram.is_some() {
+                info!("Telegram alerts enabled on API (quote Redis miss)");
+            }
             let state = Self {
                 engine: Arc::new(RwLock::new(engine)),
                 config,
                 token_metadata,
                 rpc,
                 pool_state_store,
+                telegram,
             };
             state.spawn_snapshot_reloader(snapshot_store, snapshot_events, initial_version);
             return Ok(state);
@@ -587,12 +612,14 @@ impl AppState {
         });
 
         let pool_state_store = configured_pool_state_store(&config)?;
+        let telegram = lumagg_alerts::TelegramAlerter::from_env_api_primary().map(Arc::new);
         Ok(Self {
             engine: Arc::new(RwLock::new(engine)),
             config,
             token_metadata,
             rpc,
             pool_state_store,
+            telegram,
         })
     }
 }

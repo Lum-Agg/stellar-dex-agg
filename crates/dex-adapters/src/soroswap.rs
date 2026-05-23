@@ -6,7 +6,6 @@
 //! - Factory contract provides pair discovery
 //! - Each pair is a separate contract with token_0(), token_1(), get_reserves()
 
-use crate::batch_refresh::batch_refresh_soroswap_reserves;
 use crate::rpc::{scval_to_address, scval_to_i128, scval_to_u128, scval_to_u32, SorobanRpc};
 use crate::traits::*;
 use anyhow::Result;
@@ -48,7 +47,16 @@ impl SoroswapAdapter {
         let pool_addresses: Vec<String> = pairs.iter().map(|p| p.pool_address.clone()).collect();
         drop(pairs); // Release read lock before write
 
-        let results = batch_refresh_soroswap_reserves(&self.rpc, &pool_addresses).await?;
+        let concurrency = std::env::var("POOL_STATE_REFRESH_CONCURRENCY")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4);
+        let results = crate::batch_refresh::batch_refresh_soroswap_reserves_parallel(
+            &self.rpc,
+            &pool_addresses,
+            concurrency,
+        )
+        .await?;
 
         let mut updated = 0;
         let mut pairs = self.pairs.write().await;
