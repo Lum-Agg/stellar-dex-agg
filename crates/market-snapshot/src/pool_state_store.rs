@@ -16,6 +16,24 @@ pub const DEFAULT_QUOTE_HYDRATE_MAX_POOLS: usize = 12;
 
 const XYK_KEY_PREFIX: &str = "lumagg:pool:xyk";
 const CLMM_KEY_PREFIX: &str = "lumagg:pool:clmm";
+const AQUARIUS_KEY_PREFIX: &str = "lumagg:pool:aquarius";
+
+/// Full Aquarius pool state (token-ordered reserves + stable params).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AquariusPoolStateValue {
+    pub pool_address: String,
+    pub tokens: Vec<String>,
+    pub reserves: Vec<u128>,
+    pub fee_bps: u32,
+    pub is_stable: bool,
+    pub amp: u128,
+}
+
+impl AquariusPoolStateValue {
+    pub fn redis_key(pool_address: &str) -> String {
+        format!("{AQUARIUS_KEY_PREFIX}:{pool_address}")
+    }
+}
 
 /// xy=k reserves stored per pool (canonical token orientation from worker snapshot).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -113,8 +131,10 @@ impl RedisPoolStateStore {
         &self,
         xyk_values: &[XykPoolStateValue],
         clmm_pools: &[ClmmPoolSnapshot],
+        aquarius_pools: &[AquariusPoolStateValue],
     ) -> Result<()> {
         self.set_xyk_batch(xyk_values).await?;
+        self.set_aquarius_batch(aquarius_pools).await?;
         let complete_clmm: Vec<&ClmmPoolSnapshot> = clmm_pools
             .iter()
             .filter(|pool| should_publish_clmm_to_redis(pool))
@@ -128,11 +148,49 @@ impl RedisPoolStateStore {
         .await?;
         tracing::debug!(
             xyk_written = xyk_values.len(),
+            aquarius_written = aquarius_pools.len(),
             clmm_written = complete_clmm.len(),
             ttl_secs = self.ttl_secs,
             "Published per-pool state to Redis"
         );
         Ok(())
+    }
+
+    pub async fn set_aquarius_batch(&self, values: &[AquariusPoolStateValue]) -> Result<()> {
+        if values.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.client.get_multiplexed_async_connection().await?;
+        for value in values {
+            let key = AquariusPoolStateValue::redis_key(&value.pool_address);
+            let bytes = serde_json::to_vec(value)?;
+            conn.set_ex::<_, _, ()>(key, bytes, self.ttl_secs).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn fetch_aquarius(
+        &self,
+        pool_addresses: &[String],
+    ) -> Result<HashMap<String, AquariusPoolStateValue>> {
+        if pool_addresses.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let keys: Vec<String> = pool_addresses
+            .iter()
+            .map(|pool| AquariusPoolStateValue::redis_key(pool))
+            .collect();
+        let mut conn = self.client.get_multiplexed_async_connection().await?;
+        let values: Vec<Option<Vec<u8>>> = conn.mget(&keys).await?;
+        let mut out = HashMap::new();
+        for (pool, bytes) in pool_addresses.iter().zip(values.into_iter()) {
+            let Some(bytes) = bytes else {
+                continue;
+            };
+            let value: AquariusPoolStateValue = serde_json::from_slice(&bytes)?;
+            out.insert(pool.clone(), value);
+        }
+        Ok(out)
     }
 
     pub async fn fetch_xyk(

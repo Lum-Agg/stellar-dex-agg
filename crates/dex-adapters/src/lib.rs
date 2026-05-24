@@ -40,6 +40,7 @@ pub mod traits;
 pub mod utils;
 
 pub use cache::{default_cache_path, PoolCache};
+pub use aquarius::{quote_aquarius_pool, AquariusAdapter, AquariusPoolQuoteState};
 pub use comet::{quote_comet_pool, CometAdapter, CometPoolQuoteState, COMET_FACTORY_MAINNET};
 pub use rpc::SorobanRpc;
 pub use sushi::SushiAdapter;

@@ -11,6 +11,7 @@ use crate::rpc::{scval_to_address, scval_to_string, scval_to_u128, SorobanRpc};
 use crate::traits::*;
 use anyhow::Result;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use stellar_xdr::curr as xdr;
@@ -34,6 +35,69 @@ const BLACKLISTED_POOLS: &[&str] = &[
 
 /// Default amplification factor for stable pools
 const DEFAULT_STABLE_AMP: u128 = 100;
+
+/// On-chain Aquarius pool state for local quotes (stable + volatile).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AquariusPoolQuoteState {
+    pub pool_address: String,
+    /// Token addresses in on-chain order (matches `get_reserves()` indices).
+    pub tokens: Vec<String>,
+    pub reserves: Vec<u128>,
+    pub fee_bps: u32,
+    pub is_stable: bool,
+    pub amp: u128,
+}
+
+/// Quote a hop using full pool reserves and stable/volatile math.
+pub fn quote_aquarius_pool(
+    state: &AquariusPoolQuoteState,
+    token_in: &str,
+    token_out: &str,
+    amount_in: u128,
+) -> Option<AdapterQuote> {
+    if amount_in == 0 || state.reserves.is_empty() {
+        return None;
+    }
+    let in_idx = state.tokens.iter().position(|t| t == token_in)?;
+    let out_idx = state.tokens.iter().position(|t| t == token_out)?;
+    if in_idx == out_idx {
+        return None;
+    }
+    let reserve_in = *state.reserves.get(in_idx)?;
+    if reserve_in == 0 {
+        return None;
+    }
+
+    let amount_out = if state.is_stable {
+        AquariusAdapter::stable_swap_quote_multi(
+            &state.reserves,
+            in_idx,
+            out_idx,
+            amount_in,
+            state.fee_bps,
+            state.amp,
+        )
+    } else {
+        let reserve_out = *state.reserves.get(out_idx)?;
+        AquariusAdapter::constant_product_quote(
+            amount_in,
+            reserve_in,
+            reserve_out,
+            state.fee_bps,
+        )
+    };
+
+    if amount_out == 0 {
+        return None;
+    }
+
+    let price_impact_bps = (amount_in * 10_000 / (2 * reserve_in)).min(10_000) as u32;
+    Some(AdapterQuote {
+        amount_out,
+        fee_bps: state.fee_bps,
+        price_impact_bps,
+    })
+}
 
 #[derive(Debug, Clone)]
 struct PoolMeta {
@@ -181,138 +245,89 @@ impl AquariusAdapter {
             before.saturating_sub(all_pools.len())
         );
 
-        // 3. Batch-fetch reserves using getLedgerEntries (fast, 1 RPC call per 200 pools)
-        info!(
-            "Aquarius: batch-fetching reserves for {} pools...",
-            all_pools.len()
-        );
-        let pool_addresses: Vec<String> = all_pools
+        // 3. Fetch reserves per pool via on-chain get_reserves() (correct token index order).
+        let unique_pools: std::collections::HashSet<String> = all_pools
             .iter()
             .map(|(p, _)| p.pool_address.clone())
             .collect();
-        let batch_results =
-            crate::batch_refresh::batch_refresh_soroswap_reserves(&self.rpc, &pool_addresses).await;
-
-        match batch_results {
-            Ok(results) => {
-                let found = results.iter().filter(|(_, r)| r.is_some()).count();
-                if found > 0 {
-                    for (addr, reserves) in &results {
-                        if let Some((r0, r1)) = reserves {
-                            if let Some((pair, _)) =
-                                all_pools.iter_mut().find(|(p, _)| &p.pool_address == addr)
-                            {
-                                pair.reserve_a = Some(*r0);
-                                pair.reserve_b = Some(*r1);
-                            }
-                        }
-                    }
-                    info!("Aquarius: batch got reserves for {} pools", found);
-                } else {
-                    // Batch didn't work (different storage layout), use concurrent simulate
-                    info!("Aquarius: batch returned 0, using concurrent simulate...");
-                    let batch_size = 50;
-                    for chunk in all_pools.chunks_mut(batch_size) {
-                        let futures: Vec<_> = chunk
-                            .iter()
-                            .map(|(pair, _)| self.fetch_pool_reserves(&pair.pool_address))
-                            .collect();
-                        let results = futures::future::join_all(futures).await;
-                        for (i, result) in results.into_iter().enumerate() {
-                            if let Ok((r0, r1)) = result {
-                                chunk[i].0.reserve_a = Some(r0);
-                                chunk[i].0.reserve_b = Some(r1);
-                            }
-                        }
-                    }
+        info!(
+            "Aquarius: fetching get_reserves for {} unique pools...",
+            unique_pools.len()
+        );
+        for pool_addr in unique_pools {
+            let reserves = match self.fetch_pool_reserves_vec(&pool_addr).await {
+                Ok(r) => r,
+                Err(error) => {
+                    warn!(
+                        pool = %pool_addr,
+                        "Aquarius discovery get_reserves failed: {}",
+                        error
+                    );
+                    continue;
                 }
-            }
-            Err(e) => {
-                warn!("Aquarius batch reserves failed: {}", e);
-                // Fallback: concurrent individual calls
-                let batch_size = 50;
-                for chunk in all_pools.chunks_mut(batch_size) {
-                    let futures: Vec<_> = chunk
-                        .iter()
-                        .map(|(pair, _)| self.fetch_pool_reserves(&pair.pool_address))
-                        .collect();
-                    let results = futures::future::join_all(futures).await;
-                    for (i, result) in results.into_iter().enumerate() {
-                        if let Ok((r0, r1)) = result {
-                            chunk[i].0.reserve_a = Some(r0);
-                            chunk[i].0.reserve_b = Some(r1);
-                        }
-                    }
+            };
+            let amp = self.fetch_pool_amp(&pool_addr).await;
+            for (pair, meta) in all_pools.iter_mut().filter(|(p, _)| p.pool_address == pool_addr) {
+                if reserves.len() != meta.all_tokens.len() {
+                    continue;
+                }
+                meta.all_reserves = reserves.clone();
+                meta.amp = amp;
+                let a_key = pair.token_a.canonical();
+                let b_key = pair.token_b.canonical();
+                if let (Some(i), Some(j)) = (
+                    meta.all_tokens.iter().position(|t| t == &a_key),
+                    meta.all_tokens.iter().position(|t| t == &b_key),
+                ) {
+                    pair.reserve_a = meta.all_reserves.get(i).copied();
+                    pair.reserve_b = meta.all_reserves.get(j).copied();
                 }
             }
         }
 
-        // Filter out pools with no reserves
-        all_pools
-            .retain(|(pair, _)| pair.reserve_a.unwrap_or(0) > 0 || pair.reserve_b.unwrap_or(0) > 0);
-
-        // For multi-token pools, fetch full reserves via get_reserves()
-        let mut multi_token_pools: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
-        for (pair, meta) in &all_pools {
-            if meta.n_tokens > 2 && !multi_token_pools.contains(&pair.pool_address) {
-                multi_token_pools.insert(pair.pool_address.clone());
-            }
-        }
-
-        for pool_addr in &multi_token_pools {
-            // Fetch reserves
-            match self.rpc.call_no_args(pool_addr, "get_reserves").await {
-                Ok(xdr::ScVal::Vec(Some(vec))) => {
-                    let reserves: Vec<u128> =
-                        vec.0.iter().filter_map(|v| scval_to_u128(v).ok()).collect();
-                    for (_, meta) in all_pools
-                        .iter_mut()
-                        .filter(|(p, _)| &p.pool_address == pool_addr)
-                    {
-                        meta.all_reserves = reserves.clone();
-                    }
-                }
-                _ => {}
-            }
-            // Fetch amplification coefficient
-            match self.rpc.call_no_args(pool_addr, "a").await {
-                Ok(val) => {
-                    if let Ok(amp) = scval_to_u128(&val) {
-                        for (_, meta) in all_pools
-                            .iter_mut()
-                            .filter(|(p, _)| &p.pool_address == pool_addr)
-                        {
-                            meta.amp = amp;
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
+        all_pools.retain(|(pair, _)| {
+            pair.reserve_a.unwrap_or(0) > 0 && pair.reserve_b.unwrap_or(0) > 0
+        });
 
         info!(
-            "Aquarius: fetched {} pools with reserves ({} multi-token)",
-            all_pools.len(),
-            multi_token_pools.len()
+            "Aquarius: fetched {} pool edges with reserves",
+            all_pools.len()
         );
         Ok(all_pools)
     }
 
-    /// Fetch reserves for a single Aquarius pool by calling get_reserves on the pool contract.
-    async fn fetch_pool_reserves(&self, pool_address: &str) -> Result<(u128, u128)> {
-        // Aquarius pools have a get_reserves() function that returns Vec<u128>
-        let result = self.rpc.call_no_args(pool_address, "get_reserves").await?;
+    /// Export one state blob per pool for Redis / quote hydration.
+    pub async fn export_pool_quote_states(&self) -> Vec<AquariusPoolQuoteState> {
+        let meta_map = self.pool_meta.read().await;
+        let mut out = Vec::new();
+        for (pool_address, meta) in meta_map.iter() {
+            if meta.all_tokens.is_empty()
+                || meta.all_reserves.len() != meta.all_tokens.len()
+                || meta.all_reserves.iter().all(|&r| r == 0)
+            {
+                continue;
+            }
+            out.push(AquariusPoolQuoteState {
+                pool_address: pool_address.clone(),
+                tokens: meta.all_tokens.clone(),
+                reserves: meta.all_reserves.clone(),
+                fee_bps: meta.fee_bps,
+                is_stable: meta.is_stable,
+                amp: meta.amp,
+            });
+        }
+        out.sort_by(|a, b| a.pool_address.cmp(&b.pool_address));
+        out
+    }
 
+    async fn fetch_pool_reserves_vec(&self, pool_address: &str) -> Result<Vec<u128>> {
+        let result = self.rpc.call_no_args(pool_address, "get_reserves").await?;
         if let xdr::ScVal::Vec(Some(vec)) = &result {
-            if vec.0.len() >= 2 {
-                let r0 = scval_to_u128(&vec.0[0]).unwrap_or(0);
-                let r1 = scval_to_u128(&vec.0[1]).unwrap_or(0);
-                return Ok((r0, r1));
+            let reserves: Vec<u128> = vec.0.iter().filter_map(|v| scval_to_u128(v).ok()).collect();
+            if !reserves.is_empty() {
+                return Ok(reserves);
             }
         }
-
-        // Try Map format
         if let xdr::ScVal::Map(Some(map)) = &result {
             let mut reserves = Vec::new();
             for entry in map.0.iter() {
@@ -320,15 +335,53 @@ impl AquariusAdapter {
                     reserves.push(v);
                 }
             }
-            if reserves.len() >= 2 {
-                return Ok((reserves[0], reserves[1]));
+            if !reserves.is_empty() {
+                return Ok(reserves);
             }
         }
-
         Err(anyhow::anyhow!(
-            "Could not parse reserves for pool {}",
+            "Could not parse get_reserves for pool {}",
             pool_address
         ))
+    }
+
+    async fn fetch_pool_amp(&self, pool_address: &str) -> u128 {
+        match self.rpc.call_no_args(pool_address, "a").await {
+            Ok(val) => scval_to_u128(&val).unwrap_or(DEFAULT_STABLE_AMP),
+            Err(_) => DEFAULT_STABLE_AMP,
+        }
+    }
+
+    fn apply_pool_reserves_to_pairs(
+        pairs: &mut [AdapterTradingPair],
+        pool_address: &str,
+        meta: &PoolMeta,
+    ) {
+        for pair in pairs.iter_mut().filter(|p| p.pool_address == pool_address) {
+            let a_key = pair.token_a.canonical();
+            let b_key = pair.token_b.canonical();
+            let Some(i) = meta.all_tokens.iter().position(|t| t == &a_key) else {
+                continue;
+            };
+            let Some(j) = meta.all_tokens.iter().position(|t| t == &b_key) else {
+                continue;
+            };
+            pair.reserve_a = meta.all_reserves.get(i).copied();
+            pair.reserve_b = meta.all_reserves.get(j).copied();
+        }
+    }
+
+    /// Fetch reserves for a single Aquarius pool by calling get_reserves on the pool contract.
+    async fn fetch_pool_reserves(&self, pool_address: &str) -> Result<(u128, u128)> {
+        let reserves = self.fetch_pool_reserves_vec(pool_address).await?;
+        if reserves.len() >= 2 {
+            Ok((reserves[0], reserves[1]))
+        } else {
+            Err(anyhow::anyhow!(
+                "Could not parse reserves for pool {}",
+                pool_address
+            ))
+        }
     }
 
     /// Parse the result of get_pools_for_tokens_range.
@@ -502,14 +555,6 @@ impl DexAdapter for AquariusAdapter {
         amount_in: u128,
         pool_address: &str,
     ) -> Result<Option<AdapterQuote>> {
-        let pairs = self.pairs.read().await;
-        let pair = pairs.iter().find(|p| p.pool_address == pool_address);
-
-        let pair = match pair {
-            Some(p) => p,
-            None => return Ok(None),
-        };
-
         let meta_map = self.pool_meta.read().await;
         let meta = meta_map.get(pool_address).cloned().unwrap_or(PoolMeta {
             is_stable: false,
@@ -519,43 +564,35 @@ impl DexAdapter for AquariusAdapter {
             all_reserves: vec![],
             amp: DEFAULT_STABLE_AMP,
         });
+        drop(meta_map);
 
-        // For multi-token stable pools, use stable_math
-        if meta.n_tokens > 2 && meta.is_stable {
-            let token_in_addr = token_in.canonical();
-            let token_out_addr = token_out.canonical();
-
-            // Find indices in the pool's token list
-            let in_idx = meta.all_tokens.iter().position(|t| t == &token_in_addr);
-            let out_idx = meta.all_tokens.iter().position(|t| t == &token_out_addr);
-
-            if let (Some(i), Some(j)) = (in_idx, out_idx) {
-                if meta.all_reserves.iter().any(|&r| r > 0) {
-                    let amount_out = Self::stable_swap_quote_multi(
-                        &meta.all_reserves,
-                        i,
-                        j,
-                        amount_in,
-                        meta.fee_bps,
-                        meta.amp,
-                    );
-                    if amount_out > 0 {
-                        let reserve_in = meta.all_reserves[i];
-                        let price_impact_bps = if reserve_in > 0 {
-                            (amount_in * 10_000 / (2 * reserve_in)).min(10_000) as u32
-                        } else {
-                            0
-                        };
-                        return Ok(Some(AdapterQuote {
-                            amount_out,
-                            fee_bps: meta.fee_bps,
-                            price_impact_bps,
-                        }));
-                    }
-                }
-            }
-            return Ok(None);
+        if meta.all_tokens.len() >= 2
+            && meta.all_reserves.len() == meta.all_tokens.len()
+            && meta.all_reserves.iter().any(|&r| r > 0)
+        {
+            let state = AquariusPoolQuoteState {
+                pool_address: pool_address.to_string(),
+                tokens: meta.all_tokens,
+                reserves: meta.all_reserves,
+                fee_bps: meta.fee_bps,
+                is_stable: meta.is_stable,
+                amp: meta.amp,
+            };
+            return Ok(quote_aquarius_pool(
+                &state,
+                &token_in.canonical(),
+                &token_out.canonical(),
+                amount_in,
+            ));
         }
+
+        let pairs = self.pairs.read().await;
+        let pair = pairs.iter().find(|p| p.pool_address == pool_address);
+
+        let pair = match pair {
+            Some(p) => p,
+            None => return Ok(None),
+        };
 
         let (reserve_in, reserve_out) = if token_in.canonical() == pair.token_a.canonical() {
             (pair.reserve_a, pair.reserve_b)
@@ -623,37 +660,41 @@ impl DexAdapter for AquariusAdapter {
     }
 
     async fn refresh_reserves(&self) -> Result<usize> {
-        // Use batch getLedgerEntries to refresh all Aquarius pool reserves
-        let pairs = self.pairs.read().await;
-        if pairs.is_empty() {
+        let pool_addresses: Vec<String> = {
+            let meta = self.pool_meta.read().await;
+            meta.keys().cloned().collect()
+        };
+        if pool_addresses.is_empty() {
             return Ok(0);
         }
 
-        let pool_addresses: Vec<String> = pairs.iter().map(|p| p.pool_address.clone()).collect();
-        drop(pairs);
-
-        // Reuse the same batch refresh as Soroswap (same instance storage layout)
-        let concurrency = std::env::var("POOL_STATE_REFRESH_CONCURRENCY")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(4);
-        let results = crate::batch_refresh::batch_refresh_soroswap_reserves_parallel(
-            &self.rpc,
-            &pool_addresses,
-            concurrency,
-        )
-        .await?;
-
-        let mut updated = 0;
+        let mut updated = 0usize;
+        let mut meta_map = self.pool_meta.write().await;
         let mut pairs = self.pairs.write().await;
-        for (addr, reserves) in &results {
-            if let Some((r0, r1)) = reserves {
-                if let Some(pair) = pairs.iter_mut().find(|p| &p.pool_address == addr) {
-                    pair.reserve_a = Some(*r0);
-                    pair.reserve_b = Some(*r1);
-                    updated += 1;
+
+        for pool_address in pool_addresses {
+            let reserves = match self.fetch_pool_reserves_vec(&pool_address).await {
+                Ok(r) => r,
+                Err(error) => {
+                    warn!(
+                        pool = %pool_address,
+                        "Aquarius refresh get_reserves failed: {}",
+                        error
+                    );
+                    continue;
                 }
+            };
+            let amp = self.fetch_pool_amp(&pool_address).await;
+            let Some(meta) = meta_map.get_mut(&pool_address) else {
+                continue;
+            };
+            if meta.all_tokens.is_empty() || reserves.len() != meta.all_tokens.len() {
+                continue;
             }
+            meta.all_reserves = reserves;
+            meta.amp = amp;
+            Self::apply_pool_reserves_to_pairs(&mut pairs, &pool_address, meta);
+            updated += 1;
         }
 
         Ok(updated)

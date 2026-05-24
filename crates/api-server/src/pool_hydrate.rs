@@ -4,11 +4,12 @@ use std::collections::{HashMap, HashSet};
 
 use dex_adapters::{
     batch_refresh::batch_refresh_soroswap_reserves, clmm_math::clmm_pool_from_snapshot,
-    comet::CometAdapter, rpc::SorobanRpc,
+    comet::CometAdapter, rpc::SorobanRpc, AquariusPoolQuoteState,
 };
 use market_snapshot::{
     pool_state_store::{
-        parse_quote_hydrate_max_pools_from_env, RedisPoolStateStore, XykPoolStateValue,
+        parse_quote_hydrate_max_pools_from_env, AquariusPoolStateValue, RedisPoolStateStore,
+        XykPoolStateValue,
     },
     ClmmPoolSnapshot,
 };
@@ -17,7 +18,7 @@ use std::sync::Arc;
 use tracing::{debug, warn};
 
 const CLMM_SOURCES: &[&str] = &["sushi", "aquarius_clmm"];
-const BATCH_XYK_SOURCES: &[&str] = &["soroswap", "aquarius"];
+const BATCH_XYK_SOURCES: &[&str] = &["soroswap"];
 
 pub struct PoolHydrateConfig {
     /// When false, `/quote` uses Redis only (worker is the sole writer).
@@ -36,10 +37,16 @@ impl Default for PoolHydrateConfig {
 
 fn collect_pool_refs(
     paths: &[Path],
-) -> (Vec<(String, String)>, Vec<(String, String)>, Vec<String>) {
+) -> (
+    Vec<(String, String)>,
+    Vec<(String, String)>,
+    Vec<String>,
+    Vec<String>,
+) {
     let mut xyk = HashSet::new();
     let mut clmm = HashSet::new();
     let mut comet = HashSet::new();
+    let mut aquarius = HashSet::new();
 
     for path in paths {
         for (source, pool_address) in path.sources.iter().zip(path.pool_addresses.iter()) {
@@ -48,6 +55,8 @@ fn collect_pool_refs(
             }
             if source == "comet" {
                 comet.insert(pool_address.clone());
+            } else if source == "aquarius" {
+                aquarius.insert(pool_address.clone());
             } else if CLMM_SOURCES.contains(&source.as_str()) {
                 clmm.insert((source.clone(), pool_address.clone()));
             } else {
@@ -59,10 +68,12 @@ fn collect_pool_refs(
     let mut xyk: Vec<_> = xyk.into_iter().collect();
     let mut clmm: Vec<_> = clmm.into_iter().collect();
     let mut comet: Vec<_> = comet.into_iter().collect();
+    let mut aquarius: Vec<_> = aquarius.into_iter().collect();
     xyk.sort();
     clmm.sort();
     comet.sort();
-    (xyk, clmm, comet)
+    aquarius.sort();
+    (xyk, clmm, comet, aquarius)
 }
 
 fn clmm_state_from_snapshot(snapshot: &ClmmPoolSnapshot) -> SnapshotClmmQuoteState {
@@ -81,6 +92,17 @@ fn clmm_state_from_snapshot(snapshot: &ClmmPoolSnapshot) -> SnapshotClmmQuoteSta
     }
 }
 
+fn aquarius_quote_state(value: &AquariusPoolStateValue) -> AquariusPoolQuoteState {
+    AquariusPoolQuoteState {
+        pool_address: value.pool_address.clone(),
+        tokens: value.tokens.clone(),
+        reserves: value.reserves.clone(),
+        fee_bps: value.fee_bps,
+        is_stable: value.is_stable,
+        amp: value.amp,
+    }
+}
+
 /// Load per-pool state for candidate paths from Redis; optional batched xy=k RPC for misses.
 pub async fn hydrate_paths(
     engine: &QuoteEngine,
@@ -89,17 +111,27 @@ pub async fn hydrate_paths(
     rpc: &SorobanRpc,
     config: &PoolHydrateConfig,
 ) -> (QuoteHydration, usize) {
-    let (xyk_refs, clmm_refs, comet_pools) = collect_pool_refs(paths);
-    if xyk_refs.is_empty() && clmm_refs.is_empty() && comet_pools.is_empty() {
+    let (xyk_refs, clmm_refs, comet_pools, aquarius_refs) = collect_pool_refs(paths);
+    if xyk_refs.is_empty()
+        && clmm_refs.is_empty()
+        && comet_pools.is_empty()
+        && aquarius_refs.is_empty()
+    {
         return (QuoteHydration::default(), 0);
     }
 
     let mut xyk_pools = store.fetch_xyk(&xyk_refs).await.unwrap_or_default();
     let clmm_snapshots = store.fetch_clmm(&clmm_refs).await.unwrap_or_default();
+    let aquarius_raw = store.fetch_aquarius(&aquarius_refs).await.unwrap_or_default();
 
     let clmm_pools: HashMap<String, SnapshotClmmQuoteState> = clmm_snapshots
         .into_iter()
         .map(|(key, snapshot)| (key, clmm_state_from_snapshot(&snapshot)))
+        .collect();
+
+    let aquarius_pools: HashMap<String, AquariusPoolQuoteState> = aquarius_raw
+        .into_iter()
+        .map(|(pool, value)| (pool, aquarius_quote_state(&value)))
         .collect();
 
     let mut redis_miss_xyk = 0usize;
@@ -160,6 +192,20 @@ pub async fn hydrate_paths(
         }
     }
 
+    let mut redis_miss_aquarius = 0usize;
+    for pool_address in &aquarius_refs {
+        if !aquarius_pools.contains_key(pool_address) {
+            redis_miss_aquarius += 1;
+        }
+    }
+    if redis_miss_aquarius > 0 {
+        warn!(
+            redis_miss_aquarius,
+            paths = paths.len(),
+            "quote hydration: Aquarius Redis misses (worker should publish these pools)"
+        );
+    }
+
     let mut comet_states = HashMap::new();
     if config.rpc_hydrate_enabled && !comet_pools.is_empty() {
         let comet = CometAdapter::new(Arc::new(SorobanRpc::new(
@@ -191,7 +237,9 @@ pub async fn hydrate_paths(
         xyk = xyk_pools.len(),
         clmm = clmm_pools.len(),
         comet = comet_states.len(),
+        aquarius = aquarius_pools.len(),
         redis_miss_xyk,
+        redis_miss_aquarius,
         "hydrated pools for quote"
     );
 
@@ -200,6 +248,7 @@ pub async fn hydrate_paths(
             xyk_pools,
             clmm_pools,
             comet_pools: comet_states,
+            aquarius_pools,
         },
         redis_miss_xyk,
     )

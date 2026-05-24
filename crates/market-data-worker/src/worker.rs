@@ -314,6 +314,7 @@ fn spawn_parallel_pool_state_refresh(
     in_flight: Arc<PoolRefreshInFlight>,
     shared: Arc<RwLock<WorkerShared>>,
     adapters: Vec<Arc<dyn DexAdapter>>,
+    aquarius: Arc<AquariusAdapter>,
     sushi: Arc<SushiAdapter>,
     aquarius_clmm: Arc<AquariusClmmAdapter>,
     pool_state_store: Option<Arc<market_snapshot::pool_state_store::RedisPoolStateStore>>,
@@ -348,6 +349,7 @@ fn spawn_parallel_pool_state_refresh(
         if let Err(error) = publish_pool_state_only(
             pool_state_store.as_ref(),
             &adapters,
+            aquarius.as_ref(),
             &clmm_pools,
             metrics.as_ref(),
         )
@@ -412,6 +414,7 @@ fn log_clmm_coverage_stats(clmm_pools: &[ClmmPoolSnapshot]) {
 async fn publish_pool_state_only(
     pool_state_store: Option<&Arc<market_snapshot::pool_state_store::RedisPoolStateStore>>,
     adapters: &[Arc<dyn DexAdapter>],
+    aquarius: &AquariusAdapter,
     clmm_states: &[ClmmPoolSnapshot],
     metrics: Option<&Arc<crate::monitor::WorkerMonitorMetrics>>,
 ) -> Result<()> {
@@ -419,18 +422,20 @@ async fn publish_pool_state_only(
         return Ok(());
     };
     let xyk_values = crate::pool_state_publish::collect_xyk_pool_state(adapters).await;
+    let aquarius_values = crate::pool_state_publish::collect_aquarius_pool_state(aquarius).await;
     let clmm_complete = clmm_states
         .iter()
         .filter(|p| market_snapshot::pool_state_store::should_publish_clmm_to_redis(p))
         .count();
     pool_store
-        .publish_pool_state(&xyk_values, clmm_states)
+        .publish_pool_state(&xyk_values, clmm_states, &aquarius_values)
         .await?;
     if let Some(m) = metrics {
-        m.record_publish(xyk_values.len(), clmm_complete);
+        m.record_publish(xyk_values.len() + aquarius_values.len(), clmm_complete);
     }
     info!(
         xyk_pools = xyk_values.len(),
+        aquarius_pools = aquarius_values.len(),
         clmm_pools = clmm_complete,
         ttl_secs = pool_store.ttl_secs(),
         "Published pool state to Redis"
@@ -442,10 +447,11 @@ async fn publish_snapshot_and_pool_state(
     snapshot_store: &dyn market_snapshot::store::SnapshotStore,
     pool_state_store: Option<&Arc<market_snapshot::pool_state_store::RedisPoolStateStore>>,
     adapters: &[Arc<dyn DexAdapter>],
+    aquarius: &AquariusAdapter,
     topology: &MarketSnapshot,
     clmm_states: &[ClmmPoolSnapshot],
 ) -> Result<()> {
-    publish_pool_state_only(pool_state_store, adapters, clmm_states, None).await?;
+    publish_pool_state_only(pool_state_store, adapters, aquarius, clmm_states, None).await?;
     snapshot_store.publish_snapshot(topology).await?;
     Ok(())
 }
@@ -545,6 +551,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
     let pool_state_boot = pool_state_store.clone();
     let network_passphrase = config.network_passphrase.clone();
     let destination = snapshot_destination(&config);
+    let aquarius_boot = aquarius.clone();
     tokio::spawn(async move {
         info!("Background bootstrap: parallel adapter discovery");
         let sources = collect_sources_from_discovery(&adapters_boot).await;
@@ -569,6 +576,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
             snapshot_store_boot.as_ref(),
             pool_state_boot.as_ref(),
             &adapters_boot,
+            aquarius_boot.as_ref(),
             &snapshot,
             &clmm_pools,
         )
@@ -690,6 +698,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
                     pool_refresh_in_flight.clone(),
                     shared.clone(),
                     adapters.clone(),
+                    aquarius.clone(),
                     sushi.clone(),
                     aquarius_clmm.clone(),
                     pool_state_store.clone(),
@@ -723,6 +732,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
                 let snapshot_store_disc = snapshot_store.clone();
                 let token_metadata_disc = token_metadata.clone();
                 let pool_state_disc = pool_state_store.clone();
+                let aquarius_disc = aquarius.clone();
                 let network_passphrase_disc = config.network_passphrase.clone();
                 let destination_disc = snapshot_destination(&config);
                 tokio::spawn(async move {
@@ -757,6 +767,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
                         snapshot_store_disc.as_ref(),
                         pool_state_disc.as_ref(),
                         &adapters_disc,
+                        aquarius_disc.as_ref(),
                         &snapshot,
                         &clmm_pools,
                     )

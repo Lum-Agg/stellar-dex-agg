@@ -2,11 +2,11 @@
 
 use std::collections::HashSet;
 
-use dex_adapters::DexAdapter;
-use market_snapshot::pool_state_store::XykPoolStateValue;
+use dex_adapters::{AquariusAdapter, DexAdapter};
+use market_snapshot::pool_state_store::{AquariusPoolStateValue, XykPoolStateValue};
 use std::sync::Arc;
 
-const XYK_REDIS_SOURCES: &[&str] = &["soroswap", "aquarius", "phoenix", "comet"];
+const XYK_REDIS_SOURCES: &[&str] = &["soroswap", "phoenix", "comet"];
 
 /// xy=k reserves from adapter caches (not written into topology snapshot).
 pub async fn collect_xyk_pool_state(adapters: &[Arc<dyn DexAdapter>]) -> Vec<XykPoolStateValue> {
@@ -47,4 +47,21 @@ pub async fn collect_xyk_pool_state(adapters: &[Arc<dyn DexAdapter>]) -> Vec<Xyk
             .then_with(|| a.pool_address.cmp(&b.pool_address))
     });
     out
+}
+
+/// Aquarius pools: token-ordered reserves + stable params (one key per pool contract).
+pub async fn collect_aquarius_pool_state(aquarius: &AquariusAdapter) -> Vec<AquariusPoolStateValue> {
+    aquarius
+        .export_pool_quote_states()
+        .await
+        .into_iter()
+        .map(|state| AquariusPoolStateValue {
+            pool_address: state.pool_address,
+            tokens: state.tokens,
+            reserves: state.reserves,
+            fee_bps: state.fee_bps,
+            is_stable: state.is_stable,
+            amp: state.amp,
+        })
+        .collect()
 }

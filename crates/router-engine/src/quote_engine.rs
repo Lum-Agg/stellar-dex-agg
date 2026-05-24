@@ -70,6 +70,8 @@ pub struct QuoteHydration {
     pub clmm_pools: HashMap<String, SnapshotClmmQuoteState>,
     /// Comet weighted pools (full token records + fee).
     pub comet_pools: HashMap<String, dex_adapters::CometPoolQuoteState>,
+    /// Aquarius pools keyed by pool contract address.
+    pub aquarius_pools: HashMap<String, dex_adapters::AquariusPoolQuoteState>,
 }
 
 impl QuoteHydration {
@@ -94,6 +96,8 @@ pub struct QuoteEngine {
     /// All cached pool edges (one entry per token pair per pool; same pool may appear many times).
     cached_pools: RwLock<Vec<TradingPair>>,
     clmm_quote_states: RwLock<HashMap<String, SnapshotClmmQuoteState>>,
+    /// Populated per quote from Redis hydration (for pool index resolution).
+    aquarius_pools: RwLock<HashMap<String, dex_adapters::AquariusPoolQuoteState>>,
 }
 
 impl QuoteEngine {
@@ -104,7 +108,16 @@ impl QuoteEngine {
             adapters: RwLock::new(Vec::new()),
             cached_pools: RwLock::new(Vec::new()),
             clmm_quote_states: RwLock::new(HashMap::new()),
+            aquarius_pools: RwLock::new(HashMap::new()),
         }
+    }
+
+    /// Per-request Aquarius pool state (from Redis) for `get_pool_indices` during build_tx.
+    pub async fn set_aquarius_pools(
+        &self,
+        pools: HashMap<String, dex_adapters::AquariusPoolQuoteState>,
+    ) {
+        *self.aquarius_pools.write().await = pools;
     }
 
     fn clmm_quote_key(source: &str, pool_address: &str) -> String {
@@ -303,6 +316,12 @@ impl QuoteEngine {
 
         debug!(paths = paths.len(), "Paths discovered");
 
+        if let Some(h) = hydration {
+            self.set_aquarius_pools(h.aquarius_pools.clone()).await;
+        } else {
+            self.set_aquarius_pools(HashMap::new()).await;
+        }
+
         // 2. Get quotes for each path at full amount
         let adapters = self.adapters.read().await;
         let mut quoted_paths: Vec<QuotedPath> = Vec::new();
@@ -452,6 +471,8 @@ impl QuoteEngine {
                 )
             } else if source == "comet" {
                 self.local_comet_quote(token_in, token_out, current_amount, pool_address, hydration)
+            } else if source == "aquarius" {
+                self.local_aquarius_quote(token_in, token_out, current_amount, pool_address, hydration)
             } else if source == CLASSIC_SOURCE {
                 if let Some(q) = self.local_quote(
                     token_in,
@@ -541,6 +562,10 @@ impl QuoteEngine {
             return self.local_comet_quote(token_in, token_out, amount_in, pool_address, hydration);
         }
 
+        if source == "aquarius" {
+            return self.local_aquarius_quote(token_in, token_out, amount_in, pool_address, hydration);
+        }
+
         let pair = Self::find_pool_edge(cached_pools, pool_address, token_in, token_out)?;
         let fee_bps = pair.fee_bps;
 
@@ -569,12 +594,6 @@ impl QuoteEngine {
                 let in_after_fee = amount_in - fee;
                 let out = in_after_fee * reserve_out / (reserve_in + in_after_fee);
                 (out, 30u32)
-            }
-            "aquarius" => {
-                // Aquarius: in_after_fee = amount_in * (10000 - fee_bps) / 10000
-                let in_after_fee = amount_in * (10_000 - fee_bps as u128) / 10_000;
-                let out = in_after_fee * reserve_out / (reserve_in + in_after_fee);
-                (out, fee_bps)
             }
             "phoenix" => {
                 // Phoenix: fee on output
@@ -608,6 +627,24 @@ impl QuoteEngine {
             fee_bps,
             price_impact_bps,
         })
+    }
+
+    fn local_aquarius_quote(
+        &self,
+        token_in: &TokenId,
+        token_out: &TokenId,
+        amount_in: u128,
+        pool_address: &str,
+        hydration: Option<&QuoteHydration>,
+    ) -> Option<dex_adapters::AdapterQuote> {
+        let state = hydration
+            .and_then(|h| h.aquarius_pools.get(pool_address))?;
+        dex_adapters::quote_aquarius_pool(
+            state,
+            &token_in.canonical(),
+            &token_out.canonical(),
+            amount_in,
+        )
     }
 
     fn local_comet_quote(
@@ -698,9 +735,16 @@ impl QuoteEngine {
         token_in: &TokenId,
         token_out: &TokenId,
     ) -> Option<(u32, u32)> {
+        let in_key = token_in.canonical();
+        let out_key = token_out.canonical();
+        if let Some(state) = self.aquarius_pools.read().await.get(pool_address) {
+            let in_idx = state.tokens.iter().position(|t| t == &in_key)? as u32;
+            let out_idx = state.tokens.iter().position(|t| t == &out_key)? as u32;
+            return Some((in_idx, out_idx));
+        }
+
         let pools = self.cached_pools.read().await;
         let pair = Self::find_pool_edge(&pools, pool_address, token_in, token_out)?;
-        let in_key = token_in.canonical();
         if in_key == pair.token_a.canonical() {
             Some((0, 1))
         } else {

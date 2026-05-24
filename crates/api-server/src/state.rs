@@ -359,6 +359,7 @@ impl AppState {
             soroban_paths = soroban_path_count,
             xyk_hydrated = hydration.xyk_pools.len(),
             clmm_hydrated = hydration.clmm_pools.len(),
+            aquarius_hydrated = hydration.aquarius_pools.len(),
             paths_ms,
             hydrate_ms,
             redis_miss_xyk,
