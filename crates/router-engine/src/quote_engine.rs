@@ -322,21 +322,24 @@ impl QuoteEngine {
             self.set_aquarius_pools(HashMap::new()).await;
         }
 
-        // 2. Get quotes for each path at full amount
-        let adapters = self.adapters.read().await;
-        let mut quoted_paths: Vec<QuotedPath> = Vec::new();
-
-        for path in paths {
-            if let Some(quote) = self
-                .quote_path(path, request.amount_in, &adapters, hydration)
-                .await
-            {
-                quoted_paths.push(QuotedPath {
-                    path: path.clone(),
-                    quote,
-                });
+        // 2. Get quotes for each path at full amount (parallel — paths are independent).
+        let adapters = self.adapters.read().await.clone();
+        let hydration_owned = hydration.cloned();
+        let amount_in = request.amount_in;
+        let quoted_paths: Vec<QuotedPath> = futures::future::join_all(paths.iter().map(|path| {
+            let path = path.clone();
+            let adapters = adapters.clone();
+            let hydration = hydration_owned.clone();
+            async move {
+                self.quote_path(&path, amount_in, &adapters, hydration.as_ref())
+                    .await
+                    .map(|quote| QuotedPath { path, quote })
             }
-        }
+        }))
+        .await
+        .into_iter()
+        .flatten()
+        .collect();
 
         if quoted_paths.is_empty() {
             return OptimalRoute {
@@ -387,6 +390,10 @@ impl QuoteEngine {
         } else {
             let adapters_clone = adapters.clone();
             let hydration_owned = hydration.cloned();
+            let quote_cache = std::sync::Arc::new(tokio::sync::Mutex::new(
+                std::collections::HashMap::<(String, u128), Option<Quote>>::new(),
+            ));
+            let amount_bucket = (request.amount_in / 512).max(1);
             Some(
                 self.split_optimizer
                     .optimize(
@@ -398,9 +405,27 @@ impl QuoteEngine {
                             let adapters_ref = adapters_clone.clone();
                             let path_clone = path.clone();
                             let hydration_ref = hydration_owned.as_ref();
+                            let cache = quote_cache.clone();
                             async move {
-                                self.quote_path(&path_clone, amount, &adapters_ref, hydration_ref)
-                                    .await
+                                let bucket = if amount == 0 {
+                                    0
+                                } else {
+                                    (amount / amount_bucket) * amount_bucket
+                                };
+                                let key = (path_clone.pool_addresses.join("+"), bucket);
+                                if let Some(cached) = cache.lock().await.get(&key) {
+                                    return cached.clone();
+                                }
+                                let quote = self
+                                    .quote_path(
+                                        &path_clone,
+                                        amount,
+                                        &adapters_ref,
+                                        hydration_ref,
+                                    )
+                                    .await;
+                                cache.lock().await.insert(key, quote.clone());
+                                quote
                             }
                         },
                     )

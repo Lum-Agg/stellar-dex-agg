@@ -532,22 +532,22 @@ pub async fn build_tx_impl(body: &BuildTxRequest) -> Result<BuildTxData, String>
 
     let mut ops: Vec<xdr::Operation> = Vec::new();
     for sub in &classic_subs {
-        ops.push(build_path_payment_op(sub, &user_key, 0)?);
+        let leg_amount: i128 = sub
+            .amount_in
+            .parse()
+            .map_err(|_| format!("Invalid sub-route amount_in: {}", sub.amount_in))?;
+        let dest_min = classic_dest_min_for_sub(leg_amount, amount_in, min_amount_out)?;
+        ops.push(build_path_payment_op(sub, &user_key, dest_min)?);
     }
 
     if !soroban_subs.is_empty() {
-        let contract_min = if execution == "soroban" {
-            min_amount_out
-        } else {
-            0
-        };
         let soroban_subs_owned: Vec<BuildTxSubRoute> =
             soroban_subs.iter().map(|s| (*s).clone()).collect();
         ops.push(build_aggregator_invoke_op(
             body,
             &user_key,
             &soroban_subs_owned,
-            contract_min,
+            min_amount_out,
         )?);
     }
 
@@ -730,22 +730,22 @@ pub async fn build_unsigned_tx_xdr(body: &BuildTxRequest) -> Result<String, Stri
 
     let mut ops: Vec<xdr::Operation> = Vec::new();
     for sub in &classic_subs {
-        ops.push(build_path_payment_op(sub, &user_key, 0)?);
+        let leg_amount: i128 = sub
+            .amount_in
+            .parse()
+            .map_err(|_| format!("Invalid sub-route amount_in: {}", sub.amount_in))?;
+        let dest_min = classic_dest_min_for_sub(leg_amount, amount_in, min_amount_out)?;
+        ops.push(build_path_payment_op(sub, &user_key, dest_min)?);
     }
 
     if !soroban_subs.is_empty() {
-        let contract_min = if execution == "soroban" {
-            min_amount_out
-        } else {
-            0
-        };
         let soroban_subs_owned: Vec<BuildTxSubRoute> =
             soroban_subs.iter().map(|s| (*s).clone()).collect();
         ops.push(build_aggregator_invoke_op(
             body,
             &user_key,
             &soroban_subs_owned,
-            contract_min,
+            min_amount_out,
         )?);
     }
 
@@ -1124,6 +1124,31 @@ fn sub_route_is_classic(sub: &BuildTxSubRoute) -> bool {
 
 fn sub_route_is_soroban(sub: &BuildTxSubRoute) -> bool {
     !sub.steps.is_empty() && sub.steps.iter().all(|s| s.dex_type != DEX_CLASSIC)
+}
+
+/// Per-leg minimum output for Classic `PathPaymentStrictSend`.
+/// Stellar core rejects the op when `dest_min <= 0` (`PATH_PAYMENT_STRICT_SEND_MALFORMED`).
+fn classic_dest_min_for_sub(
+    leg_amount_in: i128,
+    total_amount_in: i128,
+    min_amount_out: i128,
+) -> Result<i64, String> {
+    if min_amount_out <= 0 {
+        return Err(
+            "min_amount_out must be > 0 for Classic DEX swaps (Stellar requires dest_min > 0)"
+                .to_string(),
+        );
+    }
+    if leg_amount_in <= 0 || total_amount_in <= 0 {
+        return Err("amount_in must be positive".to_string());
+    }
+    let dest = min_amount_out
+        .saturating_mul(leg_amount_in)
+        .checked_div(total_amount_in)
+        .unwrap_or(0);
+    let dest = dest.max(1);
+    dest.try_into()
+        .map_err(|_| format!("dest_min {} exceeds i64::MAX", dest))
 }
 
 fn build_path_payment_op(
@@ -1534,5 +1559,31 @@ async fn simulate_and_assemble(rpc_url: &str, tx_xdr: &str) -> Result<String, St
             let result = rpc_simulate_transaction(rpc_url, &sim_xdr).await?;
             merge_simulate_result_into_tx(tx_xdr, &result)
         }
+    }
+}
+
+#[cfg(test)]
+mod classic_dest_min_tests {
+    use super::classic_dest_min_for_sub;
+
+    #[test]
+    fn single_leg_gets_full_min_out() {
+        let dest = classic_dest_min_for_sub(2_000_000, 2_000_000, 150_000).unwrap();
+        assert_eq!(dest, 150_000);
+    }
+
+    #[test]
+    fn split_legs_allocate_proportionally() {
+        let total_min = 1_000_000i128;
+        let a = classic_dest_min_for_sub(600_000, 1_000_000, total_min).unwrap();
+        let b = classic_dest_min_for_sub(400_000, 1_000_000, total_min).unwrap();
+        assert_eq!(a, 600_000);
+        assert_eq!(b, 400_000);
+        assert!(a > 0 && b > 0);
+    }
+
+    #[test]
+    fn rejects_zero_min_out() {
+        assert!(classic_dest_min_for_sub(1, 1, 0).is_err());
     }
 }

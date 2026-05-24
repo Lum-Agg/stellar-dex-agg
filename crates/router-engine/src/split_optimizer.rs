@@ -191,11 +191,11 @@ impl SplitOptimizer {
             .collect();
         let candidate_paths_count = candidates.len();
         let optimization_strategy = if candidate_paths_count > 2 {
-            "recursive_pairwise_exact".to_string()
+            "recursive_pairwise_approx_rest".to_string()
         } else {
             "two_path_brent".to_string()
         };
-        let used_rest_best_approximation = false;
+        let used_rest_best_approximation = candidate_paths_count > 2;
         let candidate_routes = build_candidate_debug(&candidates);
 
         // Optimize split using recursive pairwise Brent's method
@@ -478,38 +478,49 @@ impl SplitOptimizer {
                 .sum();
         }
 
-        let path_a = &paths[0].path;
-        let rest = &paths[1..];
-
-        let optimal_fraction = self
-            .brent_maximize(0.0, 1.0, |x| {
-                let amount_a = (x * total_amount as f64) as u128;
-                let amount_rest = total_amount.saturating_sub(amount_a);
-                let path_a_clone = path_a.clone();
-                let this = self;
-
-                async move {
-                    let out_a = quote_fn(&path_a_clone, amount_a)
-                        .await
-                        .map(|q| q.amount_out)
-                        .unwrap_or(0);
-                    let out_rest =
-                        Box::pin(this.total_out_for_paths(rest, amount_rest, quote_fn)).await;
-                    (out_a + out_rest) as f64
-                }
-            })
-            .await;
-
-        let amount_a = (optimal_fraction * total_amount as f64) as u128;
-        let amount_rest = total_amount.saturating_sub(amount_a);
-
-        let out_a = quote_fn(path_a, amount_a)
+        // N >= 3: O(N) weighted split by full-amount output (avoids nested Brent explosion).
+        self.approximate_weighted_paths_output(paths, total_amount, quote_fn)
             .await
-            .map(|q| q.amount_out)
-            .unwrap_or(0);
+    }
 
-        let out_rest = Box::pin(self.total_out_for_paths(rest, amount_rest, quote_fn)).await;
-        out_a + out_rest
+    /// Split `total_amount` across paths proportional to their full-amount quotes, then re-quote.
+    async fn approximate_weighted_paths_output<F, Fut>(
+        &self,
+        paths: &[&QuotedPath],
+        total_amount: u128,
+        quote_fn: &F,
+    ) -> u128
+    where
+        F: Fn(&Path, u128) -> Fut,
+        Fut: std::future::Future<Output = Option<Quote>>,
+    {
+        if paths.is_empty() || total_amount == 0 {
+            return 0;
+        }
+        let weights: Vec<u128> = paths
+            .iter()
+            .map(|p| p.quote.amount_out.max(1))
+            .collect();
+        let weight_sum: u128 = weights.iter().copied().sum::<u128>().max(1);
+        let mut allocated = 0u128;
+        let mut total_out = 0u128;
+        for (i, qp) in paths.iter().enumerate() {
+            let amount = if i + 1 == paths.len() {
+                total_amount.saturating_sub(allocated)
+            } else {
+                let share = (total_amount as u128).saturating_mul(weights[i]) / weight_sum;
+                allocated += share;
+                share
+            };
+            if amount == 0 {
+                continue;
+            }
+            total_out += quote_fn(&qp.path, amount)
+                .await
+                .map(|q| q.amount_out)
+                .unwrap_or(0);
+        }
+        total_out
     }
 
     /// Optimize split between exactly 2 paths using Brent's method.

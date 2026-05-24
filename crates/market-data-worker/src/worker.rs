@@ -310,42 +310,20 @@ impl PoolRefreshInFlight {
     }
 }
 
-fn spawn_parallel_pool_state_refresh(
-    in_flight: Arc<PoolRefreshInFlight>,
+/// Fast path: publish adapter caches to Redis without any RPC (must complete in milliseconds).
+fn spawn_fast_pool_publish(
     shared: Arc<RwLock<WorkerShared>>,
     adapters: Vec<Arc<dyn DexAdapter>>,
     aquarius: Arc<AquariusAdapter>,
-    sushi: Arc<SushiAdapter>,
-    aquarius_clmm: Arc<AquariusClmmAdapter>,
     pool_state_store: Option<Arc<market_snapshot::pool_state_store::RedisPoolStateStore>>,
     metrics: Option<Arc<crate::monitor::WorkerMonitorMetrics>>,
     telegram: Option<Arc<lumagg_alerts::TelegramAlerter>>,
 ) {
-    if !in_flight.try_start() {
-        debug!("pool state refresh skipped (previous cycle still running)");
-        return;
-    }
-
     tokio::spawn(async move {
-        struct Guard(Arc<PoolRefreshInFlight>);
-        impl Drop for Guard {
-            fn drop(&mut self) {
-                self.0.finish();
-            }
-        }
-        let _guard = Guard(in_flight);
-
-        let sources = {
+        let clmm_pools = {
             let guard = shared.read().await;
-            guard.sources.clone()
+            guard.clmm_pools.clone()
         };
-        let refreshed = refresh_sources_parallel(&adapters, sources).await;
-        let clmm_pools = collect_clmm_snapshots(sushi.as_ref(), aquarius_clmm.as_ref()).await;
-        {
-            let mut guard = shared.write().await;
-            guard.sources = refreshed;
-            guard.clmm_pools = clmm_pools.clone();
-        }
         if let Err(error) = publish_pool_state_only(
             pool_state_store.as_ref(),
             &adapters,
@@ -363,6 +341,45 @@ fn spawn_parallel_pool_state_refresh(
             )
             .await;
         }
+    });
+}
+
+/// Slow path: refresh adapter reserves in background; coalesced via `in_flight`.
+fn spawn_background_reserve_refresh(
+    in_flight: Arc<PoolRefreshInFlight>,
+    shared: Arc<RwLock<WorkerShared>>,
+    adapters: Vec<Arc<dyn DexAdapter>>,
+    sushi: Arc<SushiAdapter>,
+    aquarius_clmm: Arc<AquariusClmmAdapter>,
+    refresh_clmm: bool,
+) {
+    if !in_flight.try_start() {
+        debug!("reserve refresh skipped (previous cycle still running)");
+        return;
+    }
+
+    tokio::spawn(async move {
+        struct Guard(Arc<PoolRefreshInFlight>);
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                self.0.finish();
+            }
+        }
+        let _guard = Guard(in_flight);
+
+        let sources = {
+            let guard = shared.read().await;
+            guard.sources.clone()
+        };
+        let refreshed = refresh_sources_parallel(&adapters, sources).await;
+        let clmm_pools = if refresh_clmm {
+            collect_clmm_snapshots(sushi.as_ref(), aquarius_clmm.as_ref()).await
+        } else {
+            shared.read().await.clmm_pools.clone()
+        };
+        let mut guard = shared.write().await;
+        guard.sources = refreshed;
+        guard.clmm_pools = clmm_pools;
     });
 }
 
@@ -680,7 +697,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
     info!(
         pool_publish_interval_secs = config.pool_publish_interval_secs,
         pool_state_refresh_concurrency = config.pool_state_refresh_concurrency,
-        "Pool state refresh loop: parallel adapter RPC + Redis publish"
+        "Pool state loop: fast Redis publish + background reserve refresh"
     );
 
     loop {
@@ -694,35 +711,32 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
 
         match tick {
             WorkerTick::PoolPublish => {
-                spawn_parallel_pool_state_refresh(
-                    pool_refresh_in_flight.clone(),
+                spawn_fast_pool_publish(
                     shared.clone(),
                     adapters.clone(),
                     aquarius.clone(),
-                    sushi.clone(),
-                    aquarius_clmm.clone(),
                     pool_state_store.clone(),
                     Some(monitor_metrics.clone()),
                     telegram.clone(),
                 );
+                spawn_background_reserve_refresh(
+                    pool_refresh_in_flight.clone(),
+                    shared.clone(),
+                    adapters.clone(),
+                    sushi.clone(),
+                    aquarius_clmm.clone(),
+                    false,
+                );
             }
             WorkerTick::Refresh => {
-                let shared_refresh = shared.clone();
-                let adapters_refresh = adapters.clone();
-                let sushi_refresh = sushi.clone();
-                let aquarius_clmm_refresh = aquarius_clmm.clone();
-                tokio::spawn(async move {
-                    let sources = {
-                        let guard = shared_refresh.read().await;
-                        guard.sources.clone()
-                    };
-                    let refreshed = refresh_sources(&adapters_refresh, sources).await;
-                    let clmm_pools =
-                        collect_clmm_snapshots(&sushi_refresh, &aquarius_clmm_refresh).await;
-                    let mut guard = shared_refresh.write().await;
-                    guard.sources = refreshed;
-                    guard.clmm_pools = clmm_pools;
-                });
+                spawn_background_reserve_refresh(
+                    pool_refresh_in_flight.clone(),
+                    shared.clone(),
+                    adapters.clone(),
+                    sushi.clone(),
+                    aquarius_clmm.clone(),
+                    true,
+                );
             }
             WorkerTick::Discovery => {
                 let shared_disc = shared.clone();

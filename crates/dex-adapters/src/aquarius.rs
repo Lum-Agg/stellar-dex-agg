@@ -16,25 +16,26 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use stellar_xdr::curr as xdr;
 use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// Aquarius Router contract address (Mainnet)
 pub const AQUARIUS_ROUTER: &str = "CBQDHNBFBZYE4MKPWBSJOPIYLW4SFSXAXUTSXJN76GNKYVYPCKWC6QUK";
 
-/// Known stablecoin assets for detecting stable pools
-/// Using SAC contract addresses on mainnet
-const STABLE_ASSETS: &[&str] = &[
-    "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75", // USDC SAC
-    "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC", // EURC SAC
-];
+const DEFAULT_AQUARIUS_HYDRATE_CONCURRENCY: usize = 16;
 
-/// Known 3-token pools to skip (their reserves don't work with 2-token math)
-const BLACKLISTED_POOLS: &[&str] = &[
-    "CBBMQBNHB2FYVZYV7VNHOJHUMTFJLR4PUMRVQYNW6RHIKZO2NQMIBUCV", // XLM/USDC/AQUA 3-token
-];
+fn aquarius_hydrate_concurrency() -> usize {
+    std::env::var("AQUARIUS_HYDRATE_CONCURRENCY")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_AQUARIUS_HYDRATE_CONCURRENCY)
+        .max(1)
+}
 
-/// Default amplification factor for stable pools
+/// Default amplification factor for stable pools (unused when `a()` is readable).
 const DEFAULT_STABLE_AMP: u128 = 100;
+
+/// Aquarius stableswap supports 2 or 3 tokens (`STABLESWAP_MAX_TOKENS` in router).
+const MAX_STABLESWAP_TOKENS: usize = 3;
 
 /// On-chain Aquarius pool state for local quotes (stable + volatile).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -184,9 +185,9 @@ impl AquariusAdapter {
             return Ok(vec![]);
         }
 
-        // 2. Fetch in batches
+        // 2. Collect unique pool addresses from router catalogue.
+        let mut pool_addresses = std::collections::HashSet::new();
         let batch_size: u128 = 50;
-        let mut all_pools = Vec::new();
         let mut start: u128 = 0;
 
         while start < total_count {
@@ -211,7 +212,7 @@ impl AquariusAdapter {
                 .await
             {
                 Ok(result) => {
-                    self.parse_pools_result(&result, &mut all_pools).await;
+                    self.collect_pool_addresses(&result, &mut pool_addresses);
                 }
                 Err(e) => {
                     warn!("Aquarius batch [{}, {}) failed: {}", start, end, e);
@@ -220,80 +221,173 @@ impl AquariusAdapter {
 
             start = end;
 
-            // Rate limiting
             if start < total_count {
                 tokio::time::sleep(std::time::Duration::from_millis(300)).await;
             }
         }
 
-        // Drop concentrated pools (quoted/routed via aquarius_clmm, not constant-product math).
-        let unique_addrs: std::collections::HashSet<String> = all_pools
-            .iter()
-            .map(|(p, _)| p.pool_address.clone())
-            .collect();
-        let mut volatile_addrs = std::collections::HashSet::new();
-        for addr in unique_addrs {
-            if self.is_volatile_pool(&addr).await {
-                volatile_addrs.insert(addr);
-            }
-        }
-        let before = all_pools.len();
-        all_pools.retain(|(p, _)| volatile_addrs.contains(&p.pool_address));
         info!(
-            "Aquarius: kept {} volatile pool edges (dropped {} concentrated)",
-            all_pools.len(),
-            before.saturating_sub(all_pools.len())
+            "Aquarius: {} unique pool addresses from router",
+            pool_addresses.len()
         );
 
-        // 3. Fetch reserves per pool via on-chain get_reserves() (correct token index order).
-        let unique_pools: std::collections::HashSet<String> = all_pools
-            .iter()
-            .map(|(p, _)| p.pool_address.clone())
-            .collect();
+        // Drop concentrated pools (quoted/routed via aquarius_clmm).
+        let before = pool_addresses.len();
+        let mut volatile_addrs = Vec::new();
+        for addr in &pool_addresses {
+            if self.is_volatile_pool(addr).await {
+                volatile_addrs.push(addr.clone());
+            }
+        }
+        pool_addresses = volatile_addrs.into_iter().collect();
         info!(
-            "Aquarius: fetching get_reserves for {} unique pools...",
-            unique_pools.len()
+            "Aquarius: kept {} non-concentrated pools (dropped {} concentrated)",
+            pool_addresses.len(),
+            before.saturating_sub(pool_addresses.len())
         );
-        for pool_addr in unique_pools {
-            let reserves = match self.fetch_pool_reserves_vec(&pool_addr).await {
-                Ok(r) => r,
-                Err(error) => {
-                    warn!(
-                        pool = %pool_addr,
-                        "Aquarius discovery get_reserves failed: {}",
-                        error
-                    );
-                    continue;
-                }
-            };
-            let amp = self.fetch_pool_amp(&pool_addr).await;
-            for (pair, meta) in all_pools.iter_mut().filter(|(p, _)| p.pool_address == pool_addr) {
-                if reserves.len() != meta.all_tokens.len() {
-                    continue;
-                }
-                meta.all_reserves = reserves.clone();
-                meta.amp = amp;
-                let a_key = pair.token_a.canonical();
-                let b_key = pair.token_b.canonical();
-                if let (Some(i), Some(j)) = (
-                    meta.all_tokens.iter().position(|t| t == &a_key),
-                    meta.all_tokens.iter().position(|t| t == &b_key),
-                ) {
-                    pair.reserve_a = meta.all_reserves.get(i).copied();
-                    pair.reserve_b = meta.all_reserves.get(j).copied();
+
+        // 3. Hydrate pools from on-chain get_tokens/get_reserves (supports 2- and 3-token stableswap).
+        let pool_list: Vec<String> = pool_addresses.into_iter().collect();
+        let hydrate_concurrency = aquarius_hydrate_concurrency();
+        info!(
+            pools = pool_list.len(),
+            concurrency = hydrate_concurrency,
+            "Aquarius: hydrating pools via get_tokens + get_reserves..."
+        );
+        let mut all_pools = Vec::new();
+        for chunk in pool_list.chunks(hydrate_concurrency) {
+            let results = futures::future::join_all(chunk.iter().map(|pool_addr| self.hydrate_pool(pool_addr)))
+                .await;
+            for (pool_addr, edges) in chunk.iter().zip(results) {
+                match edges {
+                    Some(edges) => all_pools.extend(edges),
+                    None => {
+                        debug!(pool = %pool_addr, "Aquarius pool hydration skipped");
+                    }
                 }
             }
         }
-
-        all_pools.retain(|(pair, _)| {
-            pair.reserve_a.unwrap_or(0) > 0 && pair.reserve_b.unwrap_or(0) > 0
-        });
 
         info!(
             "Aquarius: fetched {} pool edges with reserves",
             all_pools.len()
         );
         Ok(all_pools)
+    }
+
+    /// Load canonical token list, reserves, and pool type; emit all token-pair edges.
+    async fn hydrate_pool(
+        &self,
+        pool_address: &str,
+    ) -> Option<Vec<(AdapterTradingPair, PoolMeta)>> {
+        let tokens = self.fetch_pool_tokens(pool_address).await.ok()?;
+        let n = tokens.len();
+        if n < 2 || n > MAX_STABLESWAP_TOKENS {
+            return None;
+        }
+
+        let is_stable = self.is_stable_pool(pool_address).await;
+        if !is_stable && n != 2 {
+            warn!(
+                pool = %pool_address,
+                n_tokens = n,
+                "constant_product pool has unexpected token count"
+            );
+            return None;
+        }
+
+        let reserves = self.fetch_pool_reserves_vec(pool_address).await.ok()?;
+        if reserves.len() != n || reserves.iter().all(|&r| r == 0) {
+            return None;
+        }
+
+        let amp = if is_stable {
+            self.fetch_pool_amp(pool_address).await
+        } else {
+            DEFAULT_STABLE_AMP
+        };
+        let fee_bps = self.fetch_pool_fee_bps(pool_address).await.unwrap_or(30);
+
+        let meta = PoolMeta {
+            is_stable,
+            fee_bps,
+            n_tokens: n,
+            all_tokens: tokens.clone(),
+            all_reserves: reserves.clone(),
+            amp,
+        };
+
+        let mut edges = Vec::new();
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let reserve_a = reserves.get(i).copied();
+                let reserve_b = reserves.get(j).copied();
+                if reserve_a.unwrap_or(0) == 0 || reserve_b.unwrap_or(0) == 0 {
+                    continue;
+                }
+                edges.push((
+                    AdapterTradingPair {
+                        token_a: TokenId::Contract {
+                            address: tokens[i].clone(),
+                        },
+                        token_b: TokenId::Contract {
+                            address: tokens[j].clone(),
+                        },
+                        pool_address: pool_address.to_string(),
+                        fee_bps,
+                        reserve_a,
+                        reserve_b,
+                    },
+                    meta.clone(),
+                ));
+            }
+        }
+
+        if edges.is_empty() {
+            None
+        } else {
+            Some(edges)
+        }
+    }
+
+    async fn fetch_pool_tokens(&self, pool_address: &str) -> Result<Vec<String>> {
+        let result = self.rpc.call_no_args(pool_address, "get_tokens").await?;
+        self.parse_address_vec(&result)
+            .ok_or_else(|| anyhow::anyhow!("get_tokens empty for pool {}", pool_address))
+    }
+
+    async fn fetch_pool_fee_bps(&self, pool_address: &str) -> Option<u32> {
+        match self.rpc.call_no_args(pool_address, "get_fee_fraction").await {
+            Ok(val) => scval_to_u128(&val).ok().map(|v| v as u32),
+            Err(_) => None,
+        }
+    }
+
+    /// Extract pool contract addresses from router `get_pools_for_tokens_range` output.
+    fn collect_pool_addresses(
+        &self,
+        val: &xdr::ScVal,
+        out: &mut std::collections::HashSet<String>,
+    ) {
+        let entries = match val {
+            xdr::ScVal::Vec(Some(v)) => &v.0,
+            _ => return,
+        };
+
+        for entry in entries.iter() {
+            if let xdr::ScVal::Vec(Some(pair)) = entry {
+                if pair.0.len() < 2 {
+                    continue;
+                }
+                if let xdr::ScVal::Map(Some(map)) = &pair.0[1] {
+                    for map_entry in map.0.iter() {
+                        if let Ok(pool_address) = scval_to_address(&map_entry.val) {
+                            out.insert(pool_address);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Export one state blob per pool for Redis / quote hydration.
@@ -384,92 +478,6 @@ impl AquariusAdapter {
         }
     }
 
-    /// Parse the result of get_pools_for_tokens_range.
-    /// Returns Vec<(tokens_vec, pools_map)> where each entry is a token pair with its pools.
-    async fn parse_pools_result(
-        &self,
-        val: &xdr::ScVal,
-        pools: &mut Vec<(AdapterTradingPair, PoolMeta)>,
-    ) {
-        let entries = match val {
-            xdr::ScVal::Vec(Some(v)) => &v.0,
-            _ => return,
-        };
-
-        for entry in entries.iter() {
-            if let xdr::ScVal::Vec(Some(pair)) = entry {
-                if pair.0.len() < 2 {
-                    continue;
-                }
-
-                // Parse token addresses
-                let token_addresses = match self.parse_address_vec(&pair.0[0]) {
-                    Some(addrs) if addrs.len() >= 2 => addrs,
-                    _ => continue,
-                };
-
-                let n_tokens = token_addresses.len();
-
-                // Multi-token Aquarius pools need real token index + amp calibration at
-                // execution time. Until that path is implemented end-to-end, do not expose
-                // them to routing or we will build swaps with incorrect in/out indices.
-                if n_tokens > 2 {
-                    continue;
-                }
-
-                let is_stable = is_stable_pair(
-                    &TokenId::Contract {
-                        address: token_addresses[0].clone(),
-                    },
-                    &TokenId::Contract {
-                        address: token_addresses[1].clone(),
-                    },
-                );
-
-                // Parse pools map
-                if let xdr::ScVal::Map(Some(map)) = &pair.0[1] {
-                    for map_entry in map.0.iter() {
-                        if let Ok(pool_address) = scval_to_address(&map_entry.val) {
-                            // Skip blacklisted pools (3-token pools that break 2-token math)
-                            if BLACKLISTED_POOLS.contains(&pool_address.as_str()) {
-                                continue;
-                            }
-                            let meta = PoolMeta {
-                                is_stable,
-                                fee_bps: 30,
-                                n_tokens,
-                                all_tokens: token_addresses.clone(),
-                                all_reserves: vec![0; n_tokens],
-                                amp: DEFAULT_STABLE_AMP,
-                            };
-
-                            // Register all pair combinations from this pool
-                            for i in 0..n_tokens {
-                                for j in (i + 1)..n_tokens {
-                                    pools.push((
-                                        AdapterTradingPair {
-                                            token_a: TokenId::Contract {
-                                                address: token_addresses[i].clone(),
-                                            },
-                                            token_b: TokenId::Contract {
-                                                address: token_addresses[j].clone(),
-                                            },
-                                            pool_address: pool_address.clone(),
-                                            fee_bps: 30,
-                                            reserve_a: None,
-                                            reserve_b: None,
-                                        },
-                                        meta.clone(),
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     fn parse_address_vec(&self, val: &xdr::ScVal) -> Option<Vec<String>> {
         let mut addrs = Vec::new();
         if let xdr::ScVal::Vec(Some(vec)) = val {
@@ -497,6 +505,16 @@ impl AquariusAdapter {
         }
     }
 
+    async fn is_stable_pool(&self, pool_address: &str) -> bool {
+        match self.rpc.call_no_args(pool_address, "pool_type").await {
+            Ok(xdr::ScVal::Symbol(s)) => {
+                let name = String::from_utf8(s.0.to_vec()).unwrap_or_default();
+                name == "stable"
+            }
+            _ => false,
+        }
+    }
+
     async fn resolve_token(&self, contract_address: &str) -> TokenId {
         match self.rpc.call_no_args(contract_address, "name").await {
             Ok(val) => {
@@ -514,6 +532,54 @@ impl AquariusAdapter {
         TokenId::Contract {
             address: contract_address.to_string(),
         }
+    }
+
+    /// Batch-refresh reserves via getLedgerEntries (volatile + stableswap instance storage).
+    pub async fn refresh_all_reserves(&self) -> Result<usize> {
+        let pool_addresses: Vec<String> = {
+            let meta = self.pool_meta.read().await;
+            meta.keys().cloned().collect()
+        };
+        if pool_addresses.is_empty() {
+            return Ok(0);
+        }
+
+        let concurrency = std::env::var("POOL_STATE_REFRESH_CONCURRENCY")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4);
+        let results = crate::batch_refresh::batch_refresh_aquarius_reserves_parallel(
+            &self.rpc,
+            &pool_addresses,
+            concurrency,
+        )
+        .await?;
+
+        let mut updated = 0usize;
+        let mut meta_map = self.pool_meta.write().await;
+        let mut pairs = self.pairs.write().await;
+
+        for (pool_address, reserves) in results {
+            let Some(reserves) = reserves else {
+                continue;
+            };
+            let Some(meta) = meta_map.get_mut(&pool_address) else {
+                continue;
+            };
+            if meta.all_tokens.is_empty() || reserves.len() != meta.all_tokens.len() {
+                continue;
+            }
+            meta.all_reserves = reserves;
+            Self::apply_pool_reserves_to_pairs(&mut pairs, &pool_address, meta);
+            updated += 1;
+        }
+
+        debug!(
+            "Aquarius: batch-refreshed {}/{} pools",
+            updated,
+            pool_addresses.len()
+        );
+        Ok(updated)
     }
 }
 
@@ -538,7 +604,9 @@ impl DexAdapter for AquariusAdapter {
         let mut meta_map = HashMap::new();
 
         for (pair, meta) in results {
-            meta_map.insert(pair.pool_address.clone(), meta);
+            meta_map
+                .entry(pair.pool_address.clone())
+                .or_insert(meta);
             pairs.push(pair);
         }
 
@@ -660,44 +728,7 @@ impl DexAdapter for AquariusAdapter {
     }
 
     async fn refresh_reserves(&self) -> Result<usize> {
-        let pool_addresses: Vec<String> = {
-            let meta = self.pool_meta.read().await;
-            meta.keys().cloned().collect()
-        };
-        if pool_addresses.is_empty() {
-            return Ok(0);
-        }
-
-        let mut updated = 0usize;
-        let mut meta_map = self.pool_meta.write().await;
-        let mut pairs = self.pairs.write().await;
-
-        for pool_address in pool_addresses {
-            let reserves = match self.fetch_pool_reserves_vec(&pool_address).await {
-                Ok(r) => r,
-                Err(error) => {
-                    warn!(
-                        pool = %pool_address,
-                        "Aquarius refresh get_reserves failed: {}",
-                        error
-                    );
-                    continue;
-                }
-            };
-            let amp = self.fetch_pool_amp(&pool_address).await;
-            let Some(meta) = meta_map.get_mut(&pool_address) else {
-                continue;
-            };
-            if meta.all_tokens.is_empty() || reserves.len() != meta.all_tokens.len() {
-                continue;
-            }
-            meta.all_reserves = reserves;
-            meta.amp = amp;
-            Self::apply_pool_reserves_to_pairs(&mut pairs, &pool_address, meta);
-            updated += 1;
-        }
-
-        Ok(updated)
+        self.refresh_all_reserves().await
     }
 
     async fn get_cached_pairs(&self) -> Vec<AdapterTradingPair> {
@@ -705,13 +736,89 @@ impl DexAdapter for AquariusAdapter {
     }
 }
 
-/// Check if both tokens are stablecoins (by contract address)
-fn is_stable_pair(token_a: &TokenId, token_b: &TokenId) -> bool {
-    let a_str = token_a.canonical();
-    let b_str = token_b.canonical();
-    let a_stable = STABLE_ASSETS.contains(&a_str.as_str());
-    let b_stable = STABLE_ASSETS.contains(&b_str.as_str());
-    a_stable && b_stable
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn three_token_stableswap_matches_router_test_vector() {
+        // liquidity_pool_router::test_stableswap_3_pool — equal 100M deposit per coin, amp=6750.
+        let reserves = vec![100_0000000u128, 100_0000000, 100_0000000];
+        let out = AquariusAdapter::stable_swap_quote_multi(&reserves, 0, 1, 97_0000000, 30, 6750);
+        assert_eq!(
+            out, 96_5081326,
+            "3-token stableswap token0->token1 should match on-chain router test"
+        );
+    }
+
+    #[test]
+    fn three_token_stableswap_quote_via_pool_state() {
+        let t0 = "TOKEN_A";
+        let t1 = "TOKEN_B";
+        let t2 = "TOKEN_C";
+        let state = AquariusPoolQuoteState {
+            pool_address: "pool3".into(),
+            tokens: vec![t0.into(), t1.into(), t2.into()],
+            reserves: vec![100_0000000, 100_0000000, 100_0000000],
+            fee_bps: 30,
+            is_stable: true,
+            amp: 6750,
+        };
+        let hop01 = quote_aquarius_pool(&state, t0, t1, 97_0000000)
+            .expect("hop 0->1")
+            .amount_out;
+        assert_eq!(hop01, 96_5081326);
+
+        // Direct swap across non-adjacent indices uses full n-coin invariant.
+        let hop02 = quote_aquarius_pool(&state, t0, t2, 10_0000000)
+            .expect("hop 0->2")
+            .amount_out;
+        assert!(hop02 > 9_9000000 && hop02 < 10_0000000, "hop02={hop02}");
+    }
+
+    #[test]
+    fn usdc_to_xlm_via_cbvdrt_uses_stable_then_volatile() {
+        let usdc = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75";
+        let cbvd = "CBVDRT5474OBUEXF5MJB3UGQ5CG7CKGCAH5M4RV5NBCDJUBZ5OXHJLOU";
+        let xlm = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";
+
+        let hop1 = quote_aquarius_pool(
+            &AquariusPoolQuoteState {
+                pool_address: "CBRXOYKXPQI4EEA6KA35TUIYN5OJLNWMTIVDOMNOIL2BG5Y5LEDHUU7V".into(),
+                tokens: vec![cbvd.into(), usdc.into()],
+                reserves: vec![2092266080, 49103367],
+                fee_bps: 30,
+                is_stable: true,
+                amp: 1500,
+            },
+            usdc,
+            cbvd,
+            1_480_000,
+        )
+        .expect("hop1 stable quote")
+        .amount_out;
+
+        let hop2 = quote_aquarius_pool(
+            &AquariusPoolQuoteState {
+                pool_address: "CDYLKM3DGH5A6QA6QOIITPKG7C4DTZMS2HF75XURORACBHCR6AOE3K33".into(),
+                tokens: vec![xlm.into(), cbvd.into()],
+                reserves: vec![80963820202, 13678306977],
+                fee_bps: 30,
+                is_stable: false,
+                amp: 100,
+            },
+            cbvd,
+            xlm,
+            hop1,
+        )
+        .expect("hop2 volatile quote")
+        .amount_out;
+
+        assert!(
+            hop2 > 9_000_000 && hop2 < 11_000_000,
+            "expected ~1 XLM out, got {hop2}"
+        );
+    }
 }
 
 // ===== Curve math =====

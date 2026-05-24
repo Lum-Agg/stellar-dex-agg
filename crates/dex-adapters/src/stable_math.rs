@@ -175,6 +175,19 @@ mod tests {
     }
 
     #[test]
+    fn test_stable_3token_router_fixture() {
+        // Same fixture as aquarius::three_token_stableswap_matches_router_test_vector
+        let pool = StablePool {
+            reserves: vec![100_0000000, 100_0000000, 100_0000000],
+            decimals: vec![7, 7, 7],
+            amp: 6750,
+            fee_bps: 30,
+        };
+        let out = pool.get_dy(0, 1, 97_0000000);
+        assert_eq!(out, 96_5081326);
+    }
+
+    #[test]
     fn test_stable_3token() {
         // 3-token pool (like XLM/USDC/AQUA)
         let pool = StablePool {
