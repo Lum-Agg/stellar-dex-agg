@@ -7,6 +7,8 @@ use market_snapshot::pool_state_store::{AquariusPoolStateValue, XykPoolStateValu
 use std::sync::Arc;
 
 const XYK_REDIS_SOURCES: &[&str] = &["soroswap", "phoenix", "comet"];
+/// Do not publish xy=k pools with dust on either side (router skips these too).
+const MIN_XYK_RESERVE_STROOPS: u128 = 100_000_000;
 
 /// xy=k reserves from adapter caches (not written into topology snapshot).
 pub async fn collect_xyk_pool_state(adapters: &[Arc<dyn DexAdapter>]) -> Vec<XykPoolStateValue> {
@@ -22,7 +24,11 @@ pub async fn collect_xyk_pool_state(adapters: &[Arc<dyn DexAdapter>]) -> Vec<Xyk
             let (Some(reserve_a), Some(reserve_b)) = (pair.reserve_a, pair.reserve_b) else {
                 continue;
             };
-            if reserve_a == 0 && reserve_b == 0 {
+            if reserve_a == 0
+                || reserve_b == 0
+                || reserve_a < MIN_XYK_RESERVE_STROOPS
+                || reserve_b < MIN_XYK_RESERVE_STROOPS
+            {
                 continue;
             }
             let pool_key = XykPoolStateValue::pool_key(source, &pair.pool_address);

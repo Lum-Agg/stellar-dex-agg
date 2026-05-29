@@ -47,6 +47,9 @@ fn apply_slippage(amount: u128, slippage_bps: u32) -> u128 {
     amount * (10_000 - slippage_bps as u128) / 10_000
 }
 
+/// Skip xy=k pools with dust reserves on either side (misleading quotes at small trade sizes).
+const MIN_XYK_RESERVE_STROOPS: u128 = 100_000_000;
+
 fn reserves_for_edge(
     token_in: &TokenId,
     token_out: &TokenId,
@@ -607,7 +610,11 @@ impl QuoteEngine {
             return None;
         };
 
-        if reserve_in == 0 || reserve_out == 0 {
+        if reserve_in == 0
+            || reserve_out == 0
+            || reserve_in < MIN_XYK_RESERVE_STROOPS
+            || reserve_out < MIN_XYK_RESERVE_STROOPS
+        {
             return None;
         }
 
@@ -942,14 +949,25 @@ mod tests {
         engine
             .update_pairs_from_cache(
                 CLASSIC_SOURCE,
-                &[pair(CLASSIC_SOURCE, "classic-pool", 100_000, 100_000)],
+                &[pair(
+                    CLASSIC_SOURCE,
+                    "classic-pool",
+                    100_000_000,
+                    100_000_000,
+                )],
             )
             .await;
         engine
-            .update_pairs_from_cache("soroswap", &[pair("soroswap", "soro-pool", 10_000, 10_000)])
+            .update_pairs_from_cache(
+                "soroswap",
+                &[pair("soroswap", "soro-pool", 10_000_000, 10_000_000)],
+            )
             .await;
         engine
-            .update_pairs_from_cache("aquarius", &[pair("aquarius", "aqua-pool", 10_000, 10_000)])
+            .update_pairs_from_cache(
+                "aquarius",
+                &[pair("aquarius", "aqua-pool", 10_000_000, 10_000_000)],
+            )
             .await;
 
         let route = engine
@@ -981,10 +999,16 @@ mod tests {
             )
             .await;
         engine
-            .update_pairs_from_cache("soroswap", &[pair("soroswap", "soro-pool", 10_000, 10_000)])
+            .update_pairs_from_cache(
+                "soroswap",
+                &[pair("soroswap", "soro-pool", 100_000_000, 100_000_000)],
+            )
             .await;
         engine
-            .update_pairs_from_cache("aquarius", &[pair("aquarius", "aqua-pool", 10_000, 10_000)])
+            .update_pairs_from_cache(
+                "aquarius",
+                &[pair("aquarius", "aqua-pool", 100_000_000, 100_000_000)],
+            )
             .await;
 
         let route = engine
@@ -1213,20 +1237,20 @@ mod tests {
             ..Default::default()
         };
 
-        let paths = engine
-            .find_candidate_paths(&RouteRequest {
-                token_in: TokenId::Contract {
+        // Comet is excluded from path-finder discovery (QUOTE_EXCLUDED_SOURCES); inject path directly.
+        let paths = vec![Path {
+            tokens: vec![
+                TokenId::Contract {
                     address: blnd.to_string(),
                 },
-                token_out: TokenId::Contract {
+                TokenId::Contract {
                     address: usdc.to_string(),
                 },
-                amount_in: 100_000,
-                slippage_bps: Some(50),
-                max_hops: Some(1),
-                max_splits: Some(1),
-            })
-            .await;
+            ],
+            pool_addresses: vec!["comet-pool".to_string()],
+            sources: vec!["comet".to_string()],
+            hops: 1,
+        }];
 
         let route = engine
             .get_route_with_paths(

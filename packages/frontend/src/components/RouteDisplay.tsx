@@ -1,6 +1,12 @@
 'use client';
 
 import type { QuoteData, SubRoute } from '@/lib/aggregator';
+import {
+  formatExchangeRate,
+  formatLegPercent,
+  legExchangeRate,
+  subRoutesForDisplay,
+} from '@/lib/routeDisplay';
 
 const DEX_STYLES: Record<string, { label: string; color: string; bg: string }> = {
   soroswap: { label: 'Soroswap', color: 'text-emerald-300', bg: 'bg-emerald-500/10 border-emerald-400/25' },
@@ -115,6 +121,11 @@ export function RouteDisplay({
     return val.toFixed(Math.min(decimals, 7));
   };
 
+  const displayRoutes = subRoutesForDisplay(quote.sub_routes, quote.amount_in);
+  const hiddenLegCount = quote.sub_routes.length - displayRoutes.length;
+  const outSym = tokenOutSymbol;
+  const inSym = resolveTokenSymbol(quote.sub_routes[0]?.path[0] ?? '');
+
   return (
     <div className="bg-slate-900/70 rounded-2xl border border-white/10 p-4 space-y-3 backdrop-blur-xl">
       <div className="flex items-center justify-between">
@@ -133,12 +144,19 @@ export function RouteDisplay({
               clipRule="evenodd"
             />
           </svg>
-          <span>Split across {quote.sub_routes.length} paths for better execution</span>
+          <span>
+            Split across {displayRoutes.length} path{displayRoutes.length === 1 ? '' : 's'} for better
+            execution
+            {hiddenLegCount > 0
+              ? ` (${hiddenLegCount} dust leg${hiddenLegCount === 1 ? '' : 's'} hidden)`
+              : ''}
+          </span>
         </div>
       )}
 
       <div className="space-y-2.5">
-        {quote.sub_routes.map((route, i) => {
+        {displayRoutes.map((route, i) => {
+          const rate = legExchangeRate(route.amount_in, route.amount_out);
           const hops = routeDexHops(route);
           const cardBg = routeCardStyle(hops);
 
@@ -156,12 +174,16 @@ export function RouteDisplay({
                     );
                   })}
                 </div>
-                <span className="text-[11px] text-slate-400 font-mono shrink-0">
-                  {route.percentage < 10
-                    ? route.percentage.toFixed(1)
-                    : route.percentage.toFixed(0)}
-                  %
-                </span>
+                <div className="text-right shrink-0">
+                  <span className="text-[11px] text-slate-400 font-mono block">
+                    {formatLegPercent(route.percentage)}
+                  </span>
+                  {rate != null && inSym && outSym && (
+                    <span className="text-[10px] text-slate-500 font-mono">
+                      {formatExchangeRate(rate)} {outSym}/{inSym}
+                    </span>
+                  )}
+                </div>
               </div>
               <RouteAmountPath
                 path={route.path}

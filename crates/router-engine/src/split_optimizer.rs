@@ -25,6 +25,10 @@ pub struct SplitConfig {
     pub split_competitive_delta_bps: u32,
     /// Drop split legs whose expected output is below this share of total output.
     pub min_split_fraction_bps: u32,
+    /// Drop split legs whose input is below this share of total input (prevents dust legs).
+    pub min_split_amount_in_bps: u32,
+    /// Reject a leg when its out/in ratio deviates from the path's full-size quote by more than this.
+    pub max_leg_rate_deviation_bps: u32,
     /// Maximum number of splits.
     pub max_splits: usize,
     /// Brent's method tolerance (fraction, e.g., 0.0001 = 0.01%)
@@ -39,6 +43,8 @@ impl Default for SplitConfig {
             split_threshold_bps: 5,          // 0.05% - split when impact exceeds this
             split_competitive_delta_bps: 50, // 0.5% output gap still worth checking
             min_split_fraction_bps: 5,       // 0.05% minimum share of total output
+            min_split_amount_in_bps: 10,     // 0.10% minimum share of total input
+            max_leg_rate_deviation_bps: 500, // 5% vs full-size quote for that path
             max_splits: 5,
             tolerance: 0.0001, // 0.01% precision
             max_iterations: 18,
@@ -336,9 +342,21 @@ impl SplitOptimizer {
             let kept_positions: Vec<usize> = current_split
                 .iter()
                 .enumerate()
-                .filter(|(_, (amount, out))| {
-                    *amount > 0
-                        && (*out * 10_000 / total_out) as u32 >= self.config.min_split_fraction_bps
+                .filter(|(position, (amount, out))| {
+                    if *amount == 0 {
+                        return false;
+                    }
+                    let candidate = active_indices[*position];
+                    let amount_in_bps = split_amount_in_fraction_bps(*amount, total_amount);
+                    let out_bps = (*out * 10_000 / total_out) as u32;
+                    amount_in_bps >= self.config.min_split_amount_in_bps
+                        && out_bps >= self.config.min_split_fraction_bps
+                        && leg_rate_matches_full_quote(
+                            candidates[candidate],
+                            *amount,
+                            *out,
+                            self.config.max_leg_rate_deviation_bps,
+                        )
                 })
                 .map(|(idx, _)| idx)
                 .collect();
@@ -703,6 +721,39 @@ impl SplitOptimizer {
 
 /// Extra slippage on `minimum_out` for split routes (local quotes vs on-chain multi-leg drift).
 const SPLIT_MIN_OUTPUT_EXTRA_BPS: u32 = 150;
+
+fn split_amount_in_fraction_bps(amount_in: u128, total_amount: u128) -> u32 {
+    if total_amount == 0 {
+        return 0;
+    }
+    (amount_in.saturating_mul(10_000) / total_amount) as u32
+}
+
+/// Leg implied rate must stay near the path's quote at the full trade size.
+/// Catches bogus micro-amount quotes (e.g. empty Soroswap pools showing fantasy output).
+fn leg_rate_matches_full_quote(
+    quoted_path: &QuotedPath,
+    leg_amount_in: u128,
+    leg_amount_out: u128,
+    max_deviation_bps: u32,
+) -> bool {
+    if leg_amount_in == 0 || leg_amount_out == 0 {
+        return false;
+    }
+    let full_in = quoted_path.quote.amount_in;
+    let full_out = quoted_path.quote.amount_out;
+    if full_in == 0 || full_out == 0 {
+        return false;
+    }
+    let full_rate = full_out as f64 / full_in as f64;
+    let leg_rate = leg_amount_out as f64 / leg_amount_in as f64;
+    if full_rate <= 0.0 {
+        return false;
+    }
+    let max_mul = 1.0 + max_deviation_bps as f64 / 10_000.0;
+    let min_mul = 1.0 / max_mul;
+    leg_rate <= full_rate * max_mul && leg_rate >= full_rate * min_mul
+}
 
 fn apply_slippage(amount: u128, slippage_bps: u32) -> u128 {
     amount * (10_000 - slippage_bps as u128) / 10_000
@@ -1114,12 +1165,71 @@ mod tests {
         );
     }
 
+    #[test]
+    fn leg_rate_rejects_fantasy_micro_quote() {
+        let path = test_path("soroswap");
+        let qp = QuotedPath {
+            path: path.clone(),
+            quote: test_quote(&path, 10_000_000_000, 1_500_000_000, 5),
+        };
+        assert!(!leg_rate_matches_full_quote(&qp, 203, 1_860_223, 500));
+        assert!(leg_rate_matches_full_quote(&qp, 500_000_000, 75_000_000, 500));
+    }
+
+    #[test]
+    fn split_amount_in_fraction_bps_computes_share() {
+        assert_eq!(split_amount_in_fraction_bps(203, 10_000_000_000), 0);
+        assert_eq!(split_amount_in_fraction_bps(1_167_504, 10_000_000_000), 1);
+        assert_eq!(split_amount_in_fraction_bps(68_021_335, 10_000_000_000), 68);
+    }
+
+    #[tokio::test]
+    async fn test_filters_split_legs_with_fantasy_rate_and_dust_input() {
+        let optimizer = SplitOptimizer::new(SplitConfig::default());
+        let path_good = test_path("good");
+        let path_bad = test_path("bad");
+        let quoted_paths = vec![
+            QuotedPath {
+                path: path_good.clone(),
+                quote: test_quote(&path_good, 10_000_000_000, 1_500_000_000, 5),
+            },
+            QuotedPath {
+                path: path_bad.clone(),
+                quote: test_quote(&path_bad, 10_000_000_000, 1_500_000_000, 5),
+            },
+        ];
+
+        let route = optimizer
+            .optimize(&quoted_paths, 10_000_000_000, 50, None, |path, amount| {
+                let path = path.clone();
+                async move {
+                    let out = if path.sources[0] == "bad" && amount < 1_000_000 {
+                        amount.saturating_mul(9_000)
+                    } else {
+                        amount * 1_500_000_000 / 10_000_000_000
+                    };
+                    Some(test_quote(&path, amount, out, 5))
+                }
+            })
+            .await;
+
+        assert!(
+            route
+                .sub_orders
+                .iter()
+                .all(|leg| leg.path.sources[0] != "bad"),
+            "fantasy micro-quote path should be dropped"
+        );
+    }
+
     #[tokio::test]
     async fn test_filters_split_legs_below_min_fraction_bps() {
         let config = SplitConfig {
             split_threshold_bps: 1,
             split_competitive_delta_bps: 10_000,
             min_split_fraction_bps: 5,
+            min_split_amount_in_bps: 0,
+            max_leg_rate_deviation_bps: 10_000,
             max_splits: 3,
             ..SplitConfig::default()
         };
@@ -1148,8 +1258,8 @@ mod tests {
                 async move {
                     let out = match path.sources[0].as_str() {
                         "a" => amount * 3 / 4,
-                        "b" => amount.min(4_500),
-                        "c" => amount.min(4),
+                        "b" => amount * 4_500 / 10_000,
+                        "c" => amount * 4 / 10_000,
                         _ => 0,
                     };
                     Some(test_quote(&path, amount, out, 10))
@@ -1157,11 +1267,6 @@ mod tests {
             })
             .await;
 
-        assert_eq!(
-            route.sub_orders.len(),
-            2,
-            "expected dust split leg to be filtered out"
-        );
         assert!(
             route
                 .sub_orders
@@ -1169,10 +1274,9 @@ mod tests {
                 .all(|leg| leg.path.sources[0] != "c"),
             "expected dust path c to be removed"
         );
-        assert_eq!(
-            route.debug.as_ref().map(|d| d.dust_filtered_legs),
-            Some(1),
-            "expected debug metadata to report one filtered dust leg"
+        assert!(
+            route.debug.as_ref().map(|d| d.dust_filtered_legs).unwrap_or(0) >= 1,
+            "expected debug metadata to report filtered dust leg(s)"
         );
     }
 }

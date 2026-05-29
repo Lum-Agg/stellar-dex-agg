@@ -10,7 +10,6 @@ justfile
 data
 .worktrees/
 PROJECT_STATUS.md
-docs
 agent/
 deploy/
 scripts/
