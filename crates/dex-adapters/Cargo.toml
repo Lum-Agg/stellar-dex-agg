@@ -2,6 +2,7 @@
 name = "dex-adapters"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 market-snapshot = { path = "../market-snapshot" }

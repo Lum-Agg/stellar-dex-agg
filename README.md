@@ -8,6 +8,8 @@ Multi-source liquidity aggregation router for Stellar's Soroban DEX ecosystem.
 
 Aggregates liquidity across **Soroswap**, **Aquarius**, **Phoenix**, **Sushi V3**, **Comet**, and compares against **Classic DEX** (Horizon PathPayment) to find optimal swap execution — including multi-hop paths and split orders across venues.
 
+**SCF Build #44:** submission checklist, demo script, and talking points → [docs/scf-build.md](docs/scf-build.md) (`./scripts/scf-demo.sh`).
+
 ## Architecture
 
 Production deployment separates **slow-changing routing topology** from **fast-changing pool reserves**. The API stays stateless; a background worker owns writes to Redis.
@@ -297,4 +299,4 @@ Production `deploy/lumagg-api@.service` sets the split env vars explicitly (see 
 
 ## License
 
-MIT
+Apache-2.0. See [LICENSE](LICENSE).

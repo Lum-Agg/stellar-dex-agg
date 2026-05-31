@@ -2,6 +2,7 @@
 name = "stellar-dex-aggregator-sdk"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "TypeScript SDK is the primary client. This Rust crate is for internal testing."
 
 [dependencies]

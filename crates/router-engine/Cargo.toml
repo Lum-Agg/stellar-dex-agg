@@ -2,6 +2,7 @@
 name = "router-engine"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 stellar-xdr.workspace = true
