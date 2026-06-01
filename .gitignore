@@ -14,3 +14,6 @@ agent/
 deploy/
 scripts/*
 !scripts/scf-quote-regression.sh
+docs/*
+!docs/scf-build.md
+!docs/pool-state-architecture.md
