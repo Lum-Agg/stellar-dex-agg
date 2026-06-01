@@ -12,4 +12,5 @@ data
 PROJECT_STATUS.md
 agent/
 deploy/
-scripts/
+scripts/*
+!scripts/scf-quote-regression.sh
