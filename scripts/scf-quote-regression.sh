@@ -12,19 +12,23 @@ fail() {
 }
 
 quote() {
-  local amount_in=$1
+  local token_in=$1
+  local token_out=$2
+  local amount_in=$3
   curl -sfG "$API/api/v1/quote" \
-    --data-urlencode "token_in=$XLM" \
-    --data-urlencode "token_out=$USDC" \
+    --data-urlencode "token_in=$token_in" \
+    --data-urlencode "token_out=$token_out" \
     --data-urlencode "amount_in=$amount_in" \
     --data-urlencode "slippage=0.5"
 }
 
 check_quote() {
   local label=$1
-  local amount_in=$2
+  local token_in=$2
+  local token_out=$3
+  local amount_in=$4
   local json
-  json=$(quote "$amount_in")
+  json=$(quote "$token_in" "$token_out" "$amount_in")
 
   echo "=== $label (amount_in=$amount_in) ==="
   python3 - "$json" "$amount_in" <<'PY'
@@ -52,7 +56,7 @@ for i, r in enumerate(routes):
     flag = ""
     if in_bps < 10:
         flag = " [DUST_IN]"
-    if rate > 2.0 or (rates and rate > max(rates) * 3):
+    if len(rates) > 1 and rate > max(rates) * 3:
         flag += " [RATE?]"
     print(f"  leg{i+1} {r['source'][:40]:40} in_bps={in_bps/100:.2f}% rate={rate:.4f}{flag}")
 
@@ -72,9 +76,17 @@ PY
 
 echo "LumAgg quote regression — API=$API"
 echo
+echo "Note: XLM→USDC often wins on classic_dex (Horizon path). USDC→XLM exercises Soroban routing."
+echo
 
-check_quote "1 XLM" "10000000"
-check_quote "10 XLM" "100000000"
-check_quote "1000 XLM" "10000000000"
+echo "--- XLM → USDC ---"
+check_quote "1 XLM → USDC" "$XLM" "$USDC" "10000000"
+check_quote "10 XLM → USDC" "$XLM" "$USDC" "100000000"
+check_quote "1000 XLM → USDC" "$XLM" "$USDC" "10000000000"
+
+echo "--- USDC → XLM (reverse) ---"
+check_quote "1 USDC → XLM" "$USDC" "$XLM" "10000000"
+check_quote "10 USDC → XLM" "$USDC" "$XLM" "100000000"
+check_quote "1000 USDC → XLM" "$USDC" "$XLM" "10000000000"
 
 echo "All regression checks passed."
