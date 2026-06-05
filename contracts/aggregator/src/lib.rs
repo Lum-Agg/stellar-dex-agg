@@ -150,29 +150,8 @@ impl AggregatorContract {
         let token_in_client = token::Client::new(&env, &token_in);
         token_in_client.transfer(&user, &contract_addr, &total_in);
 
-        // Execute each sub-route and accumulate output
-        let mut total_output: i128 = 0;
-
-        for sr in sub_routes.iter() {
-            assert!(!sr.steps.is_empty(), "Empty steps");
-            // Verify first step starts with token_in
-            if let Some(first_step) = sr.steps.first() {
-                assert!(
-                    first_step.token_in == token_in,
-                    "Sub-route must start with token_in"
-                );
-            }
-            // Verify last step ends with token_out
-            if let Some(last_step) = sr.steps.last() {
-                assert!(
-                    last_step.token_out == token_out,
-                    "Sub-route must end with token_out"
-                );
-            }
-
-            let output = Self::execute_path(&env, &sr.steps, sr.amount_in, &contract_addr);
-            total_output += output;
-        }
+        let total_output =
+            Self::execute_sub_routes(&env, &token_in, &token_out, &sub_routes, &contract_addr);
 
         // Slippage: per-hop pool mins are 0; only check total output here (all sub_routes summed).
         assert!(total_output >= min_amount_out, "Output below minimum");
@@ -181,6 +160,103 @@ impl AggregatorContract {
         let token_out_client = token::Client::new(&env, &token_out);
         token_out_client.transfer(&contract_addr, &user, &total_output);
 
+        total_output
+    }
+
+    /// Round-trip swap: base → bridge (split OK) → base (split OK) in one atomic invocation.
+    ///
+    /// Funds are pulled from `user` and the final `base_token` balance is returned to `user`.
+    /// The contract does not retain funds after execution.
+    ///
+    /// - `leg_out`: sub-routes from `base_token` to `bridge_token`; `amount_in` must sum to `amount_in`
+    /// - `leg_back`: sub-routes from `bridge_token` to `base_token`; `amount_in` must sum to leg_out output
+    /// - `min_amount_out`: minimum total `base_token` returned (principal + profit floor)
+    pub fn round_trip_swap(
+        env: Env,
+        user: Address,
+        base_token: Address,
+        bridge_token: Address,
+        amount_in: i128,
+        leg_out: Vec<SubRoute>,
+        leg_back: Vec<SubRoute>,
+        min_amount_out: i128,
+    ) -> i128 {
+        user.require_auth();
+        assert!(amount_in > 0, "amount_in must be positive");
+        assert!(min_amount_out >= amount_in, "min_amount_out below principal");
+        assert!(base_token != bridge_token, "base and bridge must differ");
+
+        let contract_addr = env.current_contract_address();
+
+        let mut leg_out_in: i128 = 0;
+        for sr in leg_out.iter() {
+            leg_out_in += sr.amount_in;
+        }
+        assert!(leg_out_in == amount_in, "leg_out amounts must sum to amount_in");
+
+        // Pull base from user
+        let base_client = token::Client::new(&env, &base_token);
+        base_client.transfer(&user, &contract_addr, &amount_in);
+
+        let bridge_total =
+            Self::execute_sub_routes(&env, &base_token, &bridge_token, &leg_out, &contract_addr);
+        assert!(bridge_total > 0, "leg_out produced zero bridge token");
+
+        let mut leg_back_in: i128 = 0;
+        for sr in leg_back.iter() {
+            leg_back_in += sr.amount_in;
+        }
+        assert!(
+            leg_back_in == bridge_total,
+            "leg_back amounts must sum to leg_out output"
+        );
+
+        let base_total = Self::execute_sub_routes(
+            &env,
+            &bridge_token,
+            &base_token,
+            &leg_back,
+            &contract_addr,
+        );
+
+        assert!(
+            base_total >= min_amount_out,
+            "Output below minimum"
+        );
+
+        base_client.transfer(&contract_addr, &user, &base_total);
+
+        base_total
+    }
+
+    /// Execute sub-routes that share the same token_in → token_out pair; returns total output.
+    fn execute_sub_routes(
+        env: &Env,
+        token_in: &Address,
+        token_out: &Address,
+        sub_routes: &Vec<SubRoute>,
+        contract_addr: &Address,
+    ) -> i128 {
+        assert!(!sub_routes.is_empty(), "Empty sub_routes");
+
+        let mut total_output: i128 = 0;
+        for sr in sub_routes.iter() {
+            assert!(!sr.steps.is_empty(), "Empty steps");
+            if let Some(first_step) = sr.steps.first() {
+                assert!(
+                    first_step.token_in == *token_in,
+                    "Sub-route must start with token_in"
+                );
+            }
+            if let Some(last_step) = sr.steps.last() {
+                assert!(
+                    last_step.token_out == *token_out,
+                    "Sub-route must end with token_out"
+                );
+            }
+            let output = Self::execute_path(env, &sr.steps, sr.amount_in, contract_addr);
+            total_output += output;
+        }
         total_output
     }
 
@@ -850,8 +926,8 @@ mod test {
         };
         let before = tok_b.balance(&user);
         let out = single_swap(&env, &agg, &user, &a, &b, 1000, vec![&env, step], 1);
-        assert_eq!(out, 986);
-        assert_eq!(tok_b.balance(&user) - before, 986);
+        assert_eq!(out, 987);
+        assert_eq!(tok_b.balance(&user) - before, 987);
     }
 
     #[test]
@@ -881,8 +957,8 @@ mod test {
         };
         let before = tok_a.balance(&user);
         let out = single_swap(&env, &agg, &user, &b, &a, 1000, vec![&env, step], 1);
-        assert_eq!(out, 986);
-        assert_eq!(tok_a.balance(&user) - before, 986);
+        assert_eq!(out, 987);
+        assert_eq!(tok_a.balance(&user) - before, 987);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1002,8 +1078,8 @@ mod test {
         let before_c = tok_c.balance(&user);
         let before_b = tok_b.balance(&user);
         let out = single_swap(&env, &agg, &user, &a, &c, 5000, steps, 1);
-        assert_eq!(out, 4747);
-        assert_eq!(tok_c.balance(&user) - before_c, 4747);
+        assert_eq!(out, 4748);
+        assert_eq!(tok_c.balance(&user) - before_c, 4748);
         assert_eq!(tok_b.balance(&user) - before_b, 0);
     }
 
@@ -1066,8 +1142,164 @@ mod test {
         ];
         let before = tok_b.balance(&user);
         let total = agg.swap(&user, &a, &b, &sub_routes, &1);
-        assert_eq!(total, 4954);
-        assert_eq!(tok_b.balance(&user) - before, 4954);
+        assert_eq!(total, 4955);
+        assert_eq!(tok_b.balance(&user) - before, 4955);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  Round-trip swap (base → bridge → base)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_round_trip_swap_two_legs() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let user = gen_addr(&env);
+        let (_, agg) = setup_agg(&env);
+
+        let (base, sac_base, tok_base) = create_token(&env);
+        let (bridge, sac_bridge, _) = create_token(&env);
+        sac_base.mint(&user, &1_000_000);
+
+        let out_pid = env.register_contract(None, aq_mock::AqPool);
+        let out_pool = out_pid.clone();
+        AqPoolClient::new(&env, &out_pid).init(&base, &bridge);
+        sac_bridge.mint(&out_pool, &10_000_000);
+
+        let back_pid = env.register_contract(None, aq_mock::AqPool);
+        let back_pool = back_pid.clone();
+        AqPoolClient::new(&env, &back_pid).init(&bridge, &base);
+        sac_base.mint(&back_pool, &10_000_000);
+
+        let leg_out = vec![
+            &env,
+            SubRoute {
+                amount_in: 5000,
+                steps: vec![
+                    &env,
+                    SwapStep {
+                        dex_id: out_pool,
+                        dex_type: DexType::Aquarius,
+                        token_in: base.clone(),
+                        token_out: bridge.clone(),
+                        in_idx: 0,
+                        out_idx: 1,
+                    },
+                ],
+            },
+        ];
+        let leg_back = vec![
+            &env,
+            SubRoute {
+                amount_in: 5000,
+                steps: vec![
+                    &env,
+                    SwapStep {
+                        dex_id: back_pool,
+                        dex_type: DexType::Aquarius,
+                        token_in: bridge.clone(),
+                        token_out: base.clone(),
+                        in_idx: 0,
+                        out_idx: 1,
+                    },
+                ],
+            },
+        ];
+
+        let before = tok_base.balance(&user);
+        let out = agg.round_trip_swap(&user, &base, &bridge, &5000, &leg_out, &leg_back, &5000);
+        assert_eq!(out, 5000);
+        assert_eq!(tok_base.balance(&user) - before, 0);
+    }
+
+    #[test]
+    fn test_round_trip_swap_split_out_leg() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let user = gen_addr(&env);
+        let (_, agg) = setup_agg(&env);
+
+        let (base, sac_base, tok_base) = create_token(&env);
+        let (bridge, sac_bridge, _) = create_token(&env);
+        sac_base.mint(&user, &1_000_000);
+
+        let aq1_id = env.register_contract(None, aq_mock::AqPool);
+        let aq1 = aq1_id.clone();
+        AqPoolClient::new(&env, &aq1_id).init(&base, &bridge);
+        sac_bridge.mint(&aq1, &10_000_000);
+
+        let aq2_id = env.register_contract(None, aq_mock::AqPool);
+        let aq2 = aq2_id.clone();
+        AqPoolClient::new(&env, &aq2_id).init(&base, &bridge);
+        sac_bridge.mint(&aq2, &10_000_000);
+
+        let back_pid = env.register_contract(None, aq_mock::AqPool);
+        let back_pool = back_pid.clone();
+        AqPoolClient::new(&env, &back_pid).init(&bridge, &base);
+        sac_base.mint(&back_pool, &20_000);
+
+        let leg_out = vec![
+            &env,
+            SubRoute {
+                amount_in: 3000,
+                steps: vec![
+                    &env,
+                    SwapStep {
+                        dex_id: aq1,
+                        dex_type: DexType::Aquarius,
+                        token_in: base.clone(),
+                        token_out: bridge.clone(),
+                        in_idx: 0,
+                        out_idx: 1,
+                    },
+                ],
+            },
+            SubRoute {
+                amount_in: 2000,
+                steps: vec![
+                    &env,
+                    SwapStep {
+                        dex_id: aq2,
+                        dex_type: DexType::Aquarius,
+                        token_in: base.clone(),
+                        token_out: bridge.clone(),
+                        in_idx: 0,
+                        out_idx: 1,
+                    },
+                ],
+            },
+        ];
+        let bridge_amt = 5000_i128;
+        let leg_back = vec![
+            &env,
+            SubRoute {
+                amount_in: bridge_amt,
+                steps: vec![
+                    &env,
+                    SwapStep {
+                        dex_id: back_pool,
+                        dex_type: DexType::Aquarius,
+                        token_in: bridge.clone(),
+                        token_out: base.clone(),
+                        in_idx: 0,
+                        out_idx: 1,
+                    },
+                ],
+            },
+        ];
+
+        let before = tok_base.balance(&user);
+        let out = agg.round_trip_swap(
+            &user,
+            &base,
+            &bridge,
+            &5000,
+            &leg_out,
+            &leg_back,
+            &5000,
+        );
+        assert_eq!(out, 5000);
+        assert_eq!(tok_base.balance(&user) - before, 0);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
