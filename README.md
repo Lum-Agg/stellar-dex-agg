@@ -8,8 +8,6 @@ Multi-source liquidity aggregation router for Stellar's Soroban DEX ecosystem.
 
 Aggregates liquidity across **Soroswap**, **Aquarius**, **Phoenix**, **Sushi V3**, **Comet**, and compares against **Classic DEX** (Horizon PathPayment) to find optimal swap execution — including multi-hop paths and split orders across venues.
 
-**Soroban arbitrage scanner (Phase 1 — detect only):** `cargo run -p arbitrage --bin arb-scanner` (reads Redis; no Classic SDEX; no tx submit).
-
 ## Architecture
 
 Production deployment separates **slow-changing routing topology** from **fast-changing pool reserves**. The API stays stateless; a background worker owns writes to Redis.
