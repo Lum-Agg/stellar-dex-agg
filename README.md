@@ -8,7 +8,7 @@ Multi-source liquidity aggregation router for Stellar's Soroban DEX ecosystem.
 
 Aggregates liquidity across **Soroswap**, **Aquarius**, **Phoenix**, **Sushi V3**, **Comet**, and compares against **Classic DEX** (Horizon PathPayment) to find optimal swap execution — including multi-hop paths and split orders across venues.
 
-**SCF Build #44:** submission checklist, demo script, and talking points → [docs/scf-build.md](docs/scf-build.md) (`./scripts/scf-demo.sh`).
+**Soroban arbitrage scanner (Phase 1 — detect only):** `cargo run -p arbitrage --bin arb-scanner` (reads Redis; no Classic SDEX; no tx submit).
 
 ## Architecture
 
