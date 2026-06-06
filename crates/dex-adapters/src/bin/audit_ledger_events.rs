@@ -6,6 +6,7 @@
 use {
     dex_adapters::{
         aquarius::AQUARIUS_ROUTER,
+        dex_event_kinds::{classify_topic_op, primary_topic_op, DexEventKind},
         pool_index::{touched_pools_from_events, KnownPoolIndex},
         router_events::pools_from_router_event,
         rpc::{events::ContractEvent, SorobanRpc},
@@ -40,6 +41,9 @@ async fn main() -> anyhow::Result<()> {
 
     let mut totals = AuditTotals::default();
     let mut unique_pools_by_source: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut event_kinds_by_source: HashMap<String, HashMap<DexEventKind, usize>> = HashMap::new();
+    let mut raw_ops_by_source: HashMap<String, HashMap<String, usize>> = HashMap::new();
+
     for ledger in latest.saturating_sub(ledgers - 1)..=latest {
         let events = fetch_ledger_events(&rpc, ledger).await?;
         let ledger_stats = audit_ledger(&events, &index);
@@ -49,6 +53,7 @@ async fn main() -> anyhow::Result<()> {
                 .or_default()
                 .insert(pool.pool_address);
         }
+        count_dex_events(&events, &index, &mut event_kinds_by_source, &mut raw_ops_by_source);
         totals.merge(&ledger_stats);
         if ledger_stats.has_activity() {
             print_ledger(ledger, &ledger_stats);
@@ -58,7 +63,47 @@ async fn main() -> anyhow::Result<()> {
     println!("=== SUMMARY (last {ledgers} ledgers) ===");
     totals.print();
     print_unique_pools_by_dex(&unique_pools_by_source);
+    print_event_kinds_by_dex(&event_kinds_by_source);
+    print_raw_ops_by_dex(&raw_ops_by_source);
     Ok(())
+}
+
+fn count_dex_events(
+    events: &[ContractEvent],
+    index: &KnownPoolIndex,
+    kinds_by_source: &mut HashMap<String, HashMap<DexEventKind, usize>>,
+    raw_ops_by_source: &mut HashMap<String, HashMap<String, usize>>,
+) {
+    for event in events {
+        if event.event_type != "contract" {
+            continue;
+        }
+        let Some(op) = primary_topic_op(event.topic.as_deref()) else {
+            continue;
+        };
+
+        let source = if let Some(pool) = index.lookup_contract(&event.contract_id) {
+            pool.source.clone()
+        } else if event.contract_id == AQUARIUS_ROUTER {
+            "aquarius_router".to_string()
+        } else if event.contract_id == SOROSWAP_ROUTER {
+            "soroswap_router".to_string()
+        } else {
+            continue;
+        };
+
+        let kind = classify_topic_op(&op);
+        *kinds_by_source
+            .entry(source.clone())
+            .or_default()
+            .entry(kind)
+            .or_default() += 1;
+        *raw_ops_by_source
+            .entry(source)
+            .or_default()
+            .entry(op)
+            .or_default() += 1;
+    }
 }
 
 #[derive(Default)]
@@ -109,7 +154,7 @@ impl AuditTotals {
         } else {
             println!("  -> router path added no new pools (pool events cover same txs)");
         }
-        println!("by_source: {:?}", self.by_source);
+        println!("by_source (touched pool counts, not unique): {:?}", self.by_source);
     }
 }
 
@@ -201,11 +246,6 @@ fn print_ledger(ledger: u32, s: &LedgerStats) {
         s.touched_full.len(),
         s.touched_via_router_only.len(),
     );
-    if !s.touched_via_router_only.is_empty() {
-        for addr in &s.touched_via_router_only {
-            println!("  +router {addr}");
-        }
-    }
 }
 
 async fn fetch_ledger_events(rpc: &SorobanRpc, ledger: u32) -> anyhow::Result<Vec<ContractEvent>> {
@@ -228,12 +268,60 @@ fn print_unique_pools_by_dex(by_source: &HashMap<String, HashSet<String>>) {
     sources.sort();
     let total_unique: usize = by_source.values().map(|s| s.len()).sum();
     println!(
-        "unique_pools_by_dex: {} dex sources, {} unique pools total",
+        "\nunique_pools_by_dex: {} dex sources, {} unique pools total",
         sources.len(),
         total_unique
     );
     for src in &sources {
         println!("  {src}: {} unique pools", by_source[src].len());
+    }
+}
+
+fn print_event_kinds_by_dex(kinds: &HashMap<String, HashMap<DexEventKind, usize>>) {
+    if kinds.is_empty() {
+        return;
+    }
+    let mut sources: Vec<_> = kinds.keys().cloned().collect();
+    sources.sort();
+    println!("\nevent_kinds_by_dex (pool + router contract events):");
+    for src in &sources {
+        let counts = &kinds[src];
+        let total: usize = counts.values().sum();
+        let mut kinds_sorted: Vec<_> = counts.iter().collect();
+        kinds_sorted.sort_by_key(|(k, _)| format!("{:?}", k));
+        let parts: Vec<String> = kinds_sorted
+            .iter()
+            .map(|(k, n)| format!("{}={}", k.as_str(), n))
+            .collect();
+        println!("  {src} ({total} events): {}", parts.join(", "));
+    }
+    let mut global: HashMap<DexEventKind, usize> = HashMap::new();
+    for counts in kinds.values() {
+        for (k, n) in counts {
+            *global.entry(*k).or_default() += n;
+        }
+    }
+    let mut global_sorted: Vec<_> = global.iter().collect();
+    global_sorted.sort_by_key(|(k, _)| format!("{:?}", k));
+    let parts: Vec<String> = global_sorted
+        .iter()
+        .map(|(k, n)| format!("{}={}", k.as_str(), n))
+        .collect();
+    println!("  ALL: {}", parts.join(", "));
+}
+
+fn print_raw_ops_by_dex(raw: &HashMap<String, HashMap<String, usize>>) {
+    if raw.is_empty() {
+        return;
+    }
+    let mut sources: Vec<_> = raw.keys().cloned().collect();
+    sources.sort();
+    println!("\nraw_topic_ops_by_dex:");
+    for src in &sources {
+        let mut ops: Vec<_> = raw[src].iter().collect();
+        ops.sort_by(|a, b| b.1.cmp(a.1));
+        let parts: Vec<String> = ops.iter().map(|(op, n)| format!("{op}={n}")).collect();
+        println!("  {src}: {}", parts.join(", "));
     }
 }
 
