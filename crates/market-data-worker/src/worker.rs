@@ -97,7 +97,7 @@ impl WorkerConfig {
             pool_state_refresh_concurrency: std::env::var("POOL_STATE_REFRESH_CONCURRENCY")
                 .ok()
                 .and_then(|value| value.parse().ok())
-                .unwrap_or(4),
+                .unwrap_or(8),
             discovery_interval_secs: std::env::var("DISCOVERY_INTERVAL_SECS")
                 .ok()
                 .and_then(|value| value.parse().ok())
@@ -718,7 +718,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
         pool_state_refresh_concurrency = config.pool_state_refresh_concurrency,
         fetch_pipeline = fetch_pipeline.is_some(),
         mode = if fetch_pipeline.is_some() {
-            "fetch pipeline (RPC task → Redis)"
+            "event-driven (ledger → fetch pipeline; discovery/bootstrap → Redis)"
         } else {
             "legacy cache publish + background refresh"
         },

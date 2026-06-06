@@ -10,9 +10,9 @@ use {
     std::collections::HashMap,
 };
 
-/// Default Redis EX for pool keys. Should exceed worker refresh duration (often
-/// 15–30s on mainnet).
-pub const DEFAULT_POOL_STATE_TTL_SECS: u64 = 30;
+/// Default Redis EX for pool keys. Long TTL: cold pools stay valid until the
+/// next discovery write or ledger touch (event-driven freshness, not periodic sweep).
+pub const DEFAULT_POOL_STATE_TTL_SECS: u64 = 86_400;
 pub const DEFAULT_QUOTE_HYDRATE_MAX_POOLS: usize = 12;
 
 const XYK_KEY_PREFIX: &str = "lumagg:pool:xyk";

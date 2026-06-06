@@ -12,6 +12,8 @@ Aggregates liquidity across **Soroswap**, **Aquarius**, **Phoenix**, **Sushi V3*
 
 Production deployment separates **slow-changing routing topology** from **fast-changing pool reserves**. The API stays stateless; a background worker owns writes to Redis.
 
+Pool state freshness is **event-driven** (Jupiter-style): ledger events refresh active pools; bootstrap and periodic discovery publish full state. There is **no periodic full-market sweep**.
+
 ### System overview
 
 ```mermaid
@@ -28,14 +30,20 @@ flowchart TB
 
   subgraph worker [Data tier — single writer]
     W[market-data-worker]
+    LW[ledger watcher]
+    FP[fetch pipeline]
     AD[DEX adapters]
+    W --> LW
+    LW -->|touched pools| FP
+    FP --> AD
     W --> AD
   end
 
   subgraph redis [Redis]
     SNAP["lumagg:snapshot:*<br/>versioned graph + CLMM metadata"]
-    XYK["lumagg:pool:xyk:{source}:{pool}<br/>EX=8s"]
-    CLMM["lumagg:pool:clmm:{source}:{pool}<br/>EX=8s"]
+    XYK["lumagg:pool:xyk:{source}:{pool}<br/>EX=86400"]
+    AQU["lumagg:pool:aquarius:{pool}<br/>EX=86400"]
+    CLMM["lumagg:pool:clmm:{source}:{pool}<br/>EX=86400"]
     PUB["Pub/Sub lumagg:snapshot:events"]
   end
 
@@ -49,12 +57,17 @@ flowchart TB
   AX -->|MGET hydrate| redis
   AX -->|snapshot reload| SNAP
   AX -->|Classic benchmark| HZN
-  W -->|publish| SNAP
-  W -->|publish pool state| XYK
-  W -->|publish pool state| CLMM
+  W -->|bootstrap + discovery publish| SNAP
+  W -->|bootstrap + discovery publish| XYK
+  W -->|bootstrap + discovery publish| AQU
+  W -->|bootstrap + discovery publish| CLMM
+  FP -->|ledger touched| XYK
+  FP -->|ledger touched| AQU
+  FP -->|ledger touched| CLMM
   W --> PUB
   PUB -.->|hot reload| AX
   AD --> RPC
+  LW --> RPC
   AX -->|build XDR| AGG
 ```
 
@@ -62,10 +75,12 @@ flowchart TB
 
 | Layer | Contents | Where it lives | Update cadence |
 |-------|----------|----------------|----------------|
-| **Graph (topology)** | Token pairs, pool contract IDs, fee tiers; CLMM pool refs (no ticks) | `MarketSnapshot` in Redis (`lumagg:snapshot:current` + version history) or `data/snapshots/current.json` — **no reserves** | **Discovery ~600s** — full `get_trading_pairs()` per adapter, replace edges per source |
-| **Pool state (reserves / ticks)** | xy=k `reserve_a/b`; CLMM slot0, liquidity, ticks + **coverage**; Comet balances/weights at quote time | Redis `lumagg:pool:xyk:*` / `lumagg:pool:clmm:*` (**TTL 8s**) | **Refresh ~5s** on worker (from adapter caches); **ledger watcher ~3s** for touched pools; **quote hydrate** for Redis misses |
+| **Graph (topology)** | Token pairs, pool contract IDs, fee tiers; CLMM pool refs (no ticks) | `MarketSnapshot` in Redis — **no reserves** | **Discovery ~600s**; bootstrap on worker start |
+| **Pool state (reserves / ticks)** | xy=k `reserve_a/b`; Aquarius N-token; CLMM slot0, liquidity, ticks + **coverage** | Redis `lumagg:pool:*` (**TTL 86400s**) | **Ledger ~0.5s** for touched pools; **bootstrap + discovery** full publish; no periodic sweep |
 
-The API does **not** keep a long-lived in-process pool cache (no 120s memory layer). Each `/quote` loads the graph from the last snapshot reload, then overlays fresh pool state via Redis + bounded RPC.
+The API does **not** keep a long-lived in-process pool cache. Each `/quote` loads the graph from the last snapshot reload, then overlays pool state from Redis (`QUOTE_RPC_HYDRATE_ENABLED=false` by default).
+
+**Cold pools** (no recent trades) are not re-fetched on a timer — on-chain state is unchanged, so the last Redis value remains correct.
 
 ### Component responsibilities
 
@@ -76,34 +91,24 @@ The API does **not** keep a long-lived in-process pool cache (no 120s memory lay
                                 │ REST: /quote, /tokens, /build_tx, …
 ┌───────────────────────────────▼──────────────────────────────────────────┐
 │  api-server (Axum)                                                        │
-│  • Snapshot mode: load MarketSnapshot → QuoteEngine graph (no discovery)  │
-│  • quote_route: find paths → Redis MGET → hydrate misses → local math     │
-│  • ClassicDexAdapter registered live (Horizon PathPayment per request)    │
+│  • Snapshot mode: load MarketSnapshot → QuoteEngine graph                   │
+│  • quote_route: find paths → Redis MGET → local math (no RPC by default)  │
+│  • ClassicDexAdapter live (Horizon PathPayment per request)               │
 └───────────────────────────────┬──────────────────────────────────────────┘
                                 │
 ┌───────────────────────────────▼──────────────────────────────────────────┐
-│  router-engine                                                            │
-│  ┌────────────┐  ┌─────────────────┐  ┌──────────────────┐               │
-│  │ PathFinder │  │ SplitOptimizer  │  │ TransactionBuilder│               │
-│  │   (BFS)    │  │    (greedy)     │  │    (XDR / agg)    │               │
-│  └─────┬──────┘  └────────┬────────┘  └─────────┬────────┘               │
-│        └──────────────────┴──────────────────────┘                       │
-│  QuoteEngine: local AMM/CLMM/Comet math + optional adapter get_quote      │
+│  router-engine — PathFinder (BFS), SplitOptimizer, QuoteEngine local math │
 └───────────────────────────────┬──────────────────────────────────────────┘
                                 │
 ┌───────────────────────────────▼──────────────────────────────────────────┐
 │  market-data-worker (sole snapshot + Redis pool-state writer)             │
 │  ┌─────────────────────────────────────────────────────────────────────┐ │
-│  │ Loop A — discovery (DISCOVERY_INTERVAL_SECS, default 600)            │ │
-│  │   Soroswap / Aquarius / Phoenix / Sushi / Comet / Aquarius CLMM      │ │
-│  │   → build MarketSnapshot → publish Redis/file → rebuild pool index   │ │
+│  │ Bootstrap (on start) — discovery + publish snapshot + full Redis      │ │
 │  ├─────────────────────────────────────────────────────────────────────┤ │
-│  │ Loop B — refresh (REFRESH_INTERVAL_SECS, default 5)                  │ │
-│  │   adapter.refresh_reserves() → update snapshot reserves + Redis    │ │
+│  │ Discovery (DISCOVERY_INTERVAL_SECS, default 600) — reconcile + Redis │ │
 │  ├─────────────────────────────────────────────────────────────────────┤ │
-│  │ Loop C — ledger watcher (LEDGER_POLL_SECS, default 0.5, needs Redis) │ │
-│  │   getLatestLedger + getEvents → touched known pools → partial refresh│ │
-│  │   → Redis writeback only (no extra snapshot publish)                 │ │
+│  │ Ledger watcher (LEDGER_POLL_SECS, default 0.5)                       │ │
+│  │   getEvents → touched pools → fetch pipeline → Redis only             │ │
 │  └─────────────────────────────────────────────────────────────────────┘ │
 └───────────────────────────────┬──────────────────────────────────────────┘
                                 │ dex-adapters + SorobanRpc
@@ -114,91 +119,72 @@ The API does **not** keep a long-lived in-process pool cache (no 120s memory lay
 
 ### Quote request flow (`/api/v1/quote`)
 
-Snapshot-mode API path (recommended for production):
-
 ```mermaid
 sequenceDiagram
   participant C as Client
   participant API as api-server
   participant RE as QuoteEngine
   participant R as Redis
-  participant RPC as Soroban RPC
 
   C->>API: POST /quote
   API->>RE: find_candidate_paths (in-memory graph)
   RE-->>API: candidate paths
-  API->>R: MGET lumagg:pool:xyk + clmm keys
+  API->>R: MGET lumagg:pool:xyk + aquarius + clmm keys
   R-->>API: cached pool states
-  alt xy=k miss (Soroswap/Aquarius)
-    API->>RPC: batch getLedgerEntries
-    API->>R: SET writeback EX=8
-  end
-  alt Comet hops on path
-    API->>RPC: get_tokens / balance / weight per pool
-    Note over API: in-request only, not written to Redis
-  end
   API->>RE: get_route_with_paths + QuoteHydration
-  Note over RE: Soroswap/Aquarius/Phoenix xy=k<br/>Sushi/Aquarius CLMM local tick math<br/>Comet Balancer weighted math<br/>Classic via Horizon compare
+  Note over RE: Local AMM / CLMM / Comet math<br/>Classic via Horizon compare
   RE-->>API: OptimalRoute
   API-->>C: quote + pool_addresses
 ```
 
-Steps in code (`state::quote_route` → `pool_hydrate` → `quote_engine`):
+Steps in code:
 
 1. **Path discovery (graph only)** — all candidate paths (no liquidity prune).
 2. **Collect pool keys** — unique `(source, pool_address)` across paths.
-3. **Redis MGET** — xy=k + CLMM pool state (worker publishes every ~2s).
-4. **Quote** — local math; API does not RPC by default (`QUOTE_RPC_HYDRATE_ENABLED=false`).
-5. **Comet hydrate** — per Comet pool on path: read tokens, balances, normalized/denorm weights; held in `QuoteHydration.comet_pools` for this request only.
-6. **Route + split** — simulate hops with local math; compare best Soroban route vs Classic single-path (Horizon) when both exist.
-7. **CLMM guard** — hops skip or fail when tick coverage is incomplete (`coverage.is_complete`).
+3. **Redis MGET** — xy=k, Aquarius, CLMM pool state (written by worker).
+4. **Quote** — local math only; no RPC when `QUOTE_RPC_HYDRATE_ENABLED=false`.
+5. **Comet** — per-request hydrate for Comet hops (not stored in Redis).
+6. **CLMM guard** — skip hops when tick coverage is incomplete.
 
 ### DEX sources and discovery
 
-| Source | Pool type | Graph discovery | Reserve / state refresh | Quote math |
-|--------|-----------|-----------------|-------------------------|------------|
-| **soroswap** | xy=k (Uniswap V2) | Factory `all_pairs` | Instance reserves; ledger batch refresh | Constant product, 0.3% fee |
-| **aquarius** | xy=k + stable | On-chain pool list | Instance reserves | xy=k or stable math (3-token pool pending) |
-| **phoenix** | xy=k (fee on output) | Factory pool query | Factory `query_all_pools_details` | Phoenix fee-on-output formula |
-| **sushi** | CLMM V3 | Known addresses + factory storage (stellar.expert) + fallback; `SUSHI_DISCOVERY_RPC` | slot0 + ticks via pool-lens; coverage tracked | Local `clmm_math` |
-| **aquarius_clmm** | CLMM | Router / configured pools | Tiered slot0 + conditional tick rescan | Local `clmm_math` + coverage |
-| **comet** | Weighted (Balancer) | Factory `IsCpool` (expert) + `NEW_POOL` events + seeds | `refresh_pool` per tracked pool | **Balancer** `comet_math` when hydrated |
-| **classic_dex** | Native orderbook + pools | **No graph** — not in snapshot topology | **Per quote** Horizon PathPayment | Benchmark / fallback only |
+| Source | Pool type | Graph discovery | Pool state to Redis | Quote math |
+|--------|-----------|-----------------|---------------------|------------|
+| **soroswap** | xy=k | Factory `all_pairs` | Discovery + ledger batch | Constant product |
+| **aquarius** | xy=k + stable | On-chain pool list | Discovery + ledger | xy=k / stable |
+| **phoenix** | xy=k | Factory query | Discovery + ledger | Fee-on-output |
+| **sushi** | CLMM V3 | Known + factory | Discovery + ledger | Local `clmm_math` |
+| **aquarius_clmm** | CLMM | Router pools | Discovery + ledger | Local `clmm_math` |
+| **comet** | Weighted | Factory + events | Discovery + ledger | Balancer math (quote-time) |
+| **classic_dex** | Native | **Not in graph** | **Per quote** Horizon | Benchmark only |
 
-**Comet** factory (mainnet): `CA2LVIPU6HJHHPPD6EDDYJTV2QEUBPGOAVJ4VIYNTMFUCRM4LFK3TJKF` — override with `COMET_FACTORY`. Optional `COMET_EXTRA_POOLS` for manual pool IDs.
-
-**Classic DEX** is intentionally outside the pool graph: Stellar Core controls PathPayment routing. The API calls Horizon at quote time and picks the better of Soroban-local routes vs Classic — Classic does not participate in multi-hop graph search.
-
-### Ledger watcher (incremental updates)
-
-There is no Soroban WebSocket; the worker **polls** RPC:
+### Ledger watcher (hot path)
 
 ```text
-getLatestLedger
-  → getEvents [last+1 .. latest]  (contract filter, topics **)
-  → intersect event.contractId with KnownPoolIndex (from snapshot graph + CLMM list)
-  → partial refresh touched pools only
-  → Redis SET (xyk always; clmm only if coverage.is_complete)
+getLatestLedger → getEvents [last+1 .. latest]
+  → intersect contractId with KnownPoolIndex
+  → fetch pipeline: RPC refresh touched pools only
+  → Redis SET (CLMM only if coverage.is_complete)
 ```
 
-Does **not** publish a new `MarketSnapshot` on each ledger tick (Redis pool keys only). Full discovery + refresh loops remain the safety net.
+Stellar has no Geyser-style account push; ledger polling is the closest equivalent to Jupiter's subscription model. Active pools update within ~0.5–2s.
 
 ### CLMM Redis policy
 
-Incomplete tick windows must not be shared across API instances:
+- Tick data lives in **pool contract storage** (Aquarius `TickChunk`/bitmaps; Sushi via pool-lens) — not separate chain accounts.
+- `coverage.is_complete == true` → worker may write Redis.
+- Incomplete coverage → no Redis write; quote skips those hops.
 
-- `coverage.is_complete == true` → worker and quote hydrate may `SET lumagg:pool:clmm:...` (EX=8).
-- Incomplete / missing coverage → no Redis write; quote engine skips or rejects those hops.
-
-See [`docs/pool-state-architecture.md`](docs/pool-state-architecture.md) for implementation pointers and env tables.
+See [`docs/pool-state-architecture.md`](docs/pool-state-architecture.md) for env tables and code pointers.
 
 ## Key Features
 
 - **Multi-source aggregation**: Soroswap, Aquarius, Phoenix, Sushi V3, Comet weighted pools
 - **Split orders**: Brent split across paths when impact exceeds threshold (or paths are competitive)
 - **Multi-hop routing**: BFS through intermediate tokens (configurable max hops)
+- **Event-driven pool state**: Ledger watcher for active pools; discovery reconciliation — no periodic full sweep
 - **Snapshot + Redis pool state**: Horizontally scalable API tier; single worker writer
-- **Sub-10s pool freshness**: 8s Redis TTL + 5s refresh + ~3s ledger touch updates
+- **Sub-2s hot pool freshness**: Ledger poll ~0.5s + fetch pipeline for touched pools
 - **Atomic on-chain execution**: Optional aggregator contract `split_swap`
 - **Classic comparison**: Horizon PathPayment benchmark without polluting the Soroban graph
 
@@ -267,11 +253,12 @@ cargo run -p api-server --bin api-server
 | `SNAPSHOT_REDIS_URL` | — | worker, API | Redis for snapshots + pool state |
 | `SNAPSHOT_REDIS_CHANNEL` | `lumagg:snapshot:events` | worker, API | Pub/Sub for hot reload |
 | `SNAPSHOT_POLL_INTERVAL_MS` | `1000` | API | Polling fallback if Pub/Sub missed |
-| `DISCOVERY_INTERVAL_SECS` | `600` | worker | Full graph rediscovery |
-| `REFRESH_INTERVAL_SECS` | `5` | worker | Reserve / CLMM refresh |
-| `POOL_STATE_TTL_SECS` | `30` | worker, API | Redis EX on pool keys (should exceed refresh cycle) |
-| `POOL_PUBLISH_INTERVAL_SECS` | `2` | worker | Parallel on-chain refresh + Redis publish |
-| `POOL_STATE_REFRESH_CONCURRENCY` | `4` | worker | Concurrent getLedgerEntries batches |
+| `DISCOVERY_INTERVAL_SECS` | `600` | worker | Full graph rediscovery + Redis pool publish |
+| `REFRESH_INTERVAL_SECS` | `5` | worker | Adapter cache refresh (feeds discovery publish) |
+| `POOL_STATE_TTL_SECS` | `86400` | worker, API | Redis EX on pool keys (eviction; not freshness SLA) |
+| `POOL_STATE_REFRESH_CONCURRENCY` | `8` | worker | Concurrent getLedgerEntries batches (ledger path) |
+| `FETCH_PIPELINE_ENABLED` | `true` | worker | Ledger touched → task queue → Redis |
+| `FETCH_WORKER_COUNT` | `8` | worker | Concurrent RPC workers in fetch pipeline |
 | `QUOTE_RPC_HYDRATE_ENABLED` | `false` | API | RPC fallback on Redis miss (emergency) |
 | `QUOTE_HYDRATE_MAX_POOLS` | `12` | API | Max xy=k RPC hydrates when enabled |
 | `LEDGER_WATCHER_ENABLED` | `true` | worker | Requires Redis pool store |

@@ -1,8 +1,9 @@
-//! Pool-state fetch pipeline: `FetchTask` queue → RPC workers → Redis sink.
+//! Ledger-driven pool-state fetch pipeline: high-priority `FetchTask` queue → RPC
+//! workers → Redis sink.
 //!
-//! - Full sweep every `FETCH_FULL_INTERVAL_SECS` (default 1s): batch xy=k + one
-//!   task per CLMM pool.
-//! - Ledger watcher enqueues high-priority tasks for touched pools.
+//! Full-market refresh is **not** scheduled here. Bootstrap + periodic discovery
+//! publish pool state to Redis; this pipeline only handles ledger-touched pools
+//! (Jupiter-style event-driven updates).
 
 use {
     crate::worker::WorkerShared,
@@ -21,7 +22,7 @@ use {
     std::{
         collections::{HashMap, HashSet},
         sync::{
-            atomic::{AtomicU64, Ordering},
+            atomic::{AtomicU64, AtomicUsize, Ordering},
             Arc,
         },
     },
@@ -29,8 +30,6 @@ use {
     tracing::{debug, info, warn},
 };
 
-/// Max pools per xy=k getLedgerEntries batch (Stellar RPC limit).
-const XYK_BATCH_SIZE: usize = 200;
 /// Minimum reserve on either side (matches pool_state_publish dust filter).
 const MIN_XYK_RESERVE_STROOPS: u128 = 100_000_000;
 
@@ -43,6 +42,28 @@ pub enum FetchTask {
     ClmmPool { source: String, pool_address: String },
 }
 
+#[derive(Default)]
+pub struct FetchPipelineMetrics {
+    pub high_dropped: AtomicU64,
+    pub tasks_completed: AtomicU64,
+    pub tasks_failed: AtomicU64,
+    pub redis_writes: AtomicU64,
+    high_depth: AtomicUsize,
+}
+
+impl FetchPipelineMetrics {
+    fn log_periodic_summary(&self) {
+        info!(
+            high_dropped = self.high_dropped.load(Ordering::Relaxed),
+            tasks_completed = self.tasks_completed.load(Ordering::Relaxed),
+            tasks_failed = self.tasks_failed.load(Ordering::Relaxed),
+            redis_writes = self.redis_writes.load(Ordering::Relaxed),
+            high_queue_depth = self.high_depth.load(Ordering::Relaxed),
+            "fetch pipeline stats"
+        );
+    }
+}
+
 #[derive(Debug)]
 enum PoolStateUpdate {
     Xyk(Vec<XykPoolStateValue>),
@@ -51,25 +72,18 @@ enum PoolStateUpdate {
 }
 
 pub struct FetchPipelineConfig {
-    pub full_interval_secs: u64,
     pub worker_count: usize,
     pub refresh_concurrency: usize,
     pub high_queue_capacity: usize,
-    pub normal_queue_capacity: usize,
 }
 
 impl FetchPipelineConfig {
     pub fn from_env(refresh_concurrency: usize) -> Self {
         Self {
-            full_interval_secs: std::env::var("FETCH_FULL_INTERVAL_SECS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(1)
-                .max(1),
             worker_count: std::env::var("FETCH_WORKER_COUNT")
                 .ok()
                 .and_then(|v| v.parse().ok())
-                .unwrap_or(4)
+                .unwrap_or(8)
                 .max(1),
             refresh_concurrency,
             high_queue_capacity: std::env::var("FETCH_HIGH_QUEUE_CAPACITY")
@@ -77,11 +91,6 @@ impl FetchPipelineConfig {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(512)
                 .max(64),
-            normal_queue_capacity: std::env::var("FETCH_NORMAL_QUEUE_CAPACITY")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(4096)
-                .max(256),
         }
     }
 }
@@ -96,8 +105,7 @@ pub fn fetch_pipeline_enabled_from_env() -> bool {
 #[derive(Clone)]
 pub struct FetchPipelineHandle {
     high_tx: mpsc::Sender<FetchTask>,
-    normal_tx: mpsc::Sender<FetchTask>,
-    tasks_enqueued: Arc<AtomicU64>,
+    metrics: Arc<FetchPipelineMetrics>,
 }
 
 impl FetchPipelineHandle {
@@ -125,34 +133,17 @@ impl FetchPipelineHandle {
                     continue;
                 }
             };
-            self.enqueue_high(task);
-        }
-    }
-
-    fn enqueue_high(&self, task: FetchTask) {
-        match self.high_tx.try_send(task) {
-            Ok(()) => {
-                self.tasks_enqueued.fetch_add(1, Ordering::Relaxed);
-            }
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                warn!("fetch pipeline high queue full, dropping ledger task");
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                warn!("fetch pipeline high queue closed");
-            }
-        }
-    }
-
-    fn enqueue_normal(&self, task: FetchTask) -> bool {
-        match self.normal_tx.try_send(task) {
-            Ok(()) => {
-                self.tasks_enqueued.fetch_add(1, Ordering::Relaxed);
-                true
-            }
-            Err(mpsc::error::TrySendError::Full(_)) => false,
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                warn!("fetch pipeline normal queue closed");
-                false
+            match self.high_tx.try_send(task) {
+                Ok(()) => {
+                    self.metrics.high_depth.fetch_add(1, Ordering::Relaxed);
+                }
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    self.metrics.high_dropped.fetch_add(1, Ordering::Relaxed);
+                    warn!("fetch pipeline high queue full, dropping ledger task");
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    warn!("fetch pipeline high queue closed");
+                }
             }
         }
     }
@@ -182,13 +173,11 @@ pub fn spawn_fetch_pipeline(
     sushi: Arc<SushiAdapter>,
     aquarius_clmm: Arc<AquariusClmmAdapter>,
 ) -> FetchPipelineHandle {
-    let (high_tx, mut high_rx) = mpsc::channel(config.high_queue_capacity);
-    let (normal_tx, mut normal_rx) = mpsc::channel(config.normal_queue_capacity);
-    let (redis_tx, mut redis_rx) = mpsc::channel(config.normal_queue_capacity.max(1024));
+    let (high_tx, mut high_rx) = mpsc::channel::<FetchTask>(config.high_queue_capacity);
+    let (redis_tx, mut redis_rx) = mpsc::channel(config.high_queue_capacity.max(1024));
 
-    let tasks_enqueued = Arc::new(AtomicU64::new(0));
-    let tasks_completed = Arc::new(AtomicU64::new(0));
-    let redis_written = Arc::new(AtomicU64::new(0));
+    let metrics = Arc::new(FetchPipelineMetrics::default());
+    let stats_metrics = metrics.clone();
 
     let worker_ctx = Arc::new(FetchWorkerContext {
         rpc,
@@ -205,25 +194,10 @@ pub fn spawn_fetch_pipeline(
     let semaphore = Arc::new(tokio::sync::Semaphore::new(config.worker_count));
     let dispatch_ctx = worker_ctx.clone();
     let dispatch_redis = redis_tx.clone();
-    let dispatch_completed = tasks_completed.clone();
+    let dispatch_metrics = metrics.clone();
     tokio::spawn(async move {
-        loop {
-            let task = tokio::select! {
-                biased;
-                t = high_rx.recv() => {
-                    match t {
-                        Some(task) => task,
-                        None => break,
-                    }
-                }
-                t = normal_rx.recv() => {
-                    match t {
-                        Some(task) => task,
-                        None if high_rx.is_closed() => break,
-                        None => continue,
-                    }
-                }
-            };
+        while let Some(task) = high_rx.recv().await {
+            dispatch_metrics.high_depth.fetch_sub(1, Ordering::Relaxed);
 
             let permit = match semaphore.clone().acquire_owned().await {
                 Ok(permit) => permit,
@@ -231,7 +205,7 @@ pub fn spawn_fetch_pipeline(
             };
             let ctx = dispatch_ctx.clone();
             let redis_tx = dispatch_redis.clone();
-            let tasks_completed = dispatch_completed.clone();
+            let dispatch_metrics = dispatch_metrics.clone();
             tokio::spawn(async move {
                 let _permit = permit;
                 match execute_fetch_task(ctx.as_ref(), task).await {
@@ -241,9 +215,10 @@ pub fn spawn_fetch_pipeline(
                                 return;
                             }
                         }
-                        tasks_completed.fetch_add(1, Ordering::Relaxed);
+                        dispatch_metrics.tasks_completed.fetch_add(1, Ordering::Relaxed);
                     }
                     Err(error) => {
+                        dispatch_metrics.tasks_failed.fetch_add(1, Ordering::Relaxed);
                         warn!(%error, "fetch task failed");
                     }
                 }
@@ -252,6 +227,7 @@ pub fn spawn_fetch_pipeline(
     });
 
     let pool_store_sink = pool_store.clone();
+    let redis_metrics = metrics.clone();
     tokio::spawn(async move {
         while let Some(update) = redis_rx.recv().await {
             let result = match update {
@@ -265,107 +241,36 @@ pub fn spawn_fetch_pipeline(
             if let Err(error) = result {
                 warn!(%error, "redis pool state write failed");
             } else {
-                redis_written.fetch_add(1, Ordering::Relaxed);
+                redis_metrics.redis_writes.fetch_add(1, Ordering::Relaxed);
             }
         }
     });
 
-    let handle = FetchPipelineHandle {
-        high_tx: high_tx.clone(),
-        normal_tx: normal_tx.clone(),
-        tasks_enqueued: tasks_enqueued.clone(),
-    };
-
-    let scheduler_handle = handle.clone();
-    let scheduler_shared = worker_ctx.shared.clone();
+    let stats_interval_secs = std::env::var("FETCH_STATS_INTERVAL_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(60)
+        .max(15);
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(config.full_interval_secs));
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(stats_interval_secs));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         interval.tick().await;
         loop {
             interval.tick().await;
-            let (sources, clmm_pools) = {
-                let guard = scheduler_shared.read().await;
-                (guard.sources.clone(), guard.clmm_pools.clone())
-            };
-            let tasks = build_full_refresh_tasks(&sources, &clmm_pools);
-            if tasks.is_empty() {
-                continue;
-            }
-            let mut enqueued = 0usize;
-            let mut skipped = false;
-            for task in tasks {
-                if !scheduler_handle.enqueue_normal(task) {
-                    skipped = true;
-                    break;
-                }
-                enqueued += 1;
-            }
-            if skipped {
-                warn!(enqueued, "full refresh sweep truncated (normal queue full)");
-            } else {
-                debug!(enqueued, "full refresh sweep enqueued");
-            }
+            stats_metrics.log_periodic_summary();
         }
     });
 
     info!(
-        full_interval_secs = config.full_interval_secs,
         worker_count = config.worker_count,
         refresh_concurrency = config.refresh_concurrency,
-        "Fetch pipeline started (RPC workers → Redis sink)"
+        "Fetch pipeline started (ledger touched → RPC workers → Redis)"
     );
 
-    handle
-}
-
-fn build_full_refresh_tasks(sources: &[SourceSnapshot], clmm_pools: &[ClmmPoolSnapshot]) -> Vec<FetchTask> {
-    let mut tasks = Vec::new();
-
-    for source in sources {
-        let addrs: Vec<String> = source.pairs.iter().map(|p| p.pool_address.clone()).collect();
-        if addrs.is_empty() {
-            continue;
-        }
-        match source.source.as_str() {
-            "soroswap" => {
-                for chunk in addrs.chunks(XYK_BATCH_SIZE) {
-                    tasks.push(FetchTask::SoroswapBatch {
-                        pool_addresses: chunk.to_vec(),
-                    });
-                }
-            }
-            "aquarius" => {
-                for chunk in addrs.chunks(XYK_BATCH_SIZE) {
-                    tasks.push(FetchTask::AquariusBatch {
-                        pool_addresses: chunk.to_vec(),
-                    });
-                }
-            }
-            "phoenix" => {
-                for chunk in addrs.chunks(XYK_BATCH_SIZE) {
-                    tasks.push(FetchTask::PhoenixBatch {
-                        pool_addresses: chunk.to_vec(),
-                    });
-                }
-            }
-            "comet" => {
-                for addr in addrs {
-                    tasks.push(FetchTask::CometPool { pool_address: addr });
-                }
-            }
-            _ => {}
-        }
+    FetchPipelineHandle {
+        high_tx,
+        metrics,
     }
-
-    for snap in clmm_pools {
-        tasks.push(FetchTask::ClmmPool {
-            source: snap.source.clone(),
-            pool_address: snap.pool_address.clone(),
-        });
-    }
-
-    tasks
 }
 
 async fn execute_fetch_task(ctx: &FetchWorkerContext, task: FetchTask) -> Result<Vec<PoolStateUpdate>> {

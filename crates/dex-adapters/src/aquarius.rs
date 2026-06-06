@@ -519,7 +519,7 @@ impl AquariusAdapter {
         let concurrency = std::env::var("POOL_STATE_REFRESH_CONCURRENCY")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(4);
+            .unwrap_or(8);
         let results =
             crate::batch_refresh::batch_refresh_aquarius_reserves_parallel(&self.rpc, pool_addresses, concurrency)
                 .await?;

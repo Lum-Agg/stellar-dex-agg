@@ -8,7 +8,7 @@ members = [
     "crates/arbitrage",
     "crates/lumagg-alerts",
     "crates/sdk",
-    "contracts/aggregator", "crates/pool-state-pipeline",
+    "contracts/aggregator"
 ]
 resolver = "2"
 
