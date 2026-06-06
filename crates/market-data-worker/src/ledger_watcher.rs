@@ -5,10 +5,7 @@ use {
     anyhow::Result,
     dex_adapters::{
         pool_index::{touched_pools_from_events, KnownPoolIndex, PoolRef},
-        rpc::{
-            events::{EventFilterSpec, MAX_LEDGER_SCAN_PER_REQUEST},
-            SorobanRpc,
-        },
+        rpc::{events::EventFilterSpec, SorobanRpc},
     },
     market_snapshot::{ClmmPoolSnapshot, SourceSnapshot},
     std::collections::HashSet,
@@ -114,51 +111,63 @@ impl LedgerWatcher {
         }
 
         let mut start = cursor + 1;
-        let mut end = latest + 1; // exclusive
-        let span = end - start;
+        let end_inclusive = latest;
+        let span = end_inclusive.saturating_sub(start) + 1;
         if span > self.max_catchup_ledgers {
-            // After restart we may be hundreds of ledgers behind; scanning the full backlog
-            // blocks the worker for minutes. Only ingest the latest ledger window.
+            // After restart we may be hundreds of ledgers behind; fetch each ledger
+            // individually but only the most recent window (LEDGER_MAX_CATCHUP).
+            let skipped = span - self.max_catchup_ledgers;
+            start = end_inclusive.saturating_sub(self.max_catchup_ledgers - 1);
             warn!(
-                skipped = span - 1,
-                latest, "Ledger backlog skipped after restart — ingesting latest ledger only"
-            );
-            start = latest;
-            end = latest + 1;
-        }
-        if span > MAX_LEDGER_SCAN_PER_REQUEST {
-            start = end.saturating_sub(MAX_LEDGER_SCAN_PER_REQUEST);
-            warn!(
-                "Ledger span capped to RPC getEvents max {}",
-                MAX_LEDGER_SCAN_PER_REQUEST
+                skipped,
+                max = self.max_catchup_ledgers,
+                latest,
+                "Ledger backlog truncated — ingesting last window per ledger"
             );
         }
 
-        // All contract events in range. Pool contracts emit swap/deposit/withdraw;
-        // router events (Aquarius/Soroswap) are parsed in pool_index for pool ids.
+        // One getEvents call per ledger (startLedger=N, endLedger=N+1). When the poll
+        // interval sees multiple new ledgers, each is fetched separately so pagination
+        // limits apply per block, not across the whole catch-up span.
         let filters = vec![EventFilterSpec {
             contract_ids: None,
             topics: Some(vec![vec!["**".to_string()]]),
         }];
 
-        let events = self
-            .rpc
-            .get_contract_events(
-                start,
-                Some(end),
-                &filters,
-                dex_adapters::rpc::events::DEFAULT_EVENTS_PAGE_LIMIT,
-            )
-            .await?;
+        let mut touched = HashSet::new();
+        let mut total_events = 0usize;
+        for ledger in start..=end_inclusive {
+            let events = self
+                .rpc
+                .get_contract_events(
+                    ledger,
+                    Some(ledger + 1),
+                    &filters,
+                    dex_adapters::rpc::events::DEFAULT_EVENTS_PAGE_LIMIT,
+                )
+                .await?;
+            total_events += events.len();
+            touched.extend(touched_pools_from_events(&events, index));
+        }
 
         self.last_ledger = Some(latest);
-        let touched = touched_pools_from_events(&events, index);
+        let ledger_count = end_inclusive - start + 1;
         if !touched.is_empty() {
-            debug!(
-                ledgers = format!("{start}..{end}"),
-                events = events.len(),
+            info!(
+                ledger_count,
+                start,
+                end = end_inclusive,
+                events = total_events,
                 touched = touched.len(),
-                "Ledger watcher found touched pools"
+                "Ledger watcher ingested per-ledger events"
+            );
+        } else if ledger_count > 1 {
+            debug!(
+                ledger_count,
+                start,
+                end = end_inclusive,
+                events = total_events,
+                "Ledger watcher polled multiple ledgers, no touched pools"
             );
         }
         Ok(touched)

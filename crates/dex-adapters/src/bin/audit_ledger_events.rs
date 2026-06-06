@@ -39,9 +39,16 @@ async fn main() -> anyhow::Result<()> {
     println!("latest_ledger={latest} scanning_last={ledgers}\n");
 
     let mut totals = AuditTotals::default();
+    let mut unique_pools_by_source: HashMap<String, HashSet<String>> = HashMap::new();
     for ledger in latest.saturating_sub(ledgers - 1)..=latest {
         let events = fetch_ledger_events(&rpc, ledger).await?;
         let ledger_stats = audit_ledger(&events, &index);
+        for pool in touched_pools_from_events(&events, &index) {
+            unique_pools_by_source
+                .entry(pool.source.clone())
+                .or_default()
+                .insert(pool.pool_address);
+        }
         totals.merge(&ledger_stats);
         if ledger_stats.has_activity() {
             print_ledger(ledger, &ledger_stats);
@@ -50,6 +57,7 @@ async fn main() -> anyhow::Result<()> {
 
     println!("=== SUMMARY (last {ledgers} ledgers) ===");
     totals.print();
+    print_unique_pools_by_dex(&unique_pools_by_source);
     Ok(())
 }
 
@@ -209,6 +217,24 @@ async fn fetch_ledger_events(rpc: &SorobanRpc, ledger: u32) -> anyhow::Result<Ve
     }];
     rpc.get_contract_events(ledger, Some(ledger + 1), &filters, DEFAULT_EVENTS_PAGE_LIMIT)
         .await
+}
+
+fn print_unique_pools_by_dex(by_source: &HashMap<String, HashSet<String>>) {
+    if by_source.is_empty() {
+        println!("unique_pools_by_dex: (none)");
+        return;
+    }
+    let mut sources: Vec<_> = by_source.keys().cloned().collect();
+    sources.sort();
+    let total_unique: usize = by_source.values().map(|s| s.len()).sum();
+    println!(
+        "unique_pools_by_dex: {} dex sources, {} unique pools total",
+        sources.len(),
+        total_unique
+    );
+    for src in &sources {
+        println!("  {src}: {} unique pools", by_source[src].len());
+    }
 }
 
 async fn load_snapshot_from_redis(redis_url: &str) -> anyhow::Result<MarketSnapshot> {
