@@ -2,13 +2,18 @@
 //! Run with: cargo test --test integration_test -- --nocapture
 //!
 //! These tests are ignored by default (require network access).
-//! Run explicitly with: cargo test --test integration_test -- --ignored --nocapture
+//! Run explicitly with: cargo test --test integration_test -- --ignored
+//! --nocapture
 
-use dex_adapters::rpc::{scval_to_address, scval_to_u32, SorobanRpc};
-use dex_adapters::soroswap::SOROSWAP_FACTORY;
-use dex_adapters::{DexAdapter, SorobanRpc as _};
-use std::sync::Arc;
-use stellar_xdr::curr as xdr;
+use {
+    dex_adapters::{
+        rpc::{scval_to_address, scval_to_u32, SorobanRpc},
+        soroswap::SOROSWAP_FACTORY,
+        DexAdapter, SorobanRpc as _,
+    },
+    std::sync::Arc,
+    stellar_xdr::curr as xdr,
+};
 
 fn mainnet_rpc() -> Arc<SorobanRpc> {
     Arc::new(SorobanRpc::mainnet())
@@ -44,10 +49,7 @@ async fn test_soroswap_fetch_first_pair() {
 
     let pair_address = scval_to_address(&pair_val).expect("Failed to parse address");
     println!("First pair address: {}", pair_address);
-    assert!(
-        pair_address.starts_with('C'),
-        "Should be a contract address"
-    );
+    assert!(pair_address.starts_with('C'), "Should be a contract address");
 
     // Get token_0
     let token_0_val = rpc
@@ -79,10 +81,7 @@ async fn test_soroswap_adapter_fetch_pairs() {
     let rpc = mainnet_rpc();
     let adapter = dex_adapters::soroswap::SoroswapAdapter::new(rpc);
 
-    let pairs = adapter
-        .get_trading_pairs()
-        .await
-        .expect("Failed to fetch pairs");
+    let pairs = adapter.get_trading_pairs().await.expect("Failed to fetch pairs");
     println!("Fetched {} Soroswap pairs", pairs.len());
 
     for (i, pair) in pairs.iter().take(5).enumerate() {
@@ -106,15 +105,12 @@ async fn test_soroswap_quote_accuracy() {
     let rpc = mainnet_rpc();
     let adapter = dex_adapters::soroswap::SoroswapAdapter::new(rpc);
 
-    let pairs = adapter
-        .get_trading_pairs()
-        .await
-        .expect("Failed to fetch pairs");
+    let pairs = adapter.get_trading_pairs().await.expect("Failed to fetch pairs");
 
     // Find a pair with reserves
-    let pair_with_liquidity = pairs.iter().find(|p| {
-        p.reserve_a.unwrap_or(0) > 1_000_0000000 && p.reserve_b.unwrap_or(0) > 1_000_0000000
-    });
+    let pair_with_liquidity = pairs
+        .iter()
+        .find(|p| p.reserve_a.unwrap_or(0) > 1_000_0000000 && p.reserve_b.unwrap_or(0) > 1_000_0000000);
 
     if let Some(pair) = pair_with_liquidity {
         println!(
@@ -150,8 +146,7 @@ async fn test_soroswap_quote_accuracy() {
 #[tokio::test]
 #[ignore] // requires network
 async fn test_aquarius_router_pool_count() {
-    use dex_adapters::aquarius::AQUARIUS_ROUTER;
-    use dex_adapters::rpc::scval_to_u128;
+    use dex_adapters::{aquarius::AQUARIUS_ROUTER, rpc::scval_to_u128};
 
     let rpc = mainnet_rpc();
 

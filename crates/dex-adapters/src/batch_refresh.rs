@@ -1,7 +1,8 @@
 //! Batch reserves refresh using getLedgerEntries.
 //!
-//! Instead of calling get_reserves() on each pool individually (1 RPC per pool),
-//! we read the contract instance data for all pools in a single getLedgerEntries call.
+//! Instead of calling get_reserves() on each pool individually (1 RPC per
+//! pool), we read the contract instance data for all pools in a single
+//! getLedgerEntries call.
 //!
 //! Soroswap pairs store reserves in instance storage:
 //!   DataKey::Reserve0 = U32(2) → I128
@@ -13,11 +14,13 @@
 //! Aquarius stableswap pools (liquidity_pool_stableswap):
 //!   DataKey::Reserves = U32(2) → Vec<u128>
 
-use crate::rpc::SorobanRpc;
-use anyhow::{anyhow, Result};
-use serde_json::json;
-use stellar_xdr::curr::{self as xdr, Limits, ReadXdr, WriteXdr};
-use tracing::debug;
+use {
+    crate::rpc::SorobanRpc,
+    anyhow::{anyhow, Result},
+    serde_json::json,
+    stellar_xdr::curr::{self as xdr, Limits, ReadXdr, WriteXdr},
+    tracing::debug,
+};
 
 /// Maximum keys per getLedgerEntries call (Stellar RPC limit)
 const MAX_KEYS_PER_CALL: usize = 200;
@@ -38,7 +41,8 @@ pub async fn batch_refresh_soroswap_reserves(
     Ok(all_results)
 }
 
-/// Same as [`batch_refresh_soroswap_reserves`] but runs up to `max_in_flight` ledger batches concurrently.
+/// Same as [`batch_refresh_soroswap_reserves`] but runs up to `max_in_flight`
+/// ledger batches concurrently.
 pub async fn batch_refresh_soroswap_reserves_parallel(
     rpc: &SorobanRpc,
     pool_addresses: &[String],
@@ -48,10 +52,7 @@ pub async fn batch_refresh_soroswap_reserves_parallel(
         return Ok(Vec::new());
     }
     let concurrency = max_in_flight.max(1);
-    let chunks: Vec<Vec<String>> = pool_addresses
-        .chunks(MAX_KEYS_PER_CALL)
-        .map(|c| c.to_vec())
-        .collect();
+    let chunks: Vec<Vec<String>> = pool_addresses.chunks(MAX_KEYS_PER_CALL).map(|c| c.to_vec()).collect();
     let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
     let mut tasks = Vec::with_capacity(chunks.len());
     for chunk in chunks {
@@ -71,7 +72,8 @@ pub async fn batch_refresh_soroswap_reserves_parallel(
     Ok(all_results)
 }
 
-/// Batch-read Aquarius pool reserves (volatile + stableswap) from contract instance storage.
+/// Batch-read Aquarius pool reserves (volatile + stableswap) from contract
+/// instance storage.
 pub async fn batch_refresh_aquarius_reserves_parallel(
     rpc: &SorobanRpc,
     pool_addresses: &[String],
@@ -81,10 +83,7 @@ pub async fn batch_refresh_aquarius_reserves_parallel(
         return Ok(Vec::new());
     }
     let concurrency = max_in_flight.max(1);
-    let chunks: Vec<Vec<String>> = pool_addresses
-        .chunks(MAX_KEYS_PER_CALL)
-        .map(|c| c.to_vec())
-        .collect();
+    let chunks: Vec<Vec<String>> = pool_addresses.chunks(MAX_KEYS_PER_CALL).map(|c| c.to_vec()).collect();
     let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
     let mut tasks = Vec::with_capacity(chunks.len());
     for chunk in chunks {
@@ -110,10 +109,8 @@ async fn fetch_soroswap_reserves_batch(
     pool_addresses: &[String],
 ) -> Result<Vec<(String, Option<(u128, u128)>)>> {
     let entries = fetch_instance_ledger_xdrs(rpc, pool_addresses).await?;
-    let mut results: Vec<(String, Option<(u128, u128)>)> = pool_addresses
-        .iter()
-        .map(|addr| (addr.clone(), None))
-        .collect();
+    let mut results: Vec<(String, Option<(u128, u128)>)> =
+        pool_addresses.iter().map(|addr| (addr.clone(), None)).collect();
 
     for (i, xdr_b64) in entries.into_iter().enumerate() {
         let Some(xdr_b64) = xdr_b64 else {
@@ -139,10 +136,8 @@ async fn fetch_aquarius_reserves_batch(
     pool_addresses: &[String],
 ) -> Result<Vec<(String, Option<Vec<u128>>)>> {
     let entries = fetch_instance_ledger_xdrs(rpc, pool_addresses).await?;
-    let mut results: Vec<(String, Option<Vec<u128>>)> = pool_addresses
-        .iter()
-        .map(|addr| (addr.clone(), None))
-        .collect();
+    let mut results: Vec<(String, Option<Vec<u128>>)> =
+        pool_addresses.iter().map(|addr| (addr.clone(), None)).collect();
 
     for (i, xdr_b64) in entries.into_iter().enumerate() {
         let Some(xdr_b64) = xdr_b64 else {
@@ -162,10 +157,7 @@ async fn fetch_aquarius_reserves_batch(
     Ok(results)
 }
 
-async fn fetch_instance_ledger_xdrs(
-    rpc: &SorobanRpc,
-    pool_addresses: &[String],
-) -> Result<Vec<Option<String>>> {
+async fn fetch_instance_ledger_xdrs(rpc: &SorobanRpc, pool_addresses: &[String]) -> Result<Vec<Option<String>>> {
     let key_xdrs = build_instance_ledger_key_xdrs(pool_addresses)?;
 
     let body = json!({
@@ -396,9 +388,7 @@ mod tests {
             "CDYLKM3YI3LFD2AFUXILLBO2ABDHYKDD3RXTLOUVW2C7BXEQPZ65IMFX".to_string(),
         ];
 
-        let results = batch_refresh_aquarius_reserves_parallel(&rpc, &pools, 2)
-            .await
-            .unwrap();
+        let results = batch_refresh_aquarius_reserves_parallel(&rpc, &pools, 2).await.unwrap();
 
         assert_eq!(results.len(), 2);
         for (addr, reserves) in &results {

@@ -1,11 +1,14 @@
 //! Compare api-server XDR encoding vs on-chain simulate (requires network).
-//! Run: cargo test -p api-server --test build_tx_simulate_test -- --ignored --nocapture
+//! Run: cargo test -p api-server --test build_tx_simulate_test -- --ignored
+//! --nocapture
 
-use api_server::handlers::{
-    build_tx_impl, build_unsigned_tx_xdr, BuildTxRequest, BuildTxStep, BuildTxSubRoute,
+use {
+    api_server::{
+        handlers::{build_tx_impl, build_unsigned_tx_xdr, BuildTxRequest, BuildTxStep, BuildTxSubRoute},
+        soroban_prepare::prepare_transaction_xdr,
+    },
+    stellar_xdr::curr::{Limits, ReadXdr},
 };
-use api_server::soroban_prepare::prepare_transaction_xdr;
-use stellar_xdr::curr::{Limits, ReadXdr};
 
 const USER: &str = "GA6RKSBPI2TSP52OW2IJTPK7LRMX24DF42KF3FBGBNMBYCV6NPDMOCBY";
 const XLM: &str = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";
@@ -131,8 +134,8 @@ async fn assert_request_simulates(body: BuildTxRequest) {
 
 async fn assert_request_prepares(body: BuildTxRequest) {
     let tx_xdr = build_unsigned_tx_xdr(&body).await.expect("build xdr");
-    let envelope = stellar_xdr::curr::TransactionEnvelope::from_xdr_base64(&tx_xdr, Limits::none())
-        .expect("parse raw envelope");
+    let envelope =
+        stellar_xdr::curr::TransactionEnvelope::from_xdr_base64(&tx_xdr, Limits::none()).expect("parse raw envelope");
     let stellar_xdr::curr::TransactionEnvelope::Tx(v1) = envelope else {
         panic!("unsupported envelope")
     };
@@ -163,10 +166,7 @@ async fn api_build_tx_xdr_sushi_simulates() {
     );
     let tx_xdr = build_unsigned_tx_xdr(&body).await.expect("build xdr");
     std::fs::write("/tmp/lumagg_build_tx.xdr", &tx_xdr).ok();
-    println!(
-        "tx_xdr len={} written /tmp/lumagg_build_tx.xdr",
-        tx_xdr.len()
-    );
+    println!("tx_xdr len={} written /tmp/lumagg_build_tx.xdr", tx_xdr.len());
     println!("tx_xdr prefix: {}...", &tx_xdr[..80.min(tx_xdr.len())]);
 
     let resp = rpc_simulate(&tx_xdr).await;
@@ -175,10 +175,7 @@ async fn api_build_tx_xdr_sushi_simulates() {
         panic!("simulate failed: {}", err);
     }
     assert!(result.get("transactionData").is_some());
-    println!(
-        "simulate OK, minResourceFee={:?}",
-        result.get("minResourceFee")
-    );
+    println!("simulate OK, minResourceFee={:?}", result.get("minResourceFee"));
 }
 
 #[tokio::test]

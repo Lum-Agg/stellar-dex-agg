@@ -1,30 +1,41 @@
 //! Comet DEX adapter: Balancer-style weighted pool AMM on Soroban.
 //!
-//! Pools are deployed via the Comet factory (`new_c_pool` / `is_c_pool` / `NEW_POOL` events).
-//! Discovery enumerates factory persistent storage (stellar.expert contract-data API) and
-//! builds routing edges for every token pair in each pool (2–8 tokens).
+//! Pools are deployed via the Comet factory (`new_c_pool` / `is_c_pool` /
+//! `NEW_POOL` events). Discovery enumerates factory persistent storage
+//! (stellar.expert contract-data API) and builds routing edges for every token
+//! pair in each pool (2–8 tokens).
 
-use crate::comet_math::{self, CometRecord, STROOP_SCALAR};
-use crate::expert_api::{expert_http_client, STELLAR_EXPERT_API};
-use crate::rpc::events::{EventFilterSpec, MAX_LEDGER_SCAN_PER_REQUEST};
-use crate::rpc::SorobanRpc;
-use crate::traits::*;
-use anyhow::{anyhow, Result};
-use async_trait::async_trait;
-use base64::Engine;
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-use stellar_xdr::curr as xdr;
-use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use {
+    crate::{
+        comet_math::{self, CometRecord, STROOP_SCALAR},
+        expert_api::{expert_http_client, STELLAR_EXPERT_API},
+        rpc::{
+            events::{EventFilterSpec, MAX_LEDGER_SCAN_PER_REQUEST},
+            SorobanRpc,
+        },
+        traits::*,
+    },
+    anyhow::{anyhow, Result},
+    async_trait::async_trait,
+    base64::Engine,
+    std::{
+        collections::{HashMap, HashSet},
+        sync::Arc,
+    },
+    stellar_xdr::curr as xdr,
+    tokio::sync::RwLock,
+    tracing::{debug, info, warn},
+};
 
-/// Mainnet Comet factory (Blend deployment — `blend-utils/mainnet.contracts.json`).
+/// Mainnet Comet factory (Blend deployment —
+/// `blend-utils/mainnet.contracts.json`).
 pub const COMET_FACTORY_MAINNET: &str = "CA2LVIPU6HJHHPPD6EDDYJTV2QEUBPGOAVJ4VIYNTMFUCRM4LFK3TJKF";
 
 /// Seed pool(s) used when factory indexing is unavailable.
 pub const COMET_SEED_POOLS: &[&str] = &["CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM"];
 
-/// Legacy hardcoded pair (BLND/USDC); kept for tests referencing the primary pool.
+/// Legacy hardcoded pair (BLND/USDC); kept for tests referencing the primary
+/// pool.
 pub const COMET_POOLS: &[(&str, &str, &str)] = &[(
     COMET_SEED_POOLS[0],
     "CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV",
@@ -49,13 +60,11 @@ pub fn quote_comet_pool(
 ) -> Option<AdapterQuote> {
     let in_record = state.records.get(token_in)?;
     let out_record = state.records.get(token_out)?;
-    let amount_out =
-        comet_math::calc_out_given_in(in_record, out_record, amount_in as i128, state.swap_fee);
+    let amount_out = comet_math::calc_out_given_in(in_record, out_record, amount_in as i128, state.swap_fee);
     if amount_out <= 0 {
         return None;
     }
-    let price_impact_bps =
-        (amount_in as i128 * 10_000 / (2 * in_record.balance)).min(10_000) as u32;
+    let price_impact_bps = (amount_in as i128 * 10_000 / (2 * in_record.balance)).min(10_000) as u32;
     Some(AdapterQuote {
         amount_out: amount_out as u128,
         fee_bps: (state.swap_fee / 1000) as u32,
@@ -101,12 +110,13 @@ impl CometAdapter {
         let hash = stellar_strkey::Contract::from_string(addr)
             .map_err(|e| anyhow!("Invalid contract address {}: {:?}", addr, e))?
             .0;
-        Ok(xdr::ScVal::Address(xdr::ScAddress::Contract(
-            xdr::ContractId(xdr::Hash(hash)),
-        )))
+        Ok(xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(
+            xdr::Hash(hash),
+        ))))
     }
 
-    /// Discover pool contract IDs: factory registry + seeds + `COMET_EXTRA_POOLS`.
+    /// Discover pool contract IDs: factory registry + seeds +
+    /// `COMET_EXTRA_POOLS`.
     pub async fn discover_pool_addresses(&self) -> Vec<String> {
         let mut addrs: HashSet<String> = HashSet::new();
         for seed in COMET_SEED_POOLS {
@@ -131,10 +141,7 @@ impl CometAdapter {
 
         match self.discover_pools_from_factory_events().await {
             Ok(event_pools) => {
-                info!(
-                    "Comet: factory events listed {} candidate pool(s)",
-                    event_pools.len()
-                );
+                info!("Comet: factory events listed {} candidate pool(s)", event_pools.len());
                 addrs.extend(event_pools);
             }
             Err(e) => {
@@ -179,7 +186,8 @@ impl CometAdapter {
         self.rpc.call_no_args(pool, "get_tokens").await.is_ok()
     }
 
-    /// Read factory persistent `IsCpool` entries via stellar.expert (same approach as Sushi).
+    /// Read factory persistent `IsCpool` entries via stellar.expert (same
+    /// approach as Sushi).
     async fn discover_pools_from_factory_storage(&self) -> Result<Vec<String>> {
         let factory = Self::factory_address();
         let client = expert_http_client()?;
@@ -194,10 +202,7 @@ impl CometAdapter {
                 .await
                 .map_err(|e| anyhow!("stellar.expert request failed: {}", e))?;
             if !resp.status().is_success() {
-                return Err(anyhow!(
-                    "stellar.expert contract-data status {}",
-                    resp.status()
-                ));
+                return Err(anyhow!("stellar.expert contract-data status {}", resp.status()));
             }
             let data: serde_json::Value = resp
                 .json()
@@ -238,7 +243,8 @@ impl CometAdapter {
             .collect())
     }
 
-    /// Scan recent factory contract events for `NEW_POOL` payloads (RPC fallback).
+    /// Scan recent factory contract events for `NEW_POOL` payloads (RPC
+    /// fallback).
     async fn discover_pools_from_factory_events(&self) -> Result<Vec<String>> {
         let factory = Self::factory_address();
         let latest = self.rpc.get_latest_ledger().await?.sequence;
@@ -281,18 +287,10 @@ impl CometAdapter {
         self.fetch_pool_state(pool_address).await
     }
 
-    async fn fetch_token_weight(
-        &self,
-        pool_address: &str,
-        token_scval: xdr::ScVal,
-    ) -> Result<i128> {
+    async fn fetch_token_weight(&self, pool_address: &str, token_scval: xdr::ScVal) -> Result<i128> {
         let normalized = self
             .rpc
-            .simulate_call(
-                pool_address,
-                "get_normalized_weight",
-                vec![token_scval.clone()],
-            )
+            .simulate_call(pool_address, "get_normalized_weight", vec![token_scval.clone()])
             .await;
         if let Ok(val) = normalized {
             if let Ok(w) = extract_i128(&val) {
@@ -346,10 +344,7 @@ impl CometAdapter {
                 .await
                 .map_err(|e| anyhow!("get_balance failed: {}", e))?;
 
-            let weight = self
-                .fetch_token_weight(pool_address, token_scval)
-                .await
-                .unwrap_or(0);
+            let weight = self.fetch_token_weight(pool_address, token_scval).await.unwrap_or(0);
             let balance = extract_i128(&balance_val).unwrap_or(0);
 
             if balance > 0 && weight > 0 {
@@ -378,10 +373,7 @@ impl CometAdapter {
     }
 
     /// One graph edge per unordered token pair with liquidity in the pool.
-    pub fn trading_pairs_from_state(
-        pool_address: &str,
-        state: &CometPoolState,
-    ) -> Vec<AdapterTradingPair> {
+    pub fn trading_pairs_from_state(pool_address: &str, state: &CometPoolState) -> Vec<AdapterTradingPair> {
         let tokens: Vec<String> = state.records.keys().cloned().collect();
         let fee_bps = (state.swap_fee / 1000) as u32;
         let mut pairs = Vec::new();
@@ -413,10 +405,7 @@ impl CometAdapter {
         if new_pairs.is_empty() {
             return 0;
         }
-        self.pool_states
-            .write()
-            .await
-            .insert(pool_address.to_string(), state);
+        self.pool_states.write().await.insert(pool_address.to_string(), state);
         let mut pairs = self.pairs.write().await;
         pairs.retain(|p| p.pool_address != pool_address);
         let n = new_pairs.len();
@@ -500,11 +489,7 @@ impl DexAdapter for CometAdapter {
             }
         }
 
-        info!(
-            "Comet: {} pools, {} pair edges loaded",
-            states.len(),
-            pairs.len()
-        );
+        info!("Comet: {} pools, {} pair edges loaded", states.len(), pairs.len());
         *self.pairs.write().await = pairs.clone();
         *self.pool_states.write().await = states;
         Ok(pairs)

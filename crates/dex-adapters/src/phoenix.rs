@@ -3,20 +3,23 @@
 //! Key characteristics:
 //! - Factory contract: CB4SVAWJA6TSRNOJZ7W2AWFW46D5VR4ZMFZKDIKXEINZCZEGZCJZCKMI
 //! - Fee applied on OUTPUT (commission), not input
-//! - Formula: gross_return = offer_amount * ask_pool / (offer_pool + offer_amount)
-//!           commission = gross_return * fee_bps / 10_000
-//!           net_return = gross_return - commission
+//! - Formula: gross_return = offer_amount * ask_pool / (offer_pool +
+//!   offer_amount) commission = gross_return * fee_bps / 10_000 net_return =
+//!   gross_return - commission
 //! - Pool discovery via query_all_pools_details()
 
-use crate::rpc::{get_map_field, scval_to_address, scval_to_i128, scval_to_string, SorobanRpc};
-use crate::traits::*;
-use anyhow::Result;
-use async_trait::async_trait;
-use std::collections::HashMap;
-use std::sync::Arc;
-use stellar_xdr::curr as xdr;
-use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use {
+    crate::{
+        rpc::{get_map_field, scval_to_address, scval_to_i128, scval_to_string, SorobanRpc},
+        traits::*,
+    },
+    anyhow::Result,
+    async_trait::async_trait,
+    std::{collections::HashMap, sync::Arc},
+    stellar_xdr::curr as xdr,
+    tokio::sync::RwLock,
+    tracing::{debug, info, warn},
+};
 
 /// Phoenix Factory contract address (Mainnet)
 pub const PHOENIX_FACTORY: &str = "CB4SVAWJA6TSRNOJZ7W2AWFW46D5VR4ZMFZKDIKXEINZCZEGZCJZCKMI";
@@ -40,12 +43,7 @@ impl PhoenixAdapter {
     /// gross_return = amount_in * reserve_out / (reserve_in + amount_in)
     /// commission = gross_return * fee_bps / 10_000
     /// net_return = gross_return - commission
-    pub fn compute_output(
-        amount_in: u128,
-        reserve_in: u128,
-        reserve_out: u128,
-        fee_bps: u32,
-    ) -> u128 {
+    pub fn compute_output(amount_in: u128, reserve_in: u128, reserve_out: u128, fee_bps: u32) -> u128 {
         if reserve_in == 0 || reserve_out == 0 || amount_in == 0 {
             return 0;
         }
@@ -84,7 +82,8 @@ impl PhoenixAdapter {
     }
 
     /// Parse a single LiquidityPoolInfo entry.
-    /// Structure: { pool_address, pool_response: { asset_a: {address, amount}, asset_b: {address, amount} }, total_fee_bps }
+    /// Structure: { pool_address, pool_response: { asset_a: {address, amount},
+    /// asset_b: {address, amount} }, total_fee_bps }
     async fn parse_pool_info(&self, val: &xdr::ScVal) -> Result<Option<(AdapterTradingPair, u32)>> {
         let map = match val {
             xdr::ScVal::Map(Some(m)) => m,
@@ -128,8 +127,7 @@ impl PhoenixAdapter {
 
     /// Parse an Asset field: { address: Address, amount: i128 }
     fn parse_asset_field(&self, map: &xdr::ScMap, key: &str) -> Result<(String, i128)> {
-        let asset_val =
-            get_map_field(map, key).ok_or_else(|| anyhow::anyhow!("missing {}", key))?;
+        let asset_val = get_map_field(map, key).ok_or_else(|| anyhow::anyhow!("missing {}", key))?;
 
         let asset_map = match asset_val {
             xdr::ScVal::Map(Some(m)) => m,
@@ -147,13 +145,13 @@ impl PhoenixAdapter {
         Ok((address, amount))
     }
 
-    /// Refresh reserves for specific pools (one factory RPC, patch cached pairs).
+    /// Refresh reserves for specific pools (one factory RPC, patch cached
+    /// pairs).
     pub async fn refresh_touched_pools(&self, pool_addresses: &[String]) -> Result<usize> {
         if pool_addresses.is_empty() {
             return Ok(0);
         }
-        let wanted: std::collections::HashSet<&str> =
-            pool_addresses.iter().map(|s| s.as_str()).collect();
+        let wanted: std::collections::HashSet<&str> = pool_addresses.iter().map(|s| s.as_str()).collect();
         let results = self.fetch_pools_from_factory().await?;
         let mut pairs = self.pairs.write().await;
         let mut fees = self.pool_fees.write().await;
@@ -162,10 +160,7 @@ impl PhoenixAdapter {
             if !wanted.contains(pair.pool_address.as_str()) {
                 continue;
             }
-            if let Some(existing) = pairs
-                .iter_mut()
-                .find(|p| p.pool_address == pair.pool_address)
-            {
+            if let Some(existing) = pairs.iter_mut().find(|p| p.pool_address == pair.pool_address) {
                 let pool_address = existing.pool_address.clone();
                 *existing = pair;
                 fees.insert(pool_address, fee_bps);

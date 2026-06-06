@@ -3,7 +3,8 @@
 //! Reads pool state (Slot0, Liquidity, tick chunks, bitmaps) from chain via
 //! `getLedgerEntries` and computes swap quotes locally using `clmm_math`.
 //!
-//! Storage layout (from thirdparty/aquarius-amm/liquidity_pool_concentrated/src/storage.rs):
+//! Storage layout (from
+//! thirdparty/aquarius-amm/liquidity_pool_concentrated/src/storage.rs):
 //! - Instance storage:
 //!   - DataKey::Slot0 -> Slot0 { sqrt_price_x96: U256, tick: i32 }
 //!   - DataKey::Liquidity -> u128
@@ -18,21 +19,23 @@
 //!   - DataKey::ChunkBitmap(i32) -> U256
 //!   - DataKey::WordBitmap(i32) -> U256
 
-use crate::clmm_math::{
-    self, bitmap, clmm_pool_to_snapshot, clmm_swap_allowed, loaded_tick_range,
-    tick_outside_loaded_range, ClmmCoverageInput, ClmmPoolState, TickDataStore, TickState,
-    TICKS_PER_CHUNK, U256 as ClmmU256,
+use {
+    crate::{
+        clmm_math::{
+            self, bitmap, clmm_pool_to_snapshot, clmm_swap_allowed, loaded_tick_range, tick_outside_loaded_range,
+            ClmmCoverageInput, ClmmPoolState, TickDataStore, TickState, TICKS_PER_CHUNK, U256 as ClmmU256,
+        },
+        rpc::SorobanRpc,
+        traits::*,
+    },
+    anyhow::{anyhow, Result},
+    async_trait::async_trait,
+    market_snapshot::{ClmmCoverageSnapshot, ClmmPoolSnapshot},
+    std::{collections::HashMap, sync::Arc},
+    stellar_xdr::curr as xdr,
+    tokio::sync::RwLock,
+    tracing::{debug, info, warn},
 };
-use crate::rpc::SorobanRpc;
-use crate::traits::*;
-use anyhow::{anyhow, Result};
-use async_trait::async_trait;
-use market_snapshot::{ClmmCoverageSnapshot, ClmmPoolSnapshot};
-use std::collections::HashMap;
-use std::sync::Arc;
-use stellar_xdr::curr as xdr;
-use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
 
 /// Aquarius concentrated pool state (cached for quoting).
 #[derive(Debug, Clone)]
@@ -90,11 +93,9 @@ impl AquariusClmmAdapter {
             Some({
                 let range = loaded_tick_range(&pool.tick_store, pool.tick_spacing);
                 ClmmCoverageSnapshot {
-                    is_complete: !pool.bitmap_truncated
-                        && range
-                            .map(|(min_tick, max_tick)| {
-                                !tick_outside_loaded_range(pool.tick, min_tick, max_tick)
-                            })
+                    is_complete: !pool.bitmap_truncated &&
+                        range
+                            .map(|(min_tick, max_tick)| !tick_outside_loaded_range(pool.tick, min_tick, max_tick))
                             .unwrap_or(false),
                     min_loaded_tick: range.map(|(min_tick, _)| min_tick),
                     max_loaded_tick: range.map(|(_, max_tick)| max_tick),
@@ -116,23 +117,21 @@ impl AquariusClmmAdapter {
         snapshots
     }
 
-    /// Set known concentrated pool addresses (discovered externally or hardcoded).
+    /// Set known concentrated pool addresses (discovered externally or
+    /// hardcoded).
     pub async fn set_pool_addresses(&self, addresses: Vec<String>) {
         *self.pool_addresses.write().await = addresses;
     }
 
     /// Discover all concentrated pools from the Aquarius router.
-    /// Queries get_tokens_sets_count() then iterates get_pools_for_tokens_range(),
-    /// filtering for pools where pool_type() == "concentrated".
+    /// Queries get_tokens_sets_count() then iterates
+    /// get_pools_for_tokens_range(), filtering for pools where pool_type()
+    /// == "concentrated".
     async fn discover_concentrated_pools(&self) -> Result<Vec<String>> {
-        use crate::aquarius::AQUARIUS_ROUTER;
-        use crate::rpc::scval_to_u128;
+        use crate::{aquarius::AQUARIUS_ROUTER, rpc::scval_to_u128};
 
         // 1. Get total token sets count
-        let count_val = self
-            .rpc
-            .call_no_args(AQUARIUS_ROUTER, "get_tokens_sets_count")
-            .await?;
+        let count_val = self.rpc.call_no_args(AQUARIUS_ROUTER, "get_tokens_sets_count").await?;
         let total_count = scval_to_u128(&count_val)?;
         info!("Aquarius CLMM: total token sets = {}", total_count);
 
@@ -159,11 +158,7 @@ impl AquariusClmmAdapter {
 
             match self
                 .rpc
-                .simulate_call(
-                    AQUARIUS_ROUTER,
-                    "get_pools_for_tokens_range",
-                    vec![start_val, end_val],
-                )
+                .simulate_call(AQUARIUS_ROUTER, "get_pools_for_tokens_range", vec![start_val, end_val])
                 .await
             {
                 Ok(result) => {
@@ -174,9 +169,7 @@ impl AquariusClmmAdapter {
                                 if pair.0.len() >= 2 {
                                     if let xdr::ScVal::Map(Some(map)) = &pair.0[1] {
                                         for map_entry in map.0.iter() {
-                                            if let Ok(addr) =
-                                                crate::rpc::scval_to_address(&map_entry.val)
-                                            {
+                                            if let Ok(addr) = crate::rpc::scval_to_address(&map_entry.val) {
                                                 all_pool_addresses.push(addr);
                                             }
                                         }
@@ -234,19 +227,18 @@ impl AquariusClmmAdapter {
             }
         }
 
-        info!(
-            "Aquarius CLMM: found {} concentrated pools",
-            concentrated.len()
-        );
+        info!("Aquarius CLMM: found {} concentrated pools", concentrated.len());
         Ok(concentrated)
     }
 
-    /// Read pool instance storage to get Slot0, Liquidity, Fee, TickSpacing, Token0, Token1.
-    /// Uses simulate_call on individual getter functions (more reliable than raw storage parsing).
+    /// Read pool instance storage to get Slot0, Liquidity, Fee, TickSpacing,
+    /// Token0, Token1. Uses simulate_call on individual getter functions
+    /// (more reliable than raw storage parsing).
     async fn read_pool_instance(&self, pool_address: &str) -> Result<AquaClmmPool> {
         // Read via contract function calls (works regardless of XDR version issues)
-        // Aquarius concentrated pool has: get_tokens(), get_fee_fraction(), get_reserves()
-        // and we can read Slot0 fields via estimate_swap with 0 amount
+        // Aquarius concentrated pool has: get_tokens(), get_fee_fraction(),
+        // get_reserves() and we can read Slot0 fields via estimate_swap with 0
+        // amount
 
         // get_tokens() -> Vec<Address>
         let tokens_val = self.rpc.call_no_args(pool_address, "get_tokens").await?;
@@ -260,10 +252,7 @@ impl AquariusClmmAdapter {
         };
 
         // get_fee_fraction() -> u32
-        let fee_val = self
-            .rpc
-            .call_no_args(pool_address, "get_fee_fraction")
-            .await?;
+        let fee_val = self.rpc.call_no_args(pool_address, "get_fee_fraction").await?;
         let fee_bps = match &fee_val {
             xdr::ScVal::U32(v) => *v,
             _ => 30, // default
@@ -275,8 +264,7 @@ impl AquariusClmmAdapter {
 
         // Read Slot0 via getLedgerEntries on instance storage
         // If that fails, try to infer from simulate
-        let (sqrt_price_x96, tick, liquidity) = match self.read_slot0_via_ledger(pool_address).await
-        {
+        let (sqrt_price_x96, tick, liquidity) = match self.read_slot0_via_ledger(pool_address).await {
             Ok(state) => state,
             Err(_) => {
                 // Fallback: read via get_pool_state_with_balances or similar
@@ -308,11 +296,9 @@ impl AquariusClmmAdapter {
         ClmmCoverageInput {
             pool_tick: pool.tick,
             tick_spacing: pool.tick_spacing,
-            is_complete: !pool.bitmap_truncated
-                && range
-                    .map(|(min_tick, max_tick)| {
-                        !tick_outside_loaded_range(pool.tick, min_tick, max_tick)
-                    })
+            is_complete: !pool.bitmap_truncated &&
+                range
+                    .map(|(min_tick, max_tick)| !tick_outside_loaded_range(pool.tick, min_tick, max_tick))
                     .unwrap_or(false),
             min_loaded_tick: range.map(|(min_tick, _)| min_tick),
             max_loaded_tick: range.map(|(_, max_tick)| max_tick),
@@ -346,7 +332,8 @@ impl AquariusClmmAdapter {
         Ok((sqrt_price_x96, tick, liquidity))
     }
 
-    /// Fallback: read pool state by simulating get_reserves and inferring from estimate_swap.
+    /// Fallback: read pool state by simulating get_reserves and inferring from
+    /// estimate_swap.
     async fn read_slot0_via_simulate(&self, pool_address: &str) -> Result<(ClmmU256, i32, u128)> {
         // Use get_slot0() and get_active_liquidity()
         let slot0_val = self
@@ -362,24 +349,21 @@ impl AquariusClmmAdapter {
             .call_no_args(pool_address, "get_active_liquidity")
             .await
             .map_err(|e| anyhow!("get_active_liquidity failed: {}", e))?;
-        let liquidity = crate::rpc::scval_to_u128(&liq_val)
-            .map_err(|e| anyhow!("Cannot parse liquidity: {}", e))?;
+        let liquidity = crate::rpc::scval_to_u128(&liq_val).map_err(|e| anyhow!("Cannot parse liquidity: {}", e))?;
 
         Ok((sqrt_price_x96, tick, liquidity))
     }
 
     /// Read tick chunks and bitmaps from persistent storage for a pool.
-    /// Uses simulate_call on pool's getter functions (avoids XDR decode issues with U256).
+    /// Uses simulate_call on pool's getter functions (avoids XDR decode issues
+    /// with U256).
     async fn read_tick_data(&self, pool: &mut AquaClmmPool, merge: bool) -> Result<()> {
         if !merge {
             pool.tick_store = TickDataStore::new();
             pool.bitmap_truncated = false;
         }
         // 1. Read tick bounds
-        let bounds_val = self
-            .rpc
-            .call_no_args(&pool.pool_address, "get_tick_bounds")
-            .await?;
+        let bounds_val = self.rpc.call_no_args(&pool.pool_address, "get_tick_bounds").await?;
         if let xdr::ScVal::Vec(Some(vec)) = &bounds_val {
             if vec.0.len() >= 2 {
                 if let xdr::ScVal::I32(min_t) = &vec.0[0] {
@@ -500,22 +484,18 @@ impl AquariusClmmAdapter {
                             if let Some((lg, ln)) = parse_tick_info_scval(tick_info_val) {
                                 if lg > 0 {
                                     // Store in our tick data store
-                                    let compressed =
-                                        bitmap::compress_tick(tick_idx, pool.tick_spacing);
+                                    let compressed = bitmap::compress_tick(tick_idx, pool.tick_spacing);
                                     let (chunk_pos, slot) = bitmap::chunk_address(compressed);
 
-                                    let chunk =
-                                        pool.tick_store.chunks.entry(chunk_pos).or_insert_with(
-                                            || {
-                                                vec![
-                                                    TickState {
-                                                        liquidity_gross: 0,
-                                                        liquidity_net: 0
-                                                    };
-                                                    TICKS_PER_CHUNK as usize
-                                                ]
-                                            },
-                                        );
+                                    let chunk = pool.tick_store.chunks.entry(chunk_pos).or_insert_with(|| {
+                                        vec![
+                                            TickState {
+                                                liquidity_gross: 0,
+                                                liquidity_net: 0
+                                            };
+                                            TICKS_PER_CHUNK as usize
+                                        ]
+                                    });
                                     chunk[slot as usize] = TickState {
                                         liquidity_gross: lg,
                                         liquidity_net: ln,
@@ -554,10 +534,7 @@ impl AquariusClmmAdapter {
         }
         let mut pool = self.read_pool_instance(pool_address).await?;
         if let Err(e) = self.read_tick_data(&mut pool, false).await {
-            warn!(
-                "Aquarius CLMM tick load incomplete for {}: {}",
-                pool_address, e
-            );
+            warn!("Aquarius CLMM tick load incomplete for {}: {}", pool_address, e);
         }
         let pair = AdapterTradingPair {
             token_a: TokenId::Contract {
@@ -571,10 +548,7 @@ impl AquariusClmmAdapter {
             reserve_a: None,
             reserve_b: None,
         };
-        self.pools
-            .write()
-            .await
-            .insert(pool_address.to_string(), pool);
+        self.pools.write().await.insert(pool_address.to_string(), pool);
         let mut pairs = self.pairs.write().await;
         if !pairs.iter().any(|p| p.pool_address == pool_address) {
             pairs.push(pair);
@@ -583,12 +557,7 @@ impl AquariusClmmAdapter {
     }
 
     /// On-chain quote via pool `estimate_swap`.
-    async fn quote_on_chain(
-        &self,
-        pool: &AquaClmmPool,
-        token_in: &str,
-        amount_in: u128,
-    ) -> Result<Option<u128>> {
+    async fn quote_on_chain(&self, pool: &AquaClmmPool, token_in: &str, amount_in: u128) -> Result<Option<u128>> {
         let (in_idx, out_idx) = if token_in == pool.token0 {
             (0u32, 1u32)
         } else if token_in == pool.token1 {
@@ -606,17 +575,10 @@ impl AquariusClmmAdapter {
             }),
         ];
 
-        match self
-            .rpc
-            .simulate_call(&pool.pool_address, "estimate_swap", args)
-            .await
-        {
+        match self.rpc.simulate_call(&pool.pool_address, "estimate_swap", args).await {
             Ok(result) => Ok(crate::rpc::scval_to_u128(&result).ok()),
             Err(e) => {
-                debug!(
-                    "Aquarius CLMM estimate_swap failed for {}: {}",
-                    pool.pool_address, e
-                );
+                debug!("Aquarius CLMM estimate_swap failed for {}: {}", pool.pool_address, e);
                 Ok(None)
             }
         }
@@ -636,8 +598,7 @@ impl AquariusClmmAdapter {
             token1: pool.token1.clone(),
         };
 
-        let result =
-            clmm_math::simulate_swap(&pool_state, &pool.tick_store, amount_in, zero_for_one);
+        let result = clmm_math::simulate_swap(&pool_state, &pool.tick_store, amount_in, zero_for_one);
         result.map(|(amount_out, _, _)| amount_out)
     }
 }
@@ -684,10 +645,7 @@ impl DexAdapter for AquariusClmmAdapter {
                 Ok(mut pool) => {
                     // Read tick data
                     if let Err(e) = self.read_tick_data(&mut pool, false).await {
-                        warn!(
-                            "Aquarius CLMM: failed to read tick data for {}: {}",
-                            addr, e
-                        );
+                        warn!("Aquarius CLMM: failed to read tick data for {}: {}", addr, e);
                         continue;
                     }
 
@@ -748,13 +706,7 @@ impl DexAdapter for AquariusClmmAdapter {
             token0: pool.token0.clone(),
             token1: pool.token1.clone(),
         };
-        if !clmm_swap_allowed(
-            &pool_state,
-            &pool.tick_store,
-            amount_in,
-            zero_for_one,
-            &coverage,
-        ) {
+        if !clmm_swap_allowed(&pool_state, &pool.tick_store, amount_in, zero_for_one, &coverage) {
             return Ok(None);
         }
 
@@ -804,11 +756,9 @@ impl DexAdapter for AquariusClmmAdapter {
                     let needs_rescan = {
                         let pools = self.pools.read().await;
                         pools.get(addr).and_then(|pool| {
-                            loaded_tick_range(&pool.tick_store, pool.tick_spacing).map(
-                                |(min_tick, max_tick)| {
-                                    tick_outside_loaded_range(new_pool.tick, min_tick, max_tick)
-                                },
-                            )
+                            loaded_tick_range(&pool.tick_store, pool.tick_spacing).map(|(min_tick, max_tick)| {
+                                tick_outside_loaded_range(new_pool.tick, min_tick, max_tick)
+                            })
                         })
                     };
                     let mut pools = self.pools.write().await;
@@ -854,7 +804,8 @@ enum DataKeyVariant {
     WordBitmap(i32),
 }
 
-/// Build a persistent storage ledger key for a given contract and data key variant.
+/// Build a persistent storage ledger key for a given contract and data key
+/// variant.
 fn make_persistent_key(contract_hash: &[u8; 32], variant: &DataKeyVariant) -> xdr::LedgerKey {
     let key_val = match variant {
         DataKeyVariant::TickChunk(pos) => {
@@ -894,7 +845,8 @@ fn make_persistent_key(contract_hash: &[u8; 32], variant: &DataKeyVariant) -> xd
     })
 }
 
-/// Parse instance storage from a ledger entry into a map of field name -> ScVal.
+/// Parse instance storage from a ledger entry into a map of field name ->
+/// ScVal.
 fn parse_instance_storage(entry: &xdr::LedgerEntryData) -> Result<HashMap<String, xdr::ScVal>> {
     let mut map = HashMap::new();
 
@@ -930,9 +882,7 @@ fn scval_to_symbol_name(val: &xdr::ScVal) -> Option<String> {
 }
 
 fn extract_slot0_sqrt_price(map: &HashMap<String, xdr::ScVal>) -> Result<ClmmU256> {
-    let slot0_val = map
-        .get("Slot0")
-        .ok_or_else(|| anyhow!("No Slot0 in instance"))?;
+    let slot0_val = map.get("Slot0").ok_or_else(|| anyhow!("No Slot0 in instance"))?;
     // Slot0 is a struct: { sqrt_price_x96: U256, tick: i32 }
     // In XDR it's a Map with symbol keys
     if let xdr::ScVal::Map(Some(m)) = slot0_val {
@@ -949,9 +899,7 @@ fn extract_slot0_sqrt_price(map: &HashMap<String, xdr::ScVal>) -> Result<ClmmU25
 }
 
 fn extract_slot0_tick(map: &HashMap<String, xdr::ScVal>) -> Result<i32> {
-    let slot0_val = map
-        .get("Slot0")
-        .ok_or_else(|| anyhow!("No Slot0 in instance"))?;
+    let slot0_val = map.get("Slot0").ok_or_else(|| anyhow!("No Slot0 in instance"))?;
     if let xdr::ScVal::Map(Some(m)) = slot0_val {
         for entry in m.0.iter() {
             if let xdr::ScVal::Symbol(s) = &entry.key {
@@ -968,9 +916,7 @@ fn extract_slot0_tick(map: &HashMap<String, xdr::ScVal>) -> Result<i32> {
 }
 
 fn extract_u128_field(map: &HashMap<String, xdr::ScVal>, name: &str) -> Result<u128> {
-    let val = map
-        .get(name)
-        .ok_or_else(|| anyhow!("No {} in instance", name))?;
+    let val = map.get(name).ok_or_else(|| anyhow!("No {} in instance", name))?;
     match val {
         xdr::ScVal::U128(parts) => Ok((parts.hi as u128) << 64 | parts.lo as u128),
         xdr::ScVal::I128(parts) => Ok((parts.hi as u128) << 64 | parts.lo as u128),
@@ -981,9 +927,7 @@ fn extract_u128_field(map: &HashMap<String, xdr::ScVal>, name: &str) -> Result<u
 }
 
 fn extract_u32_field(map: &HashMap<String, xdr::ScVal>, name: &str) -> Result<u32> {
-    let val = map
-        .get(name)
-        .ok_or_else(|| anyhow!("No {} in instance", name))?;
+    let val = map.get(name).ok_or_else(|| anyhow!("No {} in instance", name))?;
     match val {
         xdr::ScVal::U32(v) => Ok(*v),
         xdr::ScVal::U64(v) => Ok(*v as u32),
@@ -992,9 +936,7 @@ fn extract_u32_field(map: &HashMap<String, xdr::ScVal>, name: &str) -> Result<u3
 }
 
 fn extract_i32_field(map: &HashMap<String, xdr::ScVal>, name: &str) -> Result<i32> {
-    let val = map
-        .get(name)
-        .ok_or_else(|| anyhow!("No {} in instance", name))?;
+    let val = map.get(name).ok_or_else(|| anyhow!("No {} in instance", name))?;
     match val {
         xdr::ScVal::I32(v) => Ok(*v),
         xdr::ScVal::I64(v) => Ok(*v as i32),
@@ -1003,11 +945,8 @@ fn extract_i32_field(map: &HashMap<String, xdr::ScVal>, name: &str) -> Result<i3
 }
 
 fn extract_address_field(map: &HashMap<String, xdr::ScVal>, name: &str) -> Result<String> {
-    let val = map
-        .get(name)
-        .ok_or_else(|| anyhow!("No {} in instance", name))?;
-    crate::rpc::scval_to_address(val)
-        .map_err(|e| anyhow!("Cannot parse {} as address: {}", name, e))
+    let val = map.get(name).ok_or_else(|| anyhow!("No {} in instance", name))?;
+    crate::rpc::scval_to_address(val).map_err(|e| anyhow!("Cannot parse {} as address: {}", name, e))
 }
 
 fn extract_tick_spacing_from_info(val: &xdr::ScVal) -> Option<i32> {
@@ -1026,7 +965,8 @@ fn extract_tick_spacing_from_info(val: &xdr::ScVal) -> Option<i32> {
     None
 }
 
-/// Parse Slot0 from simulate_call result: Map { sqrt_price_x96: U256, tick: i32 }
+/// Parse Slot0 from simulate_call result: Map { sqrt_price_x96: U256, tick: i32
+/// }
 fn parse_slot0_scval(val: &xdr::ScVal) -> Result<(ClmmU256, i32)> {
     if let xdr::ScVal::Map(Some(map)) = val {
         let mut sqrt_price = None;
@@ -1054,10 +994,7 @@ fn parse_slot0_scval(val: &xdr::ScVal) -> Result<(ClmmU256, i32)> {
             return Ok((sp, t));
         }
     }
-    Err(anyhow!(
-        "Cannot parse Slot0 from {:?}",
-        std::mem::discriminant(val)
-    ))
+    Err(anyhow!("Cannot parse Slot0 from {:?}", std::mem::discriminant(val)))
 }
 
 /// Parse U256 from any ScVal format (U256Parts, Bytes, etc.)
@@ -1066,19 +1003,12 @@ fn parse_u256_from_scval_any(val: &xdr::ScVal) -> Option<ClmmU256> {
         xdr::ScVal::U256(parts) => {
             // UInt256Parts { hi_hi, hi_lo, lo_hi, lo_lo }
             // Our U256 is little-endian limbs: [lo_lo, lo_hi, hi_lo, hi_hi]
-            Some(ClmmU256([
-                parts.lo_lo,
-                parts.lo_hi,
-                parts.hi_lo,
-                parts.hi_hi,
-            ]))
+            Some(ClmmU256([parts.lo_lo, parts.lo_hi, parts.hi_lo, parts.hi_hi]))
         }
         xdr::ScVal::Bytes(bytes) if bytes.0.len() == 32 => {
             let b = &bytes.0;
-            let limb0 =
-                u64::from_be_bytes([b[24], b[25], b[26], b[27], b[28], b[29], b[30], b[31]]);
-            let limb1 =
-                u64::from_be_bytes([b[16], b[17], b[18], b[19], b[20], b[21], b[22], b[23]]);
+            let limb0 = u64::from_be_bytes([b[24], b[25], b[26], b[27], b[28], b[29], b[30], b[31]]);
+            let limb1 = u64::from_be_bytes([b[16], b[17], b[18], b[19], b[20], b[21], b[22], b[23]]);
             let limb2 = u64::from_be_bytes([b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]]);
             let limb3 = u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]);
             Some(ClmmU256([limb0, limb1, limb2, limb3]))
@@ -1132,7 +1062,8 @@ fn parse_tick_info_scval(val: &xdr::ScVal) -> Option<(u128, i128)> {
 
 /// Parse pool state from get_pool_state_with_balances result.
 fn parse_pool_state_with_balances(val: &xdr::ScVal) -> Result<(ClmmU256, i32, u128)> {
-    // Expected format: struct { reserve0, reserve1, state: { fee, liquidity, sqrt_price_x96, tick, ... } }
+    // Expected format: struct { reserve0, reserve1, state: { fee, liquidity,
+    // sqrt_price_x96, tick, ... } }
     if let xdr::ScVal::Map(Some(map)) = val {
         let mut sqrt_price = None;
         let mut tick = None;
@@ -1161,9 +1092,7 @@ fn parse_pool_state_with_balances(val: &xdr::ScVal) -> Result<(ClmmU256, i32, u1
                     if let xdr::ScVal::Map(Some(inner)) = &entry.val {
                         for inner_entry in inner.0.iter() {
                             let inner_key = match &inner_entry.key {
-                                xdr::ScVal::Symbol(s) => {
-                                    String::from_utf8(s.0.to_vec()).unwrap_or_default()
-                                }
+                                xdr::ScVal::Symbol(s) => String::from_utf8(s.0.to_vec()).unwrap_or_default(),
                                 _ => continue,
                             };
                             match inner_key.as_str() {
@@ -1200,10 +1129,8 @@ fn parse_u256_scval(val: &xdr::ScVal) -> Result<ClmmU256> {
         xdr::ScVal::Bytes(bytes) if bytes.0.len() == 32 => {
             // Big-endian bytes -> little-endian limbs
             let b = &bytes.0;
-            let limb0 =
-                u64::from_be_bytes([b[24], b[25], b[26], b[27], b[28], b[29], b[30], b[31]]);
-            let limb1 =
-                u64::from_be_bytes([b[16], b[17], b[18], b[19], b[20], b[21], b[22], b[23]]);
+            let limb0 = u64::from_be_bytes([b[24], b[25], b[26], b[27], b[28], b[29], b[30], b[31]]);
+            let limb1 = u64::from_be_bytes([b[16], b[17], b[18], b[19], b[20], b[21], b[22], b[23]]);
             let limb2 = u64::from_be_bytes([b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]]);
             let limb3 = u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]);
             Ok(ClmmU256([limb0, limb1, limb2, limb3]))
@@ -1221,13 +1148,11 @@ fn parse_u256_scval(val: &xdr::ScVal) -> Result<ClmmU256> {
                     parts[i] = *v;
                 }
             }
-            // Map order: hi_hi, hi_lo, lo_hi, lo_lo -> limbs[3], limbs[2], limbs[1], limbs[0]
+            // Map order: hi_hi, hi_lo, lo_hi, lo_lo -> limbs[3], limbs[2], limbs[1],
+            // limbs[0]
             Ok(ClmmU256([parts[3], parts[2], parts[1], parts[0]]))
         }
-        _ => Err(anyhow!(
-            "Cannot parse ScVal as U256: {:?}",
-            std::mem::discriminant(val)
-        )),
+        _ => Err(anyhow!("Cannot parse ScVal as U256: {:?}", std::mem::discriminant(val))),
     }
 }
 

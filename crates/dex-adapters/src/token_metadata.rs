@@ -1,12 +1,13 @@
 //! Token metadata cache: persists token symbol/name to a JSON file.
 //! On startup, loads from file. In background, resolves unknown tokens via RPC.
 
-use crate::rpc::{scval_to_string, SorobanRpc};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use {
+    crate::rpc::{scval_to_string, SorobanRpc},
+    serde::{Deserialize, Serialize},
+    std::{collections::HashMap, sync::Arc},
+    tokio::sync::RwLock,
+    tracing::{debug, info, warn},
+};
 
 const METADATA_FILE: &str = "data/token_metadata.json";
 
@@ -102,11 +103,7 @@ impl TokenMetadataStore {
                 }
                 None => {
                     // Store with contract prefix as symbol so we don't retry
-                    let short = if addr.len() > 8 {
-                        &addr[..8]
-                    } else {
-                        addr.as_str()
-                    };
+                    let short = if addr.len() > 8 { &addr[..8] } else { addr.as_str() };
                     self.cache.write().await.insert(
                         addr.clone(),
                         TokenMetadata {
@@ -186,9 +183,7 @@ impl TokenMetadataStore {
     /// Save cache to file.
     async fn save(&self) {
         let cache = self.cache.read().await;
-        let file_cache = MetadataCache {
-            tokens: cache.clone(),
-        };
+        let file_cache = MetadataCache { tokens: cache.clone() };
 
         match serde_json::to_string_pretty(&file_cache) {
             Ok(json) => {

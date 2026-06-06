@@ -1,11 +1,11 @@
 //! Send messages to Telegram Bot API with per-key rate limiting.
 
-use std::time::{Duration, Instant};
-
-use tokio::sync::Mutex;
-
-use anyhow::{Context, Result};
-use tracing::{debug, warn};
+use {
+    anyhow::{Context, Result},
+    std::time::{Duration, Instant},
+    tokio::sync::Mutex,
+    tracing::{debug, warn},
+};
 
 const DEFAULT_COOLDOWN: Duration = Duration::from_secs(300);
 
@@ -20,7 +20,8 @@ impl TelegramConfig {
         Self::from_env_filtered(None)
     }
 
-    /// Like [`from_env`] but only on API instance `LISTEN_ADDR` ending with `:port` (avoids duplicate alerts).
+    /// Like [`from_env`] but only on API instance `LISTEN_ADDR` ending with
+    /// `:port` (avoids duplicate alerts).
     pub fn from_env_api_primary() -> Option<Self> {
         let port = std::env::var("TELEGRAM_PRIMARY_API_PORT").unwrap_or_else(|_| "3100".into());
         Self::from_env_filtered(Some(port.as_str()))
@@ -40,12 +41,8 @@ impl TelegramConfig {
                 return None;
             }
         }
-        let bot_token = std::env::var("TELEGRAM_BOT_TOKEN")
-            .ok()
-            .filter(|s| !s.is_empty())?;
-        let chat_id = std::env::var("TELEGRAM_CHAT_ID")
-            .ok()
-            .filter(|s| !s.is_empty())?;
+        let bot_token = std::env::var("TELEGRAM_BOT_TOKEN").ok().filter(|s| !s.is_empty())?;
+        let chat_id = std::env::var("TELEGRAM_CHAT_ID").ok().filter(|s| !s.is_empty())?;
         Some(Self { bot_token, chat_id })
     }
 }
@@ -82,12 +79,7 @@ impl TelegramAlerter {
     }
 
     /// Send at most once per `cooldown` per `key`.
-    pub async fn send_rate_limited(
-        &self,
-        key: &str,
-        text: &str,
-        cooldown: Duration,
-    ) -> Result<()> {
+    pub async fn send_rate_limited(&self, key: &str, text: &str, cooldown: Duration) -> Result<()> {
         let now = Instant::now();
         let mut guard = self.last_sent.lock().await;
         if let Some(last) = guard.get(key) {
@@ -106,10 +98,7 @@ impl TelegramAlerter {
     }
 
     async fn send_inner(&self, text: &str) -> Result<()> {
-        let url = format!(
-            "https://api.telegram.org/bot{}/sendMessage",
-            self.config.bot_token
-        );
+        let url = format!("https://api.telegram.org/bot{}/sendMessage", self.config.bot_token);
         let resp = self
             .client
             .post(&url)

@@ -1,16 +1,16 @@
 //! Telegram heartbeat + failure alerts for the market-data worker.
 
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc,
+use {
+    crate::worker::WorkerShared,
+    lumagg_alerts::TelegramAlerter,
+    market_snapshot::pool_state_store::RedisPoolStateStore,
+    std::sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    tokio::sync::RwLock,
+    tracing::warn,
 };
-
-use lumagg_alerts::TelegramAlerter;
-use market_snapshot::pool_state_store::RedisPoolStateStore;
-use tokio::sync::RwLock;
-use tracing::warn;
-
-use crate::worker::WorkerShared;
 
 pub struct WorkerMonitorMetrics {
     pub last_publish_ms: AtomicU64,
@@ -34,8 +34,7 @@ impl WorkerMonitorMetrics {
             .unwrap_or(0);
         self.last_publish_ms.store(now, Ordering::Relaxed);
         self.last_xyk_count.store(xyk as u64, Ordering::Relaxed);
-        self.last_clmm_complete
-            .store(clmm_complete as u64, Ordering::Relaxed);
+        self.last_clmm_complete.store(clmm_complete as u64, Ordering::Relaxed);
     }
 }
 
@@ -57,27 +56,20 @@ pub fn spawn_telegram_monitor(
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(600);
-        let mut interval =
-            tokio::time::interval(std::time::Duration::from_secs(heartbeat_secs.max(60)));
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(heartbeat_secs.max(60)));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         interval.tick().await;
 
         loop {
             interval.tick().await;
-            let msg = match build_heartbeat_message(
-                &metrics,
-                &shared,
-                pool_state_store.as_deref(),
-                &api_health_url,
-            )
-            .await
-            {
-                Ok(m) => m,
-                Err(error) => {
-                    warn!("heartbeat message build failed: {}", error);
-                    continue;
-                }
-            };
+            let msg =
+                match build_heartbeat_message(&metrics, &shared, pool_state_store.as_deref(), &api_health_url).await {
+                    Ok(m) => m,
+                    Err(error) => {
+                        warn!("heartbeat message build failed: {}", error);
+                        continue;
+                    }
+                };
             if let Err(error) = alerter.send(&msg).await {
                 warn!("telegram heartbeat failed: {}", error);
             }
@@ -124,13 +116,13 @@ async fn build_heartbeat_message(
         false
     };
 
-    let stale = last_pub > 0
-        && std::time::SystemTime::now()
+    let stale = last_pub > 0 &&
+        std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0)
-            .saturating_sub(last_pub)
-            > 120;
+            .saturating_sub(last_pub) >
+            120;
 
     Ok(format!(
         "✅ LumAgg heartbeat\n\

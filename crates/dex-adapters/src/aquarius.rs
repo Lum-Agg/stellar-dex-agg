@@ -1,4 +1,5 @@
-//! Aquarius adapter: AMM on Soroban with both constant-product and stable-swap pools.
+//! Aquarius adapter: AMM on Soroban with both constant-product and stable-swap
+//! pools.
 //!
 //! Key characteristics:
 //! - Router contract: CBQDHNBFBZYE4MKPWBSJOPIYLW4SFSXAXUTSXJN76GNKYVYPCKWC6QUK
@@ -7,16 +8,19 @@
 //! - Stable pools use Curve invariant with amplification factor
 //! - Pool discovery via get_tokens_sets_count() + get_pools_for_tokens_range()
 
-use crate::rpc::{scval_to_address, scval_to_string, scval_to_u128, SorobanRpc};
-use crate::traits::*;
-use anyhow::Result;
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
-use stellar_xdr::curr as xdr;
-use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use {
+    crate::{
+        rpc::{scval_to_address, scval_to_string, scval_to_u128, SorobanRpc},
+        traits::*,
+    },
+    anyhow::Result,
+    async_trait::async_trait,
+    serde::{Deserialize, Serialize},
+    std::{collections::HashMap, sync::Arc},
+    stellar_xdr::curr as xdr,
+    tokio::sync::RwLock,
+    tracing::{debug, info, warn},
+};
 
 /// Aquarius Router contract address (Mainnet)
 pub const AQUARIUS_ROUTER: &str = "CBQDHNBFBZYE4MKPWBSJOPIYLW4SFSXAXUTSXJN76GNKYVYPCKWC6QUK";
@@ -31,10 +35,12 @@ fn aquarius_hydrate_concurrency() -> usize {
         .max(1)
 }
 
-/// Default amplification factor for stable pools (unused when `a()` is readable).
+/// Default amplification factor for stable pools (unused when `a()` is
+/// readable).
 const DEFAULT_STABLE_AMP: u128 = 100;
 
-/// Aquarius stableswap supports 2 or 3 tokens (`STABLESWAP_MAX_TOKENS` in router).
+/// Aquarius stableswap supports 2 or 3 tokens (`STABLESWAP_MAX_TOKENS` in
+/// router).
 const MAX_STABLESWAP_TOKENS: usize = 3;
 
 /// On-chain Aquarius pool state for local quotes (stable + volatile).
@@ -70,22 +76,10 @@ pub fn quote_aquarius_pool(
     }
 
     let amount_out = if state.is_stable {
-        AquariusAdapter::stable_swap_quote_multi(
-            &state.reserves,
-            in_idx,
-            out_idx,
-            amount_in,
-            state.fee_bps,
-            state.amp,
-        )
+        AquariusAdapter::stable_swap_quote_multi(&state.reserves, in_idx, out_idx, amount_in, state.fee_bps, state.amp)
     } else {
         let reserve_out = *state.reserves.get(out_idx)?;
-        AquariusAdapter::constant_product_quote(
-            amount_in,
-            reserve_in,
-            reserve_out,
-            state.fee_bps,
-        )
+        AquariusAdapter::constant_product_quote(amount_in, reserve_in, reserve_out, state.fee_bps)
     };
 
     if amount_out == 0 {
@@ -131,12 +125,7 @@ impl AquariusAdapter {
 
     /// Constant product quote.
     /// Aquarius: in_after_fee = amount_in * (10000 - fee_bps) / 10000
-    pub fn constant_product_quote(
-        amount_in: u128,
-        reserve_in: u128,
-        reserve_out: u128,
-        fee_bps: u32,
-    ) -> u128 {
+    pub fn constant_product_quote(amount_in: u128, reserve_in: u128, reserve_out: u128, fee_bps: u32) -> u128 {
         if reserve_in == 0 || reserve_out == 0 || amount_in == 0 {
             return 0;
         }
@@ -174,10 +163,7 @@ impl AquariusAdapter {
     /// Fetch all pools from the Aquarius Router contract.
     async fn fetch_pools_from_router(&self) -> Result<Vec<(AdapterTradingPair, PoolMeta)>> {
         // 1. Get total token sets count
-        let count_val = self
-            .rpc
-            .call_no_args(AQUARIUS_ROUTER, "get_tokens_sets_count")
-            .await?;
+        let count_val = self.rpc.call_no_args(AQUARIUS_ROUTER, "get_tokens_sets_count").await?;
         let total_count = scval_to_u128(&count_val)?;
         info!("Aquarius: total token sets = {}", total_count);
 
@@ -204,11 +190,7 @@ impl AquariusAdapter {
 
             match self
                 .rpc
-                .simulate_call(
-                    AQUARIUS_ROUTER,
-                    "get_pools_for_tokens_range",
-                    vec![start_val, end_val],
-                )
+                .simulate_call(AQUARIUS_ROUTER, "get_pools_for_tokens_range", vec![start_val, end_val])
                 .await
             {
                 Ok(result) => {
@@ -226,10 +208,7 @@ impl AquariusAdapter {
             }
         }
 
-        info!(
-            "Aquarius: {} unique pool addresses from router",
-            pool_addresses.len()
-        );
+        info!("Aquarius: {} unique pool addresses from router", pool_addresses.len());
 
         // Drop concentrated pools (quoted/routed via aquarius_clmm).
         let before = pool_addresses.len();
@@ -246,7 +225,8 @@ impl AquariusAdapter {
             before.saturating_sub(pool_addresses.len())
         );
 
-        // 3. Hydrate pools from on-chain get_tokens/get_reserves (supports 2- and 3-token stableswap).
+        // 3. Hydrate pools from on-chain get_tokens/get_reserves (supports 2- and
+        //    3-token stableswap).
         let pool_list: Vec<String> = pool_addresses.into_iter().collect();
         let hydrate_concurrency = aquarius_hydrate_concurrency();
         info!(
@@ -256,8 +236,7 @@ impl AquariusAdapter {
         );
         let mut all_pools = Vec::new();
         for chunk in pool_list.chunks(hydrate_concurrency) {
-            let results = futures::future::join_all(chunk.iter().map(|pool_addr| self.hydrate_pool(pool_addr)))
-                .await;
+            let results = futures::future::join_all(chunk.iter().map(|pool_addr| self.hydrate_pool(pool_addr))).await;
             for (pool_addr, edges) in chunk.iter().zip(results) {
                 match edges {
                     Some(edges) => all_pools.extend(edges),
@@ -268,18 +247,13 @@ impl AquariusAdapter {
             }
         }
 
-        info!(
-            "Aquarius: fetched {} pool edges with reserves",
-            all_pools.len()
-        );
+        info!("Aquarius: fetched {} pool edges with reserves", all_pools.len());
         Ok(all_pools)
     }
 
-    /// Load canonical token list, reserves, and pool type; emit all token-pair edges.
-    async fn hydrate_pool(
-        &self,
-        pool_address: &str,
-    ) -> Option<Vec<(AdapterTradingPair, PoolMeta)>> {
+    /// Load canonical token list, reserves, and pool type; emit all token-pair
+    /// edges.
+    async fn hydrate_pool(&self, pool_address: &str) -> Option<Vec<(AdapterTradingPair, PoolMeta)>> {
         let tokens = self.fetch_pool_tokens(pool_address).await.ok()?;
         let n = tokens.len();
         if n < 2 || n > MAX_STABLESWAP_TOKENS {
@@ -363,12 +337,9 @@ impl AquariusAdapter {
         }
     }
 
-    /// Extract pool contract addresses from router `get_pools_for_tokens_range` output.
-    fn collect_pool_addresses(
-        &self,
-        val: &xdr::ScVal,
-        out: &mut std::collections::HashSet<String>,
-    ) {
+    /// Extract pool contract addresses from router `get_pools_for_tokens_range`
+    /// output.
+    fn collect_pool_addresses(&self, val: &xdr::ScVal, out: &mut std::collections::HashSet<String>) {
         let entries = match val {
             xdr::ScVal::Vec(Some(v)) => &v.0,
             _ => return,
@@ -395,9 +366,9 @@ impl AquariusAdapter {
         let meta_map = self.pool_meta.read().await;
         let mut out = Vec::new();
         for (pool_address, meta) in meta_map.iter() {
-            if meta.all_tokens.is_empty()
-                || meta.all_reserves.len() != meta.all_tokens.len()
-                || meta.all_reserves.iter().all(|&r| r == 0)
+            if meta.all_tokens.is_empty() ||
+                meta.all_reserves.len() != meta.all_tokens.len() ||
+                meta.all_reserves.iter().all(|&r| r == 0)
             {
                 continue;
             }
@@ -446,11 +417,7 @@ impl AquariusAdapter {
         }
     }
 
-    fn apply_pool_reserves_to_pairs(
-        pairs: &mut [AdapterTradingPair],
-        pool_address: &str,
-        meta: &PoolMeta,
-    ) {
+    fn apply_pool_reserves_to_pairs(pairs: &mut [AdapterTradingPair], pool_address: &str, meta: &PoolMeta) {
         for pair in pairs.iter_mut().filter(|p| p.pool_address == pool_address) {
             let a_key = pair.token_a.canonical();
             let b_key = pair.token_b.canonical();
@@ -465,16 +432,14 @@ impl AquariusAdapter {
         }
     }
 
-    /// Fetch reserves for a single Aquarius pool by calling get_reserves on the pool contract.
+    /// Fetch reserves for a single Aquarius pool by calling get_reserves on the
+    /// pool contract.
     async fn fetch_pool_reserves(&self, pool_address: &str) -> Result<(u128, u128)> {
         let reserves = self.fetch_pool_reserves_vec(pool_address).await?;
         if reserves.len() >= 2 {
             Ok((reserves[0], reserves[1]))
         } else {
-            Err(anyhow::anyhow!(
-                "Could not parse reserves for pool {}",
-                pool_address
-            ))
+            Err(anyhow::anyhow!("Could not parse reserves for pool {}", pool_address))
         }
     }
 
@@ -494,7 +459,8 @@ impl AquariusAdapter {
         }
     }
 
-    /// Constant-product / stableswap pools only; concentrated pools use `aquarius_clmm`.
+    /// Constant-product / stableswap pools only; concentrated pools use
+    /// `aquarius_clmm`.
     async fn is_volatile_pool(&self, pool_address: &str) -> bool {
         match self.rpc.call_no_args(pool_address, "pool_type").await {
             Ok(xdr::ScVal::Symbol(s)) => {
@@ -534,12 +500,18 @@ impl AquariusAdapter {
         }
     }
 
-    /// Batch-refresh reserves via getLedgerEntries (volatile + stableswap instance storage).
+    /// Batch-refresh reserves via getLedgerEntries (volatile + stableswap
+    /// instance storage).
     pub async fn refresh_all_reserves(&self) -> Result<usize> {
         let pool_addresses: Vec<String> = {
             let meta = self.pool_meta.read().await;
             meta.keys().cloned().collect()
         };
+        self.refresh_pool_addresses(&pool_addresses).await
+    }
+
+    /// Refresh a subset of pools (used by the fetch pipeline).
+    pub async fn refresh_pool_addresses(&self, pool_addresses: &[String]) -> Result<usize> {
         if pool_addresses.is_empty() {
             return Ok(0);
         }
@@ -548,12 +520,9 @@ impl AquariusAdapter {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(4);
-        let results = crate::batch_refresh::batch_refresh_aquarius_reserves_parallel(
-            &self.rpc,
-            &pool_addresses,
-            concurrency,
-        )
-        .await?;
+        let results =
+            crate::batch_refresh::batch_refresh_aquarius_reserves_parallel(&self.rpc, pool_addresses, concurrency)
+                .await?;
 
         let mut updated = 0usize;
         let mut meta_map = self.pool_meta.write().await;
@@ -574,12 +543,18 @@ impl AquariusAdapter {
             updated += 1;
         }
 
-        debug!(
-            "Aquarius: batch-refreshed {}/{} pools",
-            updated,
-            pool_addresses.len()
-        );
+        debug!("Aquarius: batch-refreshed {}/{} pools", updated, pool_addresses.len());
         Ok(updated)
+    }
+
+    /// Export quote states for a subset of pool contracts.
+    pub async fn export_pool_quote_states_for(&self, pool_addresses: &[String]) -> Vec<AquariusPoolQuoteState> {
+        let wanted: std::collections::HashSet<&str> = pool_addresses.iter().map(|s| s.as_str()).collect();
+        self.export_pool_quote_states()
+            .await
+            .into_iter()
+            .filter(|state| wanted.contains(state.pool_address.as_str()))
+            .collect()
     }
 }
 
@@ -604,9 +579,7 @@ impl DexAdapter for AquariusAdapter {
         let mut meta_map = HashMap::new();
 
         for (pair, meta) in results {
-            meta_map
-                .entry(pair.pool_address.clone())
-                .or_insert(meta);
+            meta_map.entry(pair.pool_address.clone()).or_insert(meta);
             pairs.push(pair);
         }
 
@@ -634,9 +607,9 @@ impl DexAdapter for AquariusAdapter {
         });
         drop(meta_map);
 
-        if meta.all_tokens.len() >= 2
-            && meta.all_reserves.len() == meta.all_tokens.len()
-            && meta.all_reserves.iter().any(|&r| r > 0)
+        if meta.all_tokens.len() >= 2 &&
+            meta.all_reserves.len() == meta.all_tokens.len() &&
+            meta.all_reserves.iter().any(|&r| r > 0)
         {
             let state = AquariusPoolQuoteState {
                 pool_address: pool_address.to_string(),
@@ -680,14 +653,7 @@ impl DexAdapter for AquariusAdapter {
         };
 
         let amount_out = if meta.is_stable {
-            Self::stable_swap_quote_multi(
-                &[reserve_in, reserve_out],
-                0,
-                1,
-                amount_in,
-                meta.fee_bps,
-                meta.amp,
-            )
+            Self::stable_swap_quote_multi(&[reserve_in, reserve_out], 0, 1, amount_in, meta.fee_bps, meta.amp)
         } else {
             Self::constant_product_quote(amount_in, reserve_in, reserve_out, meta.fee_bps)
         };
@@ -742,7 +708,8 @@ mod tests {
 
     #[test]
     fn three_token_stableswap_matches_router_test_vector() {
-        // liquidity_pool_router::test_stableswap_3_pool — equal 100M deposit per coin, amp=6750.
+        // liquidity_pool_router::test_stableswap_3_pool — equal 100M deposit per coin,
+        // amp=6750.
         let reserves = vec![100_0000000u128, 100_0000000, 100_0000000];
         let out = AquariusAdapter::stable_swap_quote_multi(&reserves, 0, 1, 97_0000000, 30, 6750);
         assert_eq!(
@@ -814,10 +781,7 @@ mod tests {
         .expect("hop2 volatile quote")
         .amount_out;
 
-        assert!(
-            hop2 > 9_000_000 && hop2 < 11_000_000,
-            "expected ~1 XLM out, got {hop2}"
-        );
+        assert!(hop2 > 9_000_000 && hop2 < 11_000_000, "expected ~1 XLM out, got {hop2}");
     }
 }
 

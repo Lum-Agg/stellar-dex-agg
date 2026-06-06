@@ -1,10 +1,12 @@
 //! Token graph for path discovery.
 //!
-//! Maintains an adjacency list of all tradeable pairs across registered DEX sources.
-//! Supports BFS-based path finding with configurable max hops.
+//! Maintains an adjacency list of all tradeable pairs across registered DEX
+//! sources. Supports BFS-based path finding with configurable max hops.
 
-use crate::types::{Path, TokenId};
-use std::collections::{HashMap, HashSet, VecDeque};
+use {
+    crate::types::{Path, TokenId},
+    std::collections::{HashMap, HashSet, VecDeque},
+};
 
 /// Edge in the token graph representing a tradeable pair on a specific DEX.
 #[derive(Debug, Clone)]
@@ -31,14 +33,7 @@ impl TokenGraph {
     }
 
     /// Add a bidirectional edge (trading pair) to the graph.
-    pub fn add_pair(
-        &mut self,
-        token_a: &TokenId,
-        token_b: &TokenId,
-        source: &str,
-        pool_address: &str,
-        fee_bps: u32,
-    ) {
+    pub fn add_pair(&mut self, token_a: &TokenId, token_b: &TokenId, source: &str, pool_address: &str, fee_bps: u32) {
         let key_a = token_a.canonical();
         let key_b = token_b.canonical();
         let now = chrono::Utc::now().timestamp_millis() as u64;
@@ -65,7 +60,8 @@ impl TokenGraph {
         });
     }
 
-    /// Remove all edges from a specific source (e.g., when re-syncing a DEX adapter).
+    /// Remove all edges from a specific source (e.g., when re-syncing a DEX
+    /// adapter).
     pub fn remove_source(&mut self, source: &str) {
         for edges in self.adjacency.values_mut() {
             edges.retain(|e| e.source != source);
@@ -92,9 +88,10 @@ impl TokenGraph {
 
     /// Discover swap paths from `start` to `end`.
     ///
-    /// - **Direct (1-hop)**: every pool edge between the pair (optional `max_direct_paths` cap;
-    ///   `0` = no cap).
-    /// - **Multi-hop (2+ hops)**: BFS up to `max_hops`, capped at `max_multi_hop_paths`.
+    /// - **Direct (1-hop)**: every pool edge between the pair (optional
+    ///   `max_direct_paths` cap; `0` = no cap).
+    /// - **Multi-hop (2+ hops)**: BFS up to `max_hops`, capped at
+    ///   `max_multi_hop_paths`.
     ///
     /// Returns paths sorted by hop count (shortest first).
     pub fn find_paths(
@@ -135,25 +132,11 @@ impl TokenGraph {
         let mut multi_hop_count = 0usize;
 
         // BFS for indirect paths only (direct pools already in `results`).
-        let mut queue: VecDeque<(
-            String,
-            Vec<TokenId>,
-            Vec<String>,
-            Vec<String>,
-            HashSet<String>,
-        )> = VecDeque::new();
+        let mut queue: VecDeque<(String, Vec<TokenId>, Vec<String>, Vec<String>, HashSet<String>)> = VecDeque::new();
 
-        queue.push_back((
-            start_key.clone(),
-            vec![start.clone()],
-            vec![],
-            vec![],
-            HashSet::new(),
-        ));
+        queue.push_back((start_key.clone(), vec![start.clone()], vec![], vec![], HashSet::new()));
 
-        while let Some((current_key, token_path, source_path, pool_path, visited_pools)) =
-            queue.pop_front()
-        {
+        while let Some((current_key, token_path, source_path, pool_path, visited_pools)) = queue.pop_front() {
             if multi_hop_count >= max_multi_hop_paths {
                 break;
             }

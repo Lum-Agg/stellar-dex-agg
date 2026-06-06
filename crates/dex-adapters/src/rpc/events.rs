@@ -1,12 +1,13 @@
-//! Soroban RPC `getLatestLedger` / `getEvents` helpers for ledger-driven indexing.
+//! Soroban RPC `getLatestLedger` / `getEvents` helpers for ledger-driven
+//! indexing.
 
-use std::collections::HashSet;
-
-use anyhow::{anyhow, Result};
-use serde::Deserialize;
-use serde_json::json;
-
-use super::SorobanRpc;
+use {
+    super::SorobanRpc,
+    anyhow::{anyhow, Result},
+    serde::Deserialize,
+    serde_json::json,
+    std::collections::HashSet,
+};
 
 pub const DEFAULT_EVENTS_PAGE_LIMIT: u32 = 10_000;
 /// RPC allows scanning at most ~10k ledgers per `getEvents` request.
@@ -96,13 +97,7 @@ impl SorobanRpc {
         let mut cursor: Option<String> = None;
         loop {
             let page = self
-                .get_contract_events_page(
-                    start_ledger,
-                    end_ledger,
-                    filters,
-                    limit,
-                    cursor.as_deref(),
-                )
+                .get_contract_events_page(start_ledger, end_ledger, filters, limit, cursor.as_deref())
                 .await?;
             let mut seen_ids = HashSet::new();
             for event in page.events {
@@ -164,9 +159,7 @@ impl SorobanRpc {
         if let Some(error) = resp.get("error") {
             return Err(anyhow!("getEvents RPC error: {}", error));
         }
-        let result = resp
-            .get("result")
-            .ok_or_else(|| anyhow!("getEvents missing result"))?;
+        let result = resp.get("result").ok_or_else(|| anyhow!("getEvents missing result"))?;
 
         #[derive(Deserialize)]
         struct RawEvent {

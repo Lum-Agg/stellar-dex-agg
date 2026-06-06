@@ -2,20 +2,23 @@
 //!
 //! See `docs/pool-state-architecture.md`.
 
-use std::collections::HashMap;
+use {
+    crate::ClmmPoolSnapshot,
+    anyhow::Result,
+    redis::AsyncCommands,
+    serde::{Deserialize, Serialize},
+    std::collections::HashMap,
+};
 
-use anyhow::Result;
-use redis::AsyncCommands;
-use serde::{Deserialize, Serialize};
-
-use crate::ClmmPoolSnapshot;
-
-/// Default Redis EX for pool keys. Should exceed worker refresh duration (often 15–30s on mainnet).
+/// Default Redis EX for pool keys. Should exceed worker refresh duration (often
+/// 15–30s on mainnet).
 pub const DEFAULT_POOL_STATE_TTL_SECS: u64 = 30;
 pub const DEFAULT_QUOTE_HYDRATE_MAX_POOLS: usize = 12;
 
 const XYK_KEY_PREFIX: &str = "lumagg:pool:xyk";
 const CLMM_KEY_PREFIX: &str = "lumagg:pool:clmm";
+// N token + N reserve + stable params
+
 const AQUARIUS_KEY_PREFIX: &str = "lumagg:pool:aquarius";
 
 /// Full Aquarius pool state (token-ordered reserves + stable params).
@@ -35,7 +38,8 @@ impl AquariusPoolStateValue {
     }
 }
 
-/// xy=k reserves stored per pool (canonical token orientation from worker snapshot).
+/// xy=k reserves stored per pool (canonical token orientation from worker
+/// snapshot).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct XykPoolStateValue {
     pub source: String,
@@ -87,7 +91,8 @@ impl ClmmPoolSnapshot {
     }
 }
 
-/// Only complete CLMM coverage may be written to Redis (shared across API instances).
+/// Only complete CLMM coverage may be written to Redis (shared across API
+/// instances).
 pub fn should_publish_clmm_to_redis(pool: &ClmmPoolSnapshot) -> bool {
     pool.coverage
         .as_ref()
@@ -126,7 +131,8 @@ impl RedisPoolStateStore {
         Ok(exists)
     }
 
-    /// Worker hot path: publish xy=k reserves and complete CLMM state (not in topology snapshot).
+    /// Worker hot path: publish xy=k reserves and complete CLMM state (not in
+    /// topology snapshot).
     pub async fn publish_pool_state(
         &self,
         xyk_values: &[XykPoolStateValue],
@@ -139,13 +145,8 @@ impl RedisPoolStateStore {
             .iter()
             .filter(|pool| should_publish_clmm_to_redis(pool))
             .collect();
-        self.set_clmm_batch(
-            &complete_clmm
-                .iter()
-                .map(|p| (*p).clone())
-                .collect::<Vec<_>>(),
-        )
-        .await?;
+        self.set_clmm_batch(&complete_clmm.iter().map(|p| (*p).clone()).collect::<Vec<_>>())
+            .await?;
         tracing::debug!(
             xyk_written = xyk_values.len(),
             aquarius_written = aquarius_pools.len(),
@@ -169,10 +170,7 @@ impl RedisPoolStateStore {
         Ok(())
     }
 
-    pub async fn fetch_aquarius(
-        &self,
-        pool_addresses: &[String],
-    ) -> Result<HashMap<String, AquariusPoolStateValue>> {
+    pub async fn fetch_aquarius(&self, pool_addresses: &[String]) -> Result<HashMap<String, AquariusPoolStateValue>> {
         if pool_addresses.is_empty() {
             return Ok(HashMap::new());
         }
@@ -193,10 +191,7 @@ impl RedisPoolStateStore {
         Ok(out)
     }
 
-    pub async fn fetch_xyk(
-        &self,
-        refs: &[(String, String)],
-    ) -> Result<HashMap<String, XykPoolStateValue>> {
+    pub async fn fetch_xyk(&self, refs: &[(String, String)]) -> Result<HashMap<String, XykPoolStateValue>> {
         if refs.is_empty() {
             return Ok(HashMap::new());
         }
@@ -217,10 +212,7 @@ impl RedisPoolStateStore {
         Ok(out)
     }
 
-    pub async fn fetch_clmm(
-        &self,
-        refs: &[(String, String)],
-    ) -> Result<HashMap<String, ClmmPoolSnapshot>> {
+    pub async fn fetch_clmm(&self, refs: &[(String, String)]) -> Result<HashMap<String, ClmmPoolSnapshot>> {
         if refs.is_empty() {
             return Ok(HashMap::new());
         }
@@ -293,8 +285,7 @@ pub fn build_pool_state_store(redis_url: &str) -> Result<RedisPoolStateStore> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::ClmmCoverageSnapshot;
+    use {super::*, crate::ClmmCoverageSnapshot};
 
     #[test]
     fn clmm_writeback_requires_complete_coverage() {

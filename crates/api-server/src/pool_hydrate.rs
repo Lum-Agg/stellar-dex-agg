@@ -1,21 +1,24 @@
-//! Batched pool-state hydration for `/quote` (Redis MGET; optional RPC fallback).
+//! Batched pool-state hydration for `/quote` (Redis MGET; optional RPC
+//! fallback).
 
-use std::collections::{HashMap, HashSet};
-
-use dex_adapters::{
-    batch_refresh::batch_refresh_soroswap_reserves, clmm_math::clmm_pool_from_snapshot,
-    comet::CometAdapter, rpc::SorobanRpc, AquariusPoolQuoteState,
-};
-use market_snapshot::{
-    pool_state_store::{
-        parse_quote_hydrate_max_pools_from_env, AquariusPoolStateValue, RedisPoolStateStore,
-        XykPoolStateValue,
+use {
+    dex_adapters::{
+        batch_refresh::batch_refresh_soroswap_reserves, clmm_math::clmm_pool_from_snapshot, comet::CometAdapter,
+        rpc::SorobanRpc, AquariusPoolQuoteState,
     },
-    ClmmPoolSnapshot,
+    market_snapshot::{
+        pool_state_store::{
+            parse_quote_hydrate_max_pools_from_env, AquariusPoolStateValue, RedisPoolStateStore, XykPoolStateValue,
+        },
+        ClmmPoolSnapshot,
+    },
+    router_engine::{Path, QuoteEngine, QuoteHydration, SnapshotClmmQuoteState},
+    std::{
+        collections::{HashMap, HashSet},
+        sync::Arc,
+    },
+    tracing::{debug, warn},
 };
-use router_engine::{Path, QuoteEngine, QuoteHydration, SnapshotClmmQuoteState};
-use std::sync::Arc;
-use tracing::{debug, warn};
 
 const CLMM_SOURCES: &[&str] = &["sushi", "aquarius_clmm"];
 const BATCH_XYK_SOURCES: &[&str] = &["soroswap"];
@@ -35,14 +38,7 @@ impl Default for PoolHydrateConfig {
     }
 }
 
-fn collect_pool_refs(
-    paths: &[Path],
-) -> (
-    Vec<(String, String)>,
-    Vec<(String, String)>,
-    Vec<String>,
-    Vec<String>,
-) {
+fn collect_pool_refs(paths: &[Path]) -> (Vec<(String, String)>, Vec<(String, String)>, Vec<String>, Vec<String>) {
     let mut xyk = HashSet::new();
     let mut clmm = HashSet::new();
     let mut comet = HashSet::new();
@@ -81,11 +77,7 @@ fn clmm_state_from_snapshot(snapshot: &ClmmPoolSnapshot) -> SnapshotClmmQuoteSta
     SnapshotClmmQuoteState {
         source: snapshot.source.clone(),
         pool_address: snapshot.pool_address.clone(),
-        is_complete: snapshot
-            .coverage
-            .as_ref()
-            .map(|c| c.is_complete)
-            .unwrap_or(false),
+        is_complete: snapshot.coverage.as_ref().map(|c| c.is_complete).unwrap_or(false),
         pool,
         ticks,
         coverage: snapshot.coverage.clone(),
@@ -103,21 +95,19 @@ fn aquarius_quote_state(value: &AquariusPoolStateValue) -> AquariusPoolQuoteStat
     }
 }
 
-/// Load per-pool state for candidate paths from Redis; optional batched xy=k RPC for misses.
+/// Load per-pool state for candidate paths from Redis; optional batched xy=k
+/// RPC for misses.
 pub async fn hydrate_paths(
     engine: &QuoteEngine,
     paths: &[Path],
     store: &RedisPoolStateStore,
     rpc: &SorobanRpc,
     config: &PoolHydrateConfig,
-) -> (QuoteHydration, usize) {
+) -> (QuoteHydration, usize, usize) {
     let (xyk_refs, clmm_refs, comet_pools, aquarius_refs) = collect_pool_refs(paths);
-    if xyk_refs.is_empty()
-        && clmm_refs.is_empty()
-        && comet_pools.is_empty()
-        && aquarius_refs.is_empty()
-    {
-        return (QuoteHydration::default(), 0);
+    let soroswap_ref_count = xyk_refs.iter().filter(|(s, _)| s == "soroswap").count();
+    if xyk_refs.is_empty() && clmm_refs.is_empty() && comet_pools.is_empty() && aquarius_refs.is_empty() {
+        return (QuoteHydration::default(), 0, 0);
     }
 
     let mut xyk_pools = store.fetch_xyk(&xyk_refs).await.unwrap_or_default();
@@ -147,18 +137,13 @@ pub async fn hydrate_paths(
         rpc_candidates.truncate(config.max_rpc_pools);
 
         if !rpc_candidates.is_empty() {
-            let pool_addresses: Vec<String> = rpc_candidates
-                .iter()
-                .map(|(_, pool)| pool.clone())
-                .collect();
+            let pool_addresses: Vec<String> = rpc_candidates.iter().map(|(_, pool)| pool.clone()).collect();
             match batch_refresh_soroswap_reserves(rpc, &pool_addresses).await {
                 Ok(results) => {
                     let cached = engine.cached_pool_edges().await;
                     let mut writeback: Vec<XykPoolStateValue> = Vec::new();
 
-                    for ((source, pool_address), (_, reserves)) in
-                        rpc_candidates.iter().zip(results.iter())
-                    {
+                    for ((source, pool_address), (_, reserves)) in rpc_candidates.iter().zip(results.iter()) {
                         let Some((r0, r1)) = *reserves else {
                             continue;
                         };
@@ -208,10 +193,7 @@ pub async fn hydrate_paths(
 
     let mut comet_states = HashMap::new();
     if config.rpc_hydrate_enabled && !comet_pools.is_empty() {
-        let comet = CometAdapter::new(Arc::new(SorobanRpc::new(
-            rpc.url(),
-            rpc.network_passphrase(),
-        )));
+        let comet = CometAdapter::new(Arc::new(SorobanRpc::new(rpc.url(), rpc.network_passphrase())));
         for pool_address in comet_pools {
             match comet.fetch_pool_quote_state(&pool_address).await {
                 Ok(state) => {
@@ -251,6 +233,7 @@ pub async fn hydrate_paths(
             aquarius_pools,
         },
         redis_miss_xyk,
+        soroswap_ref_count,
     )
 }
 

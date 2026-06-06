@@ -1,5 +1,7 @@
-use serde::{Deserialize, Serialize};
-use std::path::Path;
+use {
+    serde::{Deserialize, Serialize},
+    std::path::Path,
+};
 
 pub mod pool_state_store;
 pub mod store;
@@ -17,7 +19,8 @@ pub struct MarketSnapshot {
     pub sources: Vec<SourceSnapshot>,
     #[serde(default)]
     pub token_metadata: Vec<TokenMetadataSnapshot>,
-    /// CLMM pool topology only (no slot0 / ticks / liquidity). Live state is in Redis `lumagg:pool:clmm:*`.
+    /// CLMM pool topology only (no slot0 / ticks / liquidity). Live state is in
+    /// Redis `lumagg:pool:clmm:*`.
     #[serde(default, skip_serializing_if = "Vec::is_empty", alias = "clmm_pools")]
     pub clmm_pool_refs: Vec<ClmmPoolRefSnapshot>,
 }
@@ -41,7 +44,8 @@ pub struct SourceSnapshot {
     pub pairs: Vec<TradingPairSnapshot>,
 }
 
-/// Routing-graph edge (topology only). Reserves live in Redis `lumagg:pool:xyk:*`.
+/// Routing-graph edge (topology only). Reserves live in Redis
+/// `lumagg:pool:xyk:*`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TradingPairSnapshot {
     pub token_a: String,
@@ -83,7 +87,8 @@ impl ClmmPoolRefSnapshot {
     }
 }
 
-/// Full CLMM pool state (Redis `lumagg:pool:clmm:*` only — not stored in topology snapshot).
+/// Full CLMM pool state (Redis `lumagg:pool:clmm:*` only — not stored in
+/// topology snapshot).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ClmmPoolSnapshot {
     pub source: String,
@@ -149,10 +154,7 @@ pub fn write_snapshot_to_dir(snapshot_dir: &Path, snapshot: &MarketSnapshot) -> 
     std::fs::write(&snapshot_tmp_path, serde_json::to_vec_pretty(snapshot)?)?;
     std::fs::rename(&snapshot_tmp_path, &snapshot_path)?;
 
-    std::fs::write(
-        &meta_tmp_path,
-        serde_json::to_vec_pretty(&snapshot.current_meta())?,
-    )?;
+    std::fs::write(&meta_tmp_path, serde_json::to_vec_pretty(&snapshot.current_meta())?)?;
     std::fs::rename(&meta_tmp_path, &meta_path)?;
 
     Ok(())

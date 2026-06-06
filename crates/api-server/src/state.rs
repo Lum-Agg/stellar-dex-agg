@@ -1,35 +1,36 @@
-use anyhow::Result;
-use dex_adapters::{
-    aquarius::AquariusAdapter,
-    aquarius_clmm::AquariusClmmAdapter,
-    cache::{default_cache_path, PoolCache},
-    classic_dex::ClassicDexAdapter,
-    comet::CometAdapter,
-    phoenix::PhoenixAdapter,
-    rpc::SorobanRpc,
-    soroswap::SoroswapAdapter,
-    sushi::SushiAdapter,
-    token_metadata::{TokenMetadata, TokenMetadataStore},
-    traits::AdapterTradingPair,
-    DexAdapter,
-};
-use market_snapshot::{
-    pool_state_store::{build_pool_state_store, RedisPoolStateStore},
-    store::{
-        build_snapshot_store, should_reload_snapshot_version, subscribe_to_snapshot_events,
-        SnapshotListenerEvent, SnapshotStore, SnapshotStoreBackend,
+use {
+    crate::{
+        config::AppConfig,
+        pool_hydrate::{self, PoolHydrateConfig},
+        snapshot_loader::{build_engine_from_snapshot, path_finder_config_from_app},
     },
-    MarketSnapshot,
-};
-use router_engine::{split_optimizer::SplitConfig, OptimalRoute, QuoteEngine, RouteRequest};
-use std::{path::PathBuf, sync::Arc};
-use tokio::sync::{mpsc, RwLock};
-use tracing::{info, warn};
-
-use crate::{
-    config::AppConfig,
-    pool_hydrate::{self, PoolHydrateConfig},
-    snapshot_loader::{build_engine_from_snapshot, path_finder_config_from_app},
+    anyhow::Result,
+    dex_adapters::{
+        aquarius::AquariusAdapter,
+        aquarius_clmm::AquariusClmmAdapter,
+        cache::{default_cache_path, PoolCache},
+        classic_dex::ClassicDexAdapter,
+        comet::CometAdapter,
+        phoenix::PhoenixAdapter,
+        rpc::SorobanRpc,
+        soroswap::SoroswapAdapter,
+        sushi::SushiAdapter,
+        token_metadata::{TokenMetadata, TokenMetadataStore},
+        traits::AdapterTradingPair,
+        DexAdapter,
+    },
+    market_snapshot::{
+        pool_state_store::{build_pool_state_store, RedisPoolStateStore},
+        store::{
+            build_snapshot_store, should_reload_snapshot_version, subscribe_to_snapshot_events, SnapshotListenerEvent,
+            SnapshotStore, SnapshotStoreBackend,
+        },
+        MarketSnapshot,
+    },
+    router_engine::{split_optimizer::SplitConfig, OptimalRoute, QuoteEngine, RouteRequest},
+    std::{path::PathBuf, sync::Arc},
+    tokio::sync::{mpsc, RwLock},
+    tracing::{info, warn},
 };
 
 /// Shared application state.
@@ -56,18 +57,16 @@ pub(crate) fn sanitize_cached_pairs(
         *by_pool.entry(pair.pool_address.clone()).or_insert(0) += 1;
     }
 
-    // Aquarius multi-token pools are represented as multiple edges sharing one pool address.
-    // Those routes are not executable by the current on-chain aggregator, so never hydrate
-    // them from disk cache during startup.
+    // Aquarius multi-token pools are represented as multiple edges sharing one pool
+    // address. Those routes are not executable by the current on-chain
+    // aggregator, so never hydrate them from disk cache during startup.
     pairs
         .into_iter()
         .filter(|pair| by_pool.get(&pair.pool_address).copied().unwrap_or(0) == 1)
         .collect()
 }
 
-fn snapshot_token_metadata(
-    snapshot: &MarketSnapshot,
-) -> std::collections::HashMap<String, TokenMetadata> {
+fn snapshot_token_metadata(snapshot: &MarketSnapshot) -> std::collections::HashMap<String, TokenMetadata> {
     snapshot
         .token_metadata
         .iter()
@@ -173,16 +172,10 @@ fn build_empty_quote_engine(config: &AppConfig) -> Arc<QuoteEngine> {
         max_splits: config.max_splits,
         ..SplitConfig::default()
     };
-    Arc::new(QuoteEngine::new(
-        path_finder_config_from_app(config),
-        split_config,
-    ))
+    Arc::new(QuoteEngine::new(path_finder_config_from_app(config), split_config))
 }
 
-async fn attach_snapshot_live_adapter(
-    engine: &Arc<QuoteEngine>,
-    adapter: Arc<dyn DexAdapter>,
-) -> Result<()> {
+async fn attach_snapshot_live_adapter(engine: &Arc<QuoteEngine>, adapter: Arc<dyn DexAdapter>) -> Result<()> {
     engine.register_adapter(adapter).await;
     Ok(())
 }
@@ -204,11 +197,7 @@ async fn load_initial_snapshot_engine(
             let version = snapshot.version.clone();
             let engine = Arc::new(build_engine_from_snapshot(config, &snapshot).await?);
             attach_snapshot_live_classic_adapter(&engine).await?;
-            Ok((
-                engine,
-                Some(version),
-                Some(snapshot_token_metadata(&snapshot)),
-            ))
+            Ok((engine, Some(version), Some(snapshot_token_metadata(&snapshot))))
         }
         Err(error) => {
             warn!(
@@ -237,10 +226,7 @@ fn reload_mode_uses_polling(mode: SnapshotReloadMode) -> bool {
     mode != SnapshotReloadMode::PubSubHealthy
 }
 
-fn next_snapshot_reload_mode(
-    current_mode: SnapshotReloadMode,
-    event: &SnapshotListenerEvent,
-) -> SnapshotReloadMode {
+fn next_snapshot_reload_mode(current_mode: SnapshotReloadMode, event: &SnapshotListenerEvent) -> SnapshotReloadMode {
     match event {
         SnapshotListenerEvent::ListenerHealthy => SnapshotReloadMode::PubSubHealthy,
         SnapshotListenerEvent::ListenerDegraded => match current_mode {
@@ -253,12 +239,9 @@ fn next_snapshot_reload_mode(
     }
 }
 
-/// Full pool discovery for all adapters: replace graph edges per source and persist cache.
-async fn run_discovery(
-    adapters: &[Arc<dyn DexAdapter>],
-    engine: &Arc<QuoteEngine>,
-    cache: &mut PoolCache,
-) {
+/// Full pool discovery for all adapters: replace graph edges per source and
+/// persist cache.
+async fn run_discovery(adapters: &[Arc<dyn DexAdapter>], engine: &Arc<QuoteEngine>, cache: &mut PoolCache) {
     for adapter in adapters {
         info!("Discovery: fetching {} pools...", adapter.id());
         match adapter.get_trading_pairs().await {
@@ -266,9 +249,7 @@ async fn run_discovery(
                 info!("Discovery: {} returned {} pairs", adapter.id(), pairs.len());
                 cache.update_source(adapter.id(), pairs.clone());
                 let trading_pairs = pairs_to_trading(&pairs, adapter.id());
-                engine
-                    .update_pairs_from_cache(adapter.id(), &trading_pairs)
-                    .await;
+                engine.update_pairs_from_cache(adapter.id(), &trading_pairs).await;
             }
             Err(e) => {
                 warn!("Discovery: {} fetch failed: {}", adapter.id(), e);
@@ -292,9 +273,7 @@ async fn run_reserve_refresh(adapters: &[Arc<dyn DexAdapter>], engine: &Arc<Quot
                 let pairs = adapter.get_cached_pairs().await;
                 if !pairs.is_empty() {
                     let trading_pairs = pairs_to_trading(&pairs, adapter.id());
-                    engine
-                        .update_pairs_from_cache(adapter.id(), &trading_pairs)
-                        .await;
+                    engine.update_pairs_from_cache(adapter.id(), &trading_pairs).await;
                 }
             }
             Ok(_) => {}
@@ -305,12 +284,37 @@ async fn run_reserve_refresh(adapters: &[Arc<dyn DexAdapter>], engine: &Arc<Quot
     }
 }
 
+/// Telegram alert only when Soroswap Redis gaps are material (avoids noise on
+/// every quote).
+fn should_alert_quote_redis_miss(miss: usize, soroswap_refs: usize) -> bool {
+    if miss == 0 {
+        return false;
+    }
+    let min_miss = std::env::var("QUOTE_REDIS_MISS_ALERT_MIN")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(12);
+    if miss < min_miss {
+        return false;
+    }
+    if soroswap_refs == 0 {
+        return true;
+    }
+    let ratio_bps = miss.saturating_mul(10_000) / soroswap_refs;
+    let min_ratio_bps = std::env::var("QUOTE_REDIS_MISS_ALERT_RATIO_BPS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3000); // 30% of soroswap hops on candidate paths
+    ratio_bps >= min_ratio_bps
+}
+
 impl AppState {
     pub async fn current_engine(&self) -> Arc<QuoteEngine> {
         self.engine.read().await.clone()
     }
 
-    /// Find paths, hydrate pool state from Redis, then quote (no path prune; no RPC by default).
+    /// Find paths, hydrate pool state from Redis, then quote (no path prune; no
+    /// RPC by default).
     pub async fn quote_route(&self, request: &RouteRequest) -> OptimalRoute {
         let started = std::time::Instant::now();
         let engine = self.current_engine().await;
@@ -323,24 +327,23 @@ impl AppState {
         };
 
         let hydrate_started = std::time::Instant::now();
-        let (hydration, redis_miss_xyk) = if let Some(store) = &self.pool_state_store {
-            pool_hydrate::hydrate_paths(
-                &engine,
-                &paths,
-                store,
-                &self.rpc,
-                &hydrate_config,
-            )
-            .await
+        let (hydration, redis_miss_xyk, soroswap_refs) = if let Some(store) = &self.pool_state_store {
+            pool_hydrate::hydrate_paths(&engine, &paths, store, &self.rpc, &hydrate_config).await
         } else {
             tracing::warn!("pool_state_store missing — Soroban quotes will not hydrate from Redis");
-            (router_engine::QuoteHydration::default(), 0)
+            (router_engine::QuoteHydration::default(), 0, 0)
         };
-        if redis_miss_xyk > 0 {
+        if should_alert_quote_redis_miss(redis_miss_xyk, soroswap_refs) {
             if let Some(alerter) = &self.telegram {
+                let pct = if soroswap_refs > 0 {
+                    redis_miss_xyk * 100 / soroswap_refs
+                } else {
+                    0
+                };
                 let detail = format!(
-                    "quote Redis xy=k misses={redis_miss_xyk} paths={} (worker should publish pools)",
-                    paths.len()
+                    "quote Redis soroswap misses={redis_miss_xyk}/{soroswap_refs} ({pct}%) paths={} rpc_hydrate={}",
+                    paths.len(),
+                    hydrate_config.rpc_hydrate_enabled
                 );
                 let _ = alerter
                     .alert("quote_redis_miss", &format!("⚠️ LumAgg API\n{detail}"))
@@ -349,9 +352,7 @@ impl AppState {
         }
         let soroban_path_count = paths
             .iter()
-            .filter(|p| {
-                !p.sources.is_empty() && p.sources.iter().all(|s| s.as_str() != "classic_dex")
-            })
+            .filter(|p| !p.sources.is_empty() && p.sources.iter().all(|s| s.as_str() != "classic_dex"))
             .count();
         let hydrate_ms = hydrate_started.elapsed().as_millis();
         tracing::info!(
@@ -363,13 +364,12 @@ impl AppState {
             paths_ms,
             hydrate_ms,
             redis_miss_xyk,
+            soroswap_refs,
             rpc_hydrate_enabled = hydrate_config.rpc_hydrate_enabled,
             "quote_route hydration"
         );
         let quote_started = std::time::Instant::now();
-        let route = engine
-            .get_route_with_paths(request, &paths, Some(&hydration))
-            .await;
+        let route = engine.get_route_with_paths(request, &paths, Some(&hydration)).await;
         tracing::info!(
             quote_ms = quote_started.elapsed().as_millis(),
             total_ms = started.elapsed().as_millis(),
@@ -429,9 +429,7 @@ impl AppState {
                     SnapshotReloadTrigger::ListenerClosed => {
                         snapshot_events = None;
                         reload_mode = SnapshotReloadMode::PollingOnly;
-                        warn!(
-                            "Snapshot pub/sub listener stopped, continuing with polling fallback"
-                        );
+                        warn!("Snapshot pub/sub listener stopped, continuing with polling fallback");
                         continue;
                     }
                     SnapshotReloadTrigger::ListenerEvent(event) => {
@@ -440,10 +438,7 @@ impl AppState {
                             SnapshotListenerEvent::ListenerHealthy => continue,
                             SnapshotListenerEvent::ListenerDegraded => continue,
                             SnapshotListenerEvent::SnapshotVersion(version) => {
-                                if !should_reload_snapshot_version(
-                                    current_version.as_deref(),
-                                    &version,
-                                ) {
+                                if !should_reload_snapshot_version(current_version.as_deref(), &version) {
                                     continue;
                                 }
                             }
@@ -470,18 +465,13 @@ impl AppState {
                             warn!("Failed to attach snapshot live adapter: {}", error);
                             continue;
                         }
-                        token_metadata
-                            .replace_all(snapshot_token_metadata(&snapshot))
-                            .await;
+                        token_metadata.replace_all(snapshot_token_metadata(&snapshot)).await;
                         *engine_holder.write().await = engine;
                         current_version = Some(snapshot.version.clone());
                         info!("Reloaded market snapshot version {}", snapshot.version);
                     }
                     Err(e) => {
-                        warn!(
-                            "Failed to build engine from snapshot {}: {}",
-                            snapshot.version, e
-                        );
+                        warn!("Failed to build engine from snapshot {}: {}", snapshot.version, e);
                     }
                 }
             }
@@ -538,14 +528,8 @@ impl AppState {
                         .collect();
                     let trading_pairs = sanitize_cached_pairs(&source.source, trading_pairs);
 
-                    engine
-                        .update_pairs_from_cache(&source.source, &trading_pairs)
-                        .await;
-                    info!(
-                        "Loaded {} cached pairs for {}",
-                        trading_pairs.len(),
-                        source.source
-                    );
+                    engine.update_pairs_from_cache(&source.source, &trading_pairs).await;
+                    info!("Loaded {} cached pairs for {}", trading_pairs.len(), source.source);
                 }
             }
             Err(_) => {
@@ -588,8 +572,7 @@ impl AppState {
             let engine_refresh = engine_bg.clone();
             let adapters_refresh = adapters.clone();
             tokio::spawn(async move {
-                let mut interval =
-                    tokio::time::interval(std::time::Duration::from_secs(refresh_interval));
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(refresh_interval));
                 interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                 loop {
                     interval.tick().await;
@@ -597,8 +580,7 @@ impl AppState {
                 }
             });
 
-            let mut discovery_timer =
-                tokio::time::interval(std::time::Duration::from_secs(discovery_interval));
+            let mut discovery_timer = tokio::time::interval(std::time::Duration::from_secs(discovery_interval));
             discovery_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             // Initial discovery already ran; first periodic tick fires after one interval.
             discovery_timer.tick().await;
@@ -627,13 +609,14 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use anyhow::anyhow;
-    use async_trait::async_trait;
-    use dex_adapters::{AdapterQuote, AdapterTradingPair, ProtocolType, SwapOperation};
-    use market_snapshot::store::SnapshotListenerEvent;
-    use market_snapshot::MarketSnapshot;
-    use router_engine::TokenId;
+    use {
+        super::*,
+        anyhow::anyhow,
+        async_trait::async_trait,
+        dex_adapters::{AdapterQuote, AdapterTradingPair, ProtocolType, SwapOperation},
+        market_snapshot::{store::SnapshotListenerEvent, MarketSnapshot},
+        router_engine::TokenId,
+    };
 
     struct FailingSnapshotStore;
 
@@ -714,9 +697,7 @@ mod tests {
     #[test]
     fn healthy_pubsub_mode_does_not_poll() {
         assert!(!reload_mode_uses_polling(SnapshotReloadMode::PubSubHealthy));
-        assert!(reload_mode_uses_polling(
-            SnapshotReloadMode::PollingFallback
-        ));
+        assert!(reload_mode_uses_polling(SnapshotReloadMode::PollingFallback));
         assert!(reload_mode_uses_polling(SnapshotReloadMode::PollingOnly));
     }
 
@@ -744,10 +725,9 @@ mod tests {
     #[tokio::test]
     async fn initial_snapshot_load_failure_uses_empty_engine() {
         let config = AppConfig::default();
-        let (engine, current_version, token_metadata) =
-            load_initial_snapshot_engine(&config, &FailingSnapshotStore)
-                .await
-                .unwrap();
+        let (engine, current_version, token_metadata) = load_initial_snapshot_engine(&config, &FailingSnapshotStore)
+            .await
+            .unwrap();
 
         let route = engine
             .get_route(&router_engine::RouteRequest {

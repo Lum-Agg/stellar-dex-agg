@@ -1,17 +1,22 @@
-//! CLMM accuracy test: compare local tick-math computation vs on-chain simulate.
+//! CLMM accuracy test: compare local tick-math computation vs on-chain
+//! simulate.
 //!
 //! Tests Aquarius concentrated pools and Sushi V3 pools.
 //! Run with: cargo test --test clmm_accuracy_test -- --ignored --nocapture
 //!
 //! Requires network access to Stellar mainnet RPC.
 
-use dex_adapters::aquarius_clmm::AquariusClmmAdapter;
-use dex_adapters::clmm_math;
-use dex_adapters::rpc::{scval_to_address, scval_to_i128, scval_to_u128, SorobanRpc};
-use dex_adapters::traits::TokenId;
-use dex_adapters::DexAdapter;
-use std::sync::Arc;
-use stellar_xdr::curr as xdr;
+use {
+    dex_adapters::{
+        aquarius_clmm::AquariusClmmAdapter,
+        clmm_math,
+        rpc::{scval_to_address, scval_to_i128, scval_to_u128, SorobanRpc},
+        traits::TokenId,
+        DexAdapter,
+    },
+    std::sync::Arc,
+    stellar_xdr::curr as xdr,
+};
 
 /// XLM SAC (Stellar Asset Contract) address on mainnet
 const XLM_CONTRACT: &str = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";
@@ -32,15 +37,17 @@ fn mainnet_rpc() -> Arc<SorobanRpc> {
 }
 
 /// Helper: simulate a swap on an Aquarius concentrated pool contract.
-/// Returns (amount0, amount1) where positive = user pays, negative = user receives.
+/// Returns (amount0, amount1) where positive = user pays, negative = user
+/// receives.
 async fn aquarius_clmm_simulate_swap(
     rpc: &SorobanRpc,
     pool_address: &str,
     zero_for_one: bool,
     amount_in: i128,
 ) -> Option<(i128, i128)> {
-    // Aquarius concentrated pool has: simulate_swap(zero_for_one: bool, amount_specified: i128, sqrt_price_limit_x96: U256)
-    // Returns (amount0: i128, amount1: i128)
+    // Aquarius concentrated pool has: simulate_swap(zero_for_one: bool,
+    // amount_specified: i128, sqrt_price_limit_x96: U256) Returns (amount0:
+    // i128, amount1: i128)
     let zero_for_one_val = xdr::ScVal::Bool(zero_for_one);
     let amount_val = xdr::ScVal::I128(xdr::Int128Parts {
         hi: (amount_in >> 64) as i64,
@@ -87,7 +94,8 @@ async fn aquarius_clmm_simulate_swap(
     }
 }
 
-/// Helper: simulate a swap on a Sushi V3 pool via pool-lens quote_exact_input_single.
+/// Helper: simulate a swap on a Sushi V3 pool via pool-lens
+/// quote_exact_input_single.
 async fn sushi_simulate_quote(
     rpc: &SorobanRpc,
     token_in: &str,
@@ -98,14 +106,11 @@ async fn sushi_simulate_quote(
     let token_in_hash = stellar_strkey::Contract::from_string(token_in).ok()?.0;
     let token_out_hash = stellar_strkey::Contract::from_string(token_out).ok()?.0;
 
-    // Call pool-lens quote_exact_input_single(token_in, token_out, fee, amount_in, sqrt_price_limit_x96)
+    // Call pool-lens quote_exact_input_single(token_in, token_out, fee, amount_in,
+    // sqrt_price_limit_x96)
     let args = vec![
-        xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
-            token_in_hash,
-        )))),
-        xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
-            token_out_hash,
-        )))),
+        xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(token_in_hash)))),
+        xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(token_out_hash)))),
         xdr::ScVal::U32(fee),
         xdr::ScVal::I128(xdr::Int128Parts {
             hi: (amount_in >> 64) as i64,
@@ -152,11 +157,7 @@ async fn find_aquarius_clmm_pools_with_xlm(rpc: &SorobanRpc) -> Vec<String> {
         });
 
         match rpc
-            .simulate_call(
-                AQUARIUS_ROUTER,
-                "get_pools_for_tokens_range",
-                vec![start_val, end_val],
-            )
+            .simulate_call(AQUARIUS_ROUTER, "get_pools_for_tokens_range", vec![start_val, end_val])
             .await
         {
             Ok(result) => {
@@ -206,7 +207,8 @@ fn check_tokens_contain_xlm(val: &xdr::ScVal) -> bool {
     false
 }
 
-/// Test: Read Aquarius concentrated pool state and compare local vs simulate quote.
+/// Test: Read Aquarius concentrated pool state and compare local vs simulate
+/// quote.
 #[tokio::test]
 #[ignore] // requires network
 async fn test_aquarius_clmm_quote_accuracy() {
@@ -243,10 +245,7 @@ async fn test_aquarius_clmm_quote_accuracy() {
         }
     }
 
-    println!(
-        "\nFound {} concentrated pools with XLM",
-        concentrated_pools.len()
-    );
+    println!("\nFound {} concentrated pools with XLM", concentrated_pools.len());
 
     if concentrated_pools.is_empty() {
         println!("No concentrated pools found. The first 50 token sets may not have concentrated XLM pools.");
@@ -254,7 +253,8 @@ async fn test_aquarius_clmm_quote_accuracy() {
         return;
     }
 
-    // 3. For each concentrated pool, compare on-chain estimate_swap vs local computation
+    // 3. For each concentrated pool, compare on-chain estimate_swap vs local
+    //    computation
     let adapter = AquariusClmmAdapter::new(rpc.clone());
 
     for pool_addr in concentrated_pools.iter().take(3) {
@@ -262,9 +262,7 @@ async fn test_aquarius_clmm_quote_accuracy() {
 
         // Read token0 to determine swap direction
         let token0_addr = match rpc.call_no_args(pool_addr, "get_tokens").await {
-            Ok(xdr::ScVal::Vec(Some(vec))) if !vec.0.is_empty() => {
-                scval_to_address(&vec.0[0]).unwrap_or_default()
-            }
+            Ok(xdr::ScVal::Vec(Some(vec))) if !vec.0.is_empty() => scval_to_address(&vec.0[0]).unwrap_or_default(),
             _ => {
                 println!("  Cannot read tokens, skipping");
                 continue;
@@ -272,11 +270,7 @@ async fn test_aquarius_clmm_quote_accuracy() {
         };
 
         let zero_for_one = token0_addr == XLM_CONTRACT;
-        let (in_idx, out_idx) = if zero_for_one {
-            (0u32, 1u32)
-        } else {
-            (1u32, 0u32)
-        };
+        let (in_idx, out_idx) = if zero_for_one { (0u32, 1u32) } else { (1u32, 0u32) };
         println!(
             "  XLM is token{}, zero_for_one={}",
             if zero_for_one { 0 } else { 1 },
@@ -293,11 +287,7 @@ async fn test_aquarius_clmm_quote_accuracy() {
         });
 
         let on_chain_out = match rpc
-            .simulate_call(
-                pool_addr,
-                "estimate_swap",
-                vec![in_idx_val, out_idx_val, amount_val],
-            )
+            .simulate_call(pool_addr, "estimate_swap", vec![in_idx_val, out_idx_val, amount_val])
             .await
         {
             Ok(result) => match scval_to_u128(&result) {
@@ -336,23 +326,14 @@ async fn test_aquarius_clmm_quote_accuracy() {
                     println!("  getLedgerEntries returned {} entries", entries.len());
                     if let Some(entry) = entries.first() {
                         // Print the entry type
-                        println!(
-                            "  Entry data type: {:?}",
-                            std::mem::discriminant(&entry.entry.data)
-                        );
+                        println!("  Entry data type: {:?}", std::mem::discriminant(&entry.entry.data));
                         if let xdr::LedgerEntryData::ContractData(data) = &entry.entry.data {
-                            println!(
-                                "  ContractData val type: {:?}",
-                                std::mem::discriminant(&data.val)
-                            );
+                            println!("  ContractData val type: {:?}", std::mem::discriminant(&data.val));
                             if let xdr::ScVal::ContractInstance(instance) = &data.val {
                                 if let Some(storage) = &instance.storage {
                                     println!("  Instance storage has {} entries", storage.0.len());
                                     for (i, item) in storage.0.iter().take(5).enumerate() {
-                                        let key_str = format!("{:?}", &item.key)
-                                            .chars()
-                                            .take(80)
-                                            .collect::<String>();
+                                        let key_str = format!("{:?}", &item.key).chars().take(80).collect::<String>();
                                         println!("    [{}] key={}", i, key_str);
                                     }
                                 } else {
@@ -384,21 +365,10 @@ async fn test_aquarius_clmm_quote_accuracy() {
                 Ok(pairs) => {
                     println!("  Loaded {} pairs from adapter", pairs.len());
                     if let Some(pair) = pairs.first() {
-                        let token_in = if zero_for_one {
-                            &pair.token_a
-                        } else {
-                            &pair.token_b
-                        };
-                        let token_out = if zero_for_one {
-                            &pair.token_b
-                        } else {
-                            &pair.token_a
-                        };
+                        let token_in = if zero_for_one { &pair.token_a } else { &pair.token_b };
+                        let token_out = if zero_for_one { &pair.token_b } else { &pair.token_a };
 
-                        match adapter
-                            .get_quote(token_in, token_out, amount_in, pool_addr)
-                            .await
-                        {
+                        match adapter.get_quote(token_in, token_out, amount_in, pool_addr).await {
                             Ok(Some(quote)) => {
                                 let local_out = quote.amount_out;
                                 let diff = if local_out > expected_out {
@@ -553,16 +523,11 @@ async fn test_sushi_v3_local_quote_accuracy() {
             println!("  no liquidity");
             continue;
         }
-        println!(
-            "  tick={}, liq={}, spacing={}",
-            tick, liquidity, tick_spacing
-        );
+        println!("  tick={}, liq={}, spacing={}", tick, liquidity, tick_spacing);
 
         // Read tick data via pool-lens
         let pool_hash = stellar_strkey::Contract::from_string(pool_addr).unwrap().0;
-        let pool_scval = xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
-            pool_hash,
-        ))));
+        let pool_scval = xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(pool_hash))));
 
         let compressed_tick = floor_div(tick, tick_spacing);
         let current_word = floor_div(compressed_tick, 256);
@@ -587,16 +552,15 @@ async fn test_sushi_v3_local_quote_accuracy() {
                                 let comp = floor_div(t, tick_spacing);
                                 let chunk_pos = comp.div_euclid(16);
                                 let slot = comp.rem_euclid(16) as usize;
-                                let chunk =
-                                    tick_store.chunks.entry(chunk_pos).or_insert_with(|| {
-                                        vec![
-                                            dex_adapters::clmm_math::TickState {
-                                                liquidity_gross: 0,
-                                                liquidity_net: 0
-                                            };
-                                            16
-                                        ]
-                                    });
+                                let chunk = tick_store.chunks.entry(chunk_pos).or_insert_with(|| {
+                                    vec![
+                                        dex_adapters::clmm_math::TickState {
+                                            liquidity_gross: 0,
+                                            liquidity_net: 0
+                                        };
+                                        16
+                                    ]
+                                });
                                 chunk[slot] = dex_adapters::clmm_math::TickState {
                                     liquidity_gross: lg,
                                     liquidity_net: ln,
@@ -604,8 +568,7 @@ async fn test_sushi_v3_local_quote_accuracy() {
                                 // Set bitmap
                                 let bm_word = chunk_pos >> 8;
                                 let bm_bit = (chunk_pos & 255) as u32;
-                                let word =
-                                    tick_store.chunk_bitmap.entry(bm_word).or_insert([0u8; 32]);
+                                let word = tick_store.chunk_bitmap.entry(bm_word).or_insert([0u8; 32]);
                                 let byte_idx = 31 - (bm_bit / 8) as usize;
                                 word[byte_idx] |= 1u8 << (bm_bit % 8);
                             }
@@ -654,12 +617,7 @@ async fn test_sushi_v3_local_quote_accuracy() {
             let xlm_human = amount_in as f64 / 10_000_000.0;
 
             // Local computation
-            let local_out = match dex_adapters::clmm_math::simulate_swap(
-                &pool_state,
-                &tick_store,
-                amount_in,
-                true,
-            ) {
+            let local_out = match dex_adapters::clmm_math::simulate_swap(&pool_state, &tick_store, amount_in, true) {
                 Some((out, _, _)) => out,
                 None => {
                     println!("  {:>6.0} XLM: local=0 (no output)", xlm_human);
@@ -716,18 +674,12 @@ async fn test_sushi_v3_local_quote_accuracy() {
                     xlm_human, local_out, chain, diff_pct, status
                 );
             } else {
-                println!(
-                    "  {:>6.0} XLM: local={:>12} chain=? (sim failed)",
-                    xlm_human, local_out
-                );
+                println!("  {:>6.0} XLM: local={:>12} chain=? (sim failed)", xlm_human, local_out);
             }
         }
     }
 
-    println!(
-        "=== Summary: {}/{} tests matched ===",
-        total_matched, total_tested
-    );
+    println!("=== Summary: {}/{} tests matched ===", total_matched, total_tested);
     assert!(total_matched > 0, "At least one test should match");
 }
 
@@ -751,9 +703,7 @@ fn extract_transfer_amount_from_error(err_str: &str, _zero_for_one: bool) -> Opt
                 // Split by comma, last element is the amount
                 let parts: Vec<&str> = segment.split(',').collect();
                 if let Some(amount_str) = parts.last() {
-                    let cleaned = amount_str
-                        .trim()
-                        .trim_matches(|c: char| !c.is_ascii_digit());
+                    let cleaned = amount_str.trim().trim_matches(|c: char| !c.is_ascii_digit());
                     if let Ok(amount) = cleaned.parse::<u128>() {
                         // Skip if amount equals input (1000000000) - means input transfer failed
                         if amount == 1000000000 {
@@ -775,20 +725,12 @@ async fn test_sushi_pool_state_reading() {
     println!("=== Sushi V3 Pool State Reading ===\n");
 
     // Find XLM/USDC pool (try 3000 bps = 0.3%)
-    let token_a_hash = stellar_strkey::Contract::from_string(XLM_CONTRACT)
-        .unwrap()
-        .0;
-    let token_b_hash = stellar_strkey::Contract::from_string(USDC_CONTRACT)
-        .unwrap()
-        .0;
+    let token_a_hash = stellar_strkey::Contract::from_string(XLM_CONTRACT).unwrap().0;
+    let token_b_hash = stellar_strkey::Contract::from_string(USDC_CONTRACT).unwrap().0;
 
     let args = vec![
-        xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
-            token_a_hash,
-        )))),
-        xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
-            token_b_hash,
-        )))),
+        xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(token_a_hash)))),
+        xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(token_b_hash)))),
         xdr::ScVal::U32(3000),
     ];
 
@@ -861,8 +803,9 @@ async fn test_sushi_pool_state_reading() {
 
 /// Parse Sushi SwapResult from simulate response.
 /// Result is wrapped: Vec [Symbol("Ok"), SwapResult_map]
-/// SwapResult: Map { amount0: i128, amount1: i128, liquidity: u128, sqrt_price_x96: U256, tick: i32 }
-/// Returns the output amount (positive value).
+/// SwapResult: Map { amount0: i128, amount1: i128, liquidity: u128,
+/// sqrt_price_x96: U256, tick: i32 } Returns the output amount (positive
+/// value).
 fn parse_sushi_swap_result(val: &xdr::ScVal, zero_for_one: bool) -> Option<u128> {
     // Try unwrapping Result::Ok wrapper
     let inner = match val {

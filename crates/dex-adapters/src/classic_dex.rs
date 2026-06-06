@@ -10,36 +10,53 @@
 //! Execution: PathPaymentStrictSend operation in the same transaction as
 //! Soroban contract calls (Stellar supports mixed Classic + Soroban ops).
 
-use crate::traits::*;
-use anyhow::Result;
-use async_trait::async_trait;
-use reqwest::Client;
-use serde::Deserialize;
-use tokio::sync::RwLock;
-use tracing::{debug, info};
+use {
+    crate::traits::*,
+    anyhow::{Context, Result},
+    async_trait::async_trait,
+    reqwest::Client,
+    serde::Deserialize,
+    stellar_xdr::curr::{self as xdr},
+    tokio::sync::RwLock,
+    tracing::{debug, info},
+};
 
 /// Default public Horizon endpoint
 const DEFAULT_HORIZON_URL: &str = "https://horizon.stellar.org";
 
-/// Rough effective reserve (input-token stroops) for major classic paths when Horizon
-/// does not expose pool reserves. Used for impact ≈ amount_in * 10_000 / (2 * reserve).
+/// Rough effective reserve (input-token stroops) for major classic paths when
+/// Horizon does not expose pool reserves. Used for impact ≈ amount_in * 10_000
+/// / (2 * reserve).
 fn estimate_classic_impact_bps(amount_in: u128) -> u32 {
     if amount_in == 0 {
         return 0;
     }
-    // ~500k XLM depth order-of-magnitude for XLM/USDC-class books (7-decimal stroops).
+    // ~500k XLM depth order-of-magnitude for XLM/USDC-class books (7-decimal
+    // stroops).
     const ESTIMATED_RESERVE_STROOPS: u128 = 5_000_000_000_000;
     (amount_in.saturating_mul(10_000) / (2 * ESTIMATED_RESERVE_STROOPS)).min(10_000) as u32
 }
 
-/// Well-known assets for Classic DEX path finding
-const CLASSIC_ASSETS: &[(&str, &str, &str)] = &[
+/// Horizon strict-send quote including intermediate path assets (for
+/// PathPayment ops).
+#[derive(Debug, Clone)]
+pub struct ClassicPathQuote {
+    pub amount_out: u128,
+    pub path: Vec<ClassicHorizonAsset>,
+}
+
+/// Stellar Classic asset as returned by Horizon `/paths/*`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClassicHorizonAsset {
+    Native,
+    Credit { code: String, issuer: String },
+}
+
+/// Well-known assets for Classic DEX path finding (contract, horizon code,
+/// issuer).
+pub const CLASSIC_ASSETS: &[(&str, &str, &str)] = &[
     // (contract_address, asset_code_for_horizon, issuer_or_native)
-    (
-        "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
-        "native",
-        "",
-    ),
+    ("CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA", "native", ""),
     (
         "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
         "USDC",
@@ -73,30 +90,38 @@ impl ClassicDexAdapter {
         }
     }
 
-    /// Convert a contract address to Horizon API asset parameters.
-    fn contract_to_horizon_asset(contract: &str) -> Option<HorizonAsset> {
+    /// Map a mainnet SAC contract id to a Horizon asset.
+    pub fn contract_to_horizon_asset(contract: &str) -> Option<ClassicHorizonAsset> {
         for (addr, code, issuer) in CLASSIC_ASSETS {
             if *addr == contract {
                 if *code == "native" {
-                    return Some(HorizonAsset::Native);
-                } else {
-                    return Some(HorizonAsset::Credit {
-                        code: code.to_string(),
-                        issuer: issuer.to_string(),
-                    });
+                    return Some(ClassicHorizonAsset::Native);
                 }
+                return Some(ClassicHorizonAsset::Credit {
+                    code: code.to_string(),
+                    issuer: issuer.to_string(),
+                });
             }
         }
         None
     }
 
-    /// Query Horizon `/paths/strict-send` for a quote.
-    async fn horizon_quote(
+    /// Query Horizon `/paths/strict-send` for output amount and path.
+    pub async fn strict_send_quote(
         &self,
-        source_asset: &HorizonAsset,
-        dest_asset: &HorizonAsset,
+        source_asset: &ClassicHorizonAsset,
+        dest_asset: &ClassicHorizonAsset,
         amount: u128,
-    ) -> Result<Option<u128>> {
+    ) -> Result<Option<ClassicPathQuote>> {
+        self.horizon_strict_send(source_asset, dest_asset, amount).await
+    }
+
+    async fn horizon_strict_send(
+        &self,
+        source_asset: &ClassicHorizonAsset,
+        dest_asset: &ClassicHorizonAsset,
+        amount: u128,
+    ) -> Result<Option<ClassicPathQuote>> {
         // Convert amount from stroops to decimal string (7 decimals)
         let whole = amount / 10_000_000;
         let frac = amount % 10_000_000;
@@ -104,14 +129,14 @@ impl ClassicDexAdapter {
 
         // Build destination_assets param (compact format: CODE:ISSUER or native)
         let dest_str = match dest_asset {
-            HorizonAsset::Native => "native".to_string(),
-            HorizonAsset::Credit { code, issuer } => format!("{}:{}", code, issuer),
+            ClassicHorizonAsset::Native => "native".to_string(),
+            ClassicHorizonAsset::Credit { code, issuer } => format!("{}:{}", code, issuer),
         };
 
         // Build source asset params
         let source_params = match source_asset {
-            HorizonAsset::Native => "source_asset_type=native".to_string(),
-            HorizonAsset::Credit { code, issuer } => {
+            ClassicHorizonAsset::Native => "source_asset_type=native".to_string(),
+            ClassicHorizonAsset::Credit { code, issuer } => {
                 let asset_type = if code.len() <= 4 {
                     "credit_alphanum4"
                 } else {
@@ -147,16 +172,31 @@ impl ClassicDexAdapter {
 
         if let Some(records) = records {
             if let Some(first) = records.first() {
-                if let Some(dest_amount_str) =
-                    first.get("destination_amount").and_then(|v| v.as_str())
-                {
+                if let Some(dest_amount_str) = first.get("destination_amount").and_then(|v| v.as_str()) {
                     let amount_out = parse_stellar_amount(dest_amount_str)?;
-                    return Ok(Some(amount_out));
+                    let path = first
+                        .get("path")
+                        .and_then(|p| p.as_array())
+                        .map(|arr| arr.iter().filter_map(parse_horizon_path_entry).collect::<Vec<_>>())
+                        .unwrap_or_default();
+                    return Ok(Some(ClassicPathQuote { amount_out, path }));
                 }
             }
         }
 
         Ok(None)
+    }
+
+    async fn horizon_quote(
+        &self,
+        source_asset: &ClassicHorizonAsset,
+        dest_asset: &ClassicHorizonAsset,
+        amount: u128,
+    ) -> Result<Option<u128>> {
+        Ok(self
+            .horizon_strict_send(source_asset, dest_asset, amount)
+            .await?
+            .map(|q| q.amount_out))
     }
 
     /// Generate trading pairs from well-known assets.
@@ -187,10 +227,42 @@ impl ClassicDexAdapter {
     }
 }
 
-#[derive(Debug, Clone)]
-enum HorizonAsset {
-    Native,
-    Credit { code: String, issuer: String },
+fn parse_horizon_path_entry(v: &serde_json::Value) -> Option<ClassicHorizonAsset> {
+    match v.get("asset_type")?.as_str()? {
+        "native" => Some(ClassicHorizonAsset::Native),
+        "credit_alphanum4" | "credit_alphanum12" => Some(ClassicHorizonAsset::Credit {
+            code: v.get("asset_code")?.as_str()?.to_string(),
+            issuer: v.get("asset_issuer")?.as_str()?.to_string(),
+        }),
+        _ => None,
+    }
+}
+
+/// Convert a Horizon path asset to XDR for `PathPaymentStrictSend`.
+pub fn classic_horizon_to_xdr(asset: &ClassicHorizonAsset) -> Result<xdr::Asset> {
+    match asset {
+        ClassicHorizonAsset::Native => Ok(xdr::Asset::Native),
+        ClassicHorizonAsset::Credit { code, issuer } => {
+            let issuer_pk = stellar_strkey::ed25519::PublicKey::from_string(issuer)
+                .with_context(|| format!("invalid issuer {}", issuer))?;
+            let issuer_id = xdr::AccountId(xdr::PublicKey::PublicKeyTypeEd25519(xdr::Uint256(issuer_pk.0)));
+            if code.len() <= 4 {
+                let mut bytes = [0u8; 4];
+                bytes[..code.len()].copy_from_slice(code.as_bytes());
+                Ok(xdr::Asset::CreditAlphanum4(xdr::AlphaNum4 {
+                    asset_code: xdr::AssetCode4(bytes),
+                    issuer: issuer_id,
+                }))
+            } else {
+                let mut bytes = [0u8; 12];
+                bytes[..code.len().min(12)].copy_from_slice(&code.as_bytes()[..code.len().min(12)]);
+                Ok(xdr::Asset::CreditAlphanum12(xdr::AlphaNum12 {
+                    asset_code: xdr::AssetCode12(bytes),
+                    issuer: issuer_id,
+                }))
+            }
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -284,10 +356,7 @@ impl DexAdapter for ClassicDexAdapter {
             None => return Ok(None),
         };
 
-        match self
-            .horizon_quote(&source_asset, &dest_asset, amount_in)
-            .await
-        {
+        match self.horizon_quote(&source_asset, &dest_asset, amount_in).await {
             Ok(Some(amount_out)) => {
                 Ok(Some(AdapterQuote {
                     amount_out,

@@ -1,24 +1,24 @@
-use std::{
-    path::PathBuf,
-    process::{Child, Command, Stdio},
-    sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+use {
+    anyhow::Result,
+    api_server::{config::AppConfig, snapshot_loader::build_engine_from_snapshot},
+    async_trait::async_trait,
+    dex_adapters::{
+        clmm_math::{bitmap, clmm_pool_from_snapshot, sqrt_ratio_at_tick},
+        AdapterQuote, AdapterTradingPair, DexAdapter, ProtocolType, SwapOperation, TokenId,
+    },
+    market_snapshot::{
+        store::{build_snapshot_store, SnapshotStoreBackend},
+        ClmmBitmapWordSnapshot, ClmmCoverageSnapshot, ClmmPoolRefSnapshot, ClmmPoolSnapshot, ClmmTickSnapshot,
+        MarketSnapshot, SourceSnapshot, TradingPairSnapshot,
+    },
+    router_engine::RouteRequest,
+    std::{
+        path::PathBuf,
+        process::{Child, Command, Stdio},
+        sync::Arc,
+        time::{Duration, SystemTime, UNIX_EPOCH},
+    },
 };
-
-use anyhow::Result;
-use api_server::{config::AppConfig, snapshot_loader::build_engine_from_snapshot};
-use async_trait::async_trait;
-use dex_adapters::clmm_math::clmm_pool_from_snapshot;
-use dex_adapters::{
-    clmm_math::{bitmap, sqrt_ratio_at_tick},
-    AdapterQuote, AdapterTradingPair, DexAdapter, ProtocolType, SwapOperation, TokenId,
-};
-use market_snapshot::{
-    store::{build_snapshot_store, SnapshotStoreBackend},
-    ClmmBitmapWordSnapshot, ClmmCoverageSnapshot, ClmmPoolRefSnapshot, ClmmPoolSnapshot,
-    ClmmTickSnapshot, MarketSnapshot, SourceSnapshot, TradingPairSnapshot,
-};
-use router_engine::RouteRequest;
 
 fn token(id: &str) -> TokenId {
     TokenId::Contract {
@@ -34,12 +34,7 @@ fn clmm_word_for_bits(bits: &[u32]) -> [u8; 32] {
     word
 }
 
-fn clmm_pool_snapshot(
-    source: &str,
-    token0: &str,
-    token1: &str,
-    pool_address: &str,
-) -> ClmmPoolSnapshot {
+fn clmm_pool_snapshot(source: &str, token0: &str, token1: &str, pool_address: &str) -> ClmmPoolSnapshot {
     let lower_chunk = bitmap::chunk_address(bitmap::compress_tick(-1000, 200)).0;
     let upper_chunk = bitmap::chunk_address(bitmap::compress_tick(1000, 200)).0;
     let (chunk_word_pos, lower_bit) = bitmap::chunk_bitmap_position(lower_chunk);
@@ -95,10 +90,7 @@ fn smoke_clmm_pools() -> Vec<ClmmPoolSnapshot> {
 
 fn smoke_snapshot() -> MarketSnapshot {
     let clmm_pools = smoke_clmm_pools();
-    let clmm_refs: Vec<ClmmPoolRefSnapshot> = clmm_pools
-        .iter()
-        .map(ClmmPoolRefSnapshot::from_pool)
-        .collect();
+    let clmm_refs: Vec<ClmmPoolRefSnapshot> = clmm_pools.iter().map(ClmmPoolRefSnapshot::from_pool).collect();
     MarketSnapshot::from_sources(
         "redis-smoke",
         123,
@@ -227,10 +219,7 @@ impl RedisServerGuard {
     fn start(port: u16) -> Self {
         let dir = std::env::temp_dir().join(format!(
             "lumagg-redis-smoke-{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let child = Command::new("redis-server")
@@ -281,9 +270,7 @@ async fn redis_snapshot_store_smoke_quotes_sushi_aquarius_clmm_and_classic() {
     let config = AppConfig::default();
     let engine = build_engine_from_snapshot(&config, &loaded).await.unwrap();
     seed_clmm_quote_states(&engine, &smoke_clmm_pools()).await;
-    engine
-        .register_adapter(Arc::new(StaticClassicAdapter))
-        .await;
+    engine.register_adapter(Arc::new(StaticClassicAdapter)).await;
 
     let sushi_route = engine
         .get_route(&RouteRequest {

@@ -1,11 +1,11 @@
-//! Map on-chain contract IDs to LumAgg `(source, pool_address)` for ledger event ingestion.
+//! Map on-chain contract IDs to LumAgg `(source, pool_address)` for ledger
+//! event ingestion.
 
-use std::collections::{HashMap, HashSet};
-
-use market_snapshot::{ClmmPoolRefSnapshot, SourceSnapshot};
-
-use crate::rpc::events::ContractEvent;
-use crate::utils::is_contract_address;
+use {
+    crate::{rpc::events::ContractEvent, utils::is_contract_address},
+    market_snapshot::{ClmmPoolRefSnapshot, SourceSnapshot},
+    std::collections::{HashMap, HashSet},
+};
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct PoolRef {
@@ -58,10 +58,7 @@ impl KnownPoolIndex {
 }
 
 /// Pools whose contract emitted a contract event in the indexed ledger range.
-pub fn touched_pools_from_events(
-    events: &[ContractEvent],
-    index: &KnownPoolIndex,
-) -> HashSet<PoolRef> {
+pub fn touched_pools_from_events(events: &[ContractEvent], index: &KnownPoolIndex) -> HashSet<PoolRef> {
     let mut touched = HashSet::new();
     for event in events {
         if event.event_type != "contract" {
@@ -76,8 +73,7 @@ pub fn touched_pools_from_events(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use market_snapshot::TradingPairSnapshot;
+    use {super::*, market_snapshot::TradingPairSnapshot};
 
     #[test]
     fn maps_events_to_known_pools() {
@@ -86,8 +82,7 @@ mod tests {
             pairs: vec![TradingPairSnapshot {
                 token_a: "A".to_string(),
                 token_b: "B".to_string(),
-                pool_address: "CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2"
-                    .to_string(),
+                pool_address: "CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2".to_string(),
                 fee_bps: 30,
             }],
         }];

@@ -5,5 +5,7 @@ pub mod split_optimizer;
 pub mod transaction_builder;
 pub mod types;
 
-pub use quote_engine::{QuoteEngine, QuoteHydration, SnapshotClmmQuoteState};
-pub use types::*;
+pub use {
+    quote_engine::{QuoteEngine, QuoteHydration, SnapshotClmmQuoteState},
+    types::*,
+};

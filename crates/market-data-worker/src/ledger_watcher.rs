@@ -1,17 +1,19 @@
-//! Poll `getLatestLedger` + `getEvents` and return pools touched since the last cursor.
+//! Poll `getLatestLedger` + `getEvents` and return pools touched since the last
+//! cursor.
 
-use std::collections::HashSet;
-
-use anyhow::Result;
-use dex_adapters::{
-    pool_index::{touched_pools_from_events, KnownPoolIndex, PoolRef},
-    rpc::{
-        events::{EventFilterSpec, MAX_LEDGER_SCAN_PER_REQUEST},
-        SorobanRpc,
+use {
+    anyhow::Result,
+    dex_adapters::{
+        pool_index::{touched_pools_from_events, KnownPoolIndex, PoolRef},
+        rpc::{
+            events::{EventFilterSpec, MAX_LEDGER_SCAN_PER_REQUEST},
+            SorobanRpc,
+        },
     },
+    market_snapshot::{ClmmPoolSnapshot, SourceSnapshot},
+    std::collections::HashSet,
+    tracing::{debug, info, warn},
 };
-use market_snapshot::{ClmmPoolSnapshot, SourceSnapshot};
-use tracing::{debug, info, warn};
 
 /// Default ledger poll interval (seconds, fractional OK via env).
 pub const DEFAULT_LEDGER_POLL_SECS: f64 = 0.5;
@@ -30,8 +32,10 @@ pub fn ledger_poll_duration_from_env() -> std::time::Duration {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::{Mutex, OnceLock};
+    use {
+        super::*,
+        std::sync::{Mutex, OnceLock},
+    };
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -160,10 +164,7 @@ impl LedgerWatcher {
     }
 }
 
-pub fn rebuild_pool_index(
-    sources: &[SourceSnapshot],
-    clmm_pools: &[ClmmPoolSnapshot],
-) -> KnownPoolIndex {
+pub fn rebuild_pool_index(sources: &[SourceSnapshot], clmm_pools: &[ClmmPoolSnapshot]) -> KnownPoolIndex {
     let refs = market_snapshot::MarketSnapshot::clmm_pool_refs_from_states(clmm_pools);
     KnownPoolIndex::rebuild(sources, &refs)
 }

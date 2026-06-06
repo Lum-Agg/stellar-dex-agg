@@ -1,11 +1,15 @@
-//! 3-token Aquarius stableswap: on-chain discovery smoke test (ignored by default).
+//! 3-token Aquarius stableswap: on-chain discovery smoke test (ignored by
+//! default).
 
-use dex_adapters::rpc::{scval_to_address, scval_to_u128, SorobanRpc};
-use std::sync::Arc;
+use {
+    dex_adapters::rpc::{scval_to_address, scval_to_u128, SorobanRpc},
+    std::sync::Arc,
+};
 
 const ROUTER: &str = "CBQDHNBFBZYE4MKPWBSJOPIYLW4SFSXAXUTSXJN76GNKYVYPCKWC6QUK";
 
-/// Scan router token sets and report any pool whose `get_tokens()` returns 3 coins.
+/// Scan router token sets and report any pool whose `get_tokens()` returns 3
+/// coins.
 #[tokio::test]
 #[ignore = "network integration — run with --ignored --nocapture"]
 async fn scan_mainnet_for_3token_stableswap_pools() {
@@ -31,11 +35,7 @@ async fn scan_mainnet_for_3token_stableswap_pools() {
             lo: end as u64,
         });
         let result = rpc
-            .simulate_call(
-                ROUTER,
-                "get_pools_for_tokens_range",
-                vec![start_val, end_val],
-            )
+            .simulate_call(ROUTER, "get_pools_for_tokens_range", vec![start_val, end_val])
             .await
             .unwrap();
 
@@ -75,11 +75,7 @@ async fn scan_mainnet_for_3token_stableswap_pools() {
                         }
                     }
                 }
-                if let Ok(amp) = rpc
-                    .call_no_args(&pool, "a")
-                    .await
-                    .and_then(|v| scval_to_u128(&v))
-                {
+                if let Ok(amp) = rpc.call_no_args(&pool, "a").await.and_then(|v| scval_to_u128(&v)) {
                     println!("  amp = {amp}");
                 }
             }

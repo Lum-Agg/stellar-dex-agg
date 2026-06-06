@@ -33,3 +33,7 @@ tracing-subscriber = "0.3"
 name = "sushi-quote-compare"
 path = "src/bin/sushi_quote_compare.rs"
 required-features = []
+
+[[bin]]
+name = "list-sushi-pools"
+path = "src/bin/list_sushi_pools.rs"

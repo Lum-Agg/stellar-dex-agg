@@ -1,7 +1,21 @@
 #!/bin/bash
-# Deploy API + market-data-worker (Redis snapshot / pool-state architecture)
-# Usage: ./deploy_server.sh
-set -e
+# Deploy LumAgg backend (Redis snapshot / pool-state architecture).
+#
+# Usage:
+#   ./deploy_server.sh          # same as "all"
+#   ./deploy_server.sh all      # api-server + market-data-worker
+#   ./deploy_server.sh api      # api-server only (4 instances, ports 3100-3103)
+#   ./deploy_server.sh worker   # market-data-worker only
+set -euo pipefail
+
+MODE="${1:-all}"
+case "$MODE" in
+  all | api | worker) ;;
+  *)
+    echo "Usage: $0 [all|api|worker]" >&2
+    exit 1
+    ;;
+esac
 
 SERVER="root@178.63.81.216"
 REMOTE_SRC="/opt/stellar-dex-aggregator-src"
@@ -9,10 +23,13 @@ REMOTE_APP_DIR="/opt/stellar-dex-aggregator"
 REMOTE_API_BIN="${REMOTE_APP_DIR}/target/release/api-server"
 REMOTE_WORKER_BIN="${REMOTE_APP_DIR}/target/release/market-data-worker"
 API_PORTS=(3100 3101 3102 3103)
+API_PORTS_STR="${API_PORTS[*]}"
 PRIMARY_PORT="${PRIMARY_PORT:-3100}"
 REMOTE_API_BASE="http://127.0.0.1:${PRIMARY_PORT}"
 # Must match deploy/lumagg-*.service (used only for post-deploy verify on server)
 REDIS_URL="${REDIS_URL:-redis://:REDISzlg153@127.0.0.1:6379/}"
+
+echo "=== LumAgg deploy mode: ${MODE} ==="
 
 echo "=== Syncing source code ==="
 rsync -az --delete \
@@ -26,44 +43,86 @@ rsync -az --delete \
   "$(dirname "$0")/" \
   "${SERVER}:${REMOTE_SRC}/"
 
-echo "=== Building on server (api-server + market-data-worker) ==="
-ssh -o StrictHostKeyChecking=no $SERVER "source ~/.cargo/env && cd ${REMOTE_SRC} && cargo build --release -p api-server -p market-data-worker 2>&1 | tail -8"
+BUILD_PKGS=()
+if [[ "$MODE" == "all" || "$MODE" == "api" ]]; then
+  BUILD_PKGS+=(-p api-server)
+fi
+if [[ "$MODE" == "all" || "$MODE" == "worker" ]]; then
+  BUILD_PKGS+=(-p market-data-worker)
+fi
+
+echo "=== Building on server (${BUILD_PKGS[*]}) ==="
+ssh -o StrictHostKeyChecking=no "$SERVER" \
+  "source ~/.cargo/env && cd ${REMOTE_SRC} && cargo build --release ${BUILD_PKGS[*]} 2>&1 | tail -12"
 
 echo "=== Telegram alerts config (server-only) ==="
 TELEGRAM_ENV_FILE="$(dirname "$0")/scripts/telegram.env.local"
 if [[ -f "$TELEGRAM_ENV_FILE" ]]; then
-  ssh -o StrictHostKeyChecking=no $SERVER "mkdir -p ${REMOTE_APP_DIR}/deploy"
+  ssh -o StrictHostKeyChecking=no "$SERVER" "mkdir -p ${REMOTE_APP_DIR}/deploy"
   scp -o StrictHostKeyChecking=no "$TELEGRAM_ENV_FILE" "${SERVER}:${REMOTE_APP_DIR}/deploy/telegram.env"
-  ssh -o StrictHostKeyChecking=no $SERVER "chmod 600 ${REMOTE_APP_DIR}/deploy/telegram.env"
+  ssh -o StrictHostKeyChecking=no "$SERVER" "chmod 600 ${REMOTE_APP_DIR}/deploy/telegram.env"
 else
   echo "WARN: ${TELEGRAM_ENV_FILE} missing — copy scripts/telegram.env.example and add tokens"
 fi
 
-echo "=== Deploying binaries + systemd units ==="
-ssh -o StrictHostKeyChecking=no $SERVER "\
-  set -euo pipefail; \
-  mkdir -p ${REMOTE_APP_DIR}/target/release ${REMOTE_APP_DIR}/deploy; \
-  cp ${REMOTE_SRC}/deploy/lumagg-api@.service /etc/systemd/system/lumagg-api@.service; \
-  cp ${REMOTE_SRC}/deploy/lumagg-worker.service /etc/systemd/system/lumagg-worker.service; \
-  systemctl disable --now lumagg-api >/dev/null 2>&1 || true; \
-  for port in ${API_PORTS[*]}; do systemctl stop lumagg-api@\$port >/dev/null 2>&1 || true; done; \
-  systemctl stop lumagg-worker >/dev/null 2>&1 || true; \
-  cp ${REMOTE_SRC}/target/release/api-server ${REMOTE_API_BIN}; \
-  cp ${REMOTE_SRC}/target/release/market-data-worker ${REMOTE_WORKER_BIN}; \
-  rm -f /etc/systemd/system/lumagg-api.service; \
-  systemctl daemon-reload; \
-  systemctl enable --now lumagg-worker; \
-  for port in ${API_PORTS[*]}; do systemctl enable --now lumagg-api@\$port; done \
-"
+echo "=== Deploying binaries + systemd units (mode=${MODE}) ==="
+ssh -o StrictHostKeyChecking=no "$SERVER" \
+  "MODE='${MODE}' REMOTE_SRC='${REMOTE_SRC}' REMOTE_APP_DIR='${REMOTE_APP_DIR}' REMOTE_API_BIN='${REMOTE_API_BIN}' REMOTE_WORKER_BIN='${REMOTE_WORKER_BIN}' API_PORTS_STR='${API_PORTS_STR}' bash -s" <<'REMOTE'
+set -euo pipefail
 
-echo "=== Waiting for worker pool publish (verify script polls Redis) ==="
+mkdir -p "${REMOTE_APP_DIR}/target/release" "${REMOTE_APP_DIR}/deploy"
+cp "${REMOTE_SRC}/deploy/lumagg-api@.service" /etc/systemd/system/lumagg-api@.service
+cp "${REMOTE_SRC}/deploy/lumagg-worker.service" /etc/systemd/system/lumagg-worker.service
+rm -f /etc/systemd/system/lumagg-api.service
+systemctl disable --now lumagg-api >/dev/null 2>&1 || true
 
-echo "=== Worker logs (last 15 lines) ==="
-ssh -o StrictHostKeyChecking=no $SERVER "journalctl -u lumagg-worker -n 15 --no-pager" || true
+deploy_worker() {
+  systemctl stop lumagg-worker >/dev/null 2>&1 || true
+  cp "${REMOTE_SRC}/target/release/market-data-worker" "${REMOTE_WORKER_BIN}"
+  systemctl enable --now lumagg-worker
+}
+
+deploy_api() {
+  for port in ${API_PORTS_STR}; do
+    systemctl stop "lumagg-api@${port}" >/dev/null 2>&1 || true
+  done
+  cp "${REMOTE_SRC}/target/release/api-server" "${REMOTE_API_BIN}"
+  for port in ${API_PORTS_STR}; do
+    systemctl enable --now "lumagg-api@${port}"
+  done
+}
+
+systemctl daemon-reload
+
+case "${MODE}" in
+  all)
+    deploy_worker
+    deploy_api
+    ;;
+  api)
+    deploy_api
+    ;;
+  worker)
+    deploy_worker
+    ;;
+esac
+REMOTE
+
+if [[ "$MODE" == "all" || "$MODE" == "worker" ]]; then
+  echo "=== Waiting for worker pool publish (verify script polls Redis) ==="
+  echo "=== Worker logs (last 15 lines) ==="
+  ssh -o StrictHostKeyChecking=no "$SERVER" "journalctl -u lumagg-worker -n 15 --no-pager" || true
+fi
+
+if [[ "$MODE" == "api" ]]; then
+  echo "=== API logs (last 10 lines, lumagg-api@${PRIMARY_PORT}) ==="
+  ssh -o StrictHostKeyChecking=no "$SERVER" \
+    "journalctl -u lumagg-api@${PRIMARY_PORT} -n 10 --no-pager" || true
+fi
 
 echo "=== Stack verify (health, Redis keys, quote) ==="
-ssh -o StrictHostKeyChecking=no $SERVER \
+ssh -o StrictHostKeyChecking=no "$SERVER" \
   "API_BASE=${REMOTE_API_BASE} REDIS_URL='${REDIS_URL}' bash -s" \
   < "$(dirname "$0")/scripts/verify_redis_stack.sh"
 
-echo "=== Done ==="
+echo "=== Done (mode=${MODE}) ==="

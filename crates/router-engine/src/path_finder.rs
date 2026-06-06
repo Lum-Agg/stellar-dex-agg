@@ -1,21 +1,24 @@
 //! Path finder: discovers and caches trading paths across all DEX sources.
 
-use crate::{
-    graph::TokenGraph,
-    types::{Path, TokenId, TradingPair},
+use {
+    crate::{
+        graph::TokenGraph,
+        types::{Path, TokenId, TradingPair},
+    },
+    std::{collections::HashMap, sync::Mutex},
+    tracing::info,
 };
-use std::collections::HashMap;
-use std::sync::Mutex;
-use tracing::info;
 
 /// Configuration for path finding.
 #[derive(Debug, Clone)]
 pub struct PathFinderConfig {
     /// Maximum hops per path (default: 3)
     pub max_hops: usize,
-    /// Maximum indirect paths (2+ hops). Direct pools between token_in/out are enumerated separately.
+    /// Maximum indirect paths (2+ hops). Direct pools between token_in/out are
+    /// enumerated separately.
     pub max_multi_hop_paths: usize,
-    /// Cap on direct (1-hop) pools between the pair (`0` = include all direct pools in the graph).
+    /// Cap on direct (1-hop) pools between the pair (`0` = include all direct
+    /// pools in the graph).
     pub max_direct_paths: usize,
     /// Bridge tokens used to improve multi-hop discovery
     /// (high-liquidity tokens like XLM, USDC that connect many pairs)
@@ -43,7 +46,8 @@ impl Default for PathFinderConfig {
 pub struct PathFinder {
     graph: TokenGraph,
     config: PathFinderConfig,
-    /// Path cache — separate mutex so `find_paths` only needs a read lock on the finder.
+    /// Path cache — separate mutex so `find_paths` only needs a read lock on
+    /// the finder.
     cache: Mutex<HashMap<(String, String), CachedPaths>>,
 }
 
@@ -55,7 +59,8 @@ struct CachedPaths {
 /// Cache TTL: paths are valid for 30 seconds
 const CACHE_TTL_MS: u64 = 30_000;
 
-/// Excluded from quote path discovery (aggregator Comet execution not deployed yet).
+/// Excluded from quote path discovery (aggregator Comet execution not deployed
+/// yet).
 const QUOTE_EXCLUDED_SOURCES: &[&str] = &["comet"];
 
 impl PathFinder {
@@ -85,13 +90,8 @@ impl PathFinder {
 
         // Add new edges
         for pair in pairs {
-            self.graph.add_pair(
-                &pair.token_a,
-                &pair.token_b,
-                source,
-                &pair.pool_address,
-                pair.fee_bps,
-            );
+            self.graph
+                .add_pair(&pair.token_a, &pair.token_b, source, &pair.pool_address, pair.fee_bps);
         }
 
         // Invalidate all cached paths (source changed)
@@ -140,9 +140,9 @@ impl PathFinder {
         let cache_key = (token_in.canonical(), token_out.canonical());
         let now = chrono::Utc::now().timestamp_millis() as u64;
 
-        let use_cache = max_hops == self.config.max_hops
-            && max_multi_hop_paths == self.config.max_multi_hop_paths
-            && max_direct_paths == self.config.max_direct_paths;
+        let use_cache = max_hops == self.config.max_hops &&
+            max_multi_hop_paths == self.config.max_multi_hop_paths &&
+            max_direct_paths == self.config.max_direct_paths;
         if use_cache {
             if let Ok(cache) = self.cache.lock() {
                 if let Some(cached) = cache.get(&cache_key) {
@@ -153,13 +153,9 @@ impl PathFinder {
             }
         }
 
-        let paths = self.graph.find_paths(
-            token_in,
-            token_out,
-            max_hops,
-            max_multi_hop_paths,
-            max_direct_paths,
-        );
+        let paths = self
+            .graph
+            .find_paths(token_in, token_out, max_hops, max_multi_hop_paths, max_direct_paths);
 
         if use_cache {
             if let Ok(mut cache) = self.cache.lock() {

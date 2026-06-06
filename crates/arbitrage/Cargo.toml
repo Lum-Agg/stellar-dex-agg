@@ -1,0 +1,29 @@
+[package]
+name = "arbitrage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Round-trip arbitrage scanner via aggregator.round_trip_swap"
+
+[[bin]]
+name = "arb-scanner"
+path = "src/main.rs"
+
+[dependencies]
+market-snapshot = { path = "../market-snapshot" }
+router-engine = { path = "../router-engine" }
+dex-adapters = { path = "../dex-adapters" }
+
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+stellar-xdr.workspace = true
+stellar-strkey.workspace = true
+soroban-client.workspace = true
+stellar-baselib.workspace = true
+reqwest.workspace = true
+bip39 = "2"
+slip10_ed25519 = "0.1"

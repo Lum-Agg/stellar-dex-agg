@@ -1,0 +1,338 @@
+//! Build `aggregator::round_trip_swap` Soroban invoke operations.
+
+use {
+    anyhow::{anyhow, Context, Result},
+    market_snapshot::MarketSnapshot,
+    router_engine::{OptimalRoute, Path, QuoteHydration, TokenId},
+    stellar_strkey::ed25519::PublicKey,
+    stellar_xdr::curr::{self as xdr, Limits, WriteXdr},
+};
+
+/// One hop encoded for the on-chain `SwapStep` struct.
+#[derive(Debug, Clone)]
+pub struct ArbSwapStep {
+    pub dex_type: String,
+    pub pool_address: String,
+    pub token_in: String,
+    pub token_out: String,
+    pub in_idx: u32,
+    pub out_idx: u32,
+}
+
+pub fn source_to_dex_type(source: &str) -> Result<&'static str> {
+    match source {
+        "aquarius" | "aquarius_clmm" => Ok("aquarius"),
+        "soroswap" => Ok("soroswap"),
+        "phoenix" => Ok("phoenix"),
+        "sushi" => Ok("sushi"),
+        "comet" => Ok("comet"),
+        other => Err(anyhow!("unsupported dex source: {}", other)),
+    }
+}
+
+/// Resolve pool token indices for a single hop.
+pub fn resolve_hop_indices(
+    snapshot: &MarketSnapshot,
+    hydration: &QuoteHydration,
+    source: &str,
+    pool_address: &str,
+    token_in: &TokenId,
+    token_out: &TokenId,
+) -> Result<(u32, u32)> {
+    let in_key = token_in.canonical();
+    let out_key = token_out.canonical();
+
+    if source == "aquarius" {
+        if let Some(state) = hydration.aquarius_pools.get(pool_address) {
+            let in_idx = state
+                .tokens
+                .iter()
+                .position(|t| t == &in_key)
+                .context("token_in not in aquarius pool")? as u32;
+            let out_idx = state
+                .tokens
+                .iter()
+                .position(|t| t == &out_key)
+                .context("token_out not in aquarius pool")? as u32;
+            return Ok((in_idx, out_idx));
+        }
+    }
+
+    let pair = snapshot
+        .sources
+        .iter()
+        .find(|s| s.source == source)
+        .and_then(|s| s.pairs.iter().find(|p| p.pool_address == pool_address))
+        .with_context(|| format!("pool {} not found in snapshot source {}", pool_address, source))?;
+
+    let token_a = TokenId::from_str_auto(&pair.token_a).canonical();
+    let token_b = TokenId::from_str_auto(&pair.token_b).canonical();
+
+    if in_key == token_a && out_key == token_b {
+        Ok((0, 1))
+    } else if in_key == token_b && out_key == token_a {
+        Ok((1, 0))
+    } else {
+        Err(anyhow!(
+            "tokens {} -> {} do not match pool {} ({}, {})",
+            in_key,
+            out_key,
+            pool_address,
+            token_a,
+            token_b
+        ))
+    }
+}
+
+/// Convert a router path into contract `SwapStep` arguments.
+pub fn path_to_steps(path: &Path, snapshot: &MarketSnapshot, hydration: &QuoteHydration) -> Result<Vec<ArbSwapStep>> {
+    if path.sources.len() != path.pool_addresses.len() || path.tokens.len() < 2 {
+        return Err(anyhow!("invalid path shape"));
+    }
+    let hop_count = path.sources.len();
+    let mut steps = Vec::with_capacity(hop_count);
+
+    for i in 0..hop_count {
+        let source = &path.sources[i];
+        let pool = &path.pool_addresses[i];
+        let token_in = &path.tokens[i];
+        let token_out = &path.tokens[i + 1];
+        let dex_type = source_to_dex_type(source)?.to_string();
+        let (in_idx, out_idx) = resolve_hop_indices(snapshot, hydration, source, pool, token_in, token_out)?;
+
+        steps.push(ArbSwapStep {
+            dex_type,
+            pool_address: pool.clone(),
+            token_in: token_in.canonical(),
+            token_out: token_out.canonical(),
+            in_idx,
+            out_idx,
+        });
+    }
+
+    Ok(steps)
+}
+
+fn dex_type_scval(dex_type: &str) -> Result<xdr::ScVal> {
+    let name = match dex_type {
+        "aquarius" => "Aquarius",
+        "soroswap" => "SoroswapPair",
+        "phoenix" => "Phoenix",
+        "sushi" => "Sushi",
+        "comet" => "CometDex",
+        other => return Err(anyhow!("unknown dex_type {}", other)),
+    };
+    Ok(xdr::ScVal::Vec(Some(xdr::ScVec(
+        vec![xdr::ScVal::Symbol(xdr::ScSymbol(
+            name.try_into().map_err(|_| anyhow!("bad dex symbol"))?,
+        ))]
+        .try_into()
+        .map_err(|_| anyhow!("dex enum vec"))?,
+    ))))
+}
+
+fn contract_hash(contract: &str) -> Result<[u8; 32]> {
+    Ok(stellar_strkey::Contract::from_string(contract)
+        .with_context(|| format!("invalid contract id {}", contract))?
+        .0)
+}
+
+fn i128_scval(v: i128) -> xdr::ScVal {
+    xdr::ScVal::I128(xdr::Int128Parts {
+        hi: (v >> 64) as i64,
+        lo: v as u64,
+    })
+}
+
+fn step_to_scval(step: &ArbSwapStep) -> Result<xdr::ScVal> {
+    let pool_hash = contract_hash(&step.pool_address)?;
+    let token_in_hash = contract_hash(&step.token_in)?;
+    let token_out_hash = contract_hash(&step.token_out)?;
+
+    Ok(xdr::ScVal::Map(Some(xdr::ScMap(
+        vec![
+            xdr::ScMapEntry {
+                key: xdr::ScVal::Symbol(xdr::ScSymbol("dex_id".try_into().unwrap())),
+                val: xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(pool_hash)))),
+            },
+            xdr::ScMapEntry {
+                key: xdr::ScVal::Symbol(xdr::ScSymbol("dex_type".try_into().unwrap())),
+                val: dex_type_scval(&step.dex_type)?,
+            },
+            xdr::ScMapEntry {
+                key: xdr::ScVal::Symbol(xdr::ScSymbol("in_idx".try_into().unwrap())),
+                val: xdr::ScVal::U32(step.in_idx),
+            },
+            xdr::ScMapEntry {
+                key: xdr::ScVal::Symbol(xdr::ScSymbol("out_idx".try_into().unwrap())),
+                val: xdr::ScVal::U32(step.out_idx),
+            },
+            xdr::ScMapEntry {
+                key: xdr::ScVal::Symbol(xdr::ScSymbol("token_in".try_into().unwrap())),
+                val: xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(token_in_hash)))),
+            },
+            xdr::ScMapEntry {
+                key: xdr::ScVal::Symbol(xdr::ScSymbol("token_out".try_into().unwrap())),
+                val: xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(token_out_hash)))),
+            },
+        ]
+        .try_into()
+        .map_err(|_| anyhow!("step map too large"))?,
+    ))))
+}
+
+fn route_to_sub_routes_scval(
+    route: &OptimalRoute,
+    snapshot: &MarketSnapshot,
+    hydration: &QuoteHydration,
+) -> Result<xdr::ScVal> {
+    let mut sub_routes = Vec::with_capacity(route.sub_orders.len());
+    for sub in &route.sub_orders {
+        let steps = path_to_steps(&sub.path, snapshot, hydration)?;
+        let steps_scval: Vec<xdr::ScVal> = steps.iter().map(step_to_scval).collect::<Result<_>>()?;
+
+        let amount_in_entry = xdr::ScMapEntry {
+            key: xdr::ScVal::Symbol(xdr::ScSymbol("amount_in".try_into().unwrap())),
+            val: i128_scval(sub.amount_in as i128),
+        };
+        let steps_entry = xdr::ScMapEntry {
+            key: xdr::ScVal::Symbol(xdr::ScSymbol("steps".try_into().unwrap())),
+            val: xdr::ScVal::Vec(Some(steps_scval.try_into().map_err(|_| anyhow!("too many steps"))?)),
+        };
+
+        sub_routes.push(xdr::ScVal::Map(Some(xdr::ScMap(
+            vec![amount_in_entry, steps_entry]
+                .try_into()
+                .map_err(|_| anyhow!("sub_route map"))?,
+        ))));
+    }
+
+    Ok(xdr::ScVal::Vec(Some(
+        sub_routes.try_into().map_err(|_| anyhow!("too many sub_routes"))?,
+    )))
+}
+
+/// Build `InvokeHostFunction` calling `aggregator.round_trip_swap`.
+pub fn build_round_trip_swap_op(
+    aggregator_contract: &str,
+    user_public_key: &str,
+    base_token: &str,
+    bridge_token: &str,
+    amount_in: i128,
+    leg_out: &OptimalRoute,
+    leg_back: &OptimalRoute,
+    min_amount_out: i128,
+    snapshot: &MarketSnapshot,
+    hydration: &QuoteHydration,
+) -> Result<xdr::Operation> {
+    if amount_in <= 0 {
+        return Err(anyhow!("amount_in must be positive"));
+    }
+    if min_amount_out < amount_in {
+        return Err(anyhow!("min_amount_out below principal"));
+    }
+    if leg_out.sub_orders.is_empty() || leg_back.sub_orders.is_empty() {
+        return Err(anyhow!("round_trip_swap requires non-empty legs"));
+    }
+
+    let user_key = PublicKey::from_string(user_public_key)
+        .with_context(|| format!("invalid user public key {}", user_public_key))?;
+    let agg_hash = contract_hash(aggregator_contract)?;
+    let base_hash = contract_hash(base_token)?;
+    let bridge_hash = contract_hash(bridge_token)?;
+
+    let leg_out_val = route_to_sub_routes_scval(leg_out, snapshot, hydration)?;
+    let leg_back_val = route_to_sub_routes_scval(leg_back, snapshot, hydration)?;
+
+    let invoke_args = xdr::InvokeContractArgs {
+        contract_address: xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(agg_hash))),
+        function_name: xdr::ScSymbol("round_trip_swap".try_into().unwrap()),
+        args: vec![
+            xdr::ScVal::Address(xdr::ScAddress::Account(xdr::AccountId(
+                xdr::PublicKey::PublicKeyTypeEd25519(xdr::Uint256(user_key.0)),
+            ))),
+            xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(base_hash)))),
+            xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(bridge_hash)))),
+            i128_scval(amount_in),
+            leg_out_val,
+            leg_back_val,
+            i128_scval(min_amount_out),
+        ]
+        .try_into()
+        .map_err(|_| anyhow!("round_trip_swap args"))?,
+    };
+
+    Ok(xdr::Operation {
+        source_account: None,
+        body: xdr::OperationBody::InvokeHostFunction(xdr::InvokeHostFunctionOp {
+            host_function: xdr::HostFunction::InvokeContract(invoke_args),
+            auth: xdr::VecM::default(),
+        }),
+    })
+}
+
+/// Minimum base output for `round_trip_swap` given target profit bps.
+pub fn min_amount_out_for_bps(amount_in: u128, min_profit_bps: u32) -> i128 {
+    let profit = amount_in.saturating_mul(min_profit_bps as u128) / 10_000;
+    let min_out = amount_in.saturating_add(profit.max(1));
+    min_out.min(i128::MAX as u128) as i128
+}
+
+pub fn build_raw_envelope_xdr(source_public_key: &str, sequence: u64, op: xdr::Operation) -> Result<String> {
+    let pk = PublicKey::from_string(source_public_key)
+        .with_context(|| format!("invalid source key {}", source_public_key))?;
+    let source_account = xdr::MuxedAccount::Ed25519(xdr::Uint256(pk.0));
+    let tx = xdr::Transaction {
+        source_account,
+        fee: 100_000,
+        seq_num: xdr::SequenceNumber(sequence as i64),
+        cond: xdr::Preconditions::None,
+        memo: xdr::Memo::None,
+        operations: vec![op].try_into().map_err(|_| anyhow!("ops"))?,
+        ext: xdr::TransactionExt::V0,
+    };
+    let envelope = xdr::TransactionEnvelope::Tx(xdr::TransactionV1Envelope {
+        tx,
+        signatures: xdr::VecM::default(),
+    });
+    envelope
+        .to_xdr_base64(Limits::none())
+        .context("encode transaction envelope")
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        market_snapshot::{SourceSnapshot, TradingPairSnapshot},
+    };
+
+    #[test]
+    fn maps_two_token_hop_indices() {
+        let snapshot = market_snapshot::MarketSnapshot::from_sources(
+            "v1",
+            0,
+            "test",
+            vec![SourceSnapshot {
+                source: "soroswap".to_string(),
+                pairs: vec![TradingPairSnapshot {
+                    token_a: "A".into(),
+                    token_b: "B".into(),
+                    pool_address: "p1".into(),
+                    fee_bps: 30,
+                }],
+            }],
+        );
+        let path = router_engine::Path {
+            hops: 1,
+            tokens: vec![TokenId::from_str_auto("A"), TokenId::from_str_auto("B")],
+            sources: vec!["soroswap".into()],
+            pool_addresses: vec!["p1".into()],
+        };
+        let hydration = QuoteHydration::default();
+        let steps = path_to_steps(&path, &snapshot, &hydration).unwrap();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].in_idx, 0);
+        assert_eq!(steps[0].out_idx, 1);
+    }
+}

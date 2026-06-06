@@ -7,13 +7,14 @@
 //! execution across orderbooks + liquidity pools. You cannot force it to use
 //! a specific pool or path.
 //!
-//! This means Classic DEX is NOT a controllable liquidity source for aggregation.
-//! Instead, our aggregator focuses on **Soroban DEXes** (Aquarius, Soroswap,
-//! Phoenix, Comet) where each swap is a deterministic contract call with
-//! predictable output.
+//! This means Classic DEX is NOT a controllable liquidity source for
+//! aggregation. Instead, our aggregator focuses on **Soroban DEXes** (Aquarius,
+//! Soroswap, Phoenix, Comet) where each swap is a deterministic contract call
+//! with predictable output.
 //!
 //! Classic DEX serves as:
-//! - A **benchmark** to compare against ("is our Soroban route better than PathPayment?")
+//! - A **benchmark** to compare against ("is our Soroban route better than
+//!   PathPayment?")
 //! - A **fallback** for tokens only available on the native orderbook
 //!
 //! The core value proposition: aggregate liquidity across isolated Soroban DEX
@@ -39,10 +40,13 @@ pub mod token_registry;
 pub mod traits;
 pub mod utils;
 
-pub use cache::{default_cache_path, PoolCache};
-pub use aquarius::{quote_aquarius_pool, AquariusAdapter, AquariusPoolQuoteState};
-pub use comet::{quote_comet_pool, CometAdapter, CometPoolQuoteState, COMET_FACTORY_MAINNET};
-pub use rpc::SorobanRpc;
-pub use sushi::SushiAdapter;
-pub use token_registry::TokenRegistry;
-pub use traits::*;
+pub use {
+    aquarius::{quote_aquarius_pool, AquariusAdapter, AquariusPoolQuoteState},
+    cache::{default_cache_path, PoolCache},
+    classic_dex::{classic_horizon_to_xdr, ClassicDexAdapter, ClassicHorizonAsset, ClassicPathQuote, CLASSIC_ASSETS},
+    comet::{quote_comet_pool, CometAdapter, CometPoolQuoteState, COMET_FACTORY_MAINNET},
+    rpc::SorobanRpc,
+    sushi::SushiAdapter,
+    token_registry::TokenRegistry,
+    traits::*,
+};

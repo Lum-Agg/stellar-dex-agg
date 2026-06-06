@@ -1,7 +1,9 @@
 //! Shared helpers for Stellar Expert HTTP API (contract storage indexing).
 
-use anyhow::{anyhow, Result};
-use reqwest::Client;
+use {
+    anyhow::{anyhow, Result},
+    reqwest::Client,
+};
 
 pub const STELLAR_EXPERT_API: &str = "https://api.stellar.expert/explorer/public";
 const USER_AGENT: &str = "lumagg-dex-aggregator/1.0";

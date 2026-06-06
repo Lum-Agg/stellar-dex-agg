@@ -1,15 +1,20 @@
-//! Simulate + assemble Soroban transactions via `soroban_client::Server::prepare_transaction`.
-//! Same approach as stellar-arb (`STELLAR_CLIENT.prepare_transaction`).
+//! Simulate + assemble Soroban transactions via
+//! `soroban_client::Server::prepare_transaction`. Same approach as stellar-arb
+//! (`STELLAR_CLIENT.prepare_transaction`).
 
-use soroban_client::{
-    network::{NetworkPassphrase, Networks},
-    transaction::{AccountBehavior, TransactionBehavior},
-    transaction_builder::{TransactionBuilder, TransactionBuilderBehavior, TIMEOUT_INFINITE},
-    xdr::{self, Limits, ReadXdr, WriteXdr},
-    Options, Server,
+use {
+    soroban_client::{
+        network::{NetworkPassphrase, Networks},
+        transaction::{AccountBehavior, TransactionBehavior},
+        transaction_builder::{TransactionBuilder, TransactionBuilderBehavior, TIMEOUT_INFINITE},
+        xdr::{self, Limits, ReadXdr, WriteXdr},
+        Options, Server,
+    },
+    stellar_xdr::{
+        curr as sxdr,
+        curr::{Limits as StellarLimits, WriteXdr as StellarWriteXdr},
+    },
 };
-use stellar_xdr::curr as sxdr;
-use stellar_xdr::curr::{Limits as StellarLimits, WriteXdr as StellarWriteXdr};
 
 pub fn rpc_server(rpc_url: &str) -> Result<Server, String> {
     Server::new(
@@ -22,8 +27,9 @@ pub fn rpc_server(rpc_url: &str) -> Result<Server, String> {
     .map_err(|e| format!("Soroban RPC client: {}", e))
 }
 
-/// Run simulate + assemble (footprint, auth, resource fee) and return unsigned envelope XDR.
-/// `sequence` must be the account's current on-chain sequence; the builder increments it.
+/// Run simulate + assemble (footprint, auth, resource fee) and return unsigned
+/// envelope XDR. `sequence` must be the account's current on-chain sequence;
+/// the builder increments it.
 pub async fn prepare_transaction_xdr(
     rpc_url: &str,
     user_public_key: &str,
@@ -57,9 +63,7 @@ pub async fn prepare_transaction_xdr(
         .await
         .map_err(|e| format!("prepare_transaction: {:?}", e))?;
 
-    let envelope = prepared
-        .to_envelope()
-        .map_err(|e| format!("to_envelope: {}", e))?;
+    let envelope = prepared.to_envelope().map_err(|e| format!("to_envelope: {}", e))?;
 
     envelope
         .to_xdr_base64(Limits::none())

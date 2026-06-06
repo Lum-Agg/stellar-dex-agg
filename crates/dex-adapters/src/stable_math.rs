@@ -1,7 +1,8 @@
 //! Curve StableSwap math — pure Rust port for N-token pools.
 //!
-//! Implements the Curve invariant: A*n^n * sum(x_i) + D = A*n^n*D + D^(n+1)/(n^n * prod(x_i))
-//! Used by Aquarius stableswap pools (2-token and 3-token).
+//! Implements the Curve invariant: A*n^n * sum(x_i) + D = A*n^n*D +
+//! D^(n+1)/(n^n * prod(x_i)) Used by Aquarius stableswap pools (2-token and
+//! 3-token).
 //!
 //! All calculations use u128 with iterative Newton's method (same as on-chain).
 
@@ -25,20 +26,13 @@ impl StablePool {
     /// Compute precision_mul for each token (scales to max decimals).
     fn precision_mul(&self) -> Vec<u128> {
         let max_dec = self.decimals.iter().copied().max().unwrap_or(7);
-        self.decimals
-            .iter()
-            .map(|&d| 10u128.pow(max_dec - d))
-            .collect()
+        self.decimals.iter().map(|&d| 10u128.pow(max_dec - d)).collect()
     }
 
     /// Normalize reserves to common precision (xp).
     fn xp(&self) -> Vec<u128> {
         let pmul = self.precision_mul();
-        self.reserves
-            .iter()
-            .zip(pmul.iter())
-            .map(|(&r, &m)| r * m)
-            .collect()
+        self.reserves.iter().zip(pmul.iter()).map(|(&r, &m)| r * m).collect()
     }
 
     /// Compute the StableSwap invariant D.
@@ -99,7 +93,8 @@ impl StablePool {
         }
 
         c = c * d / (ann * n);
-        let b = s + d / ann; // note: b > d always (since s >= d/ann is not guaranteed, but in practice it is)
+        let b = s + d / ann; // note: b > d always (since s >= d/ann is not guaranteed, but in practice it
+                             // is)
 
         // Newton's method to find y
         let mut y = d;

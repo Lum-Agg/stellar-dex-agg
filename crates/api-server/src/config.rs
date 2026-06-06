@@ -1,7 +1,9 @@
 //! Application configuration loaded from environment variables or config file.
 
-use market_snapshot::store::{DEFAULT_REDIS_EVENTS_CHANNEL, DEFAULT_REDIS_SNAPSHOT_HISTORY};
-use serde::{Deserialize, Serialize};
+use {
+    market_snapshot::store::{DEFAULT_REDIS_EVENTS_CHANNEL, DEFAULT_REDIS_SNAPSHOT_HISTORY},
+    serde::{Deserialize, Serialize},
+};
 
 fn normalize_snapshot_poll_interval_ms(interval_ms: u64) -> u64 {
     interval_ms.max(1)
@@ -17,30 +19,38 @@ pub struct AppConfig {
     pub listen_addr: String,
     /// Aggregator contract address (optional, for on-chain execution)
     pub aggregator_contract: Option<String>,
-    /// Pool reserve refresh interval (seconds). Keep short so quotes track live reserves.
+    /// Pool reserve refresh interval (seconds). Keep short so quotes track live
+    /// reserves.
     pub refresh_interval_secs: u64,
-    /// Full pool discovery interval (seconds): re-run `get_trading_pairs` and replace the graph.
+    /// Full pool discovery interval (seconds): re-run `get_trading_pairs` and
+    /// replace the graph.
     pub discovery_interval_secs: u64,
-    /// Price impact threshold (bps) above which split optimization is attempted.
+    /// Price impact threshold (bps) above which split optimization is
+    /// attempted.
     pub split_threshold_bps: u32,
-    /// Also try split when the second-best path is within this delta (bps) of the best path.
+    /// Also try split when the second-best path is within this delta (bps) of
+    /// the best path.
     pub split_competitive_delta_bps: u32,
-    /// Drop split legs whose expected output is below this share of total output.
+    /// Drop split legs whose expected output is below this share of total
+    /// output.
     pub min_split_fraction_bps: u32,
     /// Maximum number of candidate paths to consider for split optimization.
     pub max_splits: usize,
-    /// Path finder: max hops per path (direct pools are always enumerated separately).
+    /// Path finder: max hops per path (direct pools are always enumerated
+    /// separately).
     pub path_finder_max_hops: usize,
     /// Path finder: cap on 2+ hop paths per quote.
     pub path_finder_max_multi_hop_paths: usize,
     /// Path finder: cap on 1-hop pools (`0` = all direct pools in graph).
     pub path_finder_max_direct_paths: usize,
-    /// Allow API to RPC-fetch xy=k pool misses (default false — worker writes Redis).
+    /// Allow API to RPC-fetch xy=k pool misses (default false — worker writes
+    /// Redis).
     pub quote_rpc_hydrate_enabled: bool,
-    /// Max xy=k pools to RPC-fetch per quote when `quote_rpc_hydrate_enabled` is true.
+    /// Max xy=k pools to RPC-fetch per quote when `quote_rpc_hydrate_enabled`
+    /// is true.
     pub quote_hydrate_max_pools: usize,
-    /// Optional snapshot backend selector (`file` or `redis`). When unset, snapshot mode
-    /// is enabled only if `snapshot_dir` is set.
+    /// Optional snapshot backend selector (`file` or `redis`). When unset,
+    /// snapshot mode is enabled only if `snapshot_dir` is set.
     pub snapshot_backend: Option<String>,
     /// Optional directory containing file-backed market snapshots.
     pub snapshot_dir: Option<String>,
@@ -89,8 +99,7 @@ impl AppConfig {
             rpc_url: std::env::var("RPC_URL").unwrap_or_else(|_| Self::default().rpc_url),
             network_passphrase: std::env::var("NETWORK_PASSPHRASE")
                 .unwrap_or_else(|_| Self::default().network_passphrase),
-            listen_addr: std::env::var("LISTEN_ADDR")
-                .unwrap_or_else(|_| Self::default().listen_addr),
+            listen_addr: std::env::var("LISTEN_ADDR").unwrap_or_else(|_| Self::default().listen_addr),
             aggregator_contract: std::env::var("AGGREGATOR_CONTRACT").ok(),
             refresh_interval_secs: std::env::var("REFRESH_INTERVAL_SECS")
                 .ok()
@@ -158,8 +167,10 @@ impl AppConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::{Mutex, OnceLock};
+    use {
+        super::*,
+        std::sync::{Mutex, OnceLock},
+    };
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();

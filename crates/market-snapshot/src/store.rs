@@ -1,13 +1,13 @@
-use std::{path::PathBuf, sync::Arc};
-
-use anyhow::{anyhow, Result};
-use async_trait::async_trait;
-use futures::StreamExt;
-use redis::{AsyncCommands, Script};
-use tokio::sync::mpsc;
-use tracing::warn;
-
-use crate::{load_snapshot_from_dir, write_snapshot_to_dir, MarketSnapshot};
+use {
+    crate::{load_snapshot_from_dir, write_snapshot_to_dir, MarketSnapshot},
+    anyhow::{anyhow, Result},
+    async_trait::async_trait,
+    futures::StreamExt,
+    redis::{AsyncCommands, Script},
+    std::{path::PathBuf, sync::Arc},
+    tokio::sync::mpsc,
+    tracing::warn,
+};
 
 pub const DEFAULT_REDIS_EVENTS_CHANNEL: &str = "lumagg:snapshot:events";
 pub const DEFAULT_REDIS_SNAPSHOT_HISTORY: usize = 10;
@@ -43,14 +43,13 @@ pub fn build_snapshot_store(
 ) -> Result<Arc<dyn SnapshotStore>> {
     match backend {
         SnapshotStoreBackend::File => {
-            let snapshot_dir = snapshot_dir
-                .ok_or_else(|| anyhow!("snapshot_dir is required for file snapshot backend"))?;
+            let snapshot_dir =
+                snapshot_dir.ok_or_else(|| anyhow!("snapshot_dir is required for file snapshot backend"))?;
             Ok(Arc::new(FileSnapshotStore::new(snapshot_dir)))
         }
         SnapshotStoreBackend::Redis => {
-            let redis_url = redis_url.ok_or_else(|| {
-                anyhow!("snapshot_redis_url is required for redis snapshot backend")
-            })?;
+            let redis_url =
+                redis_url.ok_or_else(|| anyhow!("snapshot_redis_url is required for redis snapshot backend"))?;
             Ok(Arc::new(RedisSnapshotStore::with_options(
                 redis_url,
                 redis_channel.unwrap_or(DEFAULT_REDIS_EVENTS_CHANNEL),
@@ -60,10 +59,7 @@ pub fn build_snapshot_store(
     }
 }
 
-pub fn should_reload_snapshot_version(
-    current_version: Option<&str>,
-    observed_version: &str,
-) -> bool {
+pub fn should_reload_snapshot_version(current_version: Option<&str>, observed_version: &str) -> bool {
     current_version != Some(observed_version)
 }
 
@@ -90,10 +86,7 @@ pub fn subscribe_to_snapshot_events(
                 Ok(pubsub) => {
                     let (mut sink, mut stream) = pubsub.split();
                     if let Err(error) = sink.subscribe(&channel).await {
-                        warn!(
-                            "Failed to subscribe to snapshot events channel {}: {}",
-                            channel, error
-                        );
+                        warn!("Failed to subscribe to snapshot events channel {}: {}", channel, error);
                     } else {
                         if !listener_healthy {
                             if sender.send(SnapshotListenerEvent::ListenerHealthy).is_err() {
@@ -105,10 +98,7 @@ pub fn subscribe_to_snapshot_events(
                         while let Some(message) = stream.next().await {
                             match message.get_payload::<String>() {
                                 Ok(version) => {
-                                    if sender
-                                        .send(SnapshotListenerEvent::SnapshotVersion(version))
-                                        .is_err()
-                                    {
+                                    if sender.send(SnapshotListenerEvent::SnapshotVersion(version)).is_err() {
                                         return;
                                     }
                                 }
@@ -126,10 +116,7 @@ pub fn subscribe_to_snapshot_events(
             }
 
             if listener_healthy {
-                if sender
-                    .send(SnapshotListenerEvent::ListenerDegraded)
-                    .is_err()
-                {
+                if sender.send(SnapshotListenerEvent::ListenerDegraded).is_err() {
                     return;
                 }
                 listener_healthy = false;
@@ -176,26 +163,14 @@ pub struct RedisSnapshotStore {
 
 impl RedisSnapshotStore {
     pub fn new(redis_url: &str) -> Self {
-        Self::with_options(
-            redis_url,
-            DEFAULT_REDIS_EVENTS_CHANNEL,
-            DEFAULT_REDIS_SNAPSHOT_HISTORY,
-        )
+        Self::with_options(redis_url, DEFAULT_REDIS_EVENTS_CHANNEL, DEFAULT_REDIS_SNAPSHOT_HISTORY)
     }
 
     pub fn with_history_limit(redis_url: &str, keep_latest_versions: usize) -> Self {
-        Self::with_options(
-            redis_url,
-            DEFAULT_REDIS_EVENTS_CHANNEL,
-            keep_latest_versions,
-        )
+        Self::with_options(redis_url, DEFAULT_REDIS_EVENTS_CHANNEL, keep_latest_versions)
     }
 
-    pub fn with_options(
-        redis_url: &str,
-        events_channel: impl Into<Arc<str>>,
-        keep_latest_versions: usize,
-    ) -> Self {
+    pub fn with_options(redis_url: &str, events_channel: impl Into<Arc<str>>, keep_latest_versions: usize) -> Self {
         Self {
             client: redis::Client::open(redis_url).expect("invalid redis url"),
             key_prefix: Arc::from("lumagg:snapshot"),
@@ -248,19 +223,14 @@ fn dedupe_versions_by_latest(recorded_versions: &[String]) -> Vec<String> {
 }
 
 #[cfg(test)]
-fn build_retention_plan(
-    recorded_versions: &[String],
-    keep_latest: usize,
-    current_version: &str,
-) -> RetentionPlan {
+fn build_retention_plan(recorded_versions: &[String], keep_latest: usize, current_version: &str) -> RetentionPlan {
     let mut candidate_versions = recorded_versions.to_vec();
     candidate_versions.push(current_version.to_string());
 
     let deduped_candidates = dedupe_versions_by_latest(&candidate_versions);
     let keep_from = deduped_candidates.len().saturating_sub(keep_latest.max(1));
     let retained_versions = deduped_candidates[keep_from..].to_vec();
-    let retained_set: std::collections::HashSet<&str> =
-        retained_versions.iter().map(String::as_str).collect();
+    let retained_set: std::collections::HashSet<&str> = retained_versions.iter().map(String::as_str).collect();
     let stale_versions = dedupe_versions_by_latest(recorded_versions)
         .iter()
         .filter(|version| !retained_set.contains(version.as_str()))
@@ -390,8 +360,10 @@ impl SnapshotStore for RedisSnapshotStore {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{MarketSnapshot, SourceSnapshot, TradingPairSnapshot};
+    use {
+        super::*,
+        crate::{MarketSnapshot, SourceSnapshot, TradingPairSnapshot},
+    };
 
     fn sample_snapshot(version: &str) -> MarketSnapshot {
         MarketSnapshot::from_sources(
@@ -432,10 +404,7 @@ mod tests {
     fn redis_snapshot_store_uses_versioned_keys() {
         let store = RedisSnapshotStore::new("redis://127.0.0.1/");
         assert_eq!(store.current_key(), "lumagg:snapshot:current");
-        assert_eq!(
-            store.versioned_snapshot_key("v1"),
-            "lumagg:snapshot:data:v1"
-        );
+        assert_eq!(store.versioned_snapshot_key("v1"), "lumagg:snapshot:data:v1");
         assert_eq!(store.versioned_meta_key("v1"), "lumagg:snapshot:meta:v1");
         assert_eq!(store.events_channel(), "lumagg:snapshot:events");
         assert_eq!(store.versions_index_key(), "lumagg:snapshot:versions");
@@ -471,10 +440,7 @@ mod tests {
             plan.retained_versions,
             vec!["v3".to_string(), "v4".to_string(), "v5".to_string()]
         );
-        assert_eq!(
-            plan.stale_versions,
-            vec!["v1".to_string(), "v2".to_string()]
-        );
+        assert_eq!(plan.stale_versions, vec!["v1".to_string(), "v2".to_string()]);
     }
 
     #[test]
@@ -483,10 +449,7 @@ mod tests {
         let plan = build_retention_plan(&versions, 0, "v3");
 
         assert_eq!(plan.retained_versions, vec!["v3".to_string()]);
-        assert_eq!(
-            plan.stale_versions,
-            vec!["v1".to_string(), "v2".to_string()]
-        );
+        assert_eq!(plan.stale_versions, vec!["v1".to_string(), "v2".to_string()]);
     }
 
     #[test]
@@ -519,22 +482,13 @@ mod tests {
         ];
         let plan = build_retention_plan(&versions, 2, "v4");
 
-        assert_eq!(
-            plan.retained_versions,
-            vec!["v2".to_string(), "v4".to_string()]
-        );
-        assert_eq!(
-            plan.stale_versions,
-            vec!["v1".to_string(), "v3".to_string()]
-        );
+        assert_eq!(plan.retained_versions, vec!["v2".to_string(), "v4".to_string()]);
+        assert_eq!(plan.stale_versions, vec!["v1".to_string(), "v3".to_string()]);
     }
 
     #[test]
     fn snapshot_store_backend_parses_known_values() {
-        assert_eq!(
-            SnapshotStoreBackend::parse("file").unwrap(),
-            SnapshotStoreBackend::File
-        );
+        assert_eq!(SnapshotStoreBackend::parse("file").unwrap(), SnapshotStoreBackend::File);
         assert_eq!(
             SnapshotStoreBackend::parse("redis").unwrap(),
             SnapshotStoreBackend::Redis

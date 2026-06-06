@@ -1,18 +1,18 @@
-use std::sync::Arc;
-
-use anyhow::Result;
-use api_server::{config::AppConfig, snapshot_loader::build_engine_from_snapshot};
-use async_trait::async_trait;
-use dex_adapters::clmm_math::clmm_pool_from_snapshot;
-use dex_adapters::{
-    clmm_math::{bitmap, sqrt_ratio_at_tick},
-    AdapterQuote, AdapterTradingPair, DexAdapter, ProtocolType, SwapOperation, TokenId,
+use {
+    anyhow::Result,
+    api_server::{config::AppConfig, snapshot_loader::build_engine_from_snapshot},
+    async_trait::async_trait,
+    dex_adapters::{
+        clmm_math::{bitmap, clmm_pool_from_snapshot, sqrt_ratio_at_tick},
+        AdapterQuote, AdapterTradingPair, DexAdapter, ProtocolType, SwapOperation, TokenId,
+    },
+    market_snapshot::{
+        ClmmBitmapWordSnapshot, ClmmCoverageSnapshot, ClmmPoolRefSnapshot, ClmmPoolSnapshot, ClmmTickSnapshot,
+        MarketSnapshot, SourceSnapshot, TradingPairSnapshot,
+    },
+    router_engine::RouteRequest,
+    std::sync::Arc,
 };
-use market_snapshot::{
-    ClmmBitmapWordSnapshot, ClmmCoverageSnapshot, ClmmPoolRefSnapshot, ClmmPoolSnapshot,
-    ClmmTickSnapshot, MarketSnapshot, SourceSnapshot, TradingPairSnapshot,
-};
-use router_engine::RouteRequest;
 
 fn token(id: &str) -> TokenId {
     TokenId::Contract {
@@ -198,9 +198,7 @@ impl DexAdapter for StaticClassicAdapter {
 async fn snapshot_quote_succeeds_for_sushi_clmm_pool() {
     let config = AppConfig::default();
     let (snapshot, pool) = sample_clmm_topology_snapshot("sushi");
-    let engine = build_engine_from_snapshot(&config, &snapshot)
-        .await
-        .unwrap();
+    let engine = build_engine_from_snapshot(&config, &snapshot).await.unwrap();
     seed_clmm_quote_states(&engine, std::slice::from_ref(&pool)).await;
 
     let route = engine
@@ -222,9 +220,7 @@ async fn snapshot_quote_succeeds_for_sushi_clmm_pool() {
 async fn snapshot_quote_succeeds_for_aquarius_clmm_pool() {
     let config = AppConfig::default();
     let (snapshot, pool) = sample_clmm_topology_snapshot("aquarius_clmm");
-    let engine = build_engine_from_snapshot(&config, &snapshot)
-        .await
-        .unwrap();
+    let engine = build_engine_from_snapshot(&config, &snapshot).await.unwrap();
     seed_clmm_quote_states(&engine, std::slice::from_ref(&pool)).await;
 
     let route = engine
@@ -248,9 +244,7 @@ async fn snapshot_quote_succeeds_for_classic_when_live_adapter_is_attached() {
     let engine = build_engine_from_snapshot(&config, &sample_classic_snapshot())
         .await
         .unwrap();
-    engine
-        .register_adapter(Arc::new(StaticClassicAdapter))
-        .await;
+    engine.register_adapter(Arc::new(StaticClassicAdapter)).await;
 
     let route = engine
         .get_route(&RouteRequest {

@@ -1,20 +1,23 @@
-//! Token registry: maps between human-readable asset identifiers and contract addresses.
+//! Token registry: maps between human-readable asset identifiers and contract
+//! addresses.
 //!
 //! Stellar has three token formats:
-//! - "native" → XLM (SAC: CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA)
+//! - "native" → XLM (SAC:
+//!   CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA)
 //! - "CODE:ISSUER" → Classic asset (has a deterministic SAC address)
 //! - "C..." → Soroban contract address (may be a SAC or a pure Soroban token)
 //!
 //! The registry resolves contract addresses to human-readable names by calling
 //! the token's name() function, and caches the results.
 
-use crate::rpc::{scval_to_string, SorobanRpc};
-use anyhow::Result;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use tracing::debug;
+use {
+    crate::rpc::{scval_to_string, SorobanRpc},
+    anyhow::Result,
+    serde::{Deserialize, Serialize},
+    std::{collections::HashMap, sync::Arc},
+    tokio::sync::RwLock,
+    tracing::debug,
+};
 
 /// Well-known tokens on Stellar mainnet (contract address → metadata).
 /// These are pre-populated to avoid RPC calls for common tokens.
@@ -123,10 +126,7 @@ impl TokenRegistry {
 
         // Fetch remaining in parallel (batches of 10)
         for chunk in to_fetch.chunks(10) {
-            let futures: Vec<_> = chunk
-                .iter()
-                .map(|addr| self.fetch_token_meta(addr))
-                .collect();
+            let futures: Vec<_> = chunk.iter().map(|addr| self.fetch_token_meta(addr)).collect();
 
             let fetch_results = futures::future::join_all(futures).await;
 

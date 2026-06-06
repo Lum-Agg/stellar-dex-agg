@@ -1,18 +1,21 @@
-//! CLMM (Concentrated Liquidity Market Maker) math — pure Rust port of Uniswap V3 math.
+//! CLMM (Concentrated Liquidity Market Maker) math — pure Rust port of Uniswap
+//! V3 math.
 //!
 //! Shared between Aquarius Concentrated pools and Sushi V3 on Stellar.
-//! All calculations use U256 (represented as [u64; 4] little-endian) with Q64.96 fixed point.
-//! This matches the on-chain contract exactly for precision.
+//! All calculations use U256 (represented as [u64; 4] little-endian) with
+//! Q64.96 fixed point. This matches the on-chain contract exactly for
+//! precision.
 //!
 //! Key types:
-//! - sqrt_price_x96: Q64.96 fixed-point sqrt(price) = sqrt(token1/token0) * 2^96
+//! - sqrt_price_x96: Q64.96 fixed-point sqrt(price) = sqrt(token1/token0) *
+//!   2^96
 //! - tick: i32, satisfies sqrt_ratio_at_tick(tick) <= sqrt_price_x96
 //! - liquidity: u128, active liquidity in the current tick range
 
-use market_snapshot::{
-    ClmmBitmapWordSnapshot, ClmmCoverageSnapshot, ClmmPoolSnapshot, ClmmTickSnapshot,
+use {
+    market_snapshot::{ClmmBitmapWordSnapshot, ClmmCoverageSnapshot, ClmmPoolSnapshot, ClmmTickSnapshot},
+    std::fmt,
 };
-use std::fmt;
 
 // ============================================================================
 // U256 type (little-endian [u64; 4])
@@ -169,18 +172,8 @@ impl U256 {
                 result[i + 4] += carry;
             }
         }
-        let lo = U256([
-            result[0] as u64,
-            result[1] as u64,
-            result[2] as u64,
-            result[3] as u64,
-        ]);
-        let hi = U256([
-            result[4] as u64,
-            result[5] as u64,
-            result[6] as u64,
-            result[7] as u64,
-        ]);
+        let lo = U256([result[0] as u64, result[1] as u64, result[2] as u64, result[3] as u64]);
+        let hi = U256([result[4] as u64, result[5] as u64, result[6] as u64, result[7] as u64]);
         (lo, hi)
     }
 
@@ -368,10 +361,12 @@ const Q96_U256: U256 = U256([0, 0x100000000, 0, 0]); // 2^96
 
 const MIN_SQRT_RATIO: u128 = 4_295_128_739;
 
-// MAX_SQRT_RATIO as bytes (big-endian): 0xfffd8963efd1fc6a506488495d951d5263988d26
+// MAX_SQRT_RATIO as bytes (big-endian):
+// 0xfffd8963efd1fc6a506488495d951d5263988d26
 const MAX_SQRT_RATIO_LIMBS: [u64; 4] = [0x5d951d5263988d26, 0xefd1fc6a50648849, 0x0000fffd8963, 0];
 
-/// Tick multiplier table (same as on-chain). Each entry is a Q128.128 fixed-point value.
+/// Tick multiplier table (same as on-chain). Each entry is a Q128.128
+/// fixed-point value.
 const TICK_MULTIPLIERS: [u128; 20] = [
     0xfffcb933bd6fad37aa2d162d1a594001,
     0xfff97272373d413259a46990580e213a,
@@ -490,11 +485,7 @@ pub fn tick_at_sqrt_ratio(sqrt_price_x96: &U256) -> i32 {
         let (sq_hi, sq_lo) = widening_mul_u128(r, r);
         let f = sq_hi >> 127; // 0 or 1
         log_2 |= (f as i128) << bit_pos;
-        r = if f == 0 {
-            (sq_hi << 1) | (sq_lo >> 127)
-        } else {
-            sq_hi
-        };
+        r = if f == 0 { (sq_hi << 1) | (sq_lo >> 127) } else { sq_hi };
     }
 
     // Convert log2 -> log_sqrt(1.0001)
@@ -511,12 +502,7 @@ pub fn tick_at_sqrt_ratio(sqrt_price_x96: &U256) -> i32 {
     };
 
     let tick_low = (log_hi - if log_lo < TICK_LOW_ERROR { 1 } else { 0 }) as i32;
-    let tick_hi = (log_hi
-        + if log_lo.overflowing_add(TICK_HI_ERROR).1 {
-            1
-        } else {
-            0
-        }) as i32;
+    let tick_hi = (log_hi + if log_lo.overflowing_add(TICK_HI_ERROR).1 { 1 } else { 0 }) as i32;
 
     if tick_low == tick_hi {
         tick_low
@@ -553,12 +539,7 @@ fn widening_mul_u128(a: u128, b: u128) -> (u128, u128) {
 
 /// Compute amount0 (token0) delta between two sqrt prices for given liquidity.
 /// amount0 = L * Q96 * (sb - sa) / (sa * sb)
-pub fn amount0_delta(
-    sqrt_a: &U256,
-    sqrt_b: &U256,
-    liquidity: u128,
-    round_up: bool,
-) -> Option<u128> {
+pub fn amount0_delta(sqrt_a: &U256, sqrt_b: &U256, liquidity: u128, round_up: bool) -> Option<u128> {
     if liquidity == 0 {
         return Some(0);
     }
@@ -602,12 +583,7 @@ pub fn amount0_delta(
 
 /// Compute amount1 (token1) delta between two sqrt prices for given liquidity.
 /// amount1 = L * (sb - sa) / Q96
-pub fn amount1_delta(
-    sqrt_a: &U256,
-    sqrt_b: &U256,
-    liquidity: u128,
-    round_up: bool,
-) -> Option<u128> {
+pub fn amount1_delta(sqrt_a: &U256, sqrt_b: &U256, liquidity: u128, round_up: bool) -> Option<u128> {
     if liquidity == 0 {
         return Some(0);
     }
@@ -635,12 +611,7 @@ pub fn amount1_delta(
 // ============================================================================
 
 /// Compute next sqrt price given token0 input/output amount.
-pub fn get_next_sqrt_price_from_amount0(
-    sqrt_price: &U256,
-    liquidity: u128,
-    amount: u128,
-    add: bool,
-) -> U256 {
+pub fn get_next_sqrt_price_from_amount0(sqrt_price: &U256, liquidity: u128, amount: u128, add: bool) -> U256 {
     if amount == 0 {
         return *sqrt_price;
     }
@@ -663,12 +634,7 @@ pub fn get_next_sqrt_price_from_amount0(
 }
 
 /// Compute next sqrt price given token1 input/output amount.
-pub fn get_next_sqrt_price_from_amount1(
-    sqrt_price: &U256,
-    liquidity: u128,
-    amount: u128,
-    add: bool,
-) -> U256 {
+pub fn get_next_sqrt_price_from_amount1(sqrt_price: &U256, liquidity: u128, amount: u128, add: bool) -> U256 {
     let liq = U256::from_u128(liquidity);
     let amt = U256::from_u128(amount);
 
@@ -683,12 +649,7 @@ pub fn get_next_sqrt_price_from_amount1(
 }
 
 /// Compute next sqrt price from input amount.
-pub fn get_next_sqrt_price_from_input(
-    sqrt_price: &U256,
-    liquidity: u128,
-    amount_in: u128,
-    zero_for_one: bool,
-) -> U256 {
+pub fn get_next_sqrt_price_from_input(sqrt_price: &U256, liquidity: u128, amount_in: u128, zero_for_one: bool) -> U256 {
     if zero_for_one {
         get_next_sqrt_price_from_amount0(sqrt_price, liquidity, amount_in, true)
     } else {
@@ -748,8 +709,7 @@ pub fn compute_swap_step(
     let fee_complement = FEE_DENOMINATOR - fee;
 
     if exact_input {
-        let amount_remaining_less_fee =
-            mul_div_u128(amount_remaining, fee_complement, FEE_DENOMINATOR, false);
+        let amount_remaining_less_fee = mul_div_u128(amount_remaining, fee_complement, FEE_DENOMINATOR, false);
 
         let amount_in_to_target = if zero_for_one {
             amount0_delta(sqrt_target, sqrt_current, liquidity, true)
@@ -760,12 +720,8 @@ pub fn compute_swap_step(
         let sqrt_next = if amount_in_to_target.map_or(false, |a| amount_remaining_less_fee >= a) {
             *sqrt_target
         } else {
-            let computed = get_next_sqrt_price_from_input(
-                sqrt_current,
-                liquidity,
-                amount_remaining_less_fee,
-                zero_for_one,
-            );
+            let computed =
+                get_next_sqrt_price_from_input(sqrt_current, liquidity, amount_remaining_less_fee, zero_for_one);
             // Clamp to target range
             if zero_for_one {
                 if computed < *sqrt_target {
@@ -819,12 +775,7 @@ pub fn compute_swap_step(
         let sqrt_next = if amount_out_to_target.map_or(false, |a| amount_remaining >= a) {
             *sqrt_target
         } else {
-            let computed = get_next_sqrt_price_from_output(
-                sqrt_current,
-                liquidity,
-                amount_remaining,
-                zero_for_one,
-            );
+            let computed = get_next_sqrt_price_from_output(sqrt_current, liquidity, amount_remaining, zero_for_one);
             if zero_for_one {
                 if computed < *sqrt_target {
                     *sqrt_target
@@ -932,7 +883,8 @@ pub mod bitmap {
         (l2_word_pos, bit_pos)
     }
 
-    /// Find the previous (lower) set bit in a 256-bit word (big-endian [u8; 32]).
+    /// Find the previous (lower) set bit in a 256-bit word (big-endian [u8;
+    /// 32]).
     pub fn find_prev_set_bit(word: &[u8; 32], from_bit: u32) -> Option<u32> {
         let from_bit = from_bit.min(255);
         let start_byte = (255 - from_bit) / 8;
@@ -1154,12 +1106,7 @@ impl TickDataStore {
         search(l2_adj, from)
     }
 
-    fn extreme_tick_in_bitmap_word(
-        &self,
-        word_pos: i32,
-        spacing: i32,
-        highest: bool,
-    ) -> Option<i32> {
+    fn extreme_tick_in_bitmap_word(&self, word_pos: i32, spacing: i32, highest: bool) -> Option<i32> {
         let word = self.chunk_bitmap.get(&word_pos)?;
         let found_bit = if highest {
             bitmap::find_prev_set_bit(word, 255)
@@ -1185,9 +1132,7 @@ fn set_bitmap_bit(word: &mut [u8; 32], bit_pos: u32) {
     word[byte_idx] |= 1u8 << bit_idx;
 }
 
-fn derive_word_bitmap_entries(
-    chunk_bitmaps: &std::collections::HashMap<i32, [u8; 32]>,
-) -> Vec<ClmmBitmapWordSnapshot> {
+fn derive_word_bitmap_entries(chunk_bitmaps: &std::collections::HashMap<i32, [u8; 32]>) -> Vec<ClmmBitmapWordSnapshot> {
     let mut derived = std::collections::HashMap::<i32, [u8; 32]>::new();
     for (chunk_word_pos, chunk_bitmap_word) in chunk_bitmaps {
         if chunk_bitmap_word.iter().all(|byte| *byte == 0) {
@@ -1319,19 +1264,16 @@ pub fn clmm_pool_from_snapshot(snapshot: &ClmmPoolSnapshot) -> (ClmmPoolState, T
     (pool, tick_store)
 }
 
-/// True when the active tick moved outside a prior Sushi-style bitmap word scan window.
-pub fn tick_outside_word_scan(
-    tick: i32,
-    tick_spacing: i32,
-    word_start: i32,
-    word_end: i32,
-) -> bool {
+/// True when the active tick moved outside a prior Sushi-style bitmap word scan
+/// window.
+pub fn tick_outside_word_scan(tick: i32, tick_spacing: i32, word_start: i32, word_end: i32) -> bool {
     let compressed = tick.div_euclid(tick_spacing);
     let word = compressed.div_euclid(256);
     word < word_start || word > word_end
 }
 
-/// True when the active tick is outside initialized ticks we have loaded locally.
+/// True when the active tick is outside initialized ticks we have loaded
+/// locally.
 pub fn tick_outside_loaded_range(tick: i32, min_loaded: i32, max_loaded: i32) -> bool {
     tick < min_loaded || tick > max_loaded
 }
@@ -1369,7 +1311,8 @@ pub fn clmm_has_initialized_ticks(tick_store: &TickDataStore) -> bool {
         .any(|chunk| chunk.iter().any(|tick| tick.liquidity_gross > 0))
 }
 
-/// Pool metadata is present and the active tick sits inside declared coverage bounds.
+/// Pool metadata is present and the active tick sits inside declared coverage
+/// bounds.
 pub fn clmm_quote_allowed(tick_store: &TickDataStore, coverage: &ClmmCoverageInput) -> bool {
     if !coverage.is_complete {
         return false;
@@ -1390,7 +1333,8 @@ pub fn clmm_quote_allowed(tick_store: &TickDataStore, coverage: &ClmmCoverageInp
     true
 }
 
-/// Whether a simulated swap stays within loaded tick boundaries (guards missing-tick math).
+/// Whether a simulated swap stays within loaded tick boundaries (guards
+/// missing-tick math).
 pub fn swap_stays_within_loaded_ticks(
     pool: &ClmmPoolState,
     ticks: &TickDataStore,
@@ -1405,8 +1349,7 @@ pub fn swap_stays_within_loaded_ticks(
     if tick_outside_loaded_range(pool.tick, min_loaded, max_loaded) {
         return false;
     }
-    let Some((amount_out, _, final_tick)) = simulate_swap(pool, ticks, amount_in, zero_for_one)
-    else {
+    let Some((amount_out, _, final_tick)) = simulate_swap(pool, ticks, amount_in, zero_for_one) else {
         return false;
     };
     if amount_out == 0 {
@@ -1455,7 +1398,8 @@ pub fn loaded_tick_range(tick_store: &TickDataStore, tick_spacing: i32) -> Optio
 
 /// Simulate a swap on a CLMM pool (exact input, zero_for_one or one_for_zero).
 /// Returns (amount_out, final_sqrt_price, final_tick).
-/// This is the off-chain equivalent of the on-chain swap_loop with dry_run=true.
+/// This is the off-chain equivalent of the on-chain swap_loop with
+/// dry_run=true.
 pub fn simulate_swap(
     pool: &ClmmPoolState,
     ticks: &TickDataStore,
@@ -1494,8 +1438,7 @@ pub fn simulate_swap(
             break;
         }
 
-        let (next_tick, next_tick_initialized) =
-            ticks.find_initialized_tick(tick, pool.tick_spacing, zero_for_one);
+        let (next_tick, next_tick_initialized) = ticks.find_initialized_tick(tick, pool.tick_spacing, zero_for_one);
 
         let next_tick_price = sqrt_ratio_at_tick(next_tick);
 
@@ -1567,8 +1510,7 @@ pub fn simulate_swap(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use market_snapshot::ClmmCoverageSnapshot;
+    use {super::*, market_snapshot::ClmmCoverageSnapshot};
 
     #[test]
     fn test_u256_basic_ops() {
@@ -1717,7 +1659,8 @@ mod tests {
         // Create tick data with liquidity at [-1000, 1000]
         let mut ticks = TickDataStore::new();
 
-        // Add initialized ticks at -1000 and 1000 (compressed: -5 and 5 for spacing=200)
+        // Add initialized ticks at -1000 and 1000 (compressed: -5 and 5 for
+        // spacing=200)
         let lower_compressed = bitmap::compress_tick(-1000, 200); // -5
         let upper_compressed = bitmap::compress_tick(1000, 200); // 5
 
@@ -1926,12 +1869,7 @@ mod tests {
         assert_eq!(restored_pool.liquidity, pool.liquidity);
         assert_eq!(restored_pool.token0, pool.token0);
         assert_eq!(restored_pool.token1, pool.token1);
-        assert_eq!(
-            restored_ticks
-                .get_tick(-120, pool.tick_spacing)
-                .liquidity_gross,
-            777
-        );
+        assert_eq!(restored_ticks.get_tick(-120, pool.tick_spacing).liquidity_gross, 777);
         assert_eq!(restored_ticks.chunk_bitmap.get(&0), Some(&[5u8; 32]));
         assert_eq!(restored_ticks.word_bitmap.get(&-1), Some(&[9u8; 32]));
     }

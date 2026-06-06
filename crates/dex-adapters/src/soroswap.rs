@@ -6,14 +6,18 @@
 //! - Factory contract provides pair discovery
 //! - Each pair is a separate contract with token_0(), token_1(), get_reserves()
 
-use crate::rpc::{scval_to_address, scval_to_i128, scval_to_u128, scval_to_u32, SorobanRpc};
-use crate::traits::*;
-use anyhow::Result;
-use async_trait::async_trait;
-use std::sync::Arc;
-use stellar_xdr::curr as xdr;
-use tokio::sync::RwLock;
-use tracing::{debug, info};
+use {
+    crate::{
+        rpc::{scval_to_address, scval_to_i128, scval_to_u128, scval_to_u32, SorobanRpc},
+        traits::*,
+    },
+    anyhow::Result,
+    async_trait::async_trait,
+    std::sync::Arc,
+    stellar_xdr::curr as xdr,
+    tokio::sync::RwLock,
+    tracing::{debug, info},
+};
 
 /// Soroswap Factory contract address (Mainnet)
 pub const SOROSWAP_FACTORY: &str = "CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2";
@@ -37,7 +41,8 @@ impl SoroswapAdapter {
     }
 
     /// Batch-refresh all pool reserves using a single getLedgerEntries call.
-    /// This is ~200x faster than calling get_reserves() on each pool individually.
+    /// This is ~200x faster than calling get_reserves() on each pool
+    /// individually.
     pub async fn refresh_all_reserves(&self) -> Result<usize> {
         let pairs = self.pairs.read().await;
         if pairs.is_empty() {
@@ -51,12 +56,9 @@ impl SoroswapAdapter {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(4);
-        let results = crate::batch_refresh::batch_refresh_soroswap_reserves_parallel(
-            &self.rpc,
-            &pool_addresses,
-            concurrency,
-        )
-        .await?;
+        let results =
+            crate::batch_refresh::batch_refresh_soroswap_reserves_parallel(&self.rpc, &pool_addresses, concurrency)
+                .await?;
 
         let mut updated = 0;
         let mut pairs = self.pairs.write().await;
@@ -71,12 +73,25 @@ impl SoroswapAdapter {
             }
         }
 
-        debug!(
-            "Soroswap: batch-refreshed {}/{} pools",
-            updated,
-            pool_addresses.len()
-        );
+        debug!("Soroswap: batch-refreshed {}/{} pools", updated, pool_addresses.len());
         Ok(updated)
+    }
+
+    /// Apply batch getLedgerEntries results to the in-memory pair cache.
+    pub async fn apply_batch_reserves(&self, results: &[(String, Option<(u128, u128)>)]) -> usize {
+        let mut updated = 0usize;
+        let mut pairs = self.pairs.write().await;
+        for (addr, reserves) in results {
+            let Some((r0, r1)) = reserves else {
+                continue;
+            };
+            if let Some(pair) = pairs.iter_mut().find(|p| &p.pool_address == addr) {
+                pair.reserve_a = Some(*r0);
+                pair.reserve_b = Some(*r1);
+                updated += 1;
+            }
+        }
+        updated
     }
 
     /// Compute output amount using constant product formula.
@@ -104,13 +119,11 @@ impl SoroswapAdapter {
     }
 
     /// Fetch all pairs from the Soroswap Factory contract.
-    /// Optimized: uses contract addresses directly as TokenId (no name() calls).
+    /// Optimized: uses contract addresses directly as TokenId (no name()
+    /// calls).
     async fn fetch_pairs_from_factory(&self) -> Result<Vec<AdapterTradingPair>> {
         // 1. Get total pair count
-        let length_val = self
-            .rpc
-            .call_no_args(SOROSWAP_FACTORY, "all_pairs_length")
-            .await?;
+        let length_val = self.rpc.call_no_args(SOROSWAP_FACTORY, "all_pairs_length").await?;
         let total_pairs = scval_to_u32(&length_val)?;
         info!("Soroswap: total pairs = {}", total_pairs);
 
@@ -135,11 +148,7 @@ impl SoroswapAdapter {
             }
 
             if all_pairs.len() % 50 == 0 && !all_pairs.is_empty() {
-                info!(
-                    "Soroswap: fetched {}/{} pairs so far",
-                    all_pairs.len(),
-                    total_pairs
-                );
+                info!("Soroswap: fetched {}/{} pairs so far", all_pairs.len(), total_pairs);
             }
 
             // Small delay to avoid overwhelming RPC
@@ -173,12 +182,8 @@ impl SoroswapAdapter {
         let token_b_addr = scval_to_address(&token_1_result?)?;
 
         // Use contract address directly as TokenId (fast, no extra RPC)
-        let token_a = TokenId::Contract {
-            address: token_a_addr,
-        };
-        let token_b = TokenId::Contract {
-            address: token_b_addr,
-        };
+        let token_a = TokenId::Contract { address: token_a_addr };
+        let token_b = TokenId::Contract { address: token_b_addr };
 
         // Parse reserves
         let (reserve_a, reserve_b) = match reserves_result {
@@ -186,7 +191,8 @@ impl SoroswapAdapter {
             Err(_) => (None, None),
         };
 
-        // Skip pools with zero liquidity (but keep pools where reserves couldn't be read)
+        // Skip pools with zero liquidity (but keep pools where reserves couldn't be
+        // read)
         if reserve_a == Some(0) && reserve_b == Some(0) {
             return Ok(None);
         }

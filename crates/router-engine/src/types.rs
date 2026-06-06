@@ -1,7 +1,6 @@
-use serde::{Deserialize, Serialize};
-
 // Use TokenId from dex-adapters as the single source of truth
 pub use dex_adapters::TokenId;
+use serde::{Deserialize, Serialize};
 
 /// A trading pair on a specific DEX source.
 #[derive(Debug, Clone, Serialize, Deserialize)]

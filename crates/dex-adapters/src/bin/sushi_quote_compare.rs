@@ -2,11 +2,14 @@
 //!
 //! Usage:
 //!   cargo run -p dex-adapters --bin sushi-quote-compare
-//!   SUSHI_POOL=CCR2CH4GQVCZ... cargo run -p dex-adapters --bin sushi-quote-compare
+//!   SUSHI_POOL=CCR2CH4GQVCZ... cargo run -p dex-adapters --bin
+//! sushi-quote-compare
 
-use anyhow::Result;
-use dex_adapters::{DexAdapter, SorobanRpc, SushiAdapter, TokenId};
-use std::sync::Arc;
+use {
+    anyhow::Result,
+    dex_adapters::{DexAdapter, SorobanRpc, SushiAdapter, TokenId},
+    std::sync::Arc,
+};
 
 const XLM: &str = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";
 const USDC: &str = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75";
@@ -33,8 +36,8 @@ fn token_label(addr: &str) -> &str {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
-    let rpc_url = std::env::var("RPC_URL")
-        .unwrap_or_else(|_| "https://soroban-rpc.mainnet.stellar.gateway.fm".to_string());
+    let rpc_url =
+        std::env::var("RPC_URL").unwrap_or_else(|_| "https://soroban-rpc.mainnet.stellar.gateway.fm".to_string());
     println!("RPC: {}\n", rpc_url);
 
     let rpc = Arc::new(SorobanRpc::new(
@@ -74,11 +77,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    let amounts: &[(u128, &str)] = &[
-        (1_000_000, "0.1 XLM"),
-        (10_000_000, "1 XLM"),
-        (100_000_000, "10 XLM"),
-    ];
+    let amounts: &[(u128, &str)] = &[(1_000_000, "0.1 XLM"), (10_000_000, "1 XLM"), (100_000_000, "10 XLM")];
 
     println!("get_quote(): local CLMM only (no router RPC simulate)\n");
     println!(
@@ -116,9 +115,7 @@ async fn main() -> Result<()> {
         );
 
         for &(amt, label) in amounts {
-            let (local, chain, _, sim_err) = sushi
-                .compare_local_vs_simulate(pool, token_in, token_out, amt)
-                .await?;
+            let (local, chain, _, sim_err) = sushi.compare_local_vs_simulate(pool, token_in, token_out, amt).await?;
 
             match (local, chain) {
                 (Some(l), Some(s)) => {

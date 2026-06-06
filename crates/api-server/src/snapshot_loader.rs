@@ -1,8 +1,9 @@
-use anyhow::Result;
-use market_snapshot::{MarketSnapshot, TradingPairSnapshot};
-use router_engine::{path_finder::PathFinderConfig, split_optimizer::SplitConfig, QuoteEngine};
-
-use crate::{config::AppConfig, state::sanitize_cached_pairs};
+use {
+    crate::{config::AppConfig, state::sanitize_cached_pairs},
+    anyhow::Result,
+    market_snapshot::{MarketSnapshot, TradingPairSnapshot},
+    router_engine::{path_finder::PathFinderConfig, split_optimizer::SplitConfig, QuoteEngine},
+};
 
 pub fn path_finder_config_from_app(config: &AppConfig) -> PathFinderConfig {
     PathFinderConfig {
@@ -13,10 +14,7 @@ pub fn path_finder_config_from_app(config: &AppConfig) -> PathFinderConfig {
     }
 }
 
-fn snapshot_pair_to_trading(
-    pair: &TradingPairSnapshot,
-    source: &str,
-) -> router_engine::TradingPair {
+fn snapshot_pair_to_trading(pair: &TradingPairSnapshot, source: &str) -> router_engine::TradingPair {
     router_engine::TradingPair {
         token_a: router_engine::TokenId::from_str_auto(&pair.token_a),
         token_b: router_engine::TokenId::from_str_auto(&pair.token_b),
@@ -28,10 +26,7 @@ fn snapshot_pair_to_trading(
     }
 }
 
-pub async fn build_engine_from_snapshot(
-    config: &AppConfig,
-    snapshot: &MarketSnapshot,
-) -> Result<QuoteEngine> {
+pub async fn build_engine_from_snapshot(config: &AppConfig, snapshot: &MarketSnapshot) -> Result<QuoteEngine> {
     let split_config = SplitConfig {
         split_threshold_bps: config.split_threshold_bps,
         split_competitive_delta_bps: config.split_competitive_delta_bps,
@@ -48,9 +43,7 @@ pub async fn build_engine_from_snapshot(
             .map(|pair| snapshot_pair_to_trading(pair, &source.source))
             .collect::<Vec<_>>();
         let trading_pairs = sanitize_cached_pairs(&source.source, trading_pairs);
-        engine
-            .update_pairs_from_cache(&source.source, &trading_pairs)
-            .await;
+        engine.update_pairs_from_cache(&source.source, &trading_pairs).await;
     }
 
     Ok(engine)
@@ -58,10 +51,12 @@ pub async fn build_engine_from_snapshot(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use dex_adapters::clmm_math::{bitmap, sqrt_ratio_at_tick};
-    use market_snapshot::{ClmmPoolSnapshot, MarketSnapshot, SourceSnapshot, TradingPairSnapshot};
-    use router_engine::TokenId;
+    use {
+        super::*,
+        dex_adapters::clmm_math::{bitmap, sqrt_ratio_at_tick},
+        market_snapshot::{ClmmPoolSnapshot, MarketSnapshot, SourceSnapshot, TradingPairSnapshot},
+        router_engine::TokenId,
+    };
 
     fn sample_snapshot() -> MarketSnapshot {
         MarketSnapshot::from_sources(
@@ -104,20 +99,13 @@ mod tests {
                 },
             ],
             chunk_bitmaps: vec![market_snapshot::ClmmBitmapWordSnapshot {
-                word_pos: bitmap::chunk_bitmap_position(
-                    bitmap::chunk_address(bitmap::compress_tick(-1000, 200)).0,
-                )
-                .0,
+                word_pos: bitmap::chunk_bitmap_position(bitmap::chunk_address(bitmap::compress_tick(-1000, 200)).0).0,
                 word: {
                     let mut word = [0u8; 32];
-                    let lower_bit = bitmap::chunk_bitmap_position(
-                        bitmap::chunk_address(bitmap::compress_tick(-1000, 200)).0,
-                    )
-                    .1;
-                    let upper_bit = bitmap::chunk_bitmap_position(
-                        bitmap::chunk_address(bitmap::compress_tick(1000, 200)).0,
-                    )
-                    .1;
+                    let lower_bit =
+                        bitmap::chunk_bitmap_position(bitmap::chunk_address(bitmap::compress_tick(-1000, 200)).0).1;
+                    let upper_bit =
+                        bitmap::chunk_bitmap_position(bitmap::chunk_address(bitmap::compress_tick(1000, 200)).0).1;
                     word[31 - (lower_bit / 8) as usize] |= 1u8 << (lower_bit % 8);
                     word[31 - (upper_bit / 8) as usize] |= 1u8 << (upper_bit % 8);
                     word
@@ -125,19 +113,13 @@ mod tests {
             }],
             word_bitmaps: vec![market_snapshot::ClmmBitmapWordSnapshot {
                 word_pos: bitmap::word_bitmap_position(
-                    bitmap::chunk_bitmap_position(
-                        bitmap::chunk_address(bitmap::compress_tick(-1000, 200)).0,
-                    )
-                    .0,
+                    bitmap::chunk_bitmap_position(bitmap::chunk_address(bitmap::compress_tick(-1000, 200)).0).0,
                 )
                 .0,
                 word: {
                     let mut word = [0u8; 32];
                     let l2_bit = bitmap::word_bitmap_position(
-                        bitmap::chunk_bitmap_position(
-                            bitmap::chunk_address(bitmap::compress_tick(-1000, 200)).0,
-                        )
-                        .0,
+                        bitmap::chunk_bitmap_position(bitmap::chunk_address(bitmap::compress_tick(-1000, 200)).0).0,
                     )
                     .1;
                     word[31 - (l2_bit / 8) as usize] |= 1u8 << (l2_bit % 8);
@@ -173,10 +155,7 @@ mod tests {
         .with_clmm_pool_refs(vec![market_snapshot::ClmmPoolRefSnapshot::from_pool(&pool)])
     }
 
-    async fn seed_clmm_quote_states(
-        engine: &router_engine::QuoteEngine,
-        pools: &[ClmmPoolSnapshot],
-    ) {
+    async fn seed_clmm_quote_states(engine: &router_engine::QuoteEngine, pools: &[ClmmPoolSnapshot]) {
         use dex_adapters::clmm_math::clmm_pool_from_snapshot;
         for pool in pools {
             let (state, ticks) = clmm_pool_from_snapshot(pool);
@@ -219,9 +198,7 @@ mod tests {
     #[tokio::test]
     async fn builds_engine_from_snapshot_data() {
         let config = crate::config::AppConfig::default();
-        let engine = build_engine_from_snapshot(&config, &sample_snapshot())
-            .await
-            .unwrap();
+        let engine = build_engine_from_snapshot(&config, &sample_snapshot()).await.unwrap();
         engine
             .update_pairs_from_cache(
                 "soroswap",

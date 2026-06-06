@@ -1,18 +1,38 @@
-use axum::{
-    extract::{Query, State},
-    http::StatusCode,
-    response::IntoResponse,
-    Json,
+use {
+    crate::{soroban_prepare::prepare_transaction_xdr, state::AppState},
+    axum::{
+        extract::{Query, State},
+        http::StatusCode,
+        response::IntoResponse,
+        Json,
+    },
+    router_engine::{
+        types::{RouteRequest, TokenId},
+        QuoteEngine,
+    },
+    serde::{Deserialize, Serialize},
+    std::sync::Arc,
+    stellar_xdr::{
+        curr as xdr,
+        curr::{Limits, WriteXdr},
+    },
 };
-use router_engine::types::{RouteRequest, TokenId};
-use router_engine::QuoteEngine;
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use stellar_xdr::curr as xdr;
-use stellar_xdr::curr::{Limits, WriteXdr};
 
-use crate::soroban_prepare::prepare_transaction_xdr;
-use crate::state::AppState;
+/// GET / — human-friendly landing when reviewers open the API host in a
+/// browser.
+pub async fn api_root() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "service": "LumAgg API",
+        "status": "ok",
+        "endpoints": {
+            "health": "/api/v1/health",
+            "quote": "/api/v1/quote",
+            "build_tx": "/api/v1/build_tx",
+            "tokens": "/api/v1/tokens"
+        },
+        "repository": "https://github.com/ligulfzhou/stellar-dex-agg"
+    }))
+}
 
 // ============================================================
 // GET /api/v1/quote
@@ -99,7 +119,8 @@ pub struct SubRouteData {
     pub path: Vec<String>,
     /// Pool addresses for each hop (same length as path - 1)
     pub pool_addresses: Vec<String>,
-    /// DEX types for each hop: "aquarius", "soroswap", "phoenix", "sushi", "comet", "classic_dex"
+    /// DEX types for each hop: "aquarius", "soroswap", "phoenix", "sushi",
+    /// "comet", "classic_dex"
     pub dex_types: Vec<String>,
     /// Input token index for each hop (0 = token_a, 1 = token_b, etc.)
     pub in_indices: Vec<u32>,
@@ -110,10 +131,7 @@ pub struct SubRouteData {
     pub percentage: f64,
 }
 
-pub async fn get_quote(
-    State(state): State<AppState>,
-    Query(params): Query<QuoteQuery>,
-) -> impl IntoResponse {
+pub async fn get_quote(State(state): State<AppState>, Query(params): Query<QuoteQuery>) -> impl IntoResponse {
     let amount_in: u128 = match params.amount_in.parse() {
         Ok(v) => v,
         Err(_) => {
@@ -357,10 +375,7 @@ async fn route_to_sub_routes(
     Ok((sub_routes, build_sub_routes))
 }
 
-pub async fn build_swap(
-    State(state): State<AppState>,
-    Json(body): Json<SwapRequest>,
-) -> impl IntoResponse {
+pub async fn build_swap(State(state): State<AppState>, Json(body): Json<SwapRequest>) -> impl IntoResponse {
     let amount_in: u128 = match body.amount_in.parse() {
         Ok(v) => v,
         Err(_) => {
@@ -463,15 +478,14 @@ pub async fn build_swap(
 }
 
 pub async fn build_tx_impl(body: &BuildTxRequest) -> Result<BuildTxData, String> {
-    use stellar_xdr::curr as xdr;
-    use stellar_xdr::curr::{Limits, WriteXdr};
+    use stellar_xdr::{
+        curr as xdr,
+        curr::{Limits, WriteXdr},
+    };
 
     let user_key = stellar_strkey::ed25519::PublicKey::from_string(&body.user_public_key)
         .map_err(|e| format!("Invalid public key: {:?}", e))?;
-    let amount_in: i128 = body
-        .amount_in
-        .parse()
-        .map_err(|_| "Invalid amount_in".to_string())?;
+    let amount_in: i128 = body.amount_in.parse().map_err(|_| "Invalid amount_in".to_string())?;
     let min_amount_out: i128 = body
         .min_amount_out
         .parse()
@@ -494,8 +508,7 @@ pub async fn build_tx_impl(body: &BuildTxRequest) -> Result<BuildTxData, String>
             soroban_subs.push(sub);
         } else {
             return Err(
-                "Each sub-route must be all classic_dex or all Soroban hops (no mixing within one leg)"
-                    .to_string(),
+                "Each sub-route must be all classic_dex or all Soroban hops (no mixing within one leg)".to_string(),
             );
         }
     }
@@ -541,8 +554,7 @@ pub async fn build_tx_impl(body: &BuildTxRequest) -> Result<BuildTxData, String>
     }
 
     if !soroban_subs.is_empty() {
-        let soroban_subs_owned: Vec<BuildTxSubRoute> =
-            soroban_subs.iter().map(|s| (*s).clone()).collect();
+        let soroban_subs_owned: Vec<BuildTxSubRoute> = soroban_subs.iter().map(|s| (*s).clone()).collect();
         ops.push(build_aggregator_invoke_op(
             body,
             &user_key,
@@ -576,8 +588,8 @@ pub async fn build_tx_impl(body: &BuildTxRequest) -> Result<BuildTxData, String>
     });
 
     let fee = base_fee.max(10_000);
-    let rpc_url = std::env::var("RPC_URL")
-        .unwrap_or_else(|_| "https://soroban-rpc.mainnet.stellar.gateway.fm".to_string());
+    let rpc_url =
+        std::env::var("RPC_URL").unwrap_or_else(|_| "https://soroban-rpc.mainnet.stellar.gateway.fm".to_string());
 
     let unsigned_tx_xdr = match execution {
         "classic" => envelope
@@ -585,14 +597,7 @@ pub async fn build_tx_impl(body: &BuildTxRequest) -> Result<BuildTxData, String>
             .map_err(|e| format!("XDR encode error: {:?}", e))?,
         "soroban" => {
             let ops_vec: Vec<xdr::Operation> = ops.to_vec();
-            prepare_transaction_xdr(
-                &rpc_url,
-                &body.user_public_key,
-                seq_num as u64,
-                &ops_vec,
-                fee,
-            )
-            .await?
+            prepare_transaction_xdr(&rpc_url, &body.user_public_key, seq_num as u64, &ops_vec, fee).await?
         }
         "hybrid" => {
             let full_xdr = envelope
@@ -606,14 +611,8 @@ pub async fn build_tx_impl(body: &BuildTxRequest) -> Result<BuildTxData, String>
             if invoke_ops.len() != 1 {
                 return Err("Hybrid tx must contain exactly one Soroban invoke".to_string());
             }
-            let prepared_invoke = prepare_transaction_xdr(
-                &rpc_url,
-                &body.user_public_key,
-                seq_num as u64,
-                &invoke_ops,
-                fee,
-            )
-            .await?;
+            let prepared_invoke =
+                prepare_transaction_xdr(&rpc_url, &body.user_public_key, seq_num as u64, &invoke_ops, fee).await?;
             merge_prepared_invoke_into_tx(&full_xdr, &prepared_invoke)?
         }
         other => return Err(format!("Unknown execution mode: {}", other)),
@@ -628,11 +627,9 @@ pub async fn build_tx_impl(body: &BuildTxRequest) -> Result<BuildTxData, String>
     })
 }
 
-/// Copy sorobanData + auth from a prepared single-invoke tx into a hybrid envelope.
-fn merge_prepared_invoke_into_tx(
-    full_tx_xdr: &str,
-    prepared_invoke_xdr: &str,
-) -> Result<String, String> {
+/// Copy sorobanData + auth from a prepared single-invoke tx into a hybrid
+/// envelope.
+fn merge_prepared_invoke_into_tx(full_tx_xdr: &str, prepared_invoke_xdr: &str) -> Result<String, String> {
     use stellar_xdr::curr::ReadXdr;
 
     let mut full = xdr::TransactionEnvelope::from_xdr_base64(full_tx_xdr, Limits::none())
@@ -666,16 +663,14 @@ fn merge_prepared_invoke_into_tx(
         .map_err(|e| format!("encode merged tx: {:?}", e))
 }
 
-/// Build unsigned envelope XDR only (no RPC simulate). Used by tests and debugging.
+/// Build unsigned envelope XDR only (no RPC simulate). Used by tests and
+/// debugging.
 pub async fn build_unsigned_tx_xdr(body: &BuildTxRequest) -> Result<String, String> {
     use stellar_xdr::curr::{Limits, WriteXdr};
 
     let user_key = stellar_strkey::ed25519::PublicKey::from_string(&body.user_public_key)
         .map_err(|e| format!("Invalid public key: {:?}", e))?;
-    let amount_in: i128 = body
-        .amount_in
-        .parse()
-        .map_err(|_| "Invalid amount_in".to_string())?;
+    let amount_in: i128 = body.amount_in.parse().map_err(|_| "Invalid amount_in".to_string())?;
     let min_amount_out: i128 = body
         .min_amount_out
         .parse()
@@ -698,8 +693,7 @@ pub async fn build_unsigned_tx_xdr(body: &BuildTxRequest) -> Result<String, Stri
             soroban_subs.push(sub);
         } else {
             return Err(
-                "Each sub-route must be all classic_dex or all Soroban hops (no mixing within one leg)"
-                    .to_string(),
+                "Each sub-route must be all classic_dex or all Soroban hops (no mixing within one leg)".to_string(),
             );
         }
     }
@@ -739,8 +733,7 @@ pub async fn build_unsigned_tx_xdr(body: &BuildTxRequest) -> Result<String, Stri
     }
 
     if !soroban_subs.is_empty() {
-        let soroban_subs_owned: Vec<BuildTxSubRoute> =
-            soroban_subs.iter().map(|s| (*s).clone()).collect();
+        let soroban_subs_owned: Vec<BuildTxSubRoute> = soroban_subs.iter().map(|s| (*s).clone()).collect();
         ops.push(build_aggregator_invoke_op(
             body,
             &user_key,
@@ -944,8 +937,9 @@ pub async fn health_check(State(_state): State<AppState>) -> impl IntoResponse {
 const AGGREGATOR_CONTRACT: &str = "CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K";
 
 /// Build an unsigned transaction for the quoted route.
-/// Soroban legs use aggregator `swap`; Classic legs use `PathPaymentStrictSend`.
-/// Mixed routes emit both operation types in one atomic transaction.
+/// Soroban legs use aggregator `swap`; Classic legs use
+/// `PathPaymentStrictSend`. Mixed routes emit both operation types in one
+/// atomic transaction.
 #[derive(Deserialize)]
 pub struct BuildTxRequest {
     /// User's Stellar public key (G...)
@@ -971,7 +965,8 @@ pub struct BuildTxSubRoute {
 
 #[derive(Clone, Deserialize)]
 pub struct BuildTxStep {
-    /// DEX type: "aquarius", "soroswap", "phoenix", "sushi", "comet", "classic_dex"
+    /// DEX type: "aquarius", "soroswap", "phoenix", "sushi", "comet",
+    /// "classic_dex"
     pub dex_type: String,
     /// Pool contract address
     pub pool_address: String,
@@ -1026,9 +1021,7 @@ fn build_tx_step_scval(step: &BuildTxStep) -> Result<stellar_xdr::curr::ScVal, S
         "sushi" => dex_unit_enum("Sushi"),
         "comet" => dex_unit_enum("CometDex"),
         "classic_dex" => {
-            return Err(
-                "classic_dex steps must use PathPaymentStrictSend, not aggregator.swap".to_string(),
-            );
+            return Err("classic_dex steps must use PathPaymentStrictSend, not aggregator.swap".to_string());
         }
         other => return Err(format!("Unknown dex_type: {}", other)),
     };
@@ -1047,9 +1040,7 @@ fn build_tx_step_scval(step: &BuildTxStep) -> Result<stellar_xdr::curr::ScVal, S
         vec![
             xdr::ScMapEntry {
                 key: xdr::ScVal::Symbol(xdr::ScSymbol("dex_id".try_into().unwrap())),
-                val: xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
-                    pool_hash,
-                )))),
+                val: xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(pool_hash)))),
             },
             xdr::ScMapEntry {
                 key: xdr::ScVal::Symbol(xdr::ScSymbol("dex_type".try_into().unwrap())),
@@ -1065,15 +1056,11 @@ fn build_tx_step_scval(step: &BuildTxStep) -> Result<stellar_xdr::curr::ScVal, S
             },
             xdr::ScMapEntry {
                 key: xdr::ScVal::Symbol(xdr::ScSymbol("token_in".try_into().unwrap())),
-                val: xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
-                    token_in_hash,
-                )))),
+                val: xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(token_in_hash)))),
             },
             xdr::ScMapEntry {
                 key: xdr::ScVal::Symbol(xdr::ScSymbol("token_out".try_into().unwrap())),
-                val: xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
-                    token_out_hash,
-                )))),
+                val: xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(token_out_hash)))),
             },
         ]
         .try_into()
@@ -1127,17 +1114,11 @@ fn sub_route_is_soroban(sub: &BuildTxSubRoute) -> bool {
 }
 
 /// Per-leg minimum output for Classic `PathPaymentStrictSend`.
-/// Stellar core rejects the op when `dest_min <= 0` (`PATH_PAYMENT_STRICT_SEND_MALFORMED`).
-fn classic_dest_min_for_sub(
-    leg_amount_in: i128,
-    total_amount_in: i128,
-    min_amount_out: i128,
-) -> Result<i64, String> {
+/// Stellar core rejects the op when `dest_min <= 0`
+/// (`PATH_PAYMENT_STRICT_SEND_MALFORMED`).
+fn classic_dest_min_for_sub(leg_amount_in: i128, total_amount_in: i128, min_amount_out: i128) -> Result<i64, String> {
     if min_amount_out <= 0 {
-        return Err(
-            "min_amount_out must be > 0 for Classic DEX swaps (Stellar requires dest_min > 0)"
-                .to_string(),
-        );
+        return Err("min_amount_out must be > 0 for Classic DEX swaps (Stellar requires dest_min > 0)".to_string());
     }
     if leg_amount_in <= 0 || total_amount_in <= 0 {
         return Err("amount_in must be positive".to_string());
@@ -1164,10 +1145,8 @@ fn build_path_payment_op(
         .steps
         .last()
         .ok_or_else(|| "classic sub-route has no steps".to_string())?;
-    let send_asset =
-        parse_asset_xdr(&first.token_in).map_err(|e| format!("Invalid token_in: {}", e))?;
-    let dest_asset =
-        parse_asset_xdr(&last.token_out).map_err(|e| format!("Invalid token_out: {}", e))?;
+    let send_asset = parse_asset_xdr(&first.token_in).map_err(|e| format!("Invalid token_in: {}", e))?;
+    let dest_asset = parse_asset_xdr(&last.token_out).map_err(|e| format!("Invalid token_out: {}", e))?;
     let send_amount = sub
         .amount_in
         .parse::<i64>()
@@ -1205,10 +1184,9 @@ fn parse_asset_xdr(token: &str) -> Result<stellar_xdr::curr::Asset, String> {
     }
 
     if token == "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75" {
-        let issuer = stellar_strkey::ed25519::PublicKey::from_string(
-            "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-        )
-        .map_err(|e| format!("{:?}", e))?;
+        let issuer =
+            stellar_strkey::ed25519::PublicKey::from_string("GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+                .map_err(|e| format!("{:?}", e))?;
         let mut code = [0u8; 4];
         code[..4].copy_from_slice(b"USDC");
         return Ok(xdr::Asset::CreditAlphanum4(xdr::AlphaNum4 {
@@ -1218,10 +1196,9 @@ fn parse_asset_xdr(token: &str) -> Result<stellar_xdr::curr::Asset, String> {
     }
 
     if token == "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC" {
-        let issuer = stellar_strkey::ed25519::PublicKey::from_string(
-            "GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2",
-        )
-        .map_err(|e| format!("{:?}", e))?;
+        let issuer =
+            stellar_strkey::ed25519::PublicKey::from_string("GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2")
+                .map_err(|e| format!("{:?}", e))?;
         let mut code = [0u8; 4];
         code[..4].copy_from_slice(b"EURC");
         return Ok(xdr::Asset::CreditAlphanum4(xdr::AlphaNum4 {
@@ -1264,12 +1241,8 @@ fn build_aggregator_invoke_op(
             xdr::ScVal::Address(xdr::ScAddress::Account(xdr::AccountId(
                 xdr::PublicKey::PublicKeyTypeEd25519(xdr::Uint256(user_key.0)),
             ))),
-            xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
-                token_in_hash,
-            )))),
-            xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(
-                token_out_hash,
-            )))),
+            xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(token_in_hash)))),
+            xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(token_out_hash)))),
             xdr::ScVal::Vec(Some(xdr::ScVec(
                 sub_routes_scval
                     .try_into()
@@ -1293,10 +1266,7 @@ fn build_aggregator_invoke_op(
     })
 }
 
-pub async fn build_tx(
-    State(_state): State<AppState>,
-    Json(body): Json<BuildTxRequest>,
-) -> impl IntoResponse {
+pub async fn build_tx(State(_state): State<AppState>, Json(body): Json<BuildTxRequest>) -> impl IntoResponse {
     if body.sub_routes.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
@@ -1321,9 +1291,9 @@ pub async fn build_tx(
             // Simulate failed — do NOT return a broken raw XDR.
             // A Soroban tx without sorobanData cannot be signed by any wallet.
             // Categorize the error for a better UX message.
-            let user_msg = if e.contains("Output below minimum")
-                || e.contains("below minimum")
-                || (e.contains("UnreachableCodeReached") && e.contains("swap"))
+            let user_msg = if e.contains("Output below minimum") ||
+                e.contains("below minimum") ||
+                (e.contains("UnreachableCodeReached") && e.contains("swap"))
             {
                 "Swap failed: on-chain output was below your minimum (quote vs execution drift, \
                  common on split routes). Refresh the quote, increase slippage, or retry with a single-path route."
@@ -1332,8 +1302,8 @@ pub async fn build_tx(
                 "Swap failed: one of the pools has insufficient liquidity. \
                  Please try a smaller amount."
                     .to_string()
-            } else if e.contains("resulting balance is not within the allowed range")
-                || (e.contains("transfer") && e.contains("Error(Contract, #10)"))
+            } else if e.contains("resulting balance is not within the allowed range") ||
+                (e.contains("transfer") && e.contains("Error(Contract, #10)"))
             {
                 "Insufficient balance: your wallet does not hold enough of the input token \
                  for this swap amount. Lower the amount and refresh the quote."
@@ -1374,9 +1344,7 @@ async fn fetch_sequence_number(public_key: &str) -> Result<i64, String> {
         .get("sequence")
         .and_then(|s| s.as_str())
         .ok_or_else(|| "No sequence in response".to_string())?;
-    seq_str
-        .parse::<i64>()
-        .map_err(|e| format!("Invalid sequence: {}", e))
+    seq_str.parse::<i64>().map_err(|e| format!("Invalid sequence: {}", e))
 }
 
 enum TxSimulateMode {
@@ -1423,9 +1391,7 @@ fn tx_simulate_mode(tx_xdr: &str) -> Result<TxSimulateMode, String> {
         seq_num: v1.tx.seq_num,
         cond: v1.tx.cond.clone(),
         memo: v1.tx.memo.clone(),
-        operations: vec![invoke_op]
-            .try_into()
-            .map_err(|_| "invoke op error".to_string())?,
+        operations: vec![invoke_op].try_into().map_err(|_| "invoke op error".to_string())?,
         ext: xdr::TransactionExt::V0,
     };
     let sim_envelope = xdr::TransactionEnvelope::Tx(xdr::TransactionV1Envelope {
@@ -1438,10 +1404,7 @@ fn tx_simulate_mode(tx_xdr: &str) -> Result<TxSimulateMode, String> {
     Ok(TxSimulateMode::InvokeOnly(sim_xdr))
 }
 
-async fn rpc_simulate_transaction(
-    rpc_url: &str,
-    tx_xdr: &str,
-) -> Result<serde_json::Value, String> {
+async fn rpc_simulate_transaction(rpc_url: &str, tx_xdr: &str) -> Result<serde_json::Value, String> {
     let client = reqwest::Client::new();
     let body = serde_json::json!({
         "jsonrpc": "2.0",
@@ -1476,10 +1439,7 @@ async fn rpc_simulate_transaction(
         .ok_or_else(|| "No result in simulate response".to_string())
 }
 
-fn merge_simulate_result_into_tx(
-    full_tx_xdr: &str,
-    result: &serde_json::Value,
-) -> Result<String, String> {
+fn merge_simulate_result_into_tx(full_tx_xdr: &str, result: &serde_json::Value) -> Result<String, String> {
     use stellar_xdr::curr::ReadXdr;
 
     if let Some(error) = result.get("error") {
@@ -1498,9 +1458,8 @@ fn merge_simulate_result_into_tx(
         return Err("Unsupported transaction envelope".to_string());
     };
 
-    let soroban_data =
-        xdr::SorobanTransactionData::from_xdr_base64(transaction_data, Limits::none())
-            .map_err(|e| format!("Failed to parse soroban data: {:?}", e))?;
+    let soroban_data = xdr::SorobanTransactionData::from_xdr_base64(transaction_data, Limits::none())
+        .map_err(|e| format!("Failed to parse soroban data: {:?}", e))?;
     v1.tx.ext = xdr::TransactionExt::V1(soroban_data);
 
     if let Some(min_fee) = result
@@ -1525,10 +1484,8 @@ fn merge_simulate_result_into_tx(
                     let mut auth_entries = Vec::new();
                     for auth_xdr in auth_arr {
                         if let Some(auth_str) = auth_xdr.as_str() {
-                            if let Ok(entry) = xdr::SorobanAuthorizationEntry::from_xdr_base64(
-                                auth_str,
-                                Limits::none(),
-                            ) {
+                            if let Ok(entry) = xdr::SorobanAuthorizationEntry::from_xdr_base64(auth_str, Limits::none())
+                            {
                                 auth_entries.push(entry);
                             }
                         }

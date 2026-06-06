@@ -1,8 +1,11 @@
 //! Rust client SDK for the Stellar DEX Aggregator API.
-//! The primary SDK is TypeScript (in /packages/sdk/); this is for integration testing.
+//! The primary SDK is TypeScript (in /packages/sdk/); this is for integration
+//! testing.
 
-use anyhow::Result;
-use serde::{Deserialize, Serialize};
+use {
+    anyhow::Result,
+    serde::{Deserialize, Serialize},
+};
 
 pub struct AggregatorClient {
     base_url: String,

@@ -1,6 +1,7 @@
 use stellar_xdr::curr::{Limits, ReadXdr};
 
-/// Decodes a failed user submission: PathPaymentStrictSend with dest_min=0 → op_malformed.
+/// Decodes a failed user submission: PathPaymentStrictSend with dest_min=0 →
+/// op_malformed.
 #[test]
 fn decode_user_tx_dest_min_zero_is_malformed() {
     let tx = "AAAAAgAAAAA9FUgvRqcn9062kJm9X1xZfXBl5pRdlCYLWBwKvmvGxwABhqADq4v7AAAAZAAAAAAAAAAAAAAAAQAAAAAAAAANAAAAAAAAAAABMS0AAAAAAD0VSC9Gpyf3TraQmb1fXFl9cGXmlF2UJgtYHAq+a8bHAAAAAVVTREMAAAAAO5kROA7+mIugqJAOsc/kTzZvfb6Ua+0HckD39iTfFcUAAAAAAAAAAAAAAAAAAAAAAAAAAb5rxscAAABAMfnkNcNHs07OABUjfX9leHdXr9Y8lhk/F+ZBAJCRsFddTzgrNfuXu8776yov+Ib0xuoma8z+P+Fy7KNC9AIdDw==";

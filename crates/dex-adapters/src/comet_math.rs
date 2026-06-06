@@ -1,4 +1,5 @@
-//! Comet (Balancer V1) math — pure Rust port of the on-chain fixed-point arithmetic.
+//! Comet (Balancer V1) math — pure Rust port of the on-chain fixed-point
+//! arithmetic.
 //!
 //! All calculations use i128 with 18-decimal fixed point (BONE = 10^18).
 //! This matches the on-chain contract exactly for precision.
@@ -62,7 +63,8 @@ pub fn calc_out_given_in(
 }
 
 /// Fixed-point power: base^exp where both are 18-decimal fixed point.
-/// Uses integer exponentiation for the whole part and Taylor series for the fractional part.
+/// Uses integer exponentiation for the whole part and Taylor series for the
+/// fractional part.
 fn c_pow(base: i128, exp: i128, _round_up: bool) -> i128 {
     if base <= 0 {
         return 0;
@@ -99,8 +101,8 @@ fn c_powi(a: i128, n: u32) -> i128 {
     z
 }
 
-/// Taylor series approximation for base^exp where exp < 1 (in 18-decimal fixed point).
-/// This is the binomial series: (1 + x)^a ≈ 1 + ax + a(a-1)x²/2! + ...
+/// Taylor series approximation for base^exp where exp < 1 (in 18-decimal fixed
+/// point). This is the binomial series: (1 + x)^a ≈ 1 + ax + a(a-1)x²/2! + ...
 /// where base = 1 + x, so x = base - BONE
 fn c_pow_approx(base: i128, exp: i128) -> i128 {
     let x = base - BONE;
@@ -177,10 +179,11 @@ fn mul_div_u128(a: u128, b: u128, c: u128) -> u128 {
     let low = a_lo * b_lo;
     let high = a_hi * b_hi;
 
-    // Approximate: use f64 for the division (loses some precision but doesn't overflow)
-    let product_f64 = (high as f64) * (1u128 << 64) as f64 * (1u128 << 64) as f64
-        + (mid1 as f64 + mid2 as f64) * (1u128 << 64) as f64
-        + low as f64;
+    // Approximate: use f64 for the division (loses some precision but doesn't
+    // overflow)
+    let product_f64 = (high as f64) * (1u128 << 64) as f64 * (1u128 << 64) as f64 +
+        (mid1 as f64 + mid2 as f64) * (1u128 << 64) as f64 +
+        low as f64;
 
     (product_f64 / c as f64) as u128
 }

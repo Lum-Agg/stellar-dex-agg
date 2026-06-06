@@ -5,10 +5,12 @@
 
 pub mod events;
 
-use anyhow::{anyhow, Result};
-use reqwest::Client;
-use serde_json::{json, Value};
-use stellar_xdr::curr as xdr;
+use {
+    anyhow::{anyhow, Result},
+    reqwest::Client,
+    serde_json::{json, Value},
+    stellar_xdr::curr as xdr,
+};
 
 /// Lightweight Soroban RPC client focused on what DEX adapters need:
 /// - simulateTransaction (for read-only contract calls)
@@ -56,8 +58,7 @@ impl SorobanRpc {
                 Err(e) => {
                     last_err = anyhow!("RPC request failed: {}", e);
                     if attempt < MAX_ATTEMPTS {
-                        tokio::time::sleep(std::time::Duration::from_millis(200 * attempt as u64))
-                            .await;
+                        tokio::time::sleep(std::time::Duration::from_millis(200 * attempt as u64)).await;
                     }
                     continue;
                 }
@@ -68,8 +69,7 @@ impl SorobanRpc {
                 Err(e) => {
                     last_err = anyhow!("RPC response read failed: {}", e);
                     if attempt < MAX_ATTEMPTS {
-                        tokio::time::sleep(std::time::Duration::from_millis(200 * attempt as u64))
-                            .await;
+                        tokio::time::sleep(std::time::Duration::from_millis(200 * attempt as u64)).await;
                     }
                     continue;
                 }
@@ -80,8 +80,7 @@ impl SorobanRpc {
                 Err(e) => {
                     last_err = anyhow!("RPC response parse failed: {}", e);
                     if attempt < MAX_ATTEMPTS {
-                        tokio::time::sleep(std::time::Duration::from_millis(200 * attempt as u64))
-                            .await;
+                        tokio::time::sleep(std::time::Duration::from_millis(200 * attempt as u64)).await;
                     }
                 }
             }
@@ -107,9 +106,7 @@ impl SorobanRpc {
 
         let invoke_args = xdr::InvokeContractArgs {
             contract_address: xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(contract_hash))),
-            function_name: function_name
-                .try_into()
-                .map_err(|_| anyhow!("Invalid function name"))?,
+            function_name: function_name.try_into().map_err(|_| anyhow!("Invalid function name"))?,
             args: args.try_into().map_err(|_| anyhow!("Too many args"))?,
         };
 
@@ -186,8 +183,8 @@ impl SorobanRpc {
             .and_then(|x| x.as_str())
             .ok_or_else(|| anyhow!("No xdr in result"))?;
 
-        let scval = xdr::ScVal::from_xdr_base64(xdr_b64, Limits::none())
-            .map_err(|e| anyhow!("ScVal decode error: {:?}", e))?;
+        let scval =
+            xdr::ScVal::from_xdr_base64(xdr_b64, Limits::none()).map_err(|e| anyhow!("ScVal decode error: {:?}", e))?;
 
         Ok(scval)
     }
@@ -198,10 +195,7 @@ impl SorobanRpc {
     }
 
     /// Get ledger entries by key.
-    pub async fn get_ledger_entries(
-        &self,
-        keys: Vec<xdr::LedgerKey>,
-    ) -> Result<Vec<LedgerEntryResult>> {
+    pub async fn get_ledger_entries(&self, keys: Vec<xdr::LedgerKey>) -> Result<Vec<LedgerEntryResult>> {
         use stellar_xdr::curr::{Limits, ReadXdr, WriteXdr};
 
         let key_xdrs: Vec<String> = keys
@@ -225,15 +219,10 @@ impl SorobanRpc {
             return Err(anyhow!("RPC error: {}", error));
         }
 
-        let result = resp_json
-            .get("result")
-            .ok_or_else(|| anyhow!("No result"))?;
+        let result = resp_json.get("result").ok_or_else(|| anyhow!("No result"))?;
 
         let empty_vec = vec![];
-        let entries = result
-            .get("entries")
-            .and_then(|e| e.as_array())
-            .unwrap_or(&empty_vec);
+        let entries = result.get("entries").and_then(|e| e.as_array()).unwrap_or(&empty_vec);
 
         let mut results = Vec::new();
         for entry in entries {
@@ -245,9 +234,7 @@ impl SorobanRpc {
             let ledger_entry = xdr::LedgerEntry::from_xdr_base64(xdr_b64, Limits::none())
                 .map_err(|e| anyhow!("LedgerEntry decode error: {:?}", e))?;
 
-            results.push(LedgerEntryResult {
-                entry: ledger_entry,
-            });
+            results.push(LedgerEntryResult { entry: ledger_entry });
         }
 
         Ok(results)
@@ -269,10 +256,7 @@ pub struct LedgerEntryResult {
 pub fn scval_to_u32(val: &xdr::ScVal) -> Result<u32> {
     match val {
         xdr::ScVal::U32(v) => Ok(*v),
-        _ => Err(anyhow!(
-            "Expected U32, got {:?}",
-            std::mem::discriminant(val)
-        )),
+        _ => Err(anyhow!("Expected U32, got {:?}", std::mem::discriminant(val))),
     }
 }
 
@@ -280,10 +264,7 @@ pub fn scval_to_u32(val: &xdr::ScVal) -> Result<u32> {
 pub fn scval_to_u128(val: &xdr::ScVal) -> Result<u128> {
     match val {
         xdr::ScVal::U128(parts) => Ok(((parts.hi as u128) << 64) | (parts.lo as u128)),
-        _ => Err(anyhow!(
-            "Expected U128, got {:?}",
-            std::mem::discriminant(val)
-        )),
+        _ => Err(anyhow!("Expected U128, got {:?}", std::mem::discriminant(val))),
     }
 }
 
@@ -291,10 +272,7 @@ pub fn scval_to_u128(val: &xdr::ScVal) -> Result<u128> {
 pub fn scval_to_i128(val: &xdr::ScVal) -> Result<i128> {
     match val {
         xdr::ScVal::I128(parts) => Ok(((parts.hi as i128) << 64) | (parts.lo as u64 as i128)),
-        _ => Err(anyhow!(
-            "Expected I128, got {:?}",
-            std::mem::discriminant(val)
-        )),
+        _ => Err(anyhow!("Expected I128, got {:?}", std::mem::discriminant(val))),
     }
 }
 
@@ -304,13 +282,10 @@ pub fn scval_to_address(val: &xdr::ScVal) -> Result<String> {
         xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(hash)))) => {
             Ok(format!("{}", stellar_strkey::Contract(*hash)))
         }
-        xdr::ScVal::Address(xdr::ScAddress::Account(xdr::AccountId(
-            xdr::PublicKey::PublicKeyTypeEd25519(xdr::Uint256(key)),
-        ))) => Ok(format!("{}", stellar_strkey::ed25519::PublicKey(*key))),
-        _ => Err(anyhow!(
-            "Expected Address, got {:?}",
-            std::mem::discriminant(val)
-        )),
+        xdr::ScVal::Address(xdr::ScAddress::Account(xdr::AccountId(xdr::PublicKey::PublicKeyTypeEd25519(
+            xdr::Uint256(key),
+        )))) => Ok(format!("{}", stellar_strkey::ed25519::PublicKey(*key))),
+        _ => Err(anyhow!("Expected Address, got {:?}", std::mem::discriminant(val))),
     }
 }
 

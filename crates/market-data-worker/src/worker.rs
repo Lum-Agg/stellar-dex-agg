@@ -1,35 +1,37 @@
-use anyhow::Result;
-use dex_adapters::{
-    aquarius::AquariusAdapter,
-    aquarius_clmm::AquariusClmmAdapter,
-    classic_dex::ClassicDexAdapter,
-    comet::CometAdapter,
-    phoenix::PhoenixAdapter,
-    rpc::SorobanRpc,
-    soroswap::SoroswapAdapter,
-    sushi::SushiAdapter,
-    token_metadata::{TokenMetadata, TokenMetadataStore},
-    traits::AdapterTradingPair,
-    DexAdapter,
-};
-use market_snapshot::{
-    pool_state_store::build_pool_state_store,
-    store::{
-        build_snapshot_store, SnapshotStore, SnapshotStoreBackend, DEFAULT_REDIS_EVENTS_CHANNEL,
-        DEFAULT_REDIS_SNAPSHOT_HISTORY,
+use {
+    anyhow::Result,
+    dex_adapters::{
+        aquarius::AquariusAdapter,
+        aquarius_clmm::AquariusClmmAdapter,
+        classic_dex::ClassicDexAdapter,
+        comet::CometAdapter,
+        phoenix::PhoenixAdapter,
+        rpc::SorobanRpc,
+        soroswap::SoroswapAdapter,
+        sushi::SushiAdapter,
+        token_metadata::{TokenMetadata, TokenMetadataStore},
+        traits::AdapterTradingPair,
+        DexAdapter,
     },
-    ClmmPoolSnapshot, MarketSnapshot, SourceSnapshot, TokenMetadataSnapshot, TradingPairSnapshot,
-    DEFAULT_SNAPSHOT_DIR,
-};
-use std::{
-    path::PathBuf,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
+    market_snapshot::{
+        pool_state_store::build_pool_state_store,
+        store::{
+            build_snapshot_store, SnapshotStore, SnapshotStoreBackend, DEFAULT_REDIS_EVENTS_CHANNEL,
+            DEFAULT_REDIS_SNAPSHOT_HISTORY,
+        },
+        ClmmPoolSnapshot, MarketSnapshot, SourceSnapshot, TokenMetadataSnapshot, TradingPairSnapshot,
+        DEFAULT_SNAPSHOT_DIR,
     },
+    std::{
+        path::PathBuf,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        },
+    },
+    tokio::sync::RwLock,
+    tracing::{debug, info, warn},
 };
-use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
 
 /// Shared graph + CLMM state (main loop and background bootstrap).
 pub(crate) struct WorkerShared {
@@ -46,15 +48,20 @@ pub struct WorkerConfig {
     pub snapshot_redis_url: Option<String>,
     pub snapshot_redis_channel: String,
     pub snapshot_redis_keep_latest: usize,
-    /// Heavy adapter.refresh_reserves() cadence (Aquarius batch can take 15–30s).
+    /// Heavy adapter.refresh_reserves() cadence (Aquarius batch can take
+    /// 15–30s).
     pub refresh_interval_secs: u64,
-    /// Fast Redis pool-state publish from adapter caches (independent of refresh duration).
+    /// Fast Redis pool-state publish from adapter caches (independent of
+    /// refresh duration).
     pub pool_publish_interval_secs: u64,
-    /// Concurrent getLedgerEntries batches during xy=k refresh (Soroswap/Aquarius).
+    /// Concurrent getLedgerEntries batches during xy=k refresh
+    /// (Soroswap/Aquarius).
     pub pool_state_refresh_concurrency: usize,
     pub discovery_interval_secs: u64,
     pub ledger_poll: std::time::Duration,
     pub ledger_watcher_enabled: bool,
+    /// Use FetchTask pipeline (RPC → Redis) instead of 2s cache publish loop.
+    pub fetch_pipeline_enabled: bool,
 }
 
 impl WorkerConfig {
@@ -97,6 +104,7 @@ impl WorkerConfig {
                 .unwrap_or(600),
             ledger_poll: crate::ledger_watcher::ledger_poll_duration_from_env(),
             ledger_watcher_enabled: crate::ledger_watcher::ledger_watcher_enabled_from_env(),
+            fetch_pipeline_enabled: crate::fetch_pipeline::fetch_pipeline_enabled_from_env(),
         })
     }
 }
@@ -123,10 +131,7 @@ fn trading_pair_snapshot(pair: &AdapterTradingPair) -> TradingPairSnapshot {
     }
 }
 
-fn sanitize_source_pairs(
-    source: &str,
-    pairs: Vec<TradingPairSnapshot>,
-) -> Vec<TradingPairSnapshot> {
+fn sanitize_source_pairs(source: &str, pairs: Vec<TradingPairSnapshot>) -> Vec<TradingPairSnapshot> {
     if source != "aquarius" {
         return pairs;
     }
@@ -159,14 +164,11 @@ async fn discover_adapter_source(adapter: Arc<dyn DexAdapter>) -> Option<SourceS
     }
 }
 
-/// Run adapter discovery concurrently (Aquarius + Soroswap no longer block each other).
+/// Run adapter discovery concurrently (Aquarius + Soroswap no longer block each
+/// other).
 async fn collect_sources_from_discovery(adapters: &[Arc<dyn DexAdapter>]) -> Vec<SourceSnapshot> {
     let tasks = adapters.iter().cloned().map(discover_adapter_source);
-    futures::future::join_all(tasks)
-        .await
-        .into_iter()
-        .flatten()
-        .collect()
+    futures::future::join_all(tasks).await.into_iter().flatten().collect()
 }
 
 fn build_topology_snapshot(
@@ -200,9 +202,7 @@ fn spawn_token_metadata_enrichment(
         if token_addresses.is_empty() {
             return;
         }
-        token_metadata
-            .resolve_unknown(token_addresses.clone())
-            .await;
+        token_metadata.resolve_unknown(token_addresses.clone()).await;
         let metadata = token_metadata.get_all().await;
         let enriched: Vec<TokenMetadataSnapshot> = token_addresses
             .into_iter()
@@ -310,7 +310,8 @@ impl PoolRefreshInFlight {
     }
 }
 
-/// Fast path: publish adapter caches to Redis without any RPC (must complete in milliseconds).
+/// Fast path: publish adapter caches to Redis without any RPC (must complete in
+/// milliseconds).
 fn spawn_fast_pool_publish(
     shared: Arc<RwLock<WorkerShared>>,
     adapters: Vec<Arc<dyn DexAdapter>>,
@@ -344,7 +345,8 @@ fn spawn_fast_pool_publish(
     });
 }
 
-/// Slow path: refresh adapter reserves in background; coalesced via `in_flight`.
+/// Slow path: refresh adapter reserves in background; coalesced via
+/// `in_flight`.
 fn spawn_background_reserve_refresh(
     in_flight: Arc<PoolRefreshInFlight>,
     shared: Arc<RwLock<WorkerShared>>,
@@ -392,14 +394,9 @@ fn token_metadata_snapshot(meta: TokenMetadata) -> TokenMetadataSnapshot {
     }
 }
 
-async fn collect_clmm_snapshots(
-    sushi: &SushiAdapter,
-    aquarius_clmm: &AquariusClmmAdapter,
-) -> Vec<ClmmPoolSnapshot> {
-    let (sushi_pools, aquarius_pools) = tokio::join!(
-        sushi.export_clmm_snapshots(),
-        aquarius_clmm.export_clmm_snapshots(),
-    );
+async fn collect_clmm_snapshots(sushi: &SushiAdapter, aquarius_clmm: &AquariusClmmAdapter) -> Vec<ClmmPoolSnapshot> {
+    let (sushi_pools, aquarius_pools) =
+        tokio::join!(sushi.export_clmm_snapshots(), aquarius_clmm.export_clmm_snapshots(),);
     let mut clmm_pools = sushi_pools;
     clmm_pools.extend(aquarius_pools);
     clmm_pools.sort_by(|a, b| {
@@ -478,7 +475,8 @@ enum WorkerTick {
     Discovery,
     /// Periodic adapter.refresh_reserves() (slow).
     Refresh,
-    /// Parallel on-chain refresh + Redis publish (every 1–2s; skips if prior cycle still running).
+    /// Parallel on-chain refresh + Redis publish (every 1–2s; skips if prior
+    /// cycle still running).
     PoolPublish,
 }
 
@@ -490,13 +488,12 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
         Some(config.snapshot_redis_channel.as_str()),
         Some(config.snapshot_redis_keep_latest),
     )?);
-    let pool_state_store: Option<Arc<market_snapshot::pool_state_store::RedisPoolStateStore>> =
-        config
-            .snapshot_redis_url
-            .as_deref()
-            .map(build_pool_state_store)
-            .transpose()?
-            .map(Arc::new);
+    let pool_state_store: Option<Arc<market_snapshot::pool_state_store::RedisPoolStateStore>> = config
+        .snapshot_redis_url
+        .as_deref()
+        .map(build_pool_state_store)
+        .transpose()?
+        .map(Arc::new);
     let rpc = Arc::new(SorobanRpc::new(&config.rpc_url, &config.network_passphrase));
     let token_metadata = Arc::new(TokenMetadataStore::new(rpc.clone()));
     let soroswap = Arc::new(SoroswapAdapter::new(rpc.clone()));
@@ -516,27 +513,21 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
         aquarius_clmm.clone(),
     ];
 
-    let mut discovery_interval = tokio::time::interval(std::time::Duration::from_secs(
-        config.discovery_interval_secs,
-    ));
+    let mut discovery_interval = tokio::time::interval(std::time::Duration::from_secs(config.discovery_interval_secs));
     discovery_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     discovery_interval.tick().await;
-    let mut refresh_interval =
-        tokio::time::interval(std::time::Duration::from_secs(config.refresh_interval_secs));
+    let mut refresh_interval = tokio::time::interval(std::time::Duration::from_secs(config.refresh_interval_secs));
     refresh_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     refresh_interval.tick().await;
-    let mut pool_publish_interval = tokio::time::interval(std::time::Duration::from_secs(
-        config.pool_publish_interval_secs,
-    ));
+    let mut pool_publish_interval =
+        tokio::time::interval(std::time::Duration::from_secs(config.pool_publish_interval_secs));
     pool_publish_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     pool_publish_interval.tick().await;
 
     let ledger_watcher_enabled = config.ledger_watcher_enabled && pool_state_store.is_some();
-    let mut ledger_watcher = if ledger_watcher_enabled {
-        let mut watcher = crate::ledger_watcher::LedgerWatcher::new(SorobanRpc::new(
-            &config.rpc_url,
-            &config.network_passphrase,
-        ));
+    let ledger_watcher = if ledger_watcher_enabled {
+        let mut watcher =
+            crate::ledger_watcher::LedgerWatcher::new(SorobanRpc::new(&config.rpc_url, &config.network_passphrase));
         watcher.bootstrap().await?;
         Some(watcher)
     } else {
@@ -579,16 +570,13 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
             guard.clmm_pools = clmm_pools.clone();
         }
         let clmm_refs = MarketSnapshot::clmm_pool_refs_from_states(&clmm_pools);
-        let snapshot =
-            match snapshot_from_sources(sources, clmm_refs, &network_passphrase, seeded_metadata)
-                .await
-            {
-                Ok(snapshot) => snapshot,
-                Err(error) => {
-                    warn!("Background bootstrap snapshot build failed: {}", error);
-                    return;
-                }
-            };
+        let snapshot = match snapshot_from_sources(sources, clmm_refs, &network_passphrase, seeded_metadata).await {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                warn!("Background bootstrap snapshot build failed: {}", error);
+                return;
+            }
+        };
         if let Err(error) = publish_snapshot_and_pool_state(
             snapshot_store_boot.as_ref(),
             pool_state_boot.as_ref(),
@@ -611,10 +599,33 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
         spawn_token_metadata_enrichment(snapshot_store_boot, token_metadata_boot, snapshot);
     });
 
-    if let (Some(mut watcher), Some(pool_store)) = (ledger_watcher, pool_state_store.clone()) {
+    let fetch_pipeline = if config.fetch_pipeline_enabled {
+        pool_state_store.as_ref().map(|pool_store| {
+            let pipeline_config =
+                crate::fetch_pipeline::FetchPipelineConfig::from_env(config.pool_state_refresh_concurrency);
+            crate::fetch_pipeline::spawn_fetch_pipeline(
+                pipeline_config,
+                pool_store.clone(),
+                rpc.clone(),
+                shared.clone(),
+                soroswap.clone(),
+                aquarius.clone(),
+                phoenix.clone(),
+                comet.clone(),
+                sushi.clone(),
+                aquarius_clmm.clone(),
+            )
+        })
+    } else {
+        None
+    };
+
+    if let (Some(mut watcher), Some(_pool_store)) = (ledger_watcher, pool_state_store.clone()) {
+        let fetch_pipeline = fetch_pipeline.clone();
         let shared_ledger = shared.clone();
         let rpc_url = config.rpc_url.clone();
         let network_passphrase = config.network_passphrase.clone();
+        let pool_store = pool_state_store.clone();
         let soroswap_ledger = soroswap.clone();
         let aquarius_ledger = aquarius.clone();
         let phoenix_ledger = phoenix.clone();
@@ -634,6 +645,13 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
                 let index = crate::ledger_watcher::rebuild_pool_index(&index_sources, &index_clmm);
                 match watcher.poll_touched_pools(&index).await {
                     Ok(touched) if !touched.is_empty() => {
+                        if let Some(ref pipeline) = fetch_pipeline {
+                            pipeline.enqueue_touched(touched);
+                            continue;
+                        }
+                        let Some(ref pool_store) = pool_store else {
+                            continue;
+                        };
                         let rpc = SorobanRpc::new(&rpc_url, &network_passphrase);
                         let mut sources = {
                             let guard = shared_ledger.read().await;
@@ -694,17 +712,25 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
             .send("🚀 LumAgg worker started (pool refresh + Telegram monitoring)")
             .await;
     }
+    let use_legacy_pool_publish = fetch_pipeline.is_none();
     info!(
         pool_publish_interval_secs = config.pool_publish_interval_secs,
         pool_state_refresh_concurrency = config.pool_state_refresh_concurrency,
-        "Pool state loop: fast Redis publish + background reserve refresh"
+        fetch_pipeline = fetch_pipeline.is_some(),
+        mode = if fetch_pipeline.is_some() {
+            "fetch pipeline (RPC task → Redis)"
+        } else {
+            "legacy cache publish + background refresh"
+        },
+        "pool state worker"
     );
 
     loop {
-        // Never await slow adapter work inside `select!` — it starves the pool publish tick.
+        // Never await slow adapter work inside `select!` — it starves the pool publish
+        // tick.
         let tick = tokio::select! {
             biased;
-            _ = pool_publish_interval.tick() => WorkerTick::PoolPublish,
+            _ = pool_publish_interval.tick(), if use_legacy_pool_publish => WorkerTick::PoolPublish,
             _ = refresh_interval.tick() => WorkerTick::Refresh,
             _ = discovery_interval.tick() => WorkerTick::Discovery,
         };
@@ -796,11 +822,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
                         snapshot.sources.len(),
                         destination_disc
                     );
-                    spawn_token_metadata_enrichment(
-                        snapshot_store_disc,
-                        token_metadata_disc,
-                        snapshot,
-                    );
+                    spawn_token_metadata_enrichment(snapshot_store_disc, token_metadata_disc, snapshot);
                 });
             }
         }
@@ -810,18 +832,17 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
 fn snapshot_destination(config: &WorkerConfig) -> String {
     match config.snapshot_backend {
         SnapshotStoreBackend::File => config.snapshot_dir.display().to_string(),
-        SnapshotStoreBackend::Redis => config
-            .snapshot_redis_url
-            .clone()
-            .unwrap_or_else(|| "redis".to_string()),
+        SnapshotStoreBackend::Redis => config.snapshot_redis_url.clone().unwrap_or_else(|| "redis".to_string()),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use market_snapshot::ClmmPoolSnapshot;
-    use std::sync::{Mutex, OnceLock};
+    use {
+        super::*,
+        market_snapshot::ClmmPoolSnapshot,
+        std::sync::{Mutex, OnceLock},
+    };
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -915,12 +936,7 @@ mod tests {
         assert_eq!(updated.len(), 2);
         assert!(updated.iter().any(|source| source.source == "phoenix"));
         assert_eq!(
-            updated
-                .iter()
-                .find(|source| source.source == "soroswap")
-                .unwrap()
-                .pairs[0]
-                .pool_address,
+            updated.iter().find(|source| source.source == "soroswap").unwrap().pairs[0].pool_address,
             "new"
         );
     }
@@ -954,10 +970,7 @@ mod tests {
             infer_snapshot_backend(None, Some("redis://127.0.0.1/")).unwrap(),
             SnapshotStoreBackend::Redis
         );
-        assert_eq!(
-            infer_snapshot_backend(None, None).unwrap(),
-            SnapshotStoreBackend::File
-        );
+        assert_eq!(infer_snapshot_backend(None, None).unwrap(), SnapshotStoreBackend::File);
     }
 
     #[tokio::test]
@@ -1014,9 +1027,7 @@ mod tests {
                     fee_bps: 30,
                 }],
             }],
-            vec![market_snapshot::ClmmPoolRefSnapshot::from_pool(
-                &sample_clmm_pool(),
-            )],
+            vec![market_snapshot::ClmmPoolRefSnapshot::from_pool(&sample_clmm_pool())],
             "mainnet",
             seeded,
         )
@@ -1025,9 +1036,7 @@ mod tests {
 
         assert_eq!(
             snapshot.clmm_pool_refs,
-            vec![market_snapshot::ClmmPoolRefSnapshot::from_pool(
-                &sample_clmm_pool()
-            )]
+            vec![market_snapshot::ClmmPoolRefSnapshot::from_pool(&sample_clmm_pool())]
         );
         assert_eq!(snapshot.token_metadata.len(), 2);
     }

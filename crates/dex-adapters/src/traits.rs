@@ -1,8 +1,10 @@
 //! Core trait that all DEX adapters must implement.
 
-use anyhow::Result;
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use {
+    anyhow::Result,
+    async_trait::async_trait,
+    serde::{Deserialize, Serialize},
+};
 
 /// Token identifier (mirrors router-engine's TokenId but avoids circular dep).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -23,9 +25,7 @@ impl TokenId {
                 issuer: issuer.to_string(),
             };
         }
-        Self::Contract {
-            address: s.to_string(),
-        }
+        Self::Contract { address: s.to_string() }
     }
 
     pub fn canonical(&self) -> String {

@@ -5,7 +5,8 @@
 //! (Aquarius, Soroswap, Phoenix, Sushi V3, Comet).
 //!
 //! Main entry point:
-//! - `swap()`: Atomic swap via `sub_routes` (one leg = simple path; multiple = split)
+//! - `swap()`: Atomic swap via `sub_routes` (one leg = simple path; multiple =
+//!   split)
 //!
 //! Key design: the contract holds no funds permanently.
 //! Users approve token transfers, the contract executes swaps, and outputs go
@@ -99,27 +100,21 @@ impl AggregatorContract {
 
     /// Upgrade the contract WASM code. Only admin can call.
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .expect("Not initialized");
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("Not initialized");
         admin.require_auth();
         env.deployer().update_current_contract_wasm(new_wasm_hash);
     }
 
     /// Get the admin address.
     pub fn admin(env: Env) -> Address {
-        env.storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .expect("Not initialized")
+        env.storage().instance().get(&DataKey::Admin).expect("Not initialized")
     }
 
     /// Execute a swap atomically (single-path or split-order).
     ///
-    /// `sub_routes` is always a list of legs; a simple swap is one entry with the full
-    /// `amount_in` and its hop `steps`. Split execution uses multiple entries.
+    /// `sub_routes` is always a list of legs; a simple swap is one entry with
+    /// the full `amount_in` and its hop `steps`. Split execution uses
+    /// multiple entries.
     ///
     /// Flow:
     /// 1. Pull total input from user (sum of sub-route amounts)
@@ -150,10 +145,10 @@ impl AggregatorContract {
         let token_in_client = token::Client::new(&env, &token_in);
         token_in_client.transfer(&user, &contract_addr, &total_in);
 
-        let total_output =
-            Self::execute_sub_routes(&env, &token_in, &token_out, &sub_routes, &contract_addr);
+        let total_output = Self::execute_sub_routes(&env, &token_in, &token_out, &sub_routes, &contract_addr);
 
-        // Slippage: per-hop pool mins are 0; only check total output here (all sub_routes summed).
+        // Slippage: per-hop pool mins are 0; only check total output here (all
+        // sub_routes summed).
         assert!(total_output >= min_amount_out, "Output below minimum");
 
         // Transfer total output to user
@@ -163,14 +158,19 @@ impl AggregatorContract {
         total_output
     }
 
-    /// Round-trip swap: base → bridge (split OK) → base (split OK) in one atomic invocation.
+    /// Round-trip swap: base → bridge (split OK) → base (split OK) in one
+    /// atomic invocation.
     ///
-    /// Funds are pulled from `user` and the final `base_token` balance is returned to `user`.
-    /// The contract does not retain funds after execution.
+    /// Funds are pulled from `user` and the final `base_token` balance is
+    /// returned to `user`. The contract does not retain funds after
+    /// execution.
     ///
-    /// - `leg_out`: sub-routes from `base_token` to `bridge_token`; `amount_in` must sum to `amount_in`
-    /// - `leg_back`: sub-routes from `bridge_token` to `base_token`; `amount_in` must sum to leg_out output
-    /// - `min_amount_out`: minimum total `base_token` returned (principal + profit floor)
+    /// - `leg_out`: sub-routes from `base_token` to `bridge_token`; `amount_in`
+    ///   must sum to `amount_in`
+    /// - `leg_back`: sub-routes from `bridge_token` to `base_token`;
+    ///   `amount_in` must sum to leg_out output
+    /// - `min_amount_out`: minimum total `base_token` returned (principal +
+    ///   profit floor)
     pub fn round_trip_swap(
         env: Env,
         user: Address,
@@ -198,8 +198,7 @@ impl AggregatorContract {
         let base_client = token::Client::new(&env, &base_token);
         base_client.transfer(&user, &contract_addr, &amount_in);
 
-        let bridge_total =
-            Self::execute_sub_routes(&env, &base_token, &bridge_token, &leg_out, &contract_addr);
+        let bridge_total = Self::execute_sub_routes(&env, &base_token, &bridge_token, &leg_out, &contract_addr);
         assert!(bridge_total > 0, "leg_out produced zero bridge token");
 
         let mut leg_back_in: i128 = 0;
@@ -211,25 +210,17 @@ impl AggregatorContract {
             "leg_back amounts must sum to leg_out output"
         );
 
-        let base_total = Self::execute_sub_routes(
-            &env,
-            &bridge_token,
-            &base_token,
-            &leg_back,
-            &contract_addr,
-        );
+        let base_total = Self::execute_sub_routes(&env, &bridge_token, &base_token, &leg_back, &contract_addr);
 
-        assert!(
-            base_total >= min_amount_out,
-            "Output below minimum"
-        );
+        assert!(base_total >= min_amount_out, "Output below minimum");
 
         base_client.transfer(&contract_addr, &user, &base_total);
 
         base_total
     }
 
-    /// Execute sub-routes that share the same token_in → token_out pair; returns total output.
+    /// Execute sub-routes that share the same token_in → token_out pair;
+    /// returns total output.
     fn execute_sub_routes(
         env: &Env,
         token_in: &Address,
@@ -243,16 +234,10 @@ impl AggregatorContract {
         for sr in sub_routes.iter() {
             assert!(!sr.steps.is_empty(), "Empty steps");
             if let Some(first_step) = sr.steps.first() {
-                assert!(
-                    first_step.token_in == *token_in,
-                    "Sub-route must start with token_in"
-                );
+                assert!(first_step.token_in == *token_in, "Sub-route must start with token_in");
             }
             if let Some(last_step) = sr.steps.last() {
-                assert!(
-                    last_step.token_out == *token_out,
-                    "Sub-route must end with token_out"
-                );
+                assert!(last_step.token_out == *token_out, "Sub-route must end with token_out");
             }
             let output = Self::execute_path(env, &sr.steps, sr.amount_in, contract_addr);
             total_output += output;
@@ -260,19 +245,16 @@ impl AggregatorContract {
         total_output
     }
 
-    /// Comet rounds the approval ledger to avoid simulation vs execution sequence mismatch.
+    /// Comet rounds the approval ledger to avoid simulation vs execution
+    /// sequence mismatch.
     fn comet_approval_ledger(env: &Env) -> u32 {
         let seq = env.ledger().sequence();
         (seq / 100_000 + 1) * 100_000
     }
 
-    /// Execute a path (sequence of swap steps) and return the final output amount.
-    fn execute_path(
-        env: &Env,
-        steps: &Vec<SwapStep>,
-        amount_in: i128,
-        my_address: &Address,
-    ) -> i128 {
+    /// Execute a path (sequence of swap steps) and return the final output
+    /// amount.
+    fn execute_path(env: &Env, steps: &Vec<SwapStep>, amount_in: i128, my_address: &Address) -> i128 {
         let mut current_amount = amount_in;
 
         for step in steps.iter() {
@@ -326,12 +308,10 @@ impl AggregatorContract {
 
             DexType::SoroswapPair => {
                 // Soroswap flash-swap: transfer in, then pair.swap(out0, out1, to).
-                // Same flow as stellar-arb (transfer then pair.swap; pair sends output to aggregator).
-                let reserves: (i128, i128) = env.invoke_contract(
-                    &step.dex_id,
-                    &Symbol::new(env, "get_reserves"),
-                    soroban_sdk::vec![env],
-                );
+                // Same flow as stellar-arb (transfer then pair.swap; pair sends output to
+                // aggregator).
+                let reserves: (i128, i128) =
+                    env.invoke_contract(&step.dex_id, &Symbol::new(env, "get_reserves"), soroban_sdk::vec![env]);
 
                 let a2b = step.in_idx == 0 && step.out_idx == 1;
                 let (reserve_in, reserve_out) = if a2b {
@@ -351,11 +331,7 @@ impl AggregatorContract {
 
                 token_in_client.transfer(my_address, &step.dex_id, &amount_in);
 
-                let (amount0_out, amount1_out): (i128, i128) = if a2b {
-                    (0, expected_out)
-                } else {
-                    (expected_out, 0)
-                };
+                let (amount0_out, amount1_out): (i128, i128) = if a2b { (0, expected_out) } else { (expected_out, 0) };
 
                 let swap_args = soroban_sdk::vec![
                     env,
@@ -363,8 +339,7 @@ impl AggregatorContract {
                     amount1_out.into_val(env),
                     my_address.into_val(env),
                 ];
-                let _: Val =
-                    env.invoke_contract(&step.dex_id, &Symbol::new(env, "swap"), swap_args);
+                let _: Val = env.invoke_contract(&step.dex_id, &Symbol::new(env, "swap"), swap_args);
 
                 let balance_after = token_out_client.balance(my_address);
                 balance_after - balance_before
@@ -405,8 +380,7 @@ impl AggregatorContract {
                     }),
                 ]);
 
-                let _: Val =
-                    env.invoke_contract(&step.dex_id, &Symbol::new(env, "swap"), swap_args);
+                let _: Val = env.invoke_contract(&step.dex_id, &Symbol::new(env, "swap"), swap_args);
 
                 let balance_after = token_out_client.balance(my_address);
                 balance_after - balance_before
@@ -415,10 +389,12 @@ impl AggregatorContract {
             DexType::Sushi => {
                 // Sushi V3 pool: swap(sender, recipient, zero_for_one, amount_specified,
                 //               sqrt_price_limit_x96, hints)
-                // hints must come from get_oracle_hints() on the same pool (see sushiswap bindings).
+                // hints must come from get_oracle_hints() on the same pool (see sushiswap
+                // bindings).
                 let zero_for_one = step.in_idx == 0 && step.out_idx == 1;
 
-                // sqrt_price_limit: MIN_SQRT_RATIO+1 for zero_for_one, MAX_SQRT_RATIO-1 otherwise
+                // sqrt_price_limit: MIN_SQRT_RATIO+1 for zero_for_one, MAX_SQRT_RATIO-1
+                // otherwise
                 let price_limit: soroban_sdk::U256 = if zero_for_one {
                     soroban_sdk::U256::from_u128(env, 4_295_128_740u128)
                 } else {
@@ -427,9 +403,9 @@ impl AggregatorContract {
                         &soroban_sdk::Bytes::from_array(
                             env,
                             &[
-                                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                                0x00, 0xff, 0xfd, 0x89, 0x63, 0xef, 0xd1, 0xfc, 0x6a, 0x50, 0x64,
-                                0x88, 0x49, 0x5d, 0x95, 0x1d, 0x52, 0x63, 0x98, 0x8d, 0x25,
+                                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xfd,
+                                0x89, 0x63, 0xef, 0xd1, 0xfc, 0x6a, 0x50, 0x64, 0x88, 0x49, 0x5d, 0x95, 0x1d, 0x52,
+                                0x63, 0x98, 0x8d, 0x25,
                             ],
                         ),
                     )
@@ -471,16 +447,16 @@ impl AggregatorContract {
                     }),
                 ]);
 
-                let _: Val =
-                    env.invoke_contract(&step.dex_id, &Symbol::new(env, "swap"), swap_args);
+                let _: Val = env.invoke_contract(&step.dex_id, &Symbol::new(env, "swap"), swap_args);
 
                 let balance_after = token_out_client.balance(my_address);
                 balance_after - balance_before
             }
 
             DexType::CometDex => {
-                // Comet: swap_exact_amount_in(token_in, amount_in, token_out, min_out, max_price, user)
-                // user = aggregator (funds already here). Comet uses approve + transfer_from
+                // Comet: swap_exact_amount_in(token_in, amount_in, token_out, min_out,
+                // max_price, user) user = aggregator (funds already here).
+                // Comet uses approve + transfer_from
                 // (comet token_utility::pull_underlying).
                 let max_price = i128::MAX;
 
@@ -564,11 +540,13 @@ impl AggregatorContract {
 mod test {
     extern crate std;
 
-    use super::*;
-    use soroban_sdk::{
-        testutils,
-        token::{StellarAssetClient, TokenClient},
-        vec, Address, Env,
+    use {
+        super::*,
+        soroban_sdk::{
+            testutils,
+            token::{StellarAssetClient, TokenClient},
+            vec, Address, Env,
+        },
     };
 
     fn gen_addr(env: &Env) -> Address {
@@ -624,14 +602,7 @@ mod test {
                 env.storage().instance().set(&AqKey::TokenA, &a);
                 env.storage().instance().set(&AqKey::TokenB, &b);
             }
-            pub fn swap(
-                env: Env,
-                user: Address,
-                in_idx: u32,
-                out_idx: u32,
-                in_amount: u128,
-                _min: u128,
-            ) -> u128 {
+            pub fn swap(env: Env, user: Address, in_idx: u32, out_idx: u32, in_amount: u128, _min: u128) -> u128 {
                 user.require_auth();
                 let a: Address = env.storage().instance().get(&AqKey::TokenA).unwrap();
                 let b: Address = env.storage().instance().get(&AqKey::TokenB).unwrap();
@@ -669,16 +640,8 @@ mod test {
                 env.storage().instance().set(&SsKey::ReserveB, &rb);
             }
             pub fn get_reserves(env: Env) -> (i128, i128) {
-                let ra = env
-                    .storage()
-                    .instance()
-                    .get(&SsKey::ReserveA)
-                    .unwrap_or(0i128);
-                let rb = env
-                    .storage()
-                    .instance()
-                    .get(&SsKey::ReserveB)
-                    .unwrap_or(0i128);
+                let ra = env.storage().instance().get(&SsKey::ReserveA).unwrap_or(0i128);
+                let rb = env.storage().instance().get(&SsKey::ReserveB).unwrap_or(0i128);
                 (ra, rb)
             }
             pub fn swap(env: Env, a0: i128, a1: i128, to: Address) {
@@ -724,10 +687,7 @@ mod test {
 
             pub fn get_oracle_hints(env: Env) -> OracleHints {
                 let _ = env;
-                OracleHints {
-                    checkpoint: 1,
-                    slot: 2,
-                }
+                OracleHints { checkpoint: 1, slot: 2 }
             }
 
             pub fn swap(
@@ -782,13 +742,9 @@ mod test {
             ) -> (i128, i128) {
                 assert!(token_amount_in > 0);
                 let me = env.current_contract_address();
-                // Same pull pattern as mainnet Comet: transfer_from(spender=pool, from=user, to=pool)
-                token::Client::new(&env, &token_in).transfer_from(
-                    &me,
-                    &user,
-                    &me,
-                    &token_amount_in,
-                );
+                // Same pull pattern as mainnet Comet: transfer_from(spender=pool, from=user,
+                // to=pool)
+                token::Client::new(&env, &token_in).transfer_from(&me, &user, &me, &token_amount_in);
                 token::Client::new(&env, &token_out).transfer(&me, &user, &token_amount_in);
                 assert!(token_amount_in >= min_amount_out);
                 (token_amount_in, 0)
@@ -796,10 +752,7 @@ mod test {
         }
     }
 
-    use aq_mock::AqPoolClient;
-    use comet_mock::CometPoolClient;
-    use ss_mock::SsPairClient;
-    use sushi_mock::SushiPoolClient;
+    use {aq_mock::AqPoolClient, comet_mock::CometPoolClient, ss_mock::SsPairClient, sushi_mock::SushiPoolClient};
 
     // ═══════════════════════════════════════════════════════════════════════
     //  Aquarius tests
@@ -1289,15 +1242,7 @@ mod test {
         ];
 
         let before = tok_base.balance(&user);
-        let out = agg.round_trip_swap(
-            &user,
-            &base,
-            &bridge,
-            &5000,
-            &leg_out,
-            &leg_back,
-            &5000,
-        );
+        let out = agg.round_trip_swap(&user, &base, &bridge, &5000, &leg_out, &leg_back, &5000);
         assert_eq!(out, 5000);
         assert_eq!(tok_base.balance(&user) - before, 0);
     }

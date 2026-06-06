@@ -5,9 +5,10 @@ members = [
     "crates/router-engine",
     "crates/dex-adapters",
     "crates/api-server",
+    "crates/arbitrage",
     "crates/lumagg-alerts",
     "crates/sdk",
-    "contracts/aggregator",
+    "contracts/aggregator", "crates/pool-state-pipeline",
 ]
 resolver = "2"
 
@@ -56,6 +57,9 @@ base64 = "0.22"
 itertools = "0.14"
 reqwest = { version = "0.12", features = ["json"] }
 chrono = "0.4"
+
+# pipeline
+burberry = { git = "https://github.com/ligulfzhou/burberry", rev = "7cf9d163228b0e115946c789bcceff5723b334ef" }
 
 [profile.release]
 opt-level = 2

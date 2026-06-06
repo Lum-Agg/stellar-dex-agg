@@ -1,7 +1,10 @@
-//! On-chain inspection of specific Aquarius pools (run with --ignored --nocapture).
+//! On-chain inspection of specific Aquarius pools (run with --ignored
+//! --nocapture).
 
-use dex_adapters::rpc::{scval_to_address, scval_to_u128, SorobanRpc};
-use std::sync::Arc;
+use {
+    dex_adapters::rpc::{scval_to_address, scval_to_u128, SorobanRpc},
+    std::sync::Arc,
+};
 
 const POOLS: &[&str] = &[
     "CBRXOYKXPQI4EEA6KA35TUIYN5OJLNWMTIVDOMNOIL2BG5Y5LEDHUU7V",

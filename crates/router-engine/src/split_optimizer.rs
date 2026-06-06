@@ -1,4 +1,5 @@
-//! Split optimizer: determines optimal allocation of input across multiple paths.
+//! Split optimizer: determines optimal allocation of input across multiple
+//! paths.
 //!
 //! Uses Brent's method for 2-path optimization (finds optimal split ratio with
 //! ~10 evaluations to 0.01% precision), and recursive pairwise optimization for
@@ -11,23 +12,27 @@
 //!
 //! Reference: Jupiter's Iris engine uses Golden-section + Brent's method.
 
-use crate::types::{
-    OptimalRoute, Path, Quote, RouteDebug, RouteDebugCandidate, RouteDebugPlannedSplit, SubOrder,
+use {
+    crate::types::{OptimalRoute, Path, Quote, RouteDebug, RouteDebugCandidate, RouteDebugPlannedSplit, SubOrder},
+    tracing::debug,
 };
-use tracing::debug;
 
 /// Configuration for split optimization.
 #[derive(Debug, Clone)]
 pub struct SplitConfig {
     /// Price impact threshold (bps) above which splitting is considered.
     pub split_threshold_bps: u32,
-    /// If the second-best path is within this delta of the best path, still attempt split.
+    /// If the second-best path is within this delta of the best path, still
+    /// attempt split.
     pub split_competitive_delta_bps: u32,
-    /// Drop split legs whose expected output is below this share of total output.
+    /// Drop split legs whose expected output is below this share of total
+    /// output.
     pub min_split_fraction_bps: u32,
-    /// Drop split legs whose input is below this share of total input (prevents dust legs).
+    /// Drop split legs whose input is below this share of total input (prevents
+    /// dust legs).
     pub min_split_amount_in_bps: u32,
-    /// Reject a leg when its out/in ratio deviates from the path's full-size quote by more than this.
+    /// Reject a leg when its out/in ratio deviates from the path's full-size
+    /// quote by more than this.
     pub max_leg_rate_deviation_bps: u32,
     /// Maximum number of splits.
     pub max_splits: usize,
@@ -74,8 +79,9 @@ impl SplitOptimizer {
 
     /// Determine optimal split and compute the best route.
     ///
-    /// `quoted_paths`: paths with quotes at the full input amount (used to rank them).
-    /// `quote_fn`: function to get output for a path at a specific input amount.
+    /// `quoted_paths`: paths with quotes at the full input amount (used to rank
+    /// them). `quote_fn`: function to get output for a path at a specific
+    /// input amount.
     pub async fn optimize<F, Fut>(
         &self,
         quoted_paths: &[QuotedPath],
@@ -152,7 +158,8 @@ impl SplitOptimizer {
         }
 
         // Competitive second path only triggers split when there is measurable impact.
-        // Otherwise XLM/USDC-style pairs (impact ≈ 0, many similar paths) run Brent for ~10s+ with no gain.
+        // Otherwise XLM/USDC-style pairs (impact ≈ 0, many similar paths) run Brent for
+        // ~10s+ with no gain.
         let competitive_split = competitive_enough && best_single_impact > 0;
         if best_single_impact < self.config.split_threshold_bps && !competitive_split {
             let minimum_out = apply_slippage(best_single_out, slippage_bps);
@@ -205,18 +212,13 @@ impl SplitOptimizer {
         let candidate_routes = build_candidate_debug(&candidates);
 
         // Optimize split using recursive pairwise Brent's method
-        let split_result = self
-            .optimize_n_paths(&candidates, total_amount, &quote_fn)
-            .await;
+        let split_result = self.optimize_n_paths(&candidates, total_amount, &quote_fn).await;
         let (effective_candidate_indices, split_result, dust_filtered_legs) = self
             .filter_dust_split_legs(&candidates, split_result, total_amount, &quote_fn)
             .await;
-        let effective_candidates: Vec<&QuotedPath> = effective_candidate_indices
-            .iter()
-            .map(|&idx| candidates[idx])
-            .collect();
-        let planned_split =
-            build_planned_split_debug(&effective_candidates, &split_result, total_amount);
+        let effective_candidates: Vec<&QuotedPath> =
+            effective_candidate_indices.iter().map(|&idx| candidates[idx]).collect();
+        let planned_split = build_planned_split_debug(&effective_candidates, &split_result, total_amount);
 
         let total_out: u128 = split_result.iter().map(|(_, out)| out).sum();
 
@@ -349,9 +351,9 @@ impl SplitOptimizer {
                     let candidate = active_indices[*position];
                     let amount_in_bps = split_amount_in_fraction_bps(*amount, total_amount);
                     let out_bps = (*out * 10_000 / total_out) as u32;
-                    amount_in_bps >= self.config.min_split_amount_in_bps
-                        && out_bps >= self.config.min_split_fraction_bps
-                        && leg_rate_matches_full_quote(
+                    amount_in_bps >= self.config.min_split_amount_in_bps &&
+                        out_bps >= self.config.min_split_fraction_bps &&
+                        leg_rate_matches_full_quote(
                             candidates[candidate],
                             *amount,
                             *out,
@@ -361,10 +363,7 @@ impl SplitOptimizer {
                 .map(|(idx, _)| idx)
                 .collect();
 
-            let active_nonzero = current_split
-                .iter()
-                .filter(|(amount, _)| *amount > 0)
-                .count();
+            let active_nonzero = current_split.iter().filter(|(amount, _)| *amount > 0).count();
             if kept_positions.len() == active_nonzero || kept_positions.is_empty() {
                 break;
             }
@@ -375,8 +374,7 @@ impl SplitOptimizer {
                 .map(|&position| active_indices[position])
                 .collect();
 
-            let active_candidates: Vec<&QuotedPath> =
-                active_indices.iter().map(|&idx| candidates[idx]).collect();
+            let active_candidates: Vec<&QuotedPath> = active_indices.iter().map(|&idx| candidates[idx]).collect();
 
             current_split = if active_candidates.len() == 1 {
                 let out = quote_fn(&active_candidates[0].path, total_amount)
@@ -385,8 +383,7 @@ impl SplitOptimizer {
                     .unwrap_or(0);
                 vec![(total_amount, out)]
             } else {
-                self.optimize_n_paths(&active_candidates, total_amount, quote_fn)
-                    .await
+                self.optimize_n_paths(&active_candidates, total_amount, quote_fn).await
             };
         }
 
@@ -426,7 +423,8 @@ impl SplitOptimizer {
         let rest = &paths[1..];
 
         // Define the objective: given fraction x to path_a, what's the total output?
-        // We use Brent's method to maximize f(x) = output_a(x * total) + output_rest((1-x) * total)
+        // We use Brent's method to maximize f(x) = output_a(x * total) +
+        // output_rest((1-x) * total)
         let optimal_fraction = self
             .brent_maximize(0.0, 1.0, |x| {
                 let amount_a = (x * total_amount as f64) as u128;
@@ -440,8 +438,7 @@ impl SplitOptimizer {
                         .await
                         .map(|q| q.amount_out)
                         .unwrap_or(0);
-                    let out_rest =
-                        Box::pin(this.total_out_for_paths(rest, amount_rest, quote_fn)).await;
+                    let out_rest = Box::pin(this.total_out_for_paths(rest, amount_rest, quote_fn)).await;
                     (out_a + out_rest) as f64
                 }
             })
@@ -450,10 +447,7 @@ impl SplitOptimizer {
         let amount_a = (optimal_fraction * total_amount as f64) as u128;
         let amount_rest = total_amount.saturating_sub(amount_a);
 
-        let out_a = quote_fn(path_a, amount_a)
-            .await
-            .map(|q| q.amount_out)
-            .unwrap_or(0);
+        let out_a = quote_fn(path_a, amount_a).await.map(|q| q.amount_out).unwrap_or(0);
 
         let mut result = vec![(amount_a, out_a)];
 
@@ -466,12 +460,7 @@ impl SplitOptimizer {
         result
     }
 
-    async fn total_out_for_paths<F, Fut>(
-        &self,
-        paths: &[&QuotedPath],
-        total_amount: u128,
-        quote_fn: &F,
-    ) -> u128
+    async fn total_out_for_paths<F, Fut>(&self, paths: &[&QuotedPath], total_amount: u128, quote_fn: &F) -> u128
     where
         F: Fn(&Path, u128) -> Fut,
         Fut: std::future::Future<Output = Option<Quote>>,
@@ -496,12 +485,14 @@ impl SplitOptimizer {
                 .sum();
         }
 
-        // N >= 3: O(N) weighted split by full-amount output (avoids nested Brent explosion).
+        // N >= 3: O(N) weighted split by full-amount output (avoids nested Brent
+        // explosion).
         self.approximate_weighted_paths_output(paths, total_amount, quote_fn)
             .await
     }
 
-    /// Split `total_amount` across paths proportional to their full-amount quotes, then re-quote.
+    /// Split `total_amount` across paths proportional to their full-amount
+    /// quotes, then re-quote.
     async fn approximate_weighted_paths_output<F, Fut>(
         &self,
         paths: &[&QuotedPath],
@@ -515,10 +506,7 @@ impl SplitOptimizer {
         if paths.is_empty() || total_amount == 0 {
             return 0;
         }
-        let weights: Vec<u128> = paths
-            .iter()
-            .map(|p| p.quote.amount_out.max(1))
-            .collect();
+        let weights: Vec<u128> = paths.iter().map(|p| p.quote.amount_out.max(1)).collect();
         let weight_sum: u128 = weights.iter().copied().sum::<u128>().max(1);
         let mut allocated = 0u128;
         let mut total_out = 0u128;
@@ -533,10 +521,7 @@ impl SplitOptimizer {
             if amount == 0 {
                 continue;
             }
-            total_out += quote_fn(&qp.path, amount)
-                .await
-                .map(|q| q.amount_out)
-                .unwrap_or(0);
+            total_out += quote_fn(&qp.path, amount).await.map(|q| q.amount_out).unwrap_or(0);
         }
         total_out
     }
@@ -566,18 +551,12 @@ impl SplitOptimizer {
 
                 async move {
                     let out_a = if amount_a > 0 {
-                        quote_fn(&pa, amount_a)
-                            .await
-                            .map(|q| q.amount_out)
-                            .unwrap_or(0)
+                        quote_fn(&pa, amount_a).await.map(|q| q.amount_out).unwrap_or(0)
                     } else {
                         0
                     };
                     let out_b = if amount_b > 0 {
-                        quote_fn(&pb, amount_b)
-                            .await
-                            .map(|q| q.amount_out)
-                            .unwrap_or(0)
+                        quote_fn(&pb, amount_b).await.map(|q| q.amount_out).unwrap_or(0)
                     } else {
                         0
                     };
@@ -590,18 +569,12 @@ impl SplitOptimizer {
         let amount_b = total_amount.saturating_sub(amount_a);
 
         let out_a = if amount_a > 0 {
-            quote_fn(path_a, amount_a)
-                .await
-                .map(|q| q.amount_out)
-                .unwrap_or(0)
+            quote_fn(path_a, amount_a).await.map(|q| q.amount_out).unwrap_or(0)
         } else {
             0
         };
         let out_b = if amount_b > 0 {
-            quote_fn(path_b, amount_b)
-                .await
-                .map(|q| q.amount_out)
-                .unwrap_or(0)
+            quote_fn(path_b, amount_b).await.map(|q| q.amount_out).unwrap_or(0)
         } else {
             0
         };
@@ -719,7 +692,8 @@ impl SplitOptimizer {
     }
 }
 
-/// Extra slippage on `minimum_out` for split routes (local quotes vs on-chain multi-leg drift).
+/// Extra slippage on `minimum_out` for split routes (local quotes vs on-chain
+/// multi-leg drift).
 const SPLIT_MIN_OUTPUT_EXTRA_BPS: u32 = 150;
 
 fn split_amount_in_fraction_bps(amount_in: u128, total_amount: u128) -> u32 {
@@ -730,7 +704,8 @@ fn split_amount_in_fraction_bps(amount_in: u128, total_amount: u128) -> u32 {
 }
 
 /// Leg implied rate must stay near the path's quote at the full trade size.
-/// Catches bogus micro-amount quotes (e.g. empty Soroswap pools showing fantasy output).
+/// Catches bogus micro-amount quotes (e.g. empty Soroswap pools showing fantasy
+/// output).
 fn leg_rate_matches_full_quote(
     quoted_path: &QuotedPath,
     leg_amount_in: u128,
@@ -760,10 +735,7 @@ fn apply_slippage(amount: u128, slippage_bps: u32) -> u128 {
 }
 
 fn apply_split_minimum_slippage(amount: u128, slippage_bps: u32) -> u128 {
-    apply_slippage(
-        amount,
-        slippage_bps.saturating_add(SPLIT_MIN_OUTPUT_EXTRA_BPS),
-    )
+    apply_slippage(amount, slippage_bps.saturating_add(SPLIT_MIN_OUTPUT_EXTRA_BPS))
 }
 
 fn empty_route(total_amount: u128, compute_time_ms: u64) -> OptimalRoute {
@@ -785,12 +757,7 @@ fn build_candidate_debug(candidates: &[&QuotedPath]) -> Vec<RouteDebugCandidate>
         .iter()
         .map(|candidate| RouteDebugCandidate {
             source: candidate.path.sources.join(" → "),
-            path: candidate
-                .path
-                .tokens
-                .iter()
-                .map(|token| token.canonical())
-                .collect(),
+            path: candidate.path.tokens.iter().map(|token| token.canonical()).collect(),
             pool_addresses: candidate.path.pool_addresses.clone(),
             amount_out: candidate.quote.amount_out,
             price_impact_bps: candidate.quote.price_impact_bps,
@@ -827,8 +794,7 @@ fn build_planned_split_debug(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::types::TokenId;
+    use {super::*, crate::types::TokenId};
 
     fn test_path(name: &str) -> Path {
         Path {
@@ -871,11 +837,7 @@ mod tests {
             .brent_maximize(0.0, 1.0, |x| async move { -(x - 0.6) * (x - 0.6) + 1.0 })
             .await;
 
-        assert!(
-            (result - 0.6).abs() < 0.001,
-            "Expected ~0.6, got {}",
-            result
-        );
+        assert!((result - 0.6).abs() < 0.001, "Expected ~0.6, got {}", result);
     }
 
     /// Test Brent's method on AMM-like diminishing returns
@@ -900,16 +862,8 @@ mod tests {
             .await;
 
         // Pool A is deeper, so optimal split should favor A (x > 0.5)
-        assert!(
-            result > 0.5,
-            "Expected x > 0.5 (favor deeper pool), got {}",
-            result
-        );
-        assert!(
-            result < 0.8,
-            "Expected x < 0.8 (still use both), got {}",
-            result
-        );
+        assert!(result > 0.5, "Expected x > 0.5 (favor deeper pool), got {}", result);
+        assert!(result < 0.8, "Expected x < 0.8 (still use both), got {}", result);
     }
 
     /// Test that 100% to one pool is chosen when other pool is empty
@@ -951,10 +905,7 @@ mod tests {
         assert!(!route.is_split);
         assert_eq!(route.sub_orders.len(), 1);
         assert_eq!(
-            route
-                .debug
-                .as_ref()
-                .and_then(|d| d.split_rejected_reason.as_deref()),
+            route.debug.as_ref().and_then(|d| d.split_rejected_reason.as_deref()),
             Some("not_enough_paths")
         );
     }
@@ -1108,10 +1059,7 @@ mod tests {
         assert!(!route.is_split);
         assert_eq!(route.total_expected_out, 1_000);
         assert_eq!(
-            route
-                .debug
-                .as_ref()
-                .and_then(|d| d.split_rejected_reason.as_deref()),
+            route.debug.as_ref().and_then(|d| d.split_rejected_reason.as_deref()),
             Some("no_improvement")
         );
     }
@@ -1214,10 +1162,7 @@ mod tests {
             .await;
 
         assert!(
-            route
-                .sub_orders
-                .iter()
-                .all(|leg| leg.path.sources[0] != "bad"),
+            route.sub_orders.iter().all(|leg| leg.path.sources[0] != "bad"),
             "fantasy micro-quote path should be dropped"
         );
     }
@@ -1268,10 +1213,7 @@ mod tests {
             .await;
 
         assert!(
-            route
-                .sub_orders
-                .iter()
-                .all(|leg| leg.path.sources[0] != "c"),
+            route.sub_orders.iter().all(|leg| leg.path.sources[0] != "c"),
             "expected dust path c to be removed"
         );
         assert!(
