@@ -95,18 +95,22 @@ impl SorobanRpc {
 
         let mut all = Vec::new();
         let mut cursor: Option<String> = None;
-        loop {
+        let mut seen_cursors: HashSet<String> = HashSet::new();
+        const MAX_PAGES: usize = 32;
+        for _ in 0..MAX_PAGES {
             let page = self
                 .get_contract_events_page(start_ledger, end_ledger, filters, limit, cursor.as_deref())
                 .await?;
-            let mut seen_ids = HashSet::new();
+            if page.events.is_empty() {
+                break;
+            }
             for event in page.events {
-                if seen_ids.insert(event.id.clone()) {
-                    all.push(event);
-                }
+                all.push(event);
             }
             match page.cursor {
-                Some(next) if !next.is_empty() => cursor = Some(next),
+                Some(next) if !next.is_empty() && seen_cursors.insert(next.clone()) => {
+                    cursor = Some(next);
+                }
                 _ => break,
             }
         }

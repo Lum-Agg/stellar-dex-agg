@@ -16,3 +16,4 @@ scripts/*
 !scripts/scf-quote-regression.sh
 docs/*
 !docs/pool-state-architecture.md
+.DS_Store

@@ -21,6 +21,8 @@ use {
 
 /// Soroswap Factory contract address (Mainnet)
 pub const SOROSWAP_FACTORY: &str = "CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2";
+/// Soroswap Router (Mainnet) — see `thirdparty/soroswap/public/mainnet.contracts.json`
+pub const SOROSWAP_ROUTER: &str = "CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH";
 
 /// Batch concurrency for RPC calls
 const BATCH_SIZE: usize = 20;

@@ -31,6 +31,7 @@ pub mod comet_math;
 pub mod expert_api;
 pub mod phoenix;
 pub mod pool_index;
+pub mod router_events;
 pub mod rpc;
 pub mod soroswap;
 pub mod stable_math;

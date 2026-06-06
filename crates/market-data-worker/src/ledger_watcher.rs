@@ -134,7 +134,8 @@ impl LedgerWatcher {
             );
         }
 
-        // All contract events in range (Soroswap swaps emit from pair contracts).
+        // All contract events in range. Pool contracts emit swap/deposit/withdraw;
+        // router events (Aquarius/Soroswap) are parsed in pool_index for pool ids.
         let filters = vec![EventFilterSpec {
             contract_ids: None,
             topics: Some(vec![vec!["**".to_string()]]),
