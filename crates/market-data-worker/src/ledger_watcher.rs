@@ -13,7 +13,7 @@ use {
 };
 
 /// Default ledger poll interval (seconds, fractional OK via env).
-pub const DEFAULT_LEDGER_POLL_SECS: f64 = 0.5;
+pub const DEFAULT_LEDGER_POLL_SECS: f64 = 0.1;
 pub const MIN_LEDGER_POLL_SECS: f64 = 0.1;
 pub const DEFAULT_LEDGER_MAX_CATCHUP: u32 = 32;
 pub const DEFAULT_LEDGER_MAX_TOUCHED_REFRESH: usize = 64;

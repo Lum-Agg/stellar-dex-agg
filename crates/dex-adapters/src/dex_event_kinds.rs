@@ -57,9 +57,7 @@ pub fn classify_topic_op(op: &str) -> DexEventKind {
         }
         "update_reserves" | "sync" | "pool_state" | "position_update" => DexEventKind::StateUpdate,
         "add_pool" => DexEventKind::PoolDiscovery,
-        "config_rewards" | "claim" | "set_protocol_fee" | "pool_gauge_switch_token" => {
-            DexEventKind::RewardsAdmin
-        }
+        "config_rewards" | "claim" | "set_protocol_fee" | "pool_gauge_switch_token" => DexEventKind::RewardsAdmin,
         _ => DexEventKind::Other,
     }
 }
@@ -76,8 +74,7 @@ fn decode_topic_symbol(raw: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use stellar_xdr::curr::WriteXdr;
+    use {super::*, stellar_xdr::curr::WriteXdr};
 
     fn sym(s: &str) -> String {
         base64::engine::general_purpose::STANDARD.encode(

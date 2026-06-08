@@ -1,9 +1,9 @@
-//! Ledger-driven pool-state fetch pipeline: high-priority `FetchTask` queue → RPC
-//! workers → Redis sink.
+//! Ledger-driven pool-state fetch pipeline: high-priority `FetchTask` queue →
+//! RPC workers → Redis sink.
 //!
-//! Full-market refresh is **not** scheduled here. Bootstrap + periodic discovery
-//! publish pool state to Redis; this pipeline only handles ledger-touched pools
-//! (Jupiter-style event-driven updates).
+//! Full-market refresh is **not** scheduled here. Bootstrap + periodic
+//! discovery publish pool state to Redis; this pipeline only handles
+//! ledger-touched pools (Jupiter-style event-driven updates).
 
 use {
     crate::worker::WorkerShared,
@@ -267,10 +267,7 @@ pub fn spawn_fetch_pipeline(
         "Fetch pipeline started (ledger touched → RPC workers → Redis)"
     );
 
-    FetchPipelineHandle {
-        high_tx,
-        metrics,
-    }
+    FetchPipelineHandle { high_tx, metrics }
 }
 
 async fn execute_fetch_task(ctx: &FetchWorkerContext, task: FetchTask) -> Result<Vec<PoolStateUpdate>> {

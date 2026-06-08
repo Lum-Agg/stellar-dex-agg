@@ -19,8 +19,7 @@ use {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let rpc_url = std::env::var("RPC_URL").unwrap_or_else(|_| "http://127.0.0.1:8003".into());
-    let redis_url =
-        std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://:REDISzlg153@127.0.0.1:6379/".into());
+    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://:REDISzlg153@127.0.0.1:6379/".into());
     let ledgers: u32 = std::env::var("AUDIT_LEDGERS")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -98,11 +97,7 @@ fn count_dex_events(
             .or_default()
             .entry(kind)
             .or_default() += 1;
-        *raw_ops_by_source
-            .entry(source)
-            .or_default()
-            .entry(op)
-            .or_default() += 1;
+        *raw_ops_by_source.entry(source).or_default().entry(op).or_default() += 1;
     }
 }
 
@@ -142,7 +137,10 @@ impl AuditTotals {
     fn print(&self) {
         println!("ledgers_with_dex_activity: {}", self.ledgers_with_activity);
         println!("contract_events: {}", self.contract_events);
-        println!("  pool_contract_events (contractId in index): {}", self.pool_contract_events);
+        println!(
+            "  pool_contract_events (contractId in index): {}",
+            self.pool_contract_events
+        );
         println!("  router_events (aquarius/soroswap): {}", self.router_events);
         println!("  router_parsed_to_pool: {}", self.router_parsed);
         println!("  router_parse_failed: {}", self.router_parse_failed);
@@ -197,19 +195,13 @@ fn audit_ledger(events: &[ContractEvent], index: &KnownPoolIndex) -> LedgerStats
 
         if index.lookup_contract(&event.contract_id).is_some() {
             stats.pool_contract_events += 1;
-            stats
-                .touched_pool_only
-                .insert(event.contract_id.clone());
+            stats.touched_pool_only.insert(event.contract_id.clone());
         }
 
         let is_router = event.contract_id == AQUARIUS_ROUTER || event.contract_id == SOROSWAP_ROUTER;
         if is_router {
             stats.router_events += 1;
-            let parsed = pools_from_router_event(
-                &event.contract_id,
-                event.topic.as_deref(),
-                event.value.as_deref(),
-            );
+            let parsed = pools_from_router_event(&event.contract_id, event.topic.as_deref(), event.value.as_deref());
             if parsed.is_empty() {
                 stats.router_parse_failed += 1;
             } else {

@@ -1,8 +1,9 @@
 //! Parse DEX router contract events to recover touched pool addresses.
 //!
-//! Pool contracts emit their own events (preferred path in [`super::pool_index`]).
-//! When users route through Aquarius / Soroswap routers, the router also emits
-//! events whose `contractId` is the router — pool id lives in the event body.
+//! Pool contracts emit their own events (preferred path in
+//! [`super::pool_index`]). When users route through Aquarius / Soroswap
+//! routers, the router also emits events whose `contractId` is the router —
+//! pool id lives in the event body.
 
 use {
     crate::{
@@ -19,11 +20,7 @@ const AQUARIUS_POOL_OPS: &[&str] = &["deposit", "swap", "withdraw", "add_pool"];
 const SOROSWAP_LIQUIDITY_OPS: &[&str] = &["add", "remove"];
 
 /// Extract known pool contract addresses referenced by a router event.
-pub fn pools_from_router_event(
-    contract_id: &str,
-    topics: Option<&[String]>,
-    value: Option<&str>,
-) -> Vec<String> {
+pub fn pools_from_router_event(contract_id: &str, topics: Option<&[String]>, value: Option<&str>) -> Vec<String> {
     let Some(topics) = topics else {
         return Vec::new();
     };
@@ -50,7 +47,8 @@ fn pools_from_aquarius_router(topics: &[String], value: Option<&str>) -> Vec<Str
     let Some(body) = value.and_then(decode_scval_b64) else {
         return Vec::new();
     };
-    // Body: (pool_id, ...) for deposit/swap/withdraw; (pool_address, ...) for add_pool.
+    // Body: (pool_id, ...) for deposit/swap/withdraw; (pool_address, ...) for
+    // add_pool.
     first_contract_address(&body).into_iter().collect()
 }
 
@@ -103,9 +101,7 @@ fn scval_symbol(val: &ScVal) -> Option<String> {
 }
 
 fn contract_address(val: &ScVal) -> Option<String> {
-    scval_to_address(val)
-        .ok()
-        .filter(|addr| is_contract_address(addr))
+    scval_to_address(val).ok().filter(|addr| is_contract_address(addr))
 }
 
 fn first_contract_address(val: &ScVal) -> Option<String> {
@@ -121,8 +117,8 @@ fn first_contract_address(val: &ScVal) -> Option<String> {
 mod tests {
     use {
         super::*,
-        stellar_xdr::curr::{ScAddress, WriteXdr},
         stellar_strkey::Contract,
+        stellar_xdr::curr::{ScAddress, WriteXdr},
     };
 
     fn addr(seed: u8) -> ScVal {
@@ -137,9 +133,7 @@ mod tests {
     }
 
     fn b64(val: &ScVal) -> String {
-        base64::engine::general_purpose::STANDARD.encode(
-            val.to_xdr(Limits::none()).expect("xdr"),
-        )
+        base64::engine::general_purpose::STANDARD.encode(val.to_xdr(Limits::none()).expect("xdr"))
     }
 
     #[test]
@@ -148,14 +142,10 @@ mod tests {
         let body = ScVal::Vec(Some(stellar_xdr::curr::ScVec(
             vec![pool, ScVal::U32(1)].try_into().unwrap(),
         )));
-        let topics = vec![
-            b64(&ScVal::Symbol(stellar_xdr::curr::ScSymbol::try_from("swap").unwrap())),
-        ];
-        let pools = pools_from_router_event(
-            AQUARIUS_ROUTER,
-            Some(&topics),
-            Some(&b64(&body)),
-        );
+        let topics = vec![b64(&ScVal::Symbol(
+            stellar_xdr::curr::ScSymbol::try_from("swap").unwrap(),
+        ))];
+        let pools = pools_from_router_event(AQUARIUS_ROUTER, Some(&topics), Some(&b64(&body)));
         assert_eq!(pools, vec![pool_str(7)]);
     }
 
@@ -177,30 +167,20 @@ mod tests {
             )),
             b64(&ScVal::Symbol(stellar_xdr::curr::ScSymbol::try_from("add").unwrap())),
         ];
-        let pools = pools_from_router_event(
-            SOROSWAP_ROUTER,
-            Some(&topics),
-            Some(&b64(&body)),
-        );
+        let pools = pools_from_router_event(SOROSWAP_ROUTER, Some(&topics), Some(&b64(&body)));
         assert_eq!(pools, vec![pool_str(9)]);
     }
 
     #[test]
     fn soroswap_router_swap_is_ignored() {
-        let body = ScVal::Vec(Some(stellar_xdr::curr::ScVec(
-            vec![ScVal::U32(1)].try_into().unwrap(),
-        )));
+        let body = ScVal::Vec(Some(stellar_xdr::curr::ScVec(vec![ScVal::U32(1)].try_into().unwrap())));
         let topics = vec![
             b64(&ScVal::Symbol(
                 stellar_xdr::curr::ScSymbol::try_from("SoroswapRouter").unwrap(),
             )),
             b64(&ScVal::Symbol(stellar_xdr::curr::ScSymbol::try_from("swap").unwrap())),
         ];
-        let pools = pools_from_router_event(
-            SOROSWAP_ROUTER,
-            Some(&topics),
-            Some(&b64(&body)),
-        );
+        let pools = pools_from_router_event(SOROSWAP_ROUTER, Some(&topics), Some(&b64(&body)));
         assert!(pools.is_empty());
     }
 }

@@ -23,7 +23,7 @@ There is **no long-lived in-process pool cache** on the API. Each `/quote` does 
 │    Seed topology from Redis snapshot → background discovery      │
 │    → publish MarketSnapshot + full pool state to Redis           │
 ├─────────────────────────────────────────────────────────────────┤
-│ 2. Hot — ledger watcher (LEDGER_POLL_SECS, default 0.5)         │
+│ 2. Hot — ledger watcher (LEDGER_POLL_SECS, default 0.1)         │
 │    getEvents → touched known pools → fetch pipeline → Redis      │
 │    Active pools: ~0.5–2s latency                                 │
 ├─────────────────────────────────────────────────────────────────┤
@@ -72,7 +72,7 @@ Ledger ticks do **not** publish a new `MarketSnapshot`.
 | Variable | Default | Meaning |
 |----------|---------|---------|
 | `LEDGER_WATCHER_ENABLED` | `true` (requires Redis) | Turn ledger poll on/off |
-| `LEDGER_POLL_SECS` | `0.5` | Poll interval (fractional seconds; min `0.1`) |
+| `LEDGER_POLL_SECS` | `0.1` | Poll interval (fractional seconds; min `0.1`) |
 | `LEDGER_MAX_CATCHUP` | `32` | Max ledgers per poll |
 | `LEDGER_MAX_TOUCHED_REFRESH` | `64` | Cap pools refreshed per poll |
 | `FETCH_PIPELINE_ENABLED` | `true` | Ledger → task queue → Redis |

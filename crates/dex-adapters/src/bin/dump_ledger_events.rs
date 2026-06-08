@@ -64,11 +64,8 @@ struct TouchedPoolLine {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let rpc_url = std::env::var("RPC_URL").unwrap_or_else(|_| "http://127.0.0.1:8003".into());
-    let redis_url =
-        std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://:REDISzlg153@127.0.0.1:6379/".into());
-    let dump_dir = PathBuf::from(
-        std::env::var("DUMP_DIR").unwrap_or_else(|_| "ledger-events-dump".into()),
-    );
+    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://:REDISzlg153@127.0.0.1:6379/".into());
+    let dump_dir = PathBuf::from(std::env::var("DUMP_DIR").unwrap_or_else(|_| "ledger-events-dump".into()));
     let ledgers: u32 = std::env::var("DUMP_LEDGERS")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -91,13 +88,9 @@ async fn main() -> anyhow::Result<()> {
     for ledger in start..=latest {
         let events = fetch_ledger_events(&rpc, ledger).await?;
         let touched = touched_pools_from_events(&events, &index);
-        let touched_addrs: std::collections::HashSet<String> =
-            touched.iter().map(|p| p.pool_address.clone()).collect();
+        let touched_addrs: std::collections::HashSet<String> = touched.iter().map(|p| p.pool_address.clone()).collect();
 
-        let contract_events: Vec<_> = events
-            .iter()
-            .filter(|e| e.event_type == "contract")
-            .collect();
+        let contract_events: Vec<_> = events.iter().filter(|e| e.event_type == "contract").collect();
 
         let mut router_parse_ok = 0usize;
         let mut router_parse_fail = 0usize;
@@ -116,11 +109,7 @@ async fn main() -> anyhow::Result<()> {
                 soroswap_router_events += 1;
             }
             if e.contract_id == AQUARIUS_ROUTER || e.contract_id == SOROSWAP_ROUTER {
-                let parsed = pools_from_router_event(
-                    &e.contract_id,
-                    e.topic.as_deref(),
-                    e.value.as_deref(),
-                );
+                let parsed = pools_from_router_event(&e.contract_id, e.topic.as_deref(), e.value.as_deref());
                 if parsed.is_empty() {
                     router_parse_fail += 1;
                 } else {
@@ -156,14 +145,10 @@ async fn main() -> anyhow::Result<()> {
                         e.topic.as_deref(),
                         e.value.as_deref(),
                     ),
-                    in_touched_set: index.lookup_contract(&e.contract_id).is_some()
-                        || pools_from_router_event(
-                            &e.contract_id,
-                            e.topic.as_deref(),
-                            e.value.as_deref(),
-                        )
-                        .into_iter()
-                        .any(|addr| touched_addrs.contains(&addr)),
+                    in_touched_set: index.lookup_contract(&e.contract_id).is_some() ||
+                        pools_from_router_event(&e.contract_id, e.topic.as_deref(), e.value.as_deref())
+                            .into_iter()
+                            .any(|addr| touched_addrs.contains(&addr)),
                 },
             };
             use std::io::Write;
@@ -191,11 +176,7 @@ async fn main() -> anyhow::Result<()> {
             output_file: filename,
         });
 
-        println!(
-            "ledger {ledger}: wrote {} events -> {}",
-            events.len(),
-            path.display()
-        );
+        println!("ledger {ledger}: wrote {} events -> {}", events.len(), path.display());
     }
 
     let index_path = dump_dir.join("_index.json");

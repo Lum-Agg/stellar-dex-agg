@@ -64,8 +64,8 @@ impl KnownPoolIndex {
 }
 
 /// Pools touched in the ledger range: direct pool contract events plus router
-/// events where the pool id is carried in the event body (Aquarius deposit/swap/
-/// withdraw, Soroswap add/remove liquidity).
+/// events where the pool id is carried in the event body (Aquarius
+/// deposit/swap/ withdraw, Soroswap add/remove liquidity).
 pub fn touched_pools_from_events(events: &[ContractEvent], index: &KnownPoolIndex) -> HashSet<PoolRef> {
     let mut touched = HashSet::new();
     for event in events {
@@ -76,11 +76,8 @@ pub fn touched_pools_from_events(events: &[ContractEvent], index: &KnownPoolInde
             touched.insert(pool.clone());
             continue;
         }
-        for pool_address in pools_from_router_event(
-            &event.contract_id,
-            event.topic.as_deref(),
-            event.value.as_deref(),
-        ) {
+        for pool_address in pools_from_router_event(&event.contract_id, event.topic.as_deref(), event.value.as_deref())
+        {
             index.insert_if_known(&mut touched, &pool_address);
         }
     }
@@ -129,10 +126,10 @@ mod tests {
     #[test]
     fn maps_aquarius_router_event_to_pool() {
         use {
-            base64::Engine,
             crate::aquarius::AQUARIUS_ROUTER,
-            stellar_xdr::curr::{Limits, ScAddress, ScVal, WriteXdr},
+            base64::Engine,
             stellar_strkey::Contract,
+            stellar_xdr::curr::{Limits, ScAddress, ScVal, WriteXdr},
         };
 
         let hash = [42u8; 32];
@@ -161,9 +158,7 @@ mod tests {
             .unwrap(),
         )));
         let topic = ScVal::Symbol(stellar_xdr::curr::ScSymbol::try_from("deposit").unwrap());
-        let b64 = |v: &ScVal| {
-            base64::engine::general_purpose::STANDARD.encode(v.to_xdr(Limits::none()).unwrap())
-        };
+        let b64 = |v: &ScVal| base64::engine::general_purpose::STANDARD.encode(v.to_xdr(Limits::none()).unwrap());
 
         let events = vec![ContractEvent {
             event_type: "contract".to_string(),
