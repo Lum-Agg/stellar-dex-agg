@@ -365,6 +365,7 @@ export function SwapCard() {
       {quote && (
         <RouteDisplay
           quote={quote}
+          tokenInSymbol={tokenIn.symbol}
           tokenOutSymbol={tokenOut.symbol}
           tokenInDecimals={tokenIn.decimals}
           tokenOutDecimals={tokenOut.decimals}
