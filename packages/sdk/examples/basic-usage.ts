@@ -11,11 +11,18 @@
  * Run:
  *   npx tsx packages/sdk/examples/basic-usage.ts
  *
- * Or point to a different deployment:
- *   API_URL=https://some-other-api.xyz npx tsx packages/sdk/examples/basic-usage.ts
+ * Options (env vars):
+ *   API_URL  — aggregator deployment (default: https://api.lumagg.xyz)
+ *   AMOUNT   — input amount in whole tokens (default: 100)
+ *   TOKEN_IN — input token contract id  (default: XLM native)
+ *   TOKEN_OUT— output token contract id (default: USDC)
+ *
+ * Examples:
+ *   AMOUNT=50 npx tsx packages/sdk/examples/basic-usage.ts
+ *   API_URL=http://localhost:3000 TOKEN_IN=<contract> TOKEN_OUT=<contract> npx tsx packages/sdk/examples/basic-usage.ts
  */
 
-import { StellarAggregator, type QuoteResult, type SubRoute, type TokenInfo } from '../src/index';
+import { StellarAggregator, type QuoteResult, type TokenInfo } from '../src/index';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -26,6 +33,10 @@ const API_URL = process.env.API_URL || 'https://api.lumagg.xyz';
 // Well-known Stellar mainnet contract ids.
 const XLM_CONTRACT = 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6T2ZMYIE2QDSOYLOU4';
 const USDC_CONTRACT = 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMIHG';
+
+const AMOUNT = process.env.AMOUNT || '100';
+const TOKEN_IN = process.env.TOKEN_IN || XLM_CONTRACT;
+const TOKEN_OUT = process.env.TOKEN_OUT || USDC_CONTRACT;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -44,11 +55,11 @@ function formatPercent(pct: number): string {
   return `${pct.toFixed(1)}%`;
 }
 
-/** Human-readable exchange rate (out-tokens per 1 in-token). */
+/** Human-readable exchange rate: out-tokens per 1 in-token. */
 function legRate(amountIn: string, amountOut: string, inDec = 7, outDec = 7): number | null {
   const ain = BigInt(amountIn || '0');
   const aout = BigInt(amountOut || '0');
-  if (ain === 0n || aout === 0n) return null;
+  if (ain === BigInt(0) || aout === BigInt(0)) return null;
   const inUnits = Number(ain) / 10 ** inDec;
   const outUnits = Number(aout) / 10 ** outDec;
   return outUnits / inUnits;
@@ -72,6 +83,17 @@ function printDivider(title = ''): void {
   }
 }
 
+/** Build a lookup of contract id → { symbol, decimals } from the token list. */
+function buildTokenMap(
+  tokens: TokenInfo[],
+): Map<string, { symbol: string; decimals: number }> {
+  const map = new Map<string, { symbol: string; decimals: number }>();
+  for (const t of tokens) {
+    map.set(t.id, { symbol: t.symbol, decimals: (t as any).decimals ?? 7 });
+  }
+  return map;
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -88,9 +110,10 @@ async function main() {
     process.exit(1);
   }
 
-  // ---- 2. Token list ----------------------------------------------------
+  // ---- 2. Token list (needed for decimals & symbols) --------------------
   printDivider('2. Supported tokens');
   let tokens: TokenInfo[] = [];
+  const tokenMap = new Map<string, { symbol: string; decimals: number }>();
   try {
     tokens = await sdk.getTokens();
     console.log(`Fetched ${tokens.length} tokens`);
@@ -101,21 +124,32 @@ async function main() {
       }
       if (tokens.length > preview.length) console.log(`  … and ${tokens.length - preview.length} more`);
     }
+    // Build lookup from the live token list
+    for (const t of tokens) {
+      tokenMap.set(t.id, { symbol: t.symbol, decimals: (t as any).decimals ?? 7 });
+    }
   } catch (err: any) {
     console.warn(`⚠️  Could not fetch token list: ${err.message}`);
   }
 
-  // ---- 3. Quote ---------------------------------------------------------
-  printDivider('3. Quote: 100 XLM → USDC');
+  // Resolve token symbols & decimals dynamically
+  const inToken = tokenMap.get(TOKEN_IN);
+  const outToken = tokenMap.get(TOKEN_OUT);
+  const inSymbol = inToken?.symbol ?? 'XLM';
+  const outSymbol = outToken?.symbol ?? 'USDC';
+  const inDecimals = inToken?.decimals ?? 7;
+  const outDecimals = outToken?.decimals ?? 7;
 
-  const amountInXlm = '100';
-  const amountStroops = String(BigInt(amountInXlm) * 10n ** 7n); // XLM decimals = 7
+  // ---- 3. Quote ---------------------------------------------------------
+  printDivider(`3. Quote: ${AMOUNT} ${inSymbol} → ${outSymbol}`);
+
+  const amountStroops = String(BigInt(AMOUNT) * BigInt(10) ** BigInt(inDecimals));
 
   let quote: QuoteResult;
   try {
     quote = await sdk.getQuote({
-      tokenIn: XLM_CONTRACT,
-      tokenOut: USDC_CONTRACT,
+      tokenIn: TOKEN_IN,
+      tokenOut: TOKEN_OUT,
       amountIn: amountStroops,
       slippage: 0.5,
     });
@@ -124,9 +158,9 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`Input:        ${amountInXlm} XLM`);
-  console.log(`Expected out: ${stroopsToUnits(quote.expectedOutput)} USDC`);
-  console.log(`Minimum out:  ${stroopsToUnits(quote.minimumOutput)} USDC`);
+  console.log(`Input:        ${AMOUNT} ${inSymbol}`);
+  console.log(`Expected out: ${stroopsToUnits(quote.expectedOutput, outDecimals)} ${outSymbol}`);
+  console.log(`Minimum out:  ${stroopsToUnits(quote.minimumOutput, outDecimals)} ${outSymbol}`);
   console.log(`Price impact: ${quote.priceImpact > 0 ? `~${quote.priceImpact.toFixed(2)}%` : '<0.01%'}`);
   console.log(`Split route:  ${quote.isSplit ? 'yes' : 'no'}`);
   console.log(`Compute time: ${quote.computeTimeMs}ms`);
@@ -138,18 +172,15 @@ async function main() {
   } else {
     printDivider(`3a. Sub-routes (${subRoutes.length} leg${subRoutes.length === 1 ? '' : 's'})`);
 
-    const totalIn = subRoutes.reduce((s, r) => s + BigInt(r.amountIn || '0'), 0n);
+    const totalIn = subRoutes.reduce((s, r) => s + BigInt(r.amountIn || '0'), BigInt(0));
 
     for (let i = 0; i < subRoutes.length; i++) {
       const leg = subRoutes[i];
 
-      // Percentage of total input
       const legPct =
-        totalIn > 0n ? (Number(BigInt(leg.amountIn || '0')) / Number(totalIn)) * 100 : 0;
+        totalIn > BigInt(0) ? (Number(BigInt(leg.amountIn || '0')) / Number(totalIn)) * 100 : 0;
 
-      // Human-readable exchange rate for this leg (USDC per XLM)
-      // Using 7 decimals for both (Stellar standard); adjust if needed.
-      const rate = legRate(leg.amountIn, leg.amountOut, 7, 7);
+      const rate = legRate(leg.amountIn, leg.amountOut, inDecimals, outDecimals);
 
       const dexLabels = leg.source;
       const pathTokens = leg.path.join(' → ');
@@ -157,10 +188,10 @@ async function main() {
       console.log(`\n  Leg ${i + 1}  ——  ${formatPercent(legPct)} of input`);
       console.log(`    DEX:        ${dexLabels}`);
       console.log(`    Path:       ${pathTokens}`);
-      console.log(`    Amount in:  ${stroopsToUnits(leg.amountIn)} XLM`);
-      console.log(`    Amount out: ${stroopsToUnits(leg.amountOut)} USDC`);
+      console.log(`    Amount in:  ${stroopsToUnits(leg.amountIn, inDecimals)} ${inSymbol}`);
+      console.log(`    Amount out: ${stroopsToUnits(leg.amountOut, outDecimals)} ${outSymbol}`);
       if (rate !== null) {
-        console.log(`    Rate:       ${formatRate(rate)} USDC per XLM`);
+        console.log(`    Rate:       ${formatRate(rate)} ${outSymbol} per ${inSymbol}`);
       }
     }
   }
@@ -168,12 +199,11 @@ async function main() {
   // ---- 4. Build unsigned swap tx ----------------------------------------
   printDivider('4. Build swap transaction (unsigned)');
 
-  // This requires a valid Stellar public key; we use a placeholder.
   const PLACEHOLDER_PUBKEY = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
   try {
     const swap = await sdk.buildSwap({
-      tokenIn: XLM_CONTRACT,
-      tokenOut: USDC_CONTRACT,
+      tokenIn: TOKEN_IN,
+      tokenOut: TOKEN_OUT,
       amountIn: amountStroops,
       slippage: 0.5,
       userPublicKey: PLACEHOLDER_PUBKEY,
@@ -181,17 +211,15 @@ async function main() {
 
     console.log(`Simulation:   ${swap.simulation.success ? '✅ success' : '❌ failed'}`);
     if (swap.simulation.actualOutput) {
-      console.log(`Actual out:   ${stroopsToUnits(swap.simulation.actualOutput)} USDC`);
+      console.log(`Actual out:   ${stroopsToUnits(swap.simulation.actualOutput, outDecimals)} ${outSymbol}`);
     }
     if (swap.simulation.fee) {
-      console.log(`Fee:          ${stroopsToUnits(swap.simulation.fee)} XLM`);
+      console.log(`Fee:          ${stroopsToUnits(swap.simulation.fee, 7)} XLM`);
     }
     if (swap.simulation.error) {
       console.log(`Sim error:    ${swap.simulation.error}`);
     }
 
-    // The unsigned XDR would then be signed by the user's wallet (e.g.
-    // Freighter, Albedo) and submitted to Horizon.
     console.log(`\nUnsigned XDR (first 80 chars):  ${swap.unsignedTxXdr.slice(0, 80)}…`);
     console.log('👉  Sign with wallet, then POST to Horizon /transactions');
   } catch (err: any) {

@@ -103,12 +103,15 @@ function RouteAmountPath({
 
 export function RouteDisplay({
   quote,
+  tokenInSymbol,
   tokenOutSymbol,
   tokenInDecimals = 7,
   tokenOutDecimals = 7,
   resolveTokenSymbol,
 }: {
   quote: QuoteData;
+  /** Display symbol for the swap's input token (avoids resolving from path). */
+  tokenInSymbol?: string;
   tokenOutSymbol: string;
   tokenInDecimals?: number;
   tokenOutDecimals?: number;
@@ -124,7 +127,11 @@ export function RouteDisplay({
   const displayRoutes = subRoutesForDisplay(quote.sub_routes, quote.amount_in);
   const hiddenLegCount = quote.sub_routes.length - displayRoutes.length;
   const outSym = tokenOutSymbol;
-  const inSym = resolveTokenSymbol(quote.sub_routes[0]?.path[0] ?? '');
+  // Resolve in-symbol: prefer explicit prop, then first path element, then contract-id truncation.
+  const inSym =
+    tokenInSymbol ||
+    (quote.sub_routes[0]?.path[0] ? resolveTokenSymbol(quote.sub_routes[0].path[0]) : '') ||
+    '???';
 
   return (
     <div className="bg-slate-900/70 rounded-2xl border border-white/10 p-4 space-y-3 backdrop-blur-xl">
@@ -175,11 +182,11 @@ export function RouteDisplay({
                   })}
                 </div>
                 <div className="text-right shrink-0">
-                  <span className="text-[11px] text-slate-400 font-mono block">
+                  <span className="text-xs text-slate-300 font-mono block">
                     {formatLegPercent(route.percentage)}
                   </span>
                   {rate != null && inSym && outSym && (
-                    <span className="text-[10px] text-slate-500 font-mono">
+                    <span className="text-[11px] text-slate-400 font-mono">
                       {formatExchangeRate(rate)} {outSym}/{inSym}
                     </span>
                   )}
