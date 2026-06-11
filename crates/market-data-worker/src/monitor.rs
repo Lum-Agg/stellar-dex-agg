@@ -1,7 +1,7 @@
 //! Telegram heartbeat + failure alerts for the market-data worker.
 
 use {
-    crate::worker::WorkerShared,
+    crate::{clmm_metrics::ClmmCoverageMetrics, worker::WorkerShared},
     lumagg_alerts::TelegramAlerter,
     market_snapshot::pool_state_store::RedisPoolStateStore,
     std::sync::{
@@ -47,6 +47,7 @@ impl Default for WorkerMonitorMetrics {
 pub fn spawn_telegram_monitor(
     alerter: Arc<TelegramAlerter>,
     metrics: Arc<WorkerMonitorMetrics>,
+    clmm_metrics: Arc<ClmmCoverageMetrics>,
     shared: Arc<RwLock<WorkerShared>>,
     pool_state_store: Option<Arc<RedisPoolStateStore>>,
     api_health_url: String,
@@ -62,14 +63,21 @@ pub fn spawn_telegram_monitor(
 
         loop {
             interval.tick().await;
-            let msg =
-                match build_heartbeat_message(&metrics, &shared, pool_state_store.as_deref(), &api_health_url).await {
-                    Ok(m) => m,
-                    Err(error) => {
-                        warn!("heartbeat message build failed: {}", error);
-                        continue;
-                    }
-                };
+            let msg = match build_heartbeat_message(
+                &metrics,
+                &clmm_metrics,
+                &shared,
+                pool_state_store.as_deref(),
+                &api_health_url,
+            )
+            .await
+            {
+                Ok(m) => m,
+                Err(error) => {
+                    warn!("heartbeat message build failed: {}", error);
+                    continue;
+                }
+            };
             if let Err(error) = alerter.send(&msg).await {
                 warn!("telegram heartbeat failed: {}", error);
             }
@@ -89,6 +97,7 @@ pub async fn alert_failure(alerter: Option<&Arc<TelegramAlerter>>, key: &str, de
 
 async fn build_heartbeat_message(
     metrics: &WorkerMonitorMetrics,
+    clmm_metrics: &ClmmCoverageMetrics,
     shared: &RwLock<WorkerShared>,
     pool_store: Option<&RedisPoolStateStore>,
     api_health_url: &str,
@@ -101,6 +110,8 @@ async fn build_heartbeat_message(
     let last_pub = metrics.last_publish_ms.load(Ordering::Relaxed);
     let xyk = metrics.last_xyk_count.load(Ordering::Relaxed);
     let clmm_ok = metrics.last_clmm_complete.load(Ordering::Relaxed);
+    let clmm_snap = clmm_metrics.snapshot();
+    let clmm_skip_bps = ClmmCoverageMetrics::skip_rate_bps(clmm_snap);
 
     let api_ok = reqwest::Client::new()
         .get(api_health_url)
@@ -132,9 +143,16 @@ async fn build_heartbeat_message(
          Topology sources: {sources}\n\
          CLMM tracked: {clmm_tracked}\n\
          Last publish: xy:k={xyk} clmm_complete={clmm_ok}\n\
+         CLMM refresh attempts: {clmm_attempts}\n\
+         CLMM skipped incomplete: {clmm_skipped} ({clmm_skip_bps} bps)\n\
+         CLMM published complete: {clmm_published}\n\
          last_publish_unix={last_pub}",
         if api_ok { "OK" } else { "FAIL" },
         if snapshot_ok { "OK" } else { "MISSING" },
         stale,
+        clmm_attempts = clmm_snap.refresh_attempts,
+        clmm_skipped = clmm_snap.publish_skipped_incomplete,
+        clmm_published = clmm_snap.published_complete,
+        clmm_skip_bps = clmm_skip_bps,
     ))
 }

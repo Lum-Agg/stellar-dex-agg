@@ -6,7 +6,7 @@
 //! ledger-touched pools (Jupiter-style event-driven updates).
 
 use {
-    crate::worker::WorkerShared,
+    crate::{clmm_metrics::ClmmCoverageMetrics, worker::WorkerShared},
     anyhow::Result,
     dex_adapters::{
         aquarius::AquariusAdapter, aquarius_clmm::AquariusClmmAdapter,
@@ -52,15 +52,31 @@ pub struct FetchPipelineMetrics {
 }
 
 impl FetchPipelineMetrics {
-    fn log_periodic_summary(&self) {
-        info!(
-            high_dropped = self.high_dropped.load(Ordering::Relaxed),
-            tasks_completed = self.tasks_completed.load(Ordering::Relaxed),
-            tasks_failed = self.tasks_failed.load(Ordering::Relaxed),
-            redis_writes = self.redis_writes.load(Ordering::Relaxed),
-            high_queue_depth = self.high_depth.load(Ordering::Relaxed),
-            "fetch pipeline stats"
-        );
+    fn log_periodic_summary(&self, clmm: Option<&ClmmCoverageMetrics>) {
+        if let Some(clmm) = clmm {
+            let snap = clmm.snapshot();
+            info!(
+                high_dropped = self.high_dropped.load(Ordering::Relaxed),
+                tasks_completed = self.tasks_completed.load(Ordering::Relaxed),
+                tasks_failed = self.tasks_failed.load(Ordering::Relaxed),
+                redis_writes = self.redis_writes.load(Ordering::Relaxed),
+                high_queue_depth = self.high_depth.load(Ordering::Relaxed),
+                clmm_refresh_attempts = snap.refresh_attempts,
+                clmm_publish_skipped_incomplete = snap.publish_skipped_incomplete,
+                clmm_published_complete = snap.published_complete,
+                clmm_skip_rate_bps = ClmmCoverageMetrics::skip_rate_bps(snap),
+                "fetch pipeline stats"
+            );
+        } else {
+            info!(
+                high_dropped = self.high_dropped.load(Ordering::Relaxed),
+                tasks_completed = self.tasks_completed.load(Ordering::Relaxed),
+                tasks_failed = self.tasks_failed.load(Ordering::Relaxed),
+                redis_writes = self.redis_writes.load(Ordering::Relaxed),
+                high_queue_depth = self.high_depth.load(Ordering::Relaxed),
+                "fetch pipeline stats"
+            );
+        }
     }
 }
 
@@ -159,6 +175,7 @@ struct FetchWorkerContext {
     aquarius_clmm: Arc<AquariusClmmAdapter>,
     shared: Arc<RwLock<WorkerShared>>,
     refresh_concurrency: usize,
+    clmm_metrics: Option<Arc<ClmmCoverageMetrics>>,
 }
 
 pub fn spawn_fetch_pipeline(
@@ -172,6 +189,7 @@ pub fn spawn_fetch_pipeline(
     comet: Arc<CometAdapter>,
     sushi: Arc<SushiAdapter>,
     aquarius_clmm: Arc<AquariusClmmAdapter>,
+    clmm_metrics: Option<Arc<ClmmCoverageMetrics>>,
 ) -> FetchPipelineHandle {
     let (high_tx, mut high_rx) = mpsc::channel::<FetchTask>(config.high_queue_capacity);
     let (redis_tx, mut redis_rx) = mpsc::channel(config.high_queue_capacity.max(1024));
@@ -189,6 +207,7 @@ pub fn spawn_fetch_pipeline(
         aquarius_clmm,
         shared,
         refresh_concurrency: config.refresh_concurrency,
+        clmm_metrics: clmm_metrics.clone(),
     });
 
     let semaphore = Arc::new(tokio::sync::Semaphore::new(config.worker_count));
@@ -251,13 +270,14 @@ pub fn spawn_fetch_pipeline(
         .and_then(|v| v.parse().ok())
         .unwrap_or(60)
         .max(15);
+    let stats_clmm = clmm_metrics.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(stats_interval_secs));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         interval.tick().await;
         loop {
             interval.tick().await;
-            stats_metrics.log_periodic_summary();
+            stats_metrics.log_periodic_summary(stats_clmm.as_deref());
         }
     });
 
@@ -348,10 +368,18 @@ async fn execute_fetch_task(ctx: &FetchWorkerContext, task: FetchTask) -> Result
                 "aquarius_clmm" => ctx.aquarius_clmm.export_clmm_snapshots().await,
                 _ => Vec::new(),
             };
-            let Some(snapshot) = exported
-                .into_iter()
-                .find(|s| s.pool_address == pool_address && should_publish_clmm_to_redis(s))
-            else {
+            let Some(snapshot) = exported.into_iter().find(|s| s.pool_address == pool_address) else {
+                return Ok(vec![]);
+            };
+            if let Some(metrics) = &ctx.clmm_metrics {
+                metrics.record_snapshot(&snapshot);
+            }
+            if !should_publish_clmm_to_redis(&snapshot) {
+                debug!(
+                    source = %source,
+                    pool = %pool_address,
+                    "CLMM fetch: skipped Redis publish (incomplete coverage)"
+                );
                 return Ok(vec![]);
             };
 

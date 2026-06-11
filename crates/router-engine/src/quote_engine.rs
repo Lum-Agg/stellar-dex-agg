@@ -427,7 +427,9 @@ impl QuoteEngine {
                                 };
                                 let key = (path_clone.pool_addresses.join("+"), bucket);
                                 if let Some(cached) = cache.lock().await.get(&key) {
-                                    return cached.clone();
+                                    if cached.as_ref().is_some_and(|q| q.amount_in == amount) {
+                                        return cached.clone();
+                                    }
                                 }
                                 let quote = self.quote_path(&path_clone, amount, &adapters_ref, hydration_ref).await;
                                 cache.lock().await.insert(key, quote.clone());

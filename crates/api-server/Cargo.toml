@@ -8,6 +8,10 @@ license.workspace = true
 name = "api-server"
 path = "src/main.rs"
 
+[[bin]]
+name = "verify-split-quote"
+path = "src/bin/verify_split_quote.rs"
+
 [dependencies]
 market-snapshot = { path = "../market-snapshot" }
 router-engine = { path = "../router-engine" }

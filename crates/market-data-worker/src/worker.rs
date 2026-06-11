@@ -354,6 +354,7 @@ fn spawn_background_reserve_refresh(
     sushi: Arc<SushiAdapter>,
     aquarius_clmm: Arc<AquariusClmmAdapter>,
     refresh_clmm: bool,
+    clmm_metrics: Arc<crate::clmm_metrics::ClmmCoverageMetrics>,
 ) {
     if !in_flight.try_start() {
         debug!("reserve refresh skipped (previous cycle still running)");
@@ -375,7 +376,7 @@ fn spawn_background_reserve_refresh(
         };
         let refreshed = refresh_sources_parallel(&adapters, sources).await;
         let clmm_pools = if refresh_clmm {
-            collect_clmm_snapshots(sushi.as_ref(), aquarius_clmm.as_ref()).await
+            collect_clmm_snapshots(sushi.as_ref(), aquarius_clmm.as_ref(), Some(clmm_metrics.as_ref())).await
         } else {
             shared.read().await.clmm_pools.clone()
         };
@@ -394,7 +395,11 @@ fn token_metadata_snapshot(meta: TokenMetadata) -> TokenMetadataSnapshot {
     }
 }
 
-async fn collect_clmm_snapshots(sushi: &SushiAdapter, aquarius_clmm: &AquariusClmmAdapter) -> Vec<ClmmPoolSnapshot> {
+async fn collect_clmm_snapshots(
+    sushi: &SushiAdapter,
+    aquarius_clmm: &AquariusClmmAdapter,
+    clmm_metrics: Option<&crate::clmm_metrics::ClmmCoverageMetrics>,
+) -> Vec<ClmmPoolSnapshot> {
     let (sushi_pools, aquarius_pools) =
         tokio::join!(sushi.export_clmm_snapshots(), aquarius_clmm.export_clmm_snapshots(),);
     let mut clmm_pools = sushi_pools;
@@ -404,11 +409,14 @@ async fn collect_clmm_snapshots(sushi: &SushiAdapter, aquarius_clmm: &AquariusCl
             .cmp(&b.source)
             .then_with(|| a.pool_address.cmp(&b.pool_address))
     });
-    log_clmm_coverage_stats(&clmm_pools);
+    log_clmm_coverage_stats(&clmm_pools, clmm_metrics);
     clmm_pools
 }
 
-fn log_clmm_coverage_stats(clmm_pools: &[ClmmPoolSnapshot]) {
+fn log_clmm_coverage_stats(
+    clmm_pools: &[ClmmPoolSnapshot],
+    clmm_metrics: Option<&crate::clmm_metrics::ClmmCoverageMetrics>,
+) {
     let mut complete = 0usize;
     let mut incomplete = 0usize;
     let mut no_coverage = 0usize;
@@ -419,10 +427,26 @@ fn log_clmm_coverage_stats(clmm_pools: &[ClmmPoolSnapshot]) {
             None => no_coverage += 1,
         }
     }
-    info!(
-        clmm_pools = clmm_pools.len(),
-        complete, incomplete, no_coverage, "CLMM snapshot coverage"
-    );
+    if let Some(metrics) = clmm_metrics {
+        metrics.record_snapshots(clmm_pools);
+        let snap = metrics.snapshot();
+        info!(
+            clmm_pools = clmm_pools.len(),
+            complete,
+            incomplete,
+            no_coverage,
+            clmm_refresh_attempts = snap.refresh_attempts,
+            clmm_publish_skipped_incomplete = snap.publish_skipped_incomplete,
+            clmm_published_complete = snap.published_complete,
+            clmm_skip_rate_bps = crate::clmm_metrics::ClmmCoverageMetrics::skip_rate_bps(snap),
+            "CLMM snapshot coverage"
+        );
+    } else {
+        info!(
+            clmm_pools = clmm_pools.len(),
+            complete, incomplete, no_coverage, "CLMM snapshot coverage"
+        );
+    }
 }
 
 async fn publish_pool_state_only(
@@ -540,6 +564,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
         sources: Vec::new(),
         clmm_pools: Vec::new(),
     }));
+    let clmm_metrics = Arc::new(crate::clmm_metrics::ClmmCoverageMetrics::new());
     if let Ok(existing) = snapshot_store.load_current_snapshot().await {
         let mut guard = shared.write().await;
         guard.sources = existing.sources;
@@ -560,10 +585,12 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
     let network_passphrase = config.network_passphrase.clone();
     let destination = snapshot_destination(&config);
     let aquarius_boot = aquarius.clone();
+    let clmm_metrics_boot = clmm_metrics.clone();
     tokio::spawn(async move {
         info!("Background bootstrap: parallel adapter discovery");
         let sources = collect_sources_from_discovery(&adapters_boot).await;
-        let clmm_pools = collect_clmm_snapshots(&sushi_boot, &aquarius_clmm_boot).await;
+        let clmm_pools =
+            collect_clmm_snapshots(&sushi_boot, &aquarius_clmm_boot, Some(clmm_metrics_boot.as_ref())).await;
         {
             let mut guard = shared_boot.write().await;
             guard.sources = sources.clone();
@@ -614,6 +641,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
                 comet.clone(),
                 sushi.clone(),
                 aquarius_clmm.clone(),
+                Some(clmm_metrics.clone()),
             )
         })
     } else {
@@ -632,6 +660,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
         let comet_ledger = comet.clone();
         let sushi_ledger = sushi.clone();
         let aquarius_clmm_ledger = aquarius_clmm.clone();
+        let clmm_metrics_ledger = clmm_metrics.clone();
         tokio::spawn(async move {
             let mut ledger_interval = tokio::time::interval(ledger_poll);
             ledger_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -673,6 +702,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
                                 aquarius_clmm: &aquarius_clmm_ledger,
                                 sources: &mut sources,
                                 clmm_pools: &mut clmm_pools,
+                                clmm_metrics: Some(clmm_metrics_ledger.as_ref()),
                             },
                             touched,
                         )
@@ -703,6 +733,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
         crate::monitor::spawn_telegram_monitor(
             alerter.clone(),
             monitor_metrics.clone(),
+            clmm_metrics.clone(),
             shared.clone(),
             pool_state_store.clone(),
             api_health_url,
@@ -752,6 +783,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
                     sushi.clone(),
                     aquarius_clmm.clone(),
                     false,
+                    clmm_metrics.clone(),
                 );
             }
             WorkerTick::Refresh => {
@@ -762,6 +794,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
                     sushi.clone(),
                     aquarius_clmm.clone(),
                     true,
+                    clmm_metrics.clone(),
                 );
             }
             WorkerTick::Discovery => {
@@ -775,9 +808,12 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
                 let aquarius_disc = aquarius.clone();
                 let network_passphrase_disc = config.network_passphrase.clone();
                 let destination_disc = snapshot_destination(&config);
+                let clmm_metrics_disc = clmm_metrics.clone();
                 tokio::spawn(async move {
                     let sources = collect_sources_from_discovery(&adapters_disc).await;
-                    let clmm_pools = collect_clmm_snapshots(&sushi_disc, &aquarius_clmm_disc).await;
+                    let clmm_pools =
+                        collect_clmm_snapshots(&sushi_disc, &aquarius_clmm_disc, Some(clmm_metrics_disc.as_ref()))
+                            .await;
                     {
                         let mut guard = shared_disc.write().await;
                         guard.sources = sources.clone();

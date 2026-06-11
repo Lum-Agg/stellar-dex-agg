@@ -30,7 +30,7 @@ pub async fn api_root() -> impl IntoResponse {
             "build_tx": "/api/v1/build_tx",
             "tokens": "/api/v1/tokens"
         },
-        "repository": "https://github.com/ligulfzhou/stellar-dex-agg"
+        "repository": "https://github.com/Lum-Agg/stellar-dex-agg"
     }))
 }
 

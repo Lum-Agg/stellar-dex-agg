@@ -1,3 +1,4 @@
+mod clmm_metrics;
 mod fetch_pipeline;
 mod ledger_watcher;
 mod monitor;

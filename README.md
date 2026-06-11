@@ -1,11 +1,11 @@
 # Stellar DEX Aggregator (LumAgg)
 
-[![GitHub](https://img.shields.io/badge/GitHub-ligulfzhou%2Fstellar--dex--agg-181717?logo=github)](https://github.com/ligulfzhou/stellar-dex-agg)
+[![GitHub](https://img.shields.io/badge/GitHub-ligulfzhou%2Fstellar--dex--agg-181717?logo=github)](https://github.com/Lum-Agg/stellar-dex-agg)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 
 Multi-source liquidity aggregation for Stellar's Soroban DEX ecosystem.
 
-**Repository:** https://github.com/ligulfzhou/stellar-dex-agg
+**Repository:** https://github.com/Lum-Agg/stellar-dex-agg
 
 LumAgg routes swaps across **Soroswap**, **Aquarius** (xy=k, stable, CLMM), **Phoenix**, **Sushi V3**, and **Comet**, with optional comparison against **Classic DEX** (Horizon PathPayment). It supports multi-hop paths, split orders across venues, and atomic on-chain execution via an optional aggregator contract.
 

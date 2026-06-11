@@ -3,7 +3,7 @@ name = "aggregator-contract"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-repository = "https://github.com/ligulfzhou/stellar-dex-agg"
+repository = "https://github.com/Lum-Agg/stellar-dex-agg"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
