@@ -22,12 +22,22 @@ export function formatLegPercent(percentage: number): string {
   return `${percentage.toFixed(1)}%`;
 }
 
-/** Stroops out / stroops in (same decimals on both legs). */
-export function legExchangeRate(amountIn: string, amountOut: string): number | null {
+/**
+ * Human-readable exchange rate: "out-tokens per 1 in-token", accounting for
+ * token decimals so the displayed rate matches what a user would expect.
+ */
+export function legExchangeRate(
+  amountIn: string,
+  amountOut: string,
+  inDecimals = 7,
+  outDecimals = 7,
+): number | null {
   const ain = BigInt(amountIn || '0');
   const aout = BigInt(amountOut || '0');
   if (ain === BigInt(0) || aout === BigInt(0)) return null;
-  return Number(aout) / Number(ain);
+  const inUnits = Number(ain) / 10 ** inDecimals;
+  const outUnits = Number(aout) / 10 ** outDecimals;
+  return outUnits / inUnits;
 }
 
 export function formatExchangeRate(rate: number): string {

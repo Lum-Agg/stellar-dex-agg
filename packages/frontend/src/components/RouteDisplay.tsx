@@ -156,7 +156,7 @@ export function RouteDisplay({
 
       <div className="space-y-2.5">
         {displayRoutes.map((route, i) => {
-          const rate = legExchangeRate(route.amount_in, route.amount_out);
+          const rate = legExchangeRate(route.amount_in, route.amount_out, tokenInDecimals, tokenOutDecimals);
           const hops = routeDexHops(route);
           const cardBg = routeCardStyle(hops);
 

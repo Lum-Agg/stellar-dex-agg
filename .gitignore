@@ -4,6 +4,8 @@ Cargo.lock
 *.wasm
 .ssl/
 packages/frontend/node_modules/
+packages/sdk/node_modules/
+*.tsbuildinfo
 packages/frontend/.next/
 packages/frontend/out/
 justfile
