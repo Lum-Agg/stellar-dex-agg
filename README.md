@@ -43,33 +43,35 @@ Two paths share one Redis store.
 **1 — Pool state writes (`market-data-worker`)**
 
 ```mermaid
-flowchart TB
-  RPC[(Soroban RPC)]
-
-  subgraph worker [market-data-worker — single writer]
+flowchart LR
+  subgraph redis [Redis]
     direction TB
-    LW[Ledger watcher<br/>poll 0.1s · per-ledger getEvents]
-    FP[Fetch pipeline]
-    AD[DEX adapters]
-    BD[Bootstrap + discovery<br/>~600s reconcile]
+    SNAP["Snapshot<br/>routing graph"]
+    POOL["Pool state<br/>reserves / ticks"]
+    PUB["Pub/Sub<br/>snapshot events"]
+    SNAP --> POOL --> PUB
+  end
+
+  subgraph worker ["market-data-worker — single writer"]
+    direction TB
+    BD["Bootstrap + discovery<br/>~600s reconcile"]
+    LW["Ledger watcher<br/>poll 0.1s · per-ledger getEvents"]
+    FP["Fetch pipeline"]
+    AD["DEX adapters"]
 
     LW -->|touched pools| FP
     FP --> AD
-    AD --> RPC
-    LW --> RPC
   end
 
-  subgraph redis [Redis]
-    direction TB
-    SNAP[Snapshot — routing graph]
-    POOL[Pool state — reserves / ticks]
-    PUB[Pub/Sub — snapshot events]
-  end
+  RPC[(Soroban RPC)]
 
-  BD --> SNAP
-  BD --> POOL
-  FP --> POOL
-  BD --> PUB
+  AD --> RPC
+  LW --> RPC
+
+  BD -->|publish| SNAP
+  BD -->|publish| POOL
+  BD -->|publish| PUB
+  FP -->|refresh| POOL
 ```
 
 **2 — Quote reads (`api-server`)**
