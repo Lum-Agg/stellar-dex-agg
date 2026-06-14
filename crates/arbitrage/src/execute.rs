@@ -6,7 +6,7 @@ use {
         callers::CallerPool,
         config::ArbConfig,
         context::ArbContext,
-        invoke::{build_raw_envelope_xdr, build_round_trip_swap_op, min_amount_out_for_bps},
+        invoke::{build_raw_envelope_xdr, build_round_trip_swap_op, min_amount_out_for_profit},
         optimize::optimize_round_trip,
         prepare::{fetch_account_sequence, prepare_transaction_xdr},
         scanner::ArbOpportunity,
@@ -60,13 +60,14 @@ pub async fn prepare_opportunity_tx(
         return Ok(None);
     };
 
+    let profit = quote.profit();
     let profit_bps = crate::scanner::compute_profit_bps(quote.amount_in, quote.amount_out);
-    if profit_bps < ctx.config.min_profit_bps as i64 {
+    if profit < ctx.config.min_profit {
         return Ok(None);
     }
 
     let amount_in_i128 = i128::try_from(quote.amount_in).context("amount_in exceeds i128")?;
-    let min_amount_out = min_amount_out_for_bps(quote.amount_in, ctx.config.min_profit_bps);
+    let min_amount_out = min_amount_out_for_profit(quote.amount_in, ctx.config.min_profit);
 
     let op = build_round_trip_swap_op(
         aggregator,

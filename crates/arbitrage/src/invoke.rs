@@ -271,10 +271,9 @@ pub fn build_round_trip_swap_op(
     })
 }
 
-/// Minimum base output for `round_trip_swap` given target profit bps.
-pub fn min_amount_out_for_bps(amount_in: u128, min_profit_bps: u32) -> i128 {
-    let profit = amount_in.saturating_mul(min_profit_bps as u128) / 10_000;
-    let min_out = amount_in.saturating_add(profit.max(1));
+/// Minimum base output for `round_trip_swap` given target absolute profit.
+pub fn min_amount_out_for_profit(amount_in: u128, min_profit: u128) -> i128 {
+    let min_out = amount_in.saturating_add(min_profit.max(1));
     min_out.min(i128::MAX as u128) as i128
 }
 
@@ -306,6 +305,11 @@ mod tests {
         super::*,
         market_snapshot::{SourceSnapshot, TradingPairSnapshot},
     };
+
+    #[test]
+    fn min_amount_out_covers_absolute_profit() {
+        assert_eq!(min_amount_out_for_profit(1_000_000_000, 1_000_000), 1_001_000_000);
+    }
 
     #[test]
     fn maps_two_token_hop_indices() {

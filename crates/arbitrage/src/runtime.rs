@@ -60,6 +60,7 @@ impl ArbRuntime {
             callers,
             aggregator = ?self.config.aggregator_contract,
             bridges = self.config.bridge_tokens.len(),
+            min_profit = self.config.min_profit,
             "arb runtime ready (aggregator.round_trip_swap; bot wallets hold float)"
         );
         if self.config.build_tx && self.config.aggregator_contract.is_none() {

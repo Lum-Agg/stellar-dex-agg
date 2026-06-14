@@ -26,7 +26,8 @@ pub struct ArbConfig {
     pub base_tokens: Vec<TokenId>,
     pub bridge_tokens: Vec<TokenId>,
     pub probe_amount_in: u128,
-    pub min_profit_bps: u32,
+    /// Minimum round-trip profit in base-token stroops (7 decimals for XLM).
+    pub min_profit: u128,
     pub slippage_bps: u32,
     pub max_hops: usize,
     pub max_splits: usize,
@@ -93,10 +94,10 @@ impl ArbConfig {
             .and_then(|v| v.parse().ok())
             .unwrap_or(100_000_000); // 10 XLM
 
-        let min_profit_bps = std::env::var("ARB_MIN_PROFIT_BPS")
+        let min_profit = std::env::var("ARB_MIN_PROFIT")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(15);
+            .unwrap_or(1_000_000); // 0.1 XLM
 
         let slippage_bps = std::env::var("ARB_SLIPPAGE_BPS")
             .ok()
@@ -171,7 +172,7 @@ impl ArbConfig {
             base_tokens,
             bridge_tokens,
             probe_amount_in,
-            min_profit_bps,
+            min_profit,
             slippage_bps,
             max_hops,
             max_splits,

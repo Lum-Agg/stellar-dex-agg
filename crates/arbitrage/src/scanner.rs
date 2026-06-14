@@ -100,8 +100,9 @@ async fn scan_with_context(runtime: &ArbRuntime, ctx: &ArbContext) -> Result<Vec
             };
             quoted += 1;
 
+            let profit = quote.profit();
             let profit_bps = compute_profit_bps(quote.amount_in, quote.amount_out);
-            if profit_bps < ctx.config.min_profit_bps as i64 {
+            if profit < ctx.config.min_profit {
                 continue;
             }
 
@@ -111,6 +112,7 @@ async fn scan_with_context(runtime: &ArbRuntime, ctx: &ArbContext) -> Result<Vec
             info!(
                 base = %base.canonical(),
                 bridge = %bridge.canonical(),
+                profit,
                 profit_bps,
                 amount_in = quote.amount_in,
                 amount_out = quote.amount_out,
