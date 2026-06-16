@@ -5,7 +5,8 @@
 
 Multi-source liquidity aggregation for Stellar's Soroban DEX ecosystem.
 
-**Repository:** https://github.com/Lum-Agg/stellar-dex-agg
+**Repository:** https://github.com/Lum-Agg/stellar-dex-agg  
+**中文文档:** [README.zh-CN.md](README.zh-CN.md)
 
 LumAgg routes swaps across **Soroswap**, **Aquarius** (xy=k, stable, CLMM), **Phoenix**, **Sushi V3**, and **Comet**, with optional comparison against **Classic DEX** (Horizon PathPayment). It supports multi-hop paths, split orders across venues, and atomic on-chain execution via an optional aggregator contract.
 
@@ -81,6 +82,14 @@ flowchart LR
   FE[Frontend / SDK] -->|REST /quote /build_tx| API[api-server]
   API --> RE[router-engine]
 
+  subgraph REinner [router-engine]
+    PF[PathFinder<br/>BFS multi-hop]
+    QE[QuoteEngine<br/>local AMM / CLMM math]
+    SO[SplitOptimizer<br/>Brent method]
+    PF --> QE --> SO
+  end
+
+  API --> REinner
   API -->|MGET hydrate| POOL[(Pool state)]
   API -->|graph reload| SNAP[(Snapshot)]
   PUB[(Pub/Sub)] -.->|hot reload| API
@@ -88,6 +97,8 @@ flowchart LR
   API -->|Classic benchmark| HZN[Horizon API]
   API -->|build XDR| AGG[Aggregator contract]
 ```
+
+After path discovery and Redis hydration, **QuoteEngine** quotes each candidate path locally, then **SplitOptimizer** decides whether to send the full amount down one path or split across several. For two paths it uses **Brent's method** (~10 evaluations, ~0.01% tolerance) to find the optimal input ratio; for more paths it merges pairwise (recursive Brent for 2-path merges, output-weighted seed for 3+). Splitting runs only when price impact exceeds `SPLIT_THRESHOLD_BPS` or competing paths are within `SPLIT_COMPETITIVE_DELTA_BPS`. See [Split routing](#split-routing).
 
 **Redis keys** (pool keys use `EX=86400`):
 
@@ -114,28 +125,34 @@ The API does **not** keep a long-lived in-process pool cache. Each `/quote` relo
 sequenceDiagram
   participant C as Client
   participant API as api-server
-  participant RE as QuoteEngine
+  participant PF as PathFinder
   participant R as Redis
+  participant QE as QuoteEngine
+  participant SO as SplitOptimizer
 
   C->>API: GET /api/v1/quote
-  API->>RE: find_candidate_paths (in-memory graph)
-  RE-->>API: candidate paths
+  API->>PF: find_candidate_paths (in-memory graph)
+  PF-->>API: candidate paths
   API->>R: MGET pool keys (xyk + aquarius + clmm)
   R-->>API: cached pool states
-  API->>RE: get_route_with_paths + QuoteHydration
-  Note over RE: Local AMM / CLMM math<br/>Classic via Horizon compare
-  RE-->>API: OptimalRoute
+  API->>QE: quote each path at full amount
+  QE-->>API: QuotedPath list
+  API->>SO: optimize (Brent if split warranted)
+  Note over SO: 2 paths: Brent ratio<br/>N paths: pairwise merge
+  SO-->>API: OptimalRoute (single or split)
   API-->>C: quote + pool_addresses
 ```
 
 Steps in code:
 
-1. **Path discovery** — graph only; all candidate paths (no liquidity prune).
+1. **Path discovery** — BFS on the routing graph; all candidate paths (no liquidity prune).
 2. **Collect pool keys** — unique `(source, pool_address)` across paths.
 3. **Redis MGET** — xy=k, Aquarius, CLMM state (written by worker).
-4. **Quote** — local math; no RPC unless `QUOTE_RPC_HYDRATE_ENABLED=true`.
-5. **Comet** — per-request hydrate (not stored in Redis).
-6. **CLMM guard** — skip hops when tick coverage is incomplete.
+4. **Per-path quote** — local AMM / CLMM math at full `amount_in`.
+5. **Split optimization** — `SplitOptimizer`: skip if impact below threshold; else Brent's method (2-path) or pairwise merge (N-path) to maximize total output.
+6. **Classic compare** — optional Horizon PathPayment benchmark vs best Soroban route.
+7. **Comet** — per-request hydrate (not stored in Redis).
+8. **CLMM guard** — skip hops when tick coverage is incomplete.
 
 ### Ledger watcher (hot path)
 
@@ -317,9 +334,19 @@ Worker defaults include `LEDGER_POLL_SECS=0.1`, `FETCH_PIPELINE_ENABLED=true`, `
 
 Production `deploy/lumagg-api@.service` sets split env vars explicitly.
 
+The **SplitOptimizer** (`crates/router-engine/src/split_optimizer.rs`) runs inside QuoteEngine after every path has been quoted at full size:
+
+| Case | Algorithm |
+|------|-----------|
+| Impact &lt; `SPLIT_THRESHOLD_BPS` and paths not competitive | Single best path (no split) |
+| 2 paths | **Brent's method** on `[0, 1]` to maximize `out_a(x) + out_b(1−x)` |
+| 3+ paths | Pairwise recursive Brent merges; 3+ seed uses output-weighted allocation |
+
+Brent tolerance defaults to `0.0001` (0.01%) with up to 18 iterations — similar in spirit to Jupiter Iris (golden-section + Brent).
+
 - **`SPLIT_THRESHOLD_BPS=5` (0.05%)** — split runs when estimated impact ≥ 5 bps, or paths are competitive (within `SPLIT_COMPETITIVE_DELTA_BPS` with impact > 0).
 - **`SPLIT_THRESHOLD_BPS=1` (0.01%)** — usually not worth it: more optimizer work, many quotes still return `split_rejected_reason: "no_improvement"`.
-- Use `?debug=1` on `/quote` to see `split_attempted`, `split_threshold_bps`, and `split_rejected_reason`.
+- Use `?debug=1` on `/quote` to see `split_attempted`, `split_threshold_bps`, `split_rejected_reason`, and `split_method` (e.g. `two_path_brent`).
 
 ## Related docs
 
