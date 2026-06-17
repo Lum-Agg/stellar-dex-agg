@@ -80,16 +80,15 @@ flowchart LR
 ```mermaid
 flowchart LR
   FE[前端 / SDK] -->|REST /quote /build_tx| API[api-server]
-  API --> RE[router-engine]
 
-  subgraph REinner [router-engine]
+  subgraph RE [router-engine]
     PF[PathFinder<br/>BFS 多跳]
     QE[QuoteEngine<br/>本地 AMM / CLMM 数学]
     SO[SplitOptimizer<br/>Brent 法]
     PF --> QE --> SO
   end
 
-  API --> REinner
+  API --> RE
   API -->|MGET hydrate| POOL[(Pool state)]
   API -->|图热加载| SNAP[(Snapshot)]
   PUB[(Pub/Sub)] -.->|hot reload| API
@@ -136,7 +135,6 @@ sequenceDiagram
   PF-->>API: 候选路径
   API->>R: MGET 池键（xyk + aquarius + clmm + comet）
   R-->>API: 缓存的池状态
-  Note over API: Comet：Redis 加权状态<br/>（miss 时 RPC 兜底）
   API->>QE: 按全额 amount_in 逐路径报价
   QE-->>API: QuotedPath 列表
   API->>SO: optimize（满足条件时 Brent 拆单）

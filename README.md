@@ -80,16 +80,15 @@ flowchart LR
 ```mermaid
 flowchart LR
   FE[Frontend / SDK] -->|REST /quote /build_tx| API[api-server]
-  API --> RE[router-engine]
 
-  subgraph REinner [router-engine]
+  subgraph RE [router-engine]
     PF[PathFinder<br/>BFS multi-hop]
     QE[QuoteEngine<br/>local AMM / CLMM math]
     SO[SplitOptimizer<br/>Brent method]
     PF --> QE --> SO
   end
 
-  API --> REinner
+  API --> RE
   API -->|MGET hydrate| POOL[(Pool state)]
   API -->|graph reload| SNAP[(Snapshot)]
   PUB[(Pub/Sub)] -.->|hot reload| API
@@ -136,7 +135,6 @@ sequenceDiagram
   PF-->>API: candidate paths
   API->>R: MGET pool keys (xyk + aquarius + clmm + comet)
   R-->>API: cached pool states
-  Note over API: Comet: Redis weighted state<br/>(RPC fallback on miss)
   API->>QE: quote each path at full amount
   QE-->>API: QuotedPath list
   API->>SO: optimize (Brent if split warranted)
