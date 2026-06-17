@@ -135,6 +135,7 @@ sequenceDiagram
   PF-->>API: 候选路径
   API->>R: MGET 池键（xyk + aquarius + clmm）
   R-->>API: 缓存的池状态
+  Note over API: Comet：RPC 拉加权状态<br/>（非 Redis；需 rpc_hydrate）
   API->>QE: 按全额 amount_in 逐路径报价
   QE-->>API: QuotedPath 列表
   API->>SO: optimize（满足条件时 Brent 拆单）
@@ -147,12 +148,10 @@ sequenceDiagram
 
 1. **路径发现** — 在路由图上 BFS；返回全部候选路径（不按流动性剪枝）。
 2. **收集池键** — 路径上唯一的 `(source, pool_address)`。
-3. **Redis MGET** — xy=k、Aquarius、CLMM 状态（由 worker 写入）。
-4. **逐路径报价** — 以全额 `amount_in` 做本地 AMM / CLMM 计算。
+3. **Hydrate 池状态**（`pool_hydrate::hydrate_paths`）— Redis MGET 拉 xy=k、Aquarius、CLMM（由 worker 写入）。Comet 需完整加权 `CometPoolQuoteState`，在 `QUOTE_RPC_HYDRATE_ENABLED=true` 时按请求 RPC 拉取（不读 Redis）。Soroswap xy=k Redis miss 时可选用 RPC 兜底。
+4. **逐路径报价** — 以全额 `amount_in` 做本地 AMM / CLMM / Comet 计算；`coverage.is_complete` 为 false 的 CLMM 跳跳过。
 5. **拆单优化** — `SplitOptimizer`：冲击低于阈值则跳过；否则 Brent 法（2 路径）或两两合并（N 路径）最大化总输出。
 6. **Classic 对比** — 可选 Horizon PathPayment 与最优 Soroban 路由比较。
-7. **Comet** — 按请求 hydrate（不入 Redis）。
-8. **CLMM 守卫** — tick 覆盖不完整时跳过该跳。
 
 ### Ledger watcher（热路径）
 
@@ -180,8 +179,10 @@ getLatestLedger
 | **phoenix** | xy=k | 是 | Discovery + ledger | 输出扣费 |
 | **sushi** | CLMM V3 | 是 | Discovery + ledger | 本地 `clmm_math` |
 | **aquarius_clmm** | CLMM | 是 | Discovery + ledger | 本地 `clmm_math` |
-| **comet** | 加权 | 是 | Discovery + ledger | Balancer 数学（报价时） |
+| **comet** | 加权 | **否*** | Worker 写 pair reserves 为 xy=k（报价不用）；报价经 RPC hydrate 加权状态 | Balancer 数学 |
 | **classic_dex** | 原生订单簿 | **否** | **按报价**（Horizon） | 仅基准 |
+
+\*Comet 在链上 Comet 执行未部署前被 PathFinder 排除；hydrate 与报价数学已实现，供测试使用。
 
 ## 核心特性
 
