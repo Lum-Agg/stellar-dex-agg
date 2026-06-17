@@ -21,6 +21,29 @@ const CLMM_KEY_PREFIX: &str = "lumagg:pool:clmm";
 // N token + N reserve + stable params
 
 const AQUARIUS_KEY_PREFIX: &str = "lumagg:pool:aquarius";
+const COMET_KEY_PREFIX: &str = "lumagg:pool:comet";
+
+/// One token slot in a Comet weighted pool (Balancer V1).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CometTokenRecordValue {
+    pub balance: i128,
+    pub weight: i128,
+    pub scalar: i128,
+}
+
+/// Full Comet pool state for local weighted-pool quotes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CometPoolStateValue {
+    pub pool_address: String,
+    pub records: HashMap<String, CometTokenRecordValue>,
+    pub swap_fee: i128,
+}
+
+impl CometPoolStateValue {
+    pub fn redis_key(pool_address: &str) -> String {
+        format!("{COMET_KEY_PREFIX}:{pool_address}")
+    }
+}
 
 /// Full Aquarius pool state (token-ordered reserves + stable params).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -139,9 +162,11 @@ impl RedisPoolStateStore {
         xyk_values: &[XykPoolStateValue],
         clmm_pools: &[ClmmPoolSnapshot],
         aquarius_pools: &[AquariusPoolStateValue],
+        comet_pools: &[CometPoolStateValue],
     ) -> Result<()> {
         self.set_xyk_batch(xyk_values).await?;
         self.set_aquarius_batch(aquarius_pools).await?;
+        self.set_comet_batch(comet_pools).await?;
         let complete_clmm: Vec<&ClmmPoolSnapshot> = clmm_pools
             .iter()
             .filter(|pool| should_publish_clmm_to_redis(pool))
@@ -151,6 +176,7 @@ impl RedisPoolStateStore {
         tracing::debug!(
             xyk_written = xyk_values.len(),
             aquarius_written = aquarius_pools.len(),
+            comet_written = comet_pools.len(),
             clmm_written = complete_clmm.len(),
             ttl_secs = self.ttl_secs,
             "Published per-pool state to Redis"
@@ -165,6 +191,40 @@ impl RedisPoolStateStore {
         let mut conn = self.client.get_multiplexed_async_connection().await?;
         for value in values {
             let key = AquariusPoolStateValue::redis_key(&value.pool_address);
+            let bytes = serde_json::to_vec(value)?;
+            conn.set_ex::<_, _, ()>(key, bytes, self.ttl_secs).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn fetch_comet(&self, pool_addresses: &[String]) -> Result<HashMap<String, CometPoolStateValue>> {
+        if pool_addresses.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let keys: Vec<String> = pool_addresses
+            .iter()
+            .map(|pool| CometPoolStateValue::redis_key(pool))
+            .collect();
+        let mut conn = self.client.get_multiplexed_async_connection().await?;
+        let values: Vec<Option<Vec<u8>>> = conn.mget(&keys).await?;
+        let mut out = HashMap::new();
+        for (pool, bytes) in pool_addresses.iter().zip(values.into_iter()) {
+            let Some(bytes) = bytes else {
+                continue;
+            };
+            let value: CometPoolStateValue = serde_json::from_slice(&bytes)?;
+            out.insert(pool.clone(), value);
+        }
+        Ok(out)
+    }
+
+    pub async fn set_comet_batch(&self, values: &[CometPoolStateValue]) -> Result<()> {
+        if values.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.client.get_multiplexed_async_connection().await?;
+        for value in values {
+            let key = CometPoolStateValue::redis_key(&value.pool_address);
             let bytes = serde_json::to_vec(value)?;
             conn.set_ex::<_, _, ()>(key, bytes, self.ttl_secs).await?;
         }
@@ -339,6 +399,10 @@ mod tests {
         assert_eq!(
             ClmmPoolSnapshot::redis_key("sushi", "POOL"),
             "lumagg:pool:clmm:sushi:POOL"
+        );
+        assert_eq!(
+            CometPoolStateValue::redis_key("POOL"),
+            "lumagg:pool:comet:POOL"
         );
     }
 }

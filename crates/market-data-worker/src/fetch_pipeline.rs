@@ -6,7 +6,7 @@
 //! ledger-touched pools (Jupiter-style event-driven updates).
 
 use {
-    crate::{clmm_metrics::ClmmCoverageMetrics, worker::WorkerShared},
+    crate::{clmm_metrics::ClmmCoverageMetrics, pool_state_publish::comet_state_to_value, worker::WorkerShared},
     anyhow::Result,
     dex_adapters::{
         aquarius::AquariusAdapter, aquarius_clmm::AquariusClmmAdapter,
@@ -15,7 +15,8 @@ use {
     },
     market_snapshot::{
         pool_state_store::{
-            should_publish_clmm_to_redis, AquariusPoolStateValue, RedisPoolStateStore, XykPoolStateValue,
+            should_publish_clmm_to_redis, AquariusPoolStateValue, CometPoolStateValue, RedisPoolStateStore,
+            XykPoolStateValue,
         },
         ClmmPoolSnapshot, SourceSnapshot, TradingPairSnapshot,
     },
@@ -84,6 +85,7 @@ impl FetchPipelineMetrics {
 enum PoolStateUpdate {
     Xyk(Vec<XykPoolStateValue>),
     Aquarius(Vec<AquariusPoolStateValue>),
+    Comet(Vec<CometPoolStateValue>),
     Clmm(ClmmPoolSnapshot),
 }
 
@@ -254,6 +256,7 @@ pub fn spawn_fetch_pipeline(
                 PoolStateUpdate::Aquarius(values) if !values.is_empty() => {
                     pool_store_sink.set_aquarius_batch(&values).await
                 }
+                PoolStateUpdate::Comet(values) if !values.is_empty() => pool_store_sink.set_comet_batch(&values).await,
                 PoolStateUpdate::Clmm(snapshot) => pool_store_sink.set_clmm_batch(&[snapshot]).await,
                 _ => Ok(()),
             };
@@ -340,18 +343,18 @@ async fn execute_fetch_task(ctx: &FetchWorkerContext, task: FetchTask) -> Result
             if !ctx.comet.refresh_pool(&pool_address).await? {
                 return Ok(vec![]);
             }
-            let sources = ctx.shared.read().await.sources.clone();
-            let values = collect_xyk_from_adapter_cache(
-                &sources,
-                "comet",
-                std::slice::from_ref(&pool_address),
-                ctx.comet.as_ref(),
-            )
-            .await;
+            let values: Vec<CometPoolStateValue> = ctx
+                .comet
+                .export_pool_quote_states_for(std::slice::from_ref(&pool_address))
+                .await
+                .into_iter()
+                .filter(|(_, state)| state.records.len() >= 2)
+                .map(|(addr, state)| comet_state_to_value(&addr, &state))
+                .collect();
             Ok(if values.is_empty() {
                 vec![]
             } else {
-                vec![PoolStateUpdate::Xyk(values)]
+                vec![PoolStateUpdate::Comet(values)]
             })
         }
         FetchTask::ClmmPool { source, pool_address } => {

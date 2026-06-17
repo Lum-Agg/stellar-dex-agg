@@ -59,10 +59,6 @@ struct CachedPaths {
 /// Cache TTL: paths are valid for 30 seconds
 const CACHE_TTL_MS: u64 = 30_000;
 
-/// Excluded from quote path discovery (aggregator Comet execution not deployed
-/// yet).
-const QUOTE_EXCLUDED_SOURCES: &[&str] = &["comet"];
-
 impl PathFinder {
     pub fn new(config: PathFinderConfig) -> Self {
         Self {
@@ -77,16 +73,6 @@ impl PathFinder {
     pub fn update_from_source(&mut self, source: &str, pairs: &[TradingPair]) {
         // Remove old edges from this source
         self.graph.remove_source(source);
-
-        if QUOTE_EXCLUDED_SOURCES.contains(&source) {
-            self.cache.lock().unwrap().clear();
-            info!(
-                source = source,
-                pairs = pairs.len(),
-                "Skipping quote graph edges for excluded DEX source"
-            );
-            return;
-        }
 
         // Add new edges
         for pair in pairs {
@@ -191,5 +177,46 @@ impl PathFinder {
     /// Get graph stats.
     pub fn stats(&self) -> (usize, usize) {
         (self.graph.token_count(), self.graph.edge_count())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::TokenId;
+
+    fn contract_token(address: &str) -> TokenId {
+        TokenId::Contract {
+            address: address.to_string(),
+        }
+    }
+
+    #[test]
+    fn includes_comet_edges_in_routing_graph() {
+        let mut finder = PathFinder::new(PathFinderConfig {
+            max_hops: 1,
+            max_multi_hop_paths: 10,
+            max_direct_paths: 0,
+            bridge_tokens: vec![],
+        });
+        let blnd = contract_token("CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV");
+        let usdc = contract_token("CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75");
+        finder.update_from_source(
+            "comet",
+            &[TradingPair {
+                token_a: blnd.clone(),
+                token_b: usdc.clone(),
+                source: "comet".to_string(),
+                pool_address: "comet-pool".to_string(),
+                fee_bps: 30,
+                reserve_a: Some(1_000_000),
+                reserve_b: Some(2_000_000),
+            }],
+        );
+
+        let paths = finder.find_paths(&blnd, &usdc);
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0].sources, vec!["comet".to_string()]);
+        assert_eq!(paths[0].pool_addresses, vec!["comet-pool".to_string()]);
     }
 }

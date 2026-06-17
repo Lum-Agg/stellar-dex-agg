@@ -4,11 +4,12 @@
 use {
     dex_adapters::{
         batch_refresh::batch_refresh_soroswap_reserves, clmm_math::clmm_pool_from_snapshot, comet::CometAdapter,
-        rpc::SorobanRpc, AquariusPoolQuoteState,
+        comet_math::CometRecord, rpc::SorobanRpc, AquariusPoolQuoteState, CometPoolQuoteState,
     },
     market_snapshot::{
         pool_state_store::{
-            parse_quote_hydrate_max_pools_from_env, AquariusPoolStateValue, RedisPoolStateStore, XykPoolStateValue,
+            parse_quote_hydrate_max_pools_from_env, AquariusPoolStateValue, CometPoolStateValue,
+            RedisPoolStateStore, XykPoolStateValue,
         },
         ClmmPoolSnapshot,
     },
@@ -95,6 +96,48 @@ fn aquarius_quote_state(value: &AquariusPoolStateValue) -> AquariusPoolQuoteStat
     }
 }
 
+fn comet_quote_state(value: &CometPoolStateValue) -> CometPoolQuoteState {
+    CometPoolQuoteState {
+        records: value
+            .records
+            .iter()
+            .map(|(token, record)| {
+                (
+                    token.clone(),
+                    CometRecord {
+                        balance: record.balance,
+                        weight: record.weight,
+                        scalar: record.scalar,
+                    },
+                )
+            })
+            .collect(),
+        swap_fee: value.swap_fee,
+    }
+}
+
+fn comet_state_to_value(pool_address: &str, state: &CometPoolQuoteState) -> CometPoolStateValue {
+    use market_snapshot::pool_state_store::CometTokenRecordValue;
+    CometPoolStateValue {
+        pool_address: pool_address.to_string(),
+        records: state
+            .records
+            .iter()
+            .map(|(token, record)| {
+                (
+                    token.clone(),
+                    CometTokenRecordValue {
+                        balance: record.balance,
+                        weight: record.weight,
+                        scalar: record.scalar,
+                    },
+                )
+            })
+            .collect(),
+        swap_fee: state.swap_fee,
+    }
+}
+
 /// Load per-pool state for candidate paths from Redis; optional batched xy=k
 /// RPC for misses.
 pub async fn hydrate_paths(
@@ -113,6 +156,7 @@ pub async fn hydrate_paths(
     let mut xyk_pools = store.fetch_xyk(&xyk_refs).await.unwrap_or_default();
     let clmm_snapshots = store.fetch_clmm(&clmm_refs).await.unwrap_or_default();
     let aquarius_raw = store.fetch_aquarius(&aquarius_refs).await.unwrap_or_default();
+    let comet_raw = store.fetch_comet(&comet_pools).await.unwrap_or_default();
 
     let clmm_pools: HashMap<String, SnapshotClmmQuoteState> = clmm_snapshots
         .into_iter()
@@ -191,17 +235,48 @@ pub async fn hydrate_paths(
         );
     }
 
-    let mut comet_states = HashMap::new();
-    if config.rpc_hydrate_enabled && !comet_pools.is_empty() {
+    let mut comet_states: HashMap<String, CometPoolQuoteState> = comet_raw
+        .into_iter()
+        .map(|(pool, value)| (pool, comet_quote_state(&value)))
+        .collect();
+
+    let mut redis_miss_comet = 0usize;
+    for pool_address in &comet_pools {
+        if !comet_states.contains_key(pool_address) {
+            redis_miss_comet += 1;
+        }
+    }
+    if redis_miss_comet > 0 {
+        warn!(
+            redis_miss_comet,
+            paths = paths.len(),
+            "quote hydration: Comet Redis misses (worker should publish weighted pool state)"
+        );
+    }
+
+    if config.rpc_hydrate_enabled && redis_miss_comet > 0 {
         let comet = CometAdapter::new(Arc::new(SorobanRpc::new(rpc.url(), rpc.network_passphrase())));
-        for pool_address in comet_pools {
+        let mut rpc_candidates: Vec<String> = comet_pools
+            .iter()
+            .filter(|pool| !comet_states.contains_key(*pool))
+            .cloned()
+            .collect();
+        rpc_candidates.truncate(config.max_rpc_pools);
+        let mut writeback = Vec::new();
+        for pool_address in rpc_candidates {
             match comet.fetch_pool_quote_state(&pool_address).await {
                 Ok(state) => {
-                    comet_states.insert(pool_address, state);
+                    comet_states.insert(pool_address.clone(), state.clone());
+                    writeback.push(comet_state_to_value(&pool_address, &state));
                 }
                 Err(error) => {
                     debug!("Comet hydrate failed for {}: {}", pool_address, error);
                 }
+            }
+        }
+        if !writeback.is_empty() {
+            if let Err(error) = store.set_comet_batch(&writeback).await {
+                debug!("Comet hydrate writeback failed: {}", error);
             }
         }
     }
@@ -222,6 +297,7 @@ pub async fn hydrate_paths(
         aquarius = aquarius_pools.len(),
         redis_miss_xyk,
         redis_miss_aquarius,
+        redis_miss_comet,
         "hydrated pools for quote"
     );
 

@@ -418,6 +418,26 @@ impl CometAdapter {
         Ok(self.apply_pool_state(pool_address, state).await > 0)
     }
 
+    /// Cached weighted pool states (for Redis publish).
+    pub async fn export_pool_quote_states(&self) -> Vec<(String, CometPoolQuoteState)> {
+        self.pool_states
+            .read()
+            .await
+            .iter()
+            .map(|(pool, state)| (pool.clone(), state.clone()))
+            .collect()
+    }
+
+    pub async fn export_pool_quote_states_for(&self, pool_addresses: &[String]) -> Vec<(String, CometPoolQuoteState)> {
+        let states = self.pool_states.read().await;
+        let wanted: HashSet<&str> = pool_addresses.iter().map(|s| s.as_str()).collect();
+        states
+            .iter()
+            .filter(|(pool, _)| wanted.contains(pool.as_str()))
+            .map(|(pool, state)| (pool.clone(), state.clone()))
+            .collect()
+    }
+
     pub async fn known_pool_addresses(&self) -> Vec<String> {
         let tracked = self.tracked_pools.read().await;
         if tracked.is_empty() {

@@ -1205,22 +1205,8 @@ mod tests {
             ..Default::default()
         };
 
-        // Comet is excluded from path-finder discovery (QUOTE_EXCLUDED_SOURCES); inject
-        // path directly.
-        let paths = vec![Path {
-            tokens: vec![
-                TokenId::Contract {
-                    address: blnd.to_string(),
-                },
-                TokenId::Contract {
-                    address: usdc.to_string(),
-                },
-            ],
-            pool_addresses: vec!["comet-pool".to_string()],
-            sources: vec!["comet".to_string()],
-            hops: 1,
-        }];
-
+        // Comet routes are included in PathFinder; verify local weighted math via
+        // candidate path + hydration.
         let route = engine
             .get_route_with_paths(
                 &RouteRequest {
@@ -1235,7 +1221,18 @@ mod tests {
                     max_hops: Some(1),
                     max_splits: Some(1),
                 },
-                &paths,
+                &engine.find_candidate_paths(&RouteRequest {
+                    token_in: TokenId::Contract {
+                        address: blnd.to_string(),
+                    },
+                    token_out: TokenId::Contract {
+                        address: usdc.to_string(),
+                    },
+                    amount_in: 100_000,
+                    slippage_bps: Some(50),
+                    max_hops: Some(1),
+                    max_splits: Some(1),
+                }).await,
                 Some(&hydration),
             )
             .await;

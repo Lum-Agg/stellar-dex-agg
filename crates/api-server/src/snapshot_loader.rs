@@ -212,8 +212,8 @@ mod tests {
                     source: "soroswap".to_string(),
                     pool_address: "pool-1".to_string(),
                     fee_bps: 30,
-                    reserve_a: Some(1_000_000),
-                    reserve_b: Some(2_000_000),
+                    reserve_a: Some(1_000_000_000),
+                    reserve_b: Some(2_000_000_000),
                 }],
             )
             .await;
@@ -226,7 +226,7 @@ mod tests {
                 token_out: TokenId::Contract {
                     address: "token-b".to_string(),
                 },
-                amount_in: 1_000,
+                amount_in: 100_000_000,
                 slippage_bps: Some(50),
                 max_hops: Some(1),
                 max_splits: Some(1),

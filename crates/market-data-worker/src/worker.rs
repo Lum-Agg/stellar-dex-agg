@@ -316,6 +316,7 @@ fn spawn_fast_pool_publish(
     shared: Arc<RwLock<WorkerShared>>,
     adapters: Vec<Arc<dyn DexAdapter>>,
     aquarius: Arc<AquariusAdapter>,
+    comet: Arc<CometAdapter>,
     pool_state_store: Option<Arc<market_snapshot::pool_state_store::RedisPoolStateStore>>,
     metrics: Option<Arc<crate::monitor::WorkerMonitorMetrics>>,
     telegram: Option<Arc<lumagg_alerts::TelegramAlerter>>,
@@ -329,6 +330,7 @@ fn spawn_fast_pool_publish(
             pool_state_store.as_ref(),
             &adapters,
             aquarius.as_ref(),
+            comet.as_ref(),
             &clmm_pools,
             metrics.as_ref(),
         )
@@ -453,6 +455,7 @@ async fn publish_pool_state_only(
     pool_state_store: Option<&Arc<market_snapshot::pool_state_store::RedisPoolStateStore>>,
     adapters: &[Arc<dyn DexAdapter>],
     aquarius: &AquariusAdapter,
+    comet: &CometAdapter,
     clmm_states: &[ClmmPoolSnapshot],
     metrics: Option<&Arc<crate::monitor::WorkerMonitorMetrics>>,
 ) -> Result<()> {
@@ -461,19 +464,24 @@ async fn publish_pool_state_only(
     };
     let xyk_values = crate::pool_state_publish::collect_xyk_pool_state(adapters).await;
     let aquarius_values = crate::pool_state_publish::collect_aquarius_pool_state(aquarius).await;
+    let comet_values = crate::pool_state_publish::collect_comet_pool_state(comet).await;
     let clmm_complete = clmm_states
         .iter()
         .filter(|p| market_snapshot::pool_state_store::should_publish_clmm_to_redis(p))
         .count();
     pool_store
-        .publish_pool_state(&xyk_values, clmm_states, &aquarius_values)
+        .publish_pool_state(&xyk_values, clmm_states, &aquarius_values, &comet_values)
         .await?;
     if let Some(m) = metrics {
-        m.record_publish(xyk_values.len() + aquarius_values.len(), clmm_complete);
+        m.record_publish(
+            xyk_values.len() + aquarius_values.len() + comet_values.len(),
+            clmm_complete,
+        );
     }
     info!(
         xyk_pools = xyk_values.len(),
         aquarius_pools = aquarius_values.len(),
+        comet_pools = comet_values.len(),
         clmm_pools = clmm_complete,
         ttl_secs = pool_store.ttl_secs(),
         "Published pool state to Redis"
@@ -486,10 +494,11 @@ async fn publish_snapshot_and_pool_state(
     pool_state_store: Option<&Arc<market_snapshot::pool_state_store::RedisPoolStateStore>>,
     adapters: &[Arc<dyn DexAdapter>],
     aquarius: &AquariusAdapter,
+    comet: &CometAdapter,
     topology: &MarketSnapshot,
     clmm_states: &[ClmmPoolSnapshot],
 ) -> Result<()> {
-    publish_pool_state_only(pool_state_store, adapters, aquarius, clmm_states, None).await?;
+    publish_pool_state_only(pool_state_store, adapters, aquarius, comet, clmm_states, None).await?;
     snapshot_store.publish_snapshot(topology).await?;
     Ok(())
 }
@@ -585,6 +594,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
     let network_passphrase = config.network_passphrase.clone();
     let destination = snapshot_destination(&config);
     let aquarius_boot = aquarius.clone();
+    let comet_boot = comet.clone();
     let clmm_metrics_boot = clmm_metrics.clone();
     tokio::spawn(async move {
         info!("Background bootstrap: parallel adapter discovery");
@@ -609,6 +619,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
             pool_state_boot.as_ref(),
             &adapters_boot,
             aquarius_boot.as_ref(),
+            comet_boot.as_ref(),
             &snapshot,
             &clmm_pools,
         )
@@ -772,6 +783,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
                     shared.clone(),
                     adapters.clone(),
                     aquarius.clone(),
+                    comet.clone(),
                     pool_state_store.clone(),
                     Some(monitor_metrics.clone()),
                     telegram.clone(),
@@ -806,6 +818,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
                 let token_metadata_disc = token_metadata.clone();
                 let pool_state_disc = pool_state_store.clone();
                 let aquarius_disc = aquarius.clone();
+                let comet_disc = comet.clone();
                 let network_passphrase_disc = config.network_passphrase.clone();
                 let destination_disc = snapshot_destination(&config);
                 let clmm_metrics_disc = clmm_metrics.clone();
@@ -844,6 +857,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
                         pool_state_disc.as_ref(),
                         &adapters_disc,
                         aquarius_disc.as_ref(),
+                        comet_disc.as_ref(),
                         &snapshot,
                         &clmm_pools,
                     )

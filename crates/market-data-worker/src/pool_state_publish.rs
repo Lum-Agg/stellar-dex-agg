@@ -2,14 +2,35 @@
 //! reserves).
 
 use {
-    dex_adapters::{AquariusAdapter, DexAdapter},
-    market_snapshot::pool_state_store::{AquariusPoolStateValue, XykPoolStateValue},
+    dex_adapters::{comet::CometAdapter, AquariusAdapter, CometPoolQuoteState, DexAdapter},
+    market_snapshot::pool_state_store::{AquariusPoolStateValue, CometPoolStateValue, CometTokenRecordValue, XykPoolStateValue},
     std::{collections::HashSet, sync::Arc},
 };
 
-const XYK_REDIS_SOURCES: &[&str] = &["soroswap", "phoenix", "comet"];
+const XYK_REDIS_SOURCES: &[&str] = &["soroswap", "phoenix"];
 /// Do not publish xy=k pools with dust on either side (router skips these too).
 const MIN_XYK_RESERVE_STROOPS: u128 = 100_000_000;
+
+pub fn comet_state_to_value(pool_address: &str, state: &CometPoolQuoteState) -> CometPoolStateValue {
+    CometPoolStateValue {
+        pool_address: pool_address.to_string(),
+        records: state
+            .records
+            .iter()
+            .map(|(token, record)| {
+                (
+                    token.clone(),
+                    CometTokenRecordValue {
+                        balance: record.balance,
+                        weight: record.weight,
+                        scalar: record.scalar,
+                    },
+                )
+            })
+            .collect(),
+        swap_fee: state.swap_fee,
+    }
+}
 
 /// xy=k reserves from adapter caches (not written into topology snapshot).
 pub async fn collect_xyk_pool_state(adapters: &[Arc<dyn DexAdapter>]) -> Vec<XykPoolStateValue> {
@@ -53,6 +74,19 @@ pub async fn collect_xyk_pool_state(adapters: &[Arc<dyn DexAdapter>]) -> Vec<Xyk
             .cmp(&b.source)
             .then_with(|| a.pool_address.cmp(&b.pool_address))
     });
+    out
+}
+
+/// Comet weighted pool state (one Redis key per pool contract).
+pub async fn collect_comet_pool_state(comet: &CometAdapter) -> Vec<CometPoolStateValue> {
+    let mut out = Vec::new();
+    for (pool_address, state) in comet.export_pool_quote_states().await {
+        if state.records.len() < 2 {
+            continue;
+        }
+        out.push(comet_state_to_value(&pool_address, &state));
+    }
+    out.sort_by(|a, b| a.pool_address.cmp(&b.pool_address));
     out
 }
 

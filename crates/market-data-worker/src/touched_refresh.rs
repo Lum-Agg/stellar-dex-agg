@@ -1,7 +1,7 @@
 //! Refresh only ledger-touched pools and push updates to Redis.
 
 use {
-    crate::{clmm_metrics::ClmmCoverageMetrics, ledger_watcher::ledger_max_touched_refresh_from_env},
+    crate::{clmm_metrics::ClmmCoverageMetrics, ledger_watcher::ledger_max_touched_refresh_from_env, pool_state_publish::comet_state_to_value},
     anyhow::Result,
     dex_adapters::{
         aquarius::AquariusAdapter, aquarius_clmm::AquariusClmmAdapter, batch_refresh::batch_refresh_soroswap_reserves,
@@ -9,7 +9,7 @@ use {
         sushi::SushiAdapter, DexAdapter,
     },
     market_snapshot::{
-        pool_state_store::{should_publish_clmm_to_redis, RedisPoolStateStore, XykPoolStateValue},
+        pool_state_store::{should_publish_clmm_to_redis, CometPoolStateValue, RedisPoolStateStore, XykPoolStateValue},
         ClmmPoolSnapshot, SourceSnapshot,
     },
     std::collections::{HashMap, HashSet},
@@ -59,6 +59,7 @@ pub async fn refresh_touched_pools(ctx: TouchedRefreshContext<'_>, touched: Hash
 
     let mut updated = 0usize;
     let mut xyk_writeback: Vec<XykPoolStateValue> = Vec::new();
+    let mut comet_writeback: Vec<CometPoolStateValue> = Vec::new();
     let mut clmm_writeback: Vec<ClmmPoolSnapshot> = Vec::new();
 
     for (source, addresses) in &by_source {
@@ -80,9 +81,7 @@ pub async fn refresh_touched_pools(ctx: TouchedRefreshContext<'_>, touched: Hash
         } else if source == COMET_SOURCE {
             let n = refresh_comet_touched(ctx.comet, ctx.sources, addresses).await?;
             updated += n;
-            xyk_writeback.extend(
-                collect_xyk_from_adapter(ctx.sources, COMET_SOURCE, addresses, ctx.comet as &dyn DexAdapter).await,
-            );
+            comet_writeback.extend(collect_comet_writeback(ctx.comet, addresses).await);
         } else if CLMM_SOURCES.contains(&source.as_str()) {
             let (n, snaps) = refresh_clmm_pools(
                 source,
@@ -106,6 +105,9 @@ pub async fn refresh_touched_pools(ctx: TouchedRefreshContext<'_>, touched: Hash
 
     if !xyk_writeback.is_empty() {
         ctx.pool_store.set_xyk_batch(&xyk_writeback).await?;
+    }
+    if !comet_writeback.is_empty() {
+        ctx.pool_store.set_comet_batch(&comet_writeback).await?;
     }
     if !clmm_writeback.is_empty() {
         ctx.pool_store.set_clmm_batch(&clmm_writeback).await?;
@@ -233,6 +235,16 @@ async fn refresh_comet_touched(
         }
     }
     Ok(updated)
+}
+
+async fn collect_comet_writeback(comet: &CometAdapter, pool_addresses: &[String]) -> Vec<CometPoolStateValue> {
+    comet
+        .export_pool_quote_states_for(pool_addresses)
+        .await
+        .into_iter()
+        .filter(|(_, state)| state.records.len() >= 2)
+        .map(|(addr, state)| comet_state_to_value(&addr, &state))
+        .collect()
 }
 
 async fn refresh_clmm_pools(
