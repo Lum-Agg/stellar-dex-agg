@@ -213,10 +213,15 @@ This aggregator targets **Soroban DEXes** where each hop is a deterministic cont
 │   └── sdk/                    # Client SDK
 ├── docs/
 │   └── pool-state-architecture.md
+├── thirdparty/                 # Optional local upstream clones (not tracked; see README there)
 ├── deploy/                     # systemd units (lumagg-api@, lumagg-worker)
 ├── deploy_server.sh            # rsync + build + restart on remote host
 └── frontend/                   # SvelteKit demo UI
 ```
+
+## Third-party reference
+
+Upstream DEX repos are **not** vendored in git. For contract layout / mainnet manifests when editing adapters, clone into `thirdparty/` — see [thirdparty/README.md](./thirdparty/README.md). Builds and deploy do not require it.
 
 ## Development
 

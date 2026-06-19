@@ -19,3 +19,7 @@ scripts/*
 docs/*
 !docs/pool-state-architecture.md
 .DS_Store
+
+# Optional upstream clones (see thirdparty/README.md)
+thirdparty/*
+!thirdparty/README.md

@@ -213,10 +213,15 @@ getLatestLedger
 │   └── sdk/                    # 客户端 SDK
 ├── docs/
 │   └── pool-state-architecture.md
+├── thirdparty/                 # 可选：本地 clone 上游参考（不入库；见 README）
 ├── deploy/                     # systemd 单元（lumagg-api@、lumagg-worker）
 ├── deploy_server.sh            # 远程 rsync + 构建 + 重启
 └── frontend/                   # SvelteKit 演示 UI
 ```
+
+## 上游参考（thirdparty）
+
+各 DEX 上游仓库**不**纳入 git。改 adapter 时需对照合约布局 / mainnet 地址清单时，clone 到 `thirdparty/` — 见 [thirdparty/README.md](./thirdparty/README.md)。构建与部署不依赖该目录。
 
 ## 开发
 
