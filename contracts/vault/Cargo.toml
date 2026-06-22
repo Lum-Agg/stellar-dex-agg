@@ -1,0 +1,26 @@
+[package]
+name = "vault-contract"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/Lum-Agg/stellar-dex-agg"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+soroban-sdk = "22.0.0"
+aggregator-contract = { path = "../aggregator", default-features = false }
+
+[dev-dependencies]
+soroban-sdk = { version = "22.0.0", features = ["testutils"] }
+aggregator-contract = { path = "../aggregator", default-features = false }
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "debuginfo"
+panic = "abort"
+codegen-units = 1
+lto = true

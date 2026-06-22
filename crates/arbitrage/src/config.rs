@@ -17,6 +17,8 @@ pub struct ArbConfig {
     pub pool_state_redis_url: String,
     /// Deployed LumAgg aggregator contract (round_trip_swap target).
     pub aggregator_contract: Option<String>,
+    /// Optional arb vault; when set, txs call vault.execute_round_trip instead of aggregator directly.
+    pub vault_contract: Option<String>,
     pub caller_secrets: Vec<String>,
     pub caller_secrets_file: Option<String>,
     pub mnemonic_path: Option<String>,
@@ -51,6 +53,10 @@ impl ArbConfig {
 
         let aggregator_contract = std::env::var("ARB_AGGREGATOR_CONTRACT")
             .or_else(|_| std::env::var("AGGREGATOR_CONTRACT"))
+            .ok()
+            .filter(|s| !s.is_empty());
+
+        let vault_contract = std::env::var("ARB_VAULT_CONTRACT")
             .ok()
             .filter(|s| !s.is_empty());
 
@@ -163,6 +169,7 @@ impl ArbConfig {
             snapshot_redis_url,
             pool_state_redis_url,
             aggregator_contract,
+            vault_contract,
             caller_secrets,
             caller_secrets_file,
             mnemonic_path,

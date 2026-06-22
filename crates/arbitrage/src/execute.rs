@@ -6,7 +6,7 @@ use {
         callers::CallerPool,
         config::ArbConfig,
         context::ArbContext,
-        invoke::{build_raw_envelope_xdr, build_round_trip_swap_op, min_amount_out_for_profit},
+        invoke::{build_execute_round_trip_op, build_raw_envelope_xdr, build_round_trip_swap_op, min_amount_out_for_profit},
         optimize::optimize_round_trip,
         prepare::{fetch_account_sequence, prepare_transaction_xdr},
         scanner::ArbOpportunity,
@@ -69,18 +69,34 @@ pub async fn prepare_opportunity_tx(
     let amount_in_i128 = i128::try_from(quote.amount_in).context("amount_in exceeds i128")?;
     let min_amount_out = min_amount_out_for_profit(quote.amount_in, ctx.config.min_profit);
 
-    let op = build_round_trip_swap_op(
-        aggregator,
-        caller_public_key,
-        &quote.base.canonical(),
-        &quote.bridge.canonical(),
-        amount_in_i128,
-        &quote.leg_out,
-        &quote.leg_back,
-        min_amount_out,
-        &ctx.snapshot,
-        hydration,
-    )?;
+    let op = if let Some(vault) = ctx.config.vault_contract.as_deref() {
+        build_execute_round_trip_op(
+            vault,
+            aggregator,
+            caller_public_key,
+            &quote.base.canonical(),
+            &quote.bridge.canonical(),
+            amount_in_i128,
+            &quote.leg_out,
+            &quote.leg_back,
+            min_amount_out,
+            &ctx.snapshot,
+            hydration,
+        )?
+    } else {
+        build_round_trip_swap_op(
+            aggregator,
+            caller_public_key,
+            &quote.base.canonical(),
+            &quote.bridge.canonical(),
+            amount_in_i128,
+            &quote.leg_out,
+            &quote.leg_back,
+            min_amount_out,
+            &ctx.snapshot,
+            hydration,
+        )?
+    };
 
     let seq = fetch_account_sequence(&ctx.config.horizon_url, caller_public_key).await?;
     let fee = 100_000u32;
@@ -106,6 +122,11 @@ pub async fn prepare_opportunity_tx(
         }
     };
 
+    let tx_kind = if ctx.config.vault_contract.is_some() {
+        "vault.execute_round_trip"
+    } else {
+        "aggregator.round_trip_swap"
+    };
     info!(
         route = %quote.route_label(),
         caller = %caller_public_key,
@@ -116,7 +137,8 @@ pub async fn prepare_opportunity_tx(
         min_amount_out,
         leg_out_splits = quote.leg_out.sub_orders.len(),
         leg_back_splits = quote.leg_back.sub_orders.len(),
-        "prepared round_trip_swap tx"
+        tx_kind,
+        "prepared arb tx"
     );
 
     Ok(Some(PreparedArbTx {

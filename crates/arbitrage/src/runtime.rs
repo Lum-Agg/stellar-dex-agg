@@ -59,12 +59,18 @@ impl ArbRuntime {
             dry_run = self.dry_run(),
             callers,
             aggregator = ?self.config.aggregator_contract,
+            vault = ?self.config.vault_contract,
             bridges = self.config.bridge_tokens.len(),
             min_profit = self.config.min_profit,
-            "arb runtime ready (aggregator.round_trip_swap; bot wallets hold float)"
+            "arb runtime ready"
         );
         if self.config.build_tx && self.config.aggregator_contract.is_none() {
             tracing::warn!("ARB_BUILD_TX=1 but ARB_AGGREGATOR_CONTRACT unset");
+        }
+        if self.config.build_tx && self.config.vault_contract.is_some() {
+            info!("vault mode: callers only need native XLM for fees; principal held in ARB_VAULT_CONTRACT");
+        } else if self.config.build_tx && self.config.vault_contract.is_none() {
+            info!("direct aggregator mode: bot wallets hold trade float");
         }
         if self.config.build_tx && !self.has_callers() {
             tracing::warn!(

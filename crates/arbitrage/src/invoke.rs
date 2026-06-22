@@ -271,6 +271,68 @@ pub fn build_round_trip_swap_op(
     })
 }
 
+/// Build `InvokeHostFunction` calling `vault.execute_round_trip`.
+pub fn build_execute_round_trip_op(
+    vault_contract: &str,
+    aggregator_contract: &str,
+    caller_public_key: &str,
+    base_token: &str,
+    bridge_token: &str,
+    amount_in: i128,
+    leg_out: &OptimalRoute,
+    leg_back: &OptimalRoute,
+    min_amount_out: i128,
+    snapshot: &MarketSnapshot,
+    hydration: &QuoteHydration,
+) -> Result<xdr::Operation> {
+    if amount_in <= 0 {
+        return Err(anyhow!("amount_in must be positive"));
+    }
+    if min_amount_out < amount_in {
+        return Err(anyhow!("min_amount_out below principal"));
+    }
+    if leg_out.sub_orders.is_empty() || leg_back.sub_orders.is_empty() {
+        return Err(anyhow!("round_trip_swap requires non-empty legs"));
+    }
+
+    let caller_key = PublicKey::from_string(caller_public_key)
+        .with_context(|| format!("invalid caller public key {}", caller_public_key))?;
+    let vault_hash = contract_hash(vault_contract)?;
+    let agg_hash = contract_hash(aggregator_contract)?;
+    let base_hash = contract_hash(base_token)?;
+    let bridge_hash = contract_hash(bridge_token)?;
+
+    let leg_out_val = route_to_sub_routes_scval(leg_out, snapshot, hydration)?;
+    let leg_back_val = route_to_sub_routes_scval(leg_back, snapshot, hydration)?;
+
+    let invoke_args = xdr::InvokeContractArgs {
+        contract_address: xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(vault_hash))),
+        function_name: xdr::ScSymbol("execute_round_trip".try_into().unwrap()),
+        args: vec![
+            xdr::ScVal::Address(xdr::ScAddress::Account(xdr::AccountId(
+                xdr::PublicKey::PublicKeyTypeEd25519(xdr::Uint256(caller_key.0)),
+            ))),
+            xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(agg_hash)))),
+            xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(base_hash)))),
+            xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(bridge_hash)))),
+            i128_scval(amount_in),
+            leg_out_val,
+            leg_back_val,
+            i128_scval(min_amount_out),
+        ]
+        .try_into()
+        .map_err(|_| anyhow!("execute_round_trip args"))?,
+    };
+
+    Ok(xdr::Operation {
+        source_account: None,
+        body: xdr::OperationBody::InvokeHostFunction(xdr::InvokeHostFunctionOp {
+            host_function: xdr::HostFunction::InvokeContract(invoke_args),
+            auth: xdr::VecM::default(),
+        }),
+    })
+}
+
 /// Minimum base output for `round_trip_swap` given target absolute profit.
 pub fn min_amount_out_for_profit(amount_in: u128, min_profit: u128) -> i128 {
     let min_out = amount_in.saturating_add(min_profit.max(1));

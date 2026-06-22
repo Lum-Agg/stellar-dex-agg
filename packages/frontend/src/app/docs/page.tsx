@@ -14,6 +14,34 @@ const TOKENS: Record<string, string> = {
   EURC: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
 };
 
+/** Static Try-it body: 1 XLM, min_out = 1 stroop (docs only; use /quote in production). */
+const BUILD_TX_EXAMPLE_JSON = JSON.stringify(
+  {
+    user_public_key: 'GA6RKSBPI2TSP52OW2IJTPK7LRMX24DF42KF3FBGBNMBYCV6NPDMOCBY',
+    token_in: TOKENS.XLM,
+    token_out: TOKENS.USDC,
+    amount_in: '10000000',
+    min_amount_out: '1',
+    sub_routes: [
+      {
+        amount_in: '10000000',
+        steps: [
+          {
+            dex_type: 'aquarius',
+            pool_address: 'CDKVJYMN34ZIEXSLNFYHVAFF6M6FM5E2U6OHXOTBKH2WLBULXOE53YDP',
+            token_in: TOKENS.XLM,
+            token_out: TOKENS.USDC,
+            in_idx: 0,
+            out_idx: 1,
+          },
+        ],
+      },
+    ],
+  },
+  null,
+  2,
+);
+
 type Param = { name: string; type: string; required: boolean; desc: string };
 
 export default function DocsPage() {
@@ -267,34 +295,7 @@ function QuoteTryIt() {
 }
 
 function BuildTxTryIt() {
-  const [body, setBody] = useState(
-    JSON.stringify(
-      {
-        user_public_key: 'GA6RKSBPI2TSP52OW2IJTPK7LRMX24DF42KF3FBGBNMBYCV6NPDMOCBY',
-        token_in: TOKENS.XLM,
-        token_out: TOKENS.USDC,
-        amount_in: '1000000000',
-        min_amount_out: '140000000',
-        sub_routes: [
-          {
-            amount_in: '1000000000',
-            steps: [
-              {
-                dex_type: 'aquarius',
-                pool_address: 'CDKVJYMN34ZIEXSLNFYHVAFF6M6FM5E2U6OHXOTBKH2WLBULXOE53YDP',
-                token_in: TOKENS.XLM,
-                token_out: TOKENS.USDC,
-                in_idx: 0,
-                out_idx: 1,
-              },
-            ],
-          },
-        ],
-      },
-      null,
-      2,
-    ),
-  );
+  const [body, setBody] = useState(BUILD_TX_EXAMPLE_JSON);
   const [result, setResult] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -316,7 +317,7 @@ function BuildTxTryIt() {
 
   return (
     <>
-      <textarea className="docs-textarea" value={body} onChange={(e) => setBody(e.target.value)} rows={8} />
+      <textarea className="docs-textarea" value={body} onChange={(e) => setBody(e.target.value)} rows={12} />
       <button type="button" className="docs-btn docs-btn--spaced" onClick={run} disabled={loading}>
         {loading ? '…' : 'Send'}
       </button>
