@@ -14,12 +14,13 @@ data
 PROJECT_STATUS.md
 agent/
 deploy/
-scripts/*
 !scripts/scf-quote-regression.sh
 docs/*
 !docs/pool-state-architecture.md
 .DS_Store
+broker/
 
 # Optional upstream clones (see thirdparty/README.md)
 thirdparty/*
 !thirdparty/README.md
+

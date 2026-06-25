@@ -356,7 +356,9 @@ Brent tolerance defaults to `0.0001` (0.01%) with up to 18 iterations — simila
 | Doc | Topic |
 |-----|-------|
 | [`docs/pool-state-architecture.md`](docs/pool-state-architecture.md) | Pool state design, env tables, code pointers |
-| [`docs/arb-executor.md`](docs/arb-executor.md) | Custodial arb contract model (planned; scanner uses aggregator today) |
+| [`docs/scf-venue-comparison.md`](docs/scf-venue-comparison.md) | LumAgg vs Soroswap / Stellar Broker — venue coverage & SCF differentiation evidence |
+| [`docs/scf-resubmission-budget.md`](docs/scf-resubmission-budget.md) | SCF #44 resubmission — $80k tranche deliverables (copy-paste) |
+| [`docs/arb-executor.md`](docs/arb-executor.md) | Atomic arb operator stack (vault + `round_trip_swap` bot) |
 
 ## License
 

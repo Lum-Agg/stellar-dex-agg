@@ -356,7 +356,10 @@ Brent 默认容差 `0.0001`（0.01%），最多 18 次迭代 — 思路类似 Ju
 | 文档 | 主题 |
 |------|------|
 | [`docs/pool-state-architecture.md`](docs/pool-state-architecture.md) | 池状态设计、环境变量、代码索引 |
-| [`docs/arb-executor.md`](docs/arb-executor.md) | 托管套利合约模型（规划中；扫描器已用 aggregator） |
+| [`docs/scf-venue-comparison.md`](docs/scf-venue-comparison.md) | LumAgg vs Soroswap / Stellar Broker — venue 覆盖与 SCF 差异化证据 |
+| [`docs/scf-resubmission-budget.md`](docs/scf-resubmission-budget.md) | SCF #44 重新提交 — $80k 三档 deliverables |
+| [`docs/scf-benchmark-results.md`](docs/scf-benchmark-results.md) | 实时 quote 对比结果（`./scripts/scf-benchmark.sh`） |
+| [`docs/arb-executor.md`](docs/arb-executor.md) | 原子套利运营栈（vault + `round_trip_swap` bot） |
 
 ## 许可证
 
