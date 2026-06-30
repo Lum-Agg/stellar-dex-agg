@@ -6,6 +6,7 @@ members = [
     "crates/dex-adapters",
     "crates/api-server",
     "crates/arbitrage",
+    "crates/analytics-indexer",
     "crates/lumagg-alerts",
     "crates/sdk",
     "contracts/aggregator",

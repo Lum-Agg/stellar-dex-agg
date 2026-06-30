@@ -1,9 +1,10 @@
 //! Soroban RPC client wrapper for DEX adapter interactions.
 //!
 //! Provides contract simulation (read-only calls), ledger entry queries,
-//! and the `events` submodule (`getLatestLedger` / `getEvents`).
+//! and the `events` / `transactions` submodules.
 
 pub mod events;
+pub mod transactions;
 
 use {
     anyhow::{anyhow, Result},
