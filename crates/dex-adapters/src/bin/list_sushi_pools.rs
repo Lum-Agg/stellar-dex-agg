@@ -1,5 +1,5 @@
-//! List Sushi V3 pool addresses (factory + known list) for syncing
-//! KNOWN_POOL_ADDRS.
+//! List Sushi V3 pool addresses (known list + factory `get_pool` brute-force)
+//! for syncing KNOWN_POOL_ADDRS.
 //!
 //!   RPC_URL=... cargo run -p dex-adapters --bin list-sushi-pools
 

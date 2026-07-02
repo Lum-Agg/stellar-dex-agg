@@ -29,7 +29,6 @@ pub mod clmm_math;
 pub mod comet;
 pub mod comet_math;
 pub mod dex_event_kinds;
-pub mod expert_api;
 pub mod phoenix;
 pub mod pool_index;
 pub mod router_events;

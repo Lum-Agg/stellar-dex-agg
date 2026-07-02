@@ -24,7 +24,6 @@ use {
             self, bitmap, clmm_pool_to_snapshot, clmm_swap_allowed, loaded_tick_range, tick_outside_word_scan,
             ClmmCoverageInput, ClmmPoolState, TickDataStore, TickState, TICKS_PER_CHUNK, U256 as ClmmU256,
         },
-        expert_api::{expert_http_client, STELLAR_EXPERT_API},
         rpc::{scval_to_address, scval_to_i128, scval_to_u128, SorobanRpc},
         traits::*,
     },
@@ -32,7 +31,7 @@ use {
     async_trait::async_trait,
     market_snapshot::{ClmmCoverageSnapshot, ClmmPoolSnapshot},
     std::{
-        collections::{HashMap, HashSet},
+        collections::HashMap,
         sync::Arc,
     },
     stellar_xdr::curr as xdr,
@@ -366,34 +365,16 @@ impl SushiAdapter {
         SorobanRpc::new(&url, self.rpc.network_passphrase())
     }
 
-    fn merge_discovered_pools(pools: &mut Vec<AdapterTradingPair>, incoming: Vec<AdapterTradingPair>) {
-        let mut seen: HashSet<String> = pools.iter().map(|p| p.pool_address.clone()).collect();
-        for pair in incoming {
-            if seen.insert(pair.pool_address.clone()) {
-                pools.push(pair);
-            }
-        }
-    }
-
-    /// Discover all pools (known list + factory storage + brute-force
-    /// fallback).
+    /// Discover all pools (known list + brute-force fallback).
     pub async fn discover_all_pools(&self) -> Result<Vec<AdapterTradingPair>> {
         self.discover_pools().await
     }
 
-    /// Discover pools: known addresses + factory storage + brute-force
-    /// fallback.
+    /// Discover pools: known addresses + brute-force fallback via factory
+    /// `get_pool`.
     async fn discover_pools(&self) -> Result<Vec<AdapterTradingPair>> {
         let mut pools = self.check_known_pools().await;
         info!("Sushi: {} pools from known addresses", pools.len());
-
-        match self.discover_pools_from_factory_storage().await {
-            Ok(factory_pools) => {
-                info!("Sushi: {} pools from factory storage", factory_pools.len());
-                Self::merge_discovered_pools(&mut pools, factory_pools);
-            }
-            Err(e) => warn!("Sushi: factory storage discovery failed: {}", e),
-        }
 
         if pools.is_empty() {
             pools = self.discover_pools_brute_force().await?;
@@ -401,89 +382,6 @@ impl SushiAdapter {
         }
 
         Ok(pools)
-    }
-
-    /// Discover all pools by reading the Factory's contract storage.
-    /// The Factory stores pool addresses under GetPool(token0, token1, fee)
-    /// keys. We read all storage entries and extract unique pool addresses.
-    async fn discover_pools_from_factory_storage(&self) -> Result<Vec<AdapterTradingPair>> {
-        let client = expert_http_client()?;
-        let mut url = format!("{STELLAR_EXPERT_API}/contract-data/{SUSHI_FACTORY}?limit=200");
-        let discovery_rpc = Arc::new(self.discovery_rpc());
-
-        let mut pool_hashes: HashSet<[u8; 32]> = HashSet::new();
-        loop {
-            let resp = client
-                .get(&url)
-                .send()
-                .await
-                .map_err(|e| anyhow!("stellar.expert request failed: {}", e))?;
-            if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                warn!("Sushi: stellar.expert rate limited, backing off 5s");
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                continue;
-            }
-            if !resp.status().is_success() {
-                return Err(anyhow!("stellar.expert contract-data status {}", resp.status()));
-            }
-            let data: serde_json::Value = resp
-                .json()
-                .await
-                .map_err(|e| anyhow!("stellar.expert response parse failed: {}", e))?;
-
-            let records = data
-                .get("_embedded")
-                .and_then(|e| e.get("records"))
-                .and_then(|r| r.as_array())
-                .ok_or_else(|| anyhow!("No records in response"))?;
-
-            use base64::Engine;
-            for record in records {
-                let val_b64 = match record.get("value").and_then(|v| v.as_str()) {
-                    Some(v) => v,
-                    None => continue,
-                };
-                let raw = match base64::engine::general_purpose::STANDARD.decode(val_b64) {
-                    Ok(r) => r,
-                    Err(_) => continue,
-                };
-                if raw.len() >= 40 && raw[3] == 0x12 && raw[7] == 0x01 {
-                    let mut hash = [0u8; 32];
-                    hash.copy_from_slice(&raw[8..40]);
-                    pool_hashes.insert(hash);
-                }
-            }
-
-            let next = data
-                .get("_links")
-                .and_then(|l| l.get("next"))
-                .and_then(|n| n.get("href"))
-                .and_then(|h| h.as_str())
-                .unwrap_or_default();
-            url = if next.is_empty() {
-                String::new()
-            } else if next.starts_with("http://") || next.starts_with("https://") {
-                next.to_string()
-            } else {
-                format!("https://api.stellar.expert{next}")
-            };
-            if url.is_empty() {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-        }
-
-        info!(
-            "Sushi: found {} unique pool addresses from factory storage",
-            pool_hashes.len()
-        );
-
-        let pool_addrs: Vec<String> = pool_hashes
-            .iter()
-            .map(|hash| format!("{}", stellar_strkey::Contract(*hash)))
-            .collect();
-
-        Ok(Self::load_sushi_pool_pairs(discovery_rpc.as_ref(), &pool_addrs).await)
     }
 
     async fn load_sushi_pool_pairs(rpc: &SorobanRpc, pool_addrs: &[String]) -> Vec<AdapterTradingPair> {
@@ -851,7 +749,15 @@ impl DexAdapter for SushiAdapter {
     }
 
     async fn get_trading_pairs(&self) -> Result<Vec<AdapterTradingPair>> {
-        let pairs = self.discover_pools().await?;
+        let pairs = {
+            let cached = self.pairs.read().await;
+            if cached.is_empty() {
+                drop(cached);
+                self.discover_pools().await?
+            } else {
+                cached.clone()
+            }
+        };
 
         // Load pool state + tick data for each discovered pool
         let mut cache = HashMap::new();

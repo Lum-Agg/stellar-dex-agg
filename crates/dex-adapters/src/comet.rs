@@ -1,14 +1,13 @@
 //! Comet DEX adapter: Balancer-style weighted pool AMM on Soroban.
 //!
 //! Pools are deployed via the Comet factory (`new_c_pool` / `is_c_pool` /
-//! `NEW_POOL` events). Discovery enumerates factory persistent storage
-//! (stellar.expert contract-data API) and builds routing edges for every token
-//! pair in each pool (2–8 tokens).
+//! `NEW_POOL` events). Discovery uses seed pools, optional env extras, and
+//! factory `getEvents` scans; routing edges cover every token pair in each pool
+//! (2–8 tokens).
 
 use {
     crate::{
         comet_math::{self, CometRecord, STROOP_SCALAR},
-        expert_api::{expert_http_client, STELLAR_EXPERT_API},
         rpc::{
             events::{EventFilterSpec, MAX_LEDGER_SCAN_PER_REQUEST},
             SorobanRpc,
@@ -126,19 +125,6 @@ impl CometAdapter {
             addrs.insert(extra);
         }
 
-        match self.discover_pools_from_factory_storage().await {
-            Ok(factory_pools) => {
-                info!(
-                    "Comet: factory storage listed {} candidate pool(s)",
-                    factory_pools.len()
-                );
-                addrs.extend(factory_pools);
-            }
-            Err(e) => {
-                warn!("Comet: factory storage discovery failed: {}", e);
-            }
-        }
-
         match self.discover_pools_from_factory_events().await {
             Ok(event_pools) => {
                 info!("Comet: factory events listed {} candidate pool(s)", event_pools.len());
@@ -186,65 +172,7 @@ impl CometAdapter {
         self.rpc.call_no_args(pool, "get_tokens").await.is_ok()
     }
 
-    /// Read factory persistent `IsCpool` entries via stellar.expert (same
-    /// approach as Sushi).
-    async fn discover_pools_from_factory_storage(&self) -> Result<Vec<String>> {
-        let factory = Self::factory_address();
-        let client = expert_http_client()?;
-
-        let mut pool_hashes: HashSet<[u8; 32]> = HashSet::new();
-        let mut url = format!("{STELLAR_EXPERT_API}/contract-data/{factory}?limit=200");
-
-        loop {
-            let resp = client
-                .get(&url)
-                .send()
-                .await
-                .map_err(|e| anyhow!("stellar.expert request failed: {}", e))?;
-            if !resp.status().is_success() {
-                return Err(anyhow!("stellar.expert contract-data status {}", resp.status()));
-            }
-            let data: serde_json::Value = resp
-                .json()
-                .await
-                .map_err(|e| anyhow!("stellar.expert parse failed: {}", e))?;
-
-            let records = data
-                .get("_embedded")
-                .and_then(|e| e.get("records"))
-                .and_then(|r| r.as_array())
-                .ok_or_else(|| anyhow!("No records in stellar.expert response"))?;
-
-            for record in records {
-                for field in ["key", "value"] {
-                    if let Some(b64) = record.get(field).and_then(|v| v.as_str()) {
-                        if let Some(hash) = contract_hash_from_storage_xdr(b64) {
-                            pool_hashes.insert(hash);
-                        }
-                    }
-                }
-            }
-
-            url = data
-                .get("_links")
-                .and_then(|l| l.get("next"))
-                .and_then(|n| n.get("href"))
-                .and_then(|h| h.as_str())
-                .map(str::to_string)
-                .unwrap_or_default();
-            if url.is_empty() {
-                break;
-            }
-        }
-
-        Ok(pool_hashes
-            .iter()
-            .map(|hash| format!("{}", stellar_strkey::Contract(*hash)))
-            .collect())
-    }
-
-    /// Scan recent factory contract events for `NEW_POOL` payloads (RPC
-    /// fallback).
+    /// Scan recent factory contract events for `NEW_POOL` payloads.
     async fn discover_pools_from_factory_events(&self) -> Result<Vec<String>> {
         let factory = Self::factory_address();
         let latest = self.rpc.get_latest_ledger().await?.sequence;
