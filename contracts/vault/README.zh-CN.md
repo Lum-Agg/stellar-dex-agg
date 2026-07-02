@@ -58,7 +58,13 @@ ARB_BUILD_TX=1
 
 ## 部署与运营
 
-1. 部署 vault WASM，`initialize(admin)`。
+```bash
+chmod +x contracts/vault/deploy.sh
+ADMIN=admin ADMIN_G=G... CALLER=G... ./contracts/vault/deploy.sh
+# 后续升级：VAULT=C... ./contracts/vault/upgrade.sh
+```
+
+1. 部署 vault WASM，`initialize(admin)`（或直接用 `deploy.sh`）。
 2. `deposit` 将套利本金（如 XLM）打入 vault。
 3. `add_caller` 为每个 bot 公钥授权。
 4. 启动 arb bot；caller 账号 **不需要** 持有大额 trade token，只需原生 XLM 付 Soroban fee。

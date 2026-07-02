@@ -58,7 +58,16 @@ If `ARB_VAULT_CONTRACT` is unset, the bot falls back to `aggregator.round_trip_s
 
 ## Deploy & operate
 
-1. Deploy vault WASM and call `initialize(admin)`.
+```bash
+# First-time mainnet deploy (requires stellar CLI + admin key)
+chmod +x contracts/vault/deploy.sh
+ADMIN=admin ADMIN_G=G... CALLER=G... ./contracts/vault/deploy.sh
+
+# Later WASM upgrades
+VAULT=C... ./contracts/vault/upgrade.sh
+```
+
+1. Deploy vault WASM and call `initialize(admin)` (or use `deploy.sh` above).
 2. `deposit` trading principal (e.g. XLM) into the vault.
 3. `add_caller` for each bot public key.
 4. Run the arb bot — callers **do not** need large trade-token balances, only native XLM for Soroban fees.
