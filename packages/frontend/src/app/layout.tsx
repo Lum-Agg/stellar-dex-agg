@@ -21,24 +21,20 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en" className="dark" suppressHydrationWarning>
       <body className={`${inter.className} min-h-screen antialiased text-zinc-100`}>
         <Providers>
-          <header className="sticky top-0 z-40 shrink-0 border-b border-white/[0.06] bg-[#09090b]/90 backdrop-blur-md">
+          <header className="sticky top-0 z-40 shrink-0 border-b border-white/[0.06] bg-[#09090b]/80 backdrop-blur-md">
             <div className="max-w-5xl mx-auto px-5 sm:px-6 h-14 flex items-center justify-between">
               <a href="/" className="flex items-center gap-2.5 group">
-                <div className="w-7 h-7 rounded-md bg-zinc-800 border border-white/[0.08] flex items-center justify-center">
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-                    <path
-                      d="M2 7h10M7 2v10"
-                      stroke="#a1a1aa"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                    />
-                  </svg>
+                <div
+                  className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-sm font-bold text-white shadow-md shadow-blue-500/20"
+                  aria-hidden
+                >
+                  L
                 </div>
                 <span className="text-[15px] font-semibold tracking-tight text-zinc-100">
-                  LumAgg
+                  Lum<span className="text-blue-400">Agg</span>
                 </span>
               </a>
               <div className="flex items-center gap-3 sm:gap-5">
