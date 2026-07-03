@@ -8,14 +8,14 @@ import {
   subRoutesForDisplay,
 } from '@/lib/routeDisplay';
 
-const DEX_STYLES: Record<string, { label: string; color: string; bg: string }> = {
-  soroswap: { label: 'Soroswap', color: 'text-emerald-300', bg: 'bg-emerald-500/10 border-emerald-400/25' },
-  aquarius_clmm: { label: 'Aquarius CLMM', color: 'text-cyan-300', bg: 'bg-cyan-500/10 border-cyan-400/25' },
-  aquarius: { label: 'Aquarius', color: 'text-cyan-300', bg: 'bg-cyan-500/10 border-cyan-400/25' },
-  phoenix: { label: 'Phoenix', color: 'text-orange-300', bg: 'bg-orange-500/10 border-orange-400/25' },
-  sushi: { label: 'Sushi', color: 'text-fuchsia-300', bg: 'bg-fuchsia-500/10 border-fuchsia-400/25' },
-  comet: { label: 'Comet', color: 'text-indigo-300', bg: 'bg-indigo-500/10 border-indigo-400/25' },
-  classic: { label: 'Classic DEX', color: 'text-violet-300', bg: 'bg-violet-500/10 border-violet-400/25' },
+const DEX_STYLES: Record<string, { label: string }> = {
+  soroswap: { label: 'Soroswap' },
+  aquarius_clmm: { label: 'Aquarius CLMM' },
+  aquarius: { label: 'Aquarius' },
+  phoenix: { label: 'Phoenix' },
+  sushi: { label: 'Sushi' },
+  comet: { label: 'Comet' },
+  classic: { label: 'Classic DEX' },
 };
 
 function dexStyle(dex: string) {
@@ -24,10 +24,9 @@ function dexStyle(dex: string) {
   const label = dex
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (c) => c.toUpperCase());
-  return { label, color: 'text-slate-300', bg: 'bg-slate-500/10 border-slate-300/20' };
+  return { label };
 }
 
-/** Prefer dex_types; fall back to source string (may be "a → b"). */
 function routeDexHops(route: SubRoute): string[] {
   if (route.dex_types?.length) {
     return route.dex_types;
@@ -38,15 +37,10 @@ function routeDexHops(route: SubRoute): string[] {
   return [route.source];
 }
 
-function routeCardStyle(hops: string[]) {
-  if (hops.length === 1) return dexStyle(hops[0]).bg;
-  return 'bg-slate-900/80 border-white/10';
-}
-
 function PathArrow() {
   return (
     <svg
-      className="w-3 h-3 text-slate-600 shrink-0"
+      className="w-3 h-3 text-zinc-600 shrink-0"
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"
@@ -85,18 +79,18 @@ function RouteAmountPath({
   const mids = symbols.slice(1, -1);
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400">
-      <span className="font-mono text-slate-300">{formatAmount(amountIn, tokenInDecimals)}</span>
-      <span className="text-slate-200 font-medium">{symbols[0]}</span>
+    <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
+      <span className="font-mono text-zinc-400">{formatAmount(amountIn, tokenInDecimals)}</span>
+      <span className="text-zinc-300 font-medium">{symbols[0]}</span>
       {mids.map((sym, idx) => (
         <span key={`${sym}-${idx}`} className="inline-flex items-center gap-1.5">
           <PathArrow />
-          <span className="text-slate-300 font-medium">{sym}</span>
+          <span className="text-zinc-400 font-medium">{sym}</span>
         </span>
       ))}
       <PathArrow />
-      <span className="font-mono text-slate-300">{formatAmount(amountOut, tokenOutDecimals)}</span>
-      <span className="text-slate-200 font-medium">{symbols[symbols.length - 1]}</span>
+      <span className="font-mono text-zinc-400">{formatAmount(amountOut, tokenOutDecimals)}</span>
+      <span className="text-zinc-300 font-medium">{symbols[symbols.length - 1]}</span>
     </div>
   );
 }
@@ -110,7 +104,6 @@ export function RouteDisplay({
   resolveTokenSymbol,
 }: {
   quote: QuoteData;
-  /** Display symbol for the swap's input token (avoids resolving from path). */
   tokenInSymbol?: string;
   tokenOutSymbol: string;
   tokenInDecimals?: number;
@@ -127,24 +120,23 @@ export function RouteDisplay({
   const displayRoutes = subRoutesForDisplay(quote.sub_routes, quote.amount_in);
   const hiddenLegCount = quote.sub_routes.length - displayRoutes.length;
   const outSym = tokenOutSymbol;
-  // Resolve in-symbol: prefer explicit prop, then first path element, then contract-id truncation.
   const inSym =
     tokenInSymbol ||
     (quote.sub_routes[0]?.path[0] ? resolveTokenSymbol(quote.sub_routes[0].path[0]) : '') ||
     '???';
 
   return (
-    <div className="bg-slate-900/70 rounded-2xl border border-white/10 p-4 space-y-3 backdrop-blur-xl">
+    <div className="surface-panel p-4 space-y-3">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-slate-300">Execution route</span>
+        <span className="text-[12px] font-medium text-zinc-300">Execution route</span>
         {quote.compute_time_ms !== undefined && (
-          <span className="text-[10px] text-slate-500">Quote in {quote.compute_time_ms}ms</span>
+          <span className="text-[11px] text-zinc-600">Quote in {quote.compute_time_ms}ms</span>
         )}
       </div>
 
       {quote.is_split && (
-        <div className="flex items-center gap-1.5 text-[11px] text-amber-300/90">
-          <svg className="w-3 h-3 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+        <div className="flex items-center gap-1.5 text-[11px] text-zinc-400">
+          <svg className="w-3 h-3 shrink-0 text-zinc-500" fill="currentColor" viewBox="0 0 20 20">
             <path
               fillRule="evenodd"
               d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z"
@@ -161,32 +153,31 @@ export function RouteDisplay({
         </div>
       )}
 
-      <div className="space-y-2.5">
+      <div className="space-y-2">
         {displayRoutes.map((route, i) => {
           const rate = legExchangeRate(route.amount_in, route.amount_out, tokenInDecimals, tokenOutDecimals);
           const hops = routeDexHops(route);
-          const cardBg = routeCardStyle(hops);
 
           return (
-            <div key={i} className={`rounded-lg border p-3 ${cardBg}`}>
+            <div key={i} className="rounded-lg border border-white/[0.06] bg-zinc-900/40 p-3">
               <div className="flex items-center justify-between gap-2 mb-1.5">
                 <div className="flex flex-wrap items-center gap-1 min-w-0">
                   {hops.map((dex, j) => {
-                    const { label, color } = dexStyle(dex);
+                    const { label } = dexStyle(dex);
                     return (
                       <span key={`${dex}-${j}`} className="inline-flex items-center gap-1">
-                        {j > 0 && <span className="text-slate-500 text-[10px]">→</span>}
-                        <span className={`text-xs font-medium ${color}`}>{label}</span>
+                        {j > 0 && <span className="text-zinc-600 text-[10px]">→</span>}
+                        <span className="text-[12px] font-medium text-zinc-300">{label}</span>
                       </span>
                     );
                   })}
                 </div>
                 <div className="text-right shrink-0">
-                  <span className="text-xs text-slate-300 font-mono block">
+                  <span className="text-[12px] text-zinc-400 font-mono block">
                     {formatLegPercent(route.percentage)}
                   </span>
                   {rate != null && inSym && outSym && (
-                    <span className="text-[11px] text-slate-400 font-mono">
+                    <span className="text-[11px] text-zinc-500 font-mono">
                       {formatExchangeRate(rate)} {outSym}/{inSym}
                     </span>
                   )}
@@ -206,16 +197,16 @@ export function RouteDisplay({
         })}
       </div>
 
-      <div className="border-t border-white/10 pt-3 space-y-1.5">
-        <div className="flex justify-between text-xs">
-          <span className="text-slate-500">Price impact</span>
-          <span className={quote.price_impact > 1 ? 'text-amber-300' : 'text-emerald-300'}>
+      <div className="border-t border-white/[0.06] pt-3 space-y-1.5">
+        <div className="flex justify-between text-[12px]">
+          <span className="text-zinc-500">Price impact</span>
+          <span className={quote.price_impact > 1 ? 'text-amber-400' : 'text-zinc-300'}>
             {quote.price_impact > 0 ? `~${quote.price_impact.toFixed(2)}%` : '< 0.01%'}
           </span>
         </div>
-        <div className="flex justify-between text-xs">
-          <span className="text-slate-500">Minimum received</span>
-          <span className="text-slate-300 font-mono">
+        <div className="flex justify-between text-[12px]">
+          <span className="text-zinc-500">Minimum received</span>
+          <span className="text-zinc-300 font-mono">
             {formatAmount(quote.minimum_output, tokenOutDecimals)} {tokenOutSymbol}
           </span>
         </div>

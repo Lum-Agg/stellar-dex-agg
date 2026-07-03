@@ -152,7 +152,7 @@ export function TokenSelector({
     <div className="relative">
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 bg-slate-800/70 hover:bg-slate-800 border border-white/15 rounded-xl px-3 py-2 transition-colors"
+        className="flex items-center gap-2 bg-zinc-800/80 hover:bg-zinc-800 border border-white/[0.08] rounded-lg px-3 py-2 transition-colors"
       >
         <TokenIcon token={selected} size={22} />
         <span className="font-medium text-sm">{selected.symbol}</span>
@@ -162,12 +162,11 @@ export function TokenSelector({
       </button>
 
       {open && typeof window !== 'undefined' && createPortal(
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => { setOpen(false); setSearch(''); }}>
-          <div className="bg-slate-900 border border-white/15 rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden" onClick={(e) => e.stopPropagation()}>
-            {/* Header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
-              <h3 className="text-base font-semibold">Select a token</h3>
-              <button onClick={() => { setOpen(false); setSearch(''); }} className="text-slate-400 hover:text-white">
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-[2px]" onClick={() => { setOpen(false); setSearch(''); }}>
+          <div className="bg-[#141419] border border-white/[0.1] rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06]">
+              <h3 className="text-[15px] font-semibold text-zinc-100">Select a token</h3>
+              <button onClick={() => { setOpen(false); setSearch(''); }} className="text-zinc-500 hover:text-zinc-200">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
@@ -181,7 +180,7 @@ export function TokenSelector({
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search name or paste address"
-                className="w-full bg-slate-950/60 border border-white/10 rounded-xl px-4 py-3 text-sm outline-none focus:border-blue-500/50 placeholder-slate-500"
+                className="w-full bg-[#09090b] border border-white/[0.08] rounded-lg px-4 py-3 text-[13px] outline-none focus:border-blue-500/40 placeholder-zinc-600 text-zinc-100"
                 autoFocus
               />
             </div>
@@ -192,8 +191,8 @@ export function TokenSelector({
                 <button
                   key={token.id}
                   onClick={() => { onSelect(token); setOpen(false); setSearch(''); }}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 transition-colors ${
-                    token.id === selected.id ? 'bg-blue-500/10 border border-blue-400/30' : ''
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-white/[0.03] transition-colors ${
+                    token.id === selected.id ? 'bg-white/[0.04] border border-white/[0.08]' : ''
                   }`}
                 >
                   <TokenIcon token={token} size={36} />

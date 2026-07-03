@@ -41,15 +41,15 @@ export function FaqSection() {
   const [open, setOpen] = useState<number | null>(0);
 
   return (
-    <section className="space-y-5">
-      <div className="text-center md:text-left space-y-2">
-        <p className="text-[11px] uppercase tracking-widest text-violet-400/90 font-medium">FAQ</p>
-        <h2 className="text-xl md:text-2xl font-semibold text-slate-100 tracking-tight">
+    <section className="space-y-5 pt-4 border-t border-white/[0.06]">
+      <div className="space-y-2">
+        <p className="section-label">FAQ</p>
+        <h2 className="section-title md:text-xl">
           Common questions
         </h2>
       </div>
 
-      <div className="rounded-2xl border border-white/10 bg-slate-900/40 divide-y divide-white/10 overflow-hidden">
+      <div className="surface-panel divide-y divide-white/[0.06] overflow-hidden">
         {FAQ.map((item, i) => {
           const isOpen = open === i;
           return (
@@ -60,16 +60,16 @@ export function FaqSection() {
                 className="w-full flex items-center justify-between gap-4 px-4 md:px-5 py-4 text-left hover:bg-white/[0.02] transition-colors"
                 aria-expanded={isOpen}
               >
-                <span className="text-sm font-medium text-slate-200">{item.q}</span>
+                <span className="text-[13px] font-medium text-zinc-200">{item.q}</span>
                 <span
-                  className={`shrink-0 text-slate-500 transition-transform ${isOpen ? 'rotate-45' : ''}`}
+                  className={`shrink-0 text-zinc-500 text-lg leading-none transition-transform ${isOpen ? 'rotate-45' : ''}`}
                   aria-hidden
                 >
                   +
                 </span>
               </button>
               {isOpen && (
-                <div className="px-4 md:px-5 pb-4 text-sm text-slate-400 leading-relaxed -mt-1">
+                <div className="px-4 md:px-5 pb-4 text-[13px] text-zinc-400 leading-relaxed -mt-1">
                   {item.a}
                 </div>
               )}

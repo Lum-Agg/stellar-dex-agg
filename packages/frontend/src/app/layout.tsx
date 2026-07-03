@@ -1,8 +1,14 @@
 import type { Metadata } from 'next';
+import { Inter } from 'next/font/google';
 import './globals.css';
 import { Providers } from './providers';
 import { HeaderWallet } from '@/components/HeaderWallet';
 import { GITHUB_REPO_URL } from '@/lib/site';
+
+const inter = Inter({
+  subsets: ['latin'],
+  display: 'swap',
+});
 
 export const metadata: Metadata = {
   title: 'LumAgg - Stellar DEX Aggregator',
@@ -16,35 +22,40 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark">
-      <body className="min-h-screen antialiased text-slate-100">
+      <body className={`${inter.className} min-h-screen antialiased text-zinc-100`}>
         <Providers>
-          <div className="fixed inset-0 pointer-events-none bg-[linear-gradient(to_bottom,rgba(148,163,184,0.06)_1px,transparent_1px)] bg-[size:100%_24px] opacity-20" />
-
-          <header className="sticky top-0 z-40 shrink-0 border-b border-white/10 bg-[#0a0f1be6] backdrop-blur-xl">
-            <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
-              <a href="/" className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-violet-500 flex items-center justify-center text-sm font-bold shadow-lg shadow-blue-500/20">
-                  L
+          <header className="sticky top-0 z-40 shrink-0 border-b border-white/[0.06] bg-[#09090b]/90 backdrop-blur-md">
+            <div className="max-w-5xl mx-auto px-5 sm:px-6 h-14 flex items-center justify-between">
+              <a href="/" className="flex items-center gap-2.5 group">
+                <div className="w-7 h-7 rounded-md bg-zinc-800 border border-white/[0.08] flex items-center justify-center">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+                    <path
+                      d="M2 7h10M7 2v10"
+                      stroke="#a1a1aa"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                    />
+                  </svg>
                 </div>
-                <span className="text-lg font-semibold tracking-tight text-slate-100">
-                  Lum<span className="text-blue-400">Agg</span>
+                <span className="text-[15px] font-semibold tracking-tight text-zinc-100">
+                  LumAgg
                 </span>
               </a>
-              <div className="flex items-center gap-4">
-                <nav className="hidden sm:flex items-center gap-6 text-sm text-slate-400">
-                  <a href="/" className="hover:text-white transition-colors">
+              <div className="flex items-center gap-3 sm:gap-5">
+                <nav className="hidden sm:flex items-center gap-5 text-[13px] text-zinc-400">
+                  <a href="/" className="hover:text-zinc-100 transition-colors">
                     Swap
                   </a>
-                  <a href="/docs" className="hover:text-white transition-colors">
+                  <a href="/docs" className="hover:text-zinc-100 transition-colors">
                     API Docs
                   </a>
                   <a
                     href={GITHUB_REPO_URL}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 hover:text-white transition-colors"
+                    className="inline-flex items-center gap-1.5 hover:text-zinc-100 transition-colors"
                   >
-                    <GitHubIcon className="w-4 h-4" />
+                    <GitHubIcon className="w-3.5 h-3.5" />
                     GitHub
                   </a>
                 </nav>
@@ -52,34 +63,33 @@ export default function RootLayout({
                   href={GITHUB_REPO_URL}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="sm:hidden inline-flex items-center justify-center w-9 h-9 rounded-lg border border-white/10 text-slate-400 hover:text-white hover:border-white/20 transition-colors"
+                  className="sm:hidden inline-flex items-center justify-center w-8 h-8 rounded-md border border-white/[0.08] text-zinc-400 hover:text-zinc-100 transition-colors"
                   aria-label="GitHub repository"
                 >
-                  <GitHubIcon className="w-4 h-4" />
+                  <GitHubIcon className="w-3.5 h-3.5" />
                 </a>
                 <HeaderWallet />
               </div>
             </div>
           </header>
 
-          <main className="relative max-w-4xl w-full mx-auto px-6 py-8 md:py-10 min-w-0">
+          <main className="relative max-w-5xl w-full mx-auto px-5 sm:px-6 py-10 md:py-12 min-w-0">
             {children}
           </main>
 
-          <footer className="relative border-t border-white/10 mt-12 bg-[#0a0f1b80]">
-            <div className="max-w-4xl mx-auto px-6 py-6 flex flex-col sm:flex-row items-center justify-center gap-2 sm:gap-4 text-xs text-slate-500">
-              <span className="text-center">
+          <footer className="relative border-t border-white/[0.06] mt-16">
+            <div className="max-w-5xl mx-auto px-5 sm:px-6 py-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-[13px] text-zinc-500">
+              <span className="max-w-lg leading-relaxed">
                 Mainnet routing across Aquarius, Phoenix, Soroswap, Sushi V3, Comet and Stellar Classic DEX.
               </span>
-              <span className="hidden sm:inline text-slate-600">·</span>
               <a
                 href={GITHUB_REPO_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-slate-400 hover:text-slate-200 transition-colors"
+                className="inline-flex items-center gap-1.5 text-zinc-400 hover:text-zinc-200 transition-colors shrink-0"
               >
                 <GitHubIcon className="w-3.5 h-3.5" />
-                Open source on GitHub
+                Open source
               </a>
             </div>
           </footer>
