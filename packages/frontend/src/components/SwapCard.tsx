@@ -14,7 +14,7 @@ export function SwapCard() {
   const [tokenIn, setTokenIn] = useState<Token>(TOKENS[0]);
   const [tokenOut, setTokenOut] = useState<Token>(TOKENS[1]);
   const [amountIn, setAmountIn] = useState('');
-  const [slippage, setSlippage] = useState(0.5);
+  const [slippage, setSlippage] = useState(1.0);
   const [quote, setQuote] = useState<QuoteData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
