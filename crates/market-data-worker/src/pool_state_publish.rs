@@ -3,13 +3,13 @@
 
 use {
     dex_adapters::{comet::CometAdapter, AquariusAdapter, CometPoolQuoteState, DexAdapter},
-    market_snapshot::pool_state_store::{AquariusPoolStateValue, CometPoolStateValue, CometTokenRecordValue, XykPoolStateValue},
+    market_snapshot::pool_state_store::{
+        AquariusPoolStateValue, CometPoolStateValue, CometTokenRecordValue, XykPoolStateValue,
+    },
     std::{collections::HashSet, sync::Arc},
 };
 
 const XYK_REDIS_SOURCES: &[&str] = &["soroswap", "phoenix"];
-/// Do not publish xy=k pools with dust on either side (router skips these too).
-const MIN_XYK_RESERVE_STROOPS: u128 = 100_000_000;
 
 pub fn comet_state_to_value(pool_address: &str, state: &CometPoolQuoteState) -> CometPoolStateValue {
     CometPoolStateValue {
@@ -33,6 +33,8 @@ pub fn comet_state_to_value(pool_address: &str, state: &CometPoolQuoteState) -> 
 }
 
 /// xy=k reserves from adapter caches (not written into topology snapshot).
+/// Publishes pools with known reserves (including zero); quote_engine skips
+/// unusable pools.
 pub async fn collect_xyk_pool_state(adapters: &[Arc<dyn DexAdapter>]) -> Vec<XykPoolStateValue> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
@@ -46,13 +48,6 @@ pub async fn collect_xyk_pool_state(adapters: &[Arc<dyn DexAdapter>]) -> Vec<Xyk
             let (Some(reserve_a), Some(reserve_b)) = (pair.reserve_a, pair.reserve_b) else {
                 continue;
             };
-            if reserve_a == 0 ||
-                reserve_b == 0 ||
-                reserve_a < MIN_XYK_RESERVE_STROOPS ||
-                reserve_b < MIN_XYK_RESERVE_STROOPS
-            {
-                continue;
-            }
             let pool_key = XykPoolStateValue::pool_key(source, &pair.pool_address);
             if !seen.insert(pool_key) {
                 continue;

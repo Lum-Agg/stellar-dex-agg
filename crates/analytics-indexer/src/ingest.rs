@@ -25,20 +25,14 @@ pub async fn run(config: IndexerConfig) -> Result<()> {
     );
 
     loop {
-        let latest = rpc
-            .get_latest_ledger()
-            .await
-            .context("getLatestLedger")?
-            .sequence;
+        let latest = rpc.get_latest_ledger().await.context("getLatestLedger")?.sequence;
 
         if cursor >= latest {
             tokio::time::sleep(std::time::Duration::from_secs(config.poll_secs)).await;
             continue;
         }
 
-        let end = cursor
-            .saturating_add(MAX_LEDGER_SCAN_PER_REQUEST)
-            .min(latest);
+        let end = cursor.saturating_add(MAX_LEDGER_SCAN_PER_REQUEST).min(latest);
 
         match ingest_range(&config, &store, &rpc, cursor, end).await {
             Ok(ingested) => {
@@ -88,22 +82,13 @@ async fn ingest_range(
     }];
 
     let txs = rpc
-        .get_contract_transactions(
-            start_ledger,
-            Some(end_ledger),
-            &filters,
-            config.page_limit,
-        )
+        .get_contract_transactions(start_ledger, Some(end_ledger), &filters, config.page_limit)
         .await
         .with_context(|| format!("getTransactions [{start_ledger}, {end_ledger})"))?;
 
     let mut ingested = 0u64;
     for tx in txs {
-        let parsed = match parse_envelope(
-            &tx.envelope_xdr,
-            &config.aggregator_contract,
-            tx.result_xdr.as_deref(),
-        ) {
+        let parsed = match parse_envelope(&tx.envelope_xdr, &config.aggregator_contract, tx.result_xdr.as_deref()) {
             Ok(Some(p)) => p,
             Ok(None) => continue,
             Err(e) => {
@@ -138,9 +123,7 @@ pub async fn backfill(config: IndexerConfig, start_ledger: u32) -> Result<()> {
     let mut cursor = start_ledger;
     let mut total = 0u64;
     while cursor < latest {
-        let end = cursor
-            .saturating_add(MAX_LEDGER_SCAN_PER_REQUEST)
-            .min(latest);
+        let end = cursor.saturating_add(MAX_LEDGER_SCAN_PER_REQUEST).min(latest);
         total += ingest_range(&config, &store, &rpc, cursor, end).await?;
         store.set_cursor_ledger(end)?;
         cursor = end;

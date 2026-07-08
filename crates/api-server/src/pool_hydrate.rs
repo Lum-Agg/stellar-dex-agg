@@ -8,8 +8,8 @@ use {
     },
     market_snapshot::{
         pool_state_store::{
-            parse_quote_hydrate_max_pools_from_env, AquariusPoolStateValue, CometPoolStateValue,
-            RedisPoolStateStore, XykPoolStateValue,
+            parse_quote_hydrate_max_pools_from_env, AquariusPoolStateValue, CometPoolStateValue, RedisPoolStateStore,
+            XykPoolStateValue,
         },
         ClmmPoolSnapshot,
     },

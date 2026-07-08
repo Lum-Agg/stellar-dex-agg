@@ -3,7 +3,7 @@
 use {
     anyhow::{anyhow, Context, Result},
     base64::{engine::general_purpose::STANDARD as BASE64, Engine as _},
-    stellar_strkey::{Contract, ed25519::PublicKey},
+    stellar_strkey::{ed25519::PublicKey, Contract},
     stellar_xdr::curr::{self as xdr, Limits, ReadXdr},
 };
 
@@ -39,8 +39,7 @@ pub fn parse_envelope(
     let bytes = BASE64
         .decode(envelope_xdr.trim())
         .context("decode envelope xdr base64")?;
-    let envelope = xdr::TransactionEnvelope::from_xdr(&bytes, Limits::none())
-        .context("decode transaction envelope")?;
+    let envelope = xdr::TransactionEnvelope::from_xdr(&bytes, Limits::none()).context("decode transaction envelope")?;
 
     let tx = match envelope {
         xdr::TransactionEnvelope::Tx(v1) => v1.tx,
@@ -124,15 +123,9 @@ fn parse_swap(args: &xdr::InvokeContractArgs, amount_out: Option<i128>) -> Resul
     }))
 }
 
-fn parse_round_trip_swap(
-    args: &xdr::InvokeContractArgs,
-    amount_out: Option<i128>,
-) -> Result<Option<ParsedInvocation>> {
+fn parse_round_trip_swap(args: &xdr::InvokeContractArgs, amount_out: Option<i128>) -> Result<Option<ParsedInvocation>> {
     if args.args.len() < 7 {
-        return Err(anyhow!(
-            "round_trip_swap expects 7 args, got {}",
-            args.args.len()
-        ));
+        return Err(anyhow!("round_trip_swap expects 7 args, got {}", args.args.len()));
     }
 
     let user_address = scval_address_str(&args.args[0])?;
@@ -183,12 +176,8 @@ fn parse_step(map: &xdr::ScMap, leg_index: u32, amount_in: Option<i128>) -> Resu
         .map(parse_dex_type)
         .transpose()?
         .unwrap_or_else(|| "unknown".into());
-    let token_in = get_map_field(map, "token_in")
-        .map(scval_address_str)
-        .transpose()?;
-    let token_out = get_map_field(map, "token_out")
-        .map(scval_address_str)
-        .transpose()?;
+    let token_in = get_map_field(map, "token_in").map(scval_address_str).transpose()?;
+    let token_out = get_map_field(map, "token_out").map(scval_address_str).transpose()?;
 
     Ok(ParsedLeg {
         leg_index,
@@ -224,8 +213,9 @@ fn symbol_dex_source(sym: &str) -> String {
 }
 
 fn parse_success_return_i128(_result_xdr: &str) -> Option<i128> {
-    // Soroban return values live in result meta (ScVal), not the legacy result XDR hash.
-    // v0 leaves amount_out unset; T3 can hydrate from meta or simulation if needed.
+    // Soroban return values live in result meta (ScVal), not the legacy result XDR
+    // hash. v0 leaves amount_out unset; T3 can hydrate from meta or simulation
+    // if needed.
     None
 }
 
@@ -285,11 +275,7 @@ fn get_map_i128(map: &xdr::ScMap, key: &str) -> Option<i128> {
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*,
-        stellar_strkey::ed25519::PublicKey,
-        stellar_xdr::curr::WriteXdr,
-    };
+    use {super::*, stellar_strkey::ed25519::PublicKey, stellar_xdr::curr::WriteXdr};
 
     const AGG: &str = "CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K";
     const USER: &str = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";

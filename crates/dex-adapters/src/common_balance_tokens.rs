@@ -2,7 +2,8 @@
 //!
 //! Curated for swap UI — **not** the full quote-engine catalog (~230 tokens).
 //! Sources (keep in sync when adding hubs):
-//! - [`crate::classic_dex::CLASSIC_ASSETS`] — XLM / USDC / EURC classic + Soroban paths
+//! - [`crate::classic_dex::CLASSIC_ASSETS`] — XLM / USDC / EURC classic +
+//!   Soroban paths
 //! - Frontend swap defaults (`TokenSelector` priority row)
 //! - [`crate::sushi`] pool-discovery hub list (BLND, yXLM, …)
 //! - High-volume mainnet SACs (BTC, etc.)
@@ -32,9 +33,7 @@ pub const COMMON_BALANCE_TOKEN_IDS: &[&str] = &[
 ];
 
 pub fn is_common_balance_token(contract_id: &str) -> bool {
-    contract_id.starts_with('C')
-        && contract_id.len() == 56
-        && COMMON_BALANCE_TOKEN_IDS.contains(&contract_id)
+    contract_id.starts_with('C') && contract_id.len() == 56 && COMMON_BALANCE_TOKEN_IDS.contains(&contract_id)
 }
 
 #[cfg(test)]

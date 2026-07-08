@@ -955,8 +955,7 @@ fn scval_to_i128(val: &xdr::ScVal) -> Option<i128> {
 }
 
 fn parse_account_public_key(account: &str) -> Result<stellar_strkey::ed25519::PublicKey, String> {
-    stellar_strkey::ed25519::PublicKey::from_string(account.trim())
-        .map_err(|_| "Invalid account address".to_string())
+    stellar_strkey::ed25519::PublicKey::from_string(account.trim()).map_err(|_| "Invalid account address".to_string())
 }
 
 fn account_balance_scval(user_key: &stellar_strkey::ed25519::PublicKey) -> xdr::ScVal {
@@ -965,15 +964,8 @@ fn account_balance_scval(user_key: &stellar_strkey::ed25519::PublicKey) -> xdr::
     )))
 }
 
-async fn fetch_sac_balance_stroops(
-    rpc: &dex_adapters::rpc::SorobanRpc,
-    token: &str,
-    account_arg: &xdr::ScVal,
-) -> u128 {
-    match rpc
-        .simulate_call(token, "balance", vec![account_arg.clone()])
-        .await
-    {
+async fn fetch_sac_balance_stroops(rpc: &dex_adapters::rpc::SorobanRpc, token: &str, account_arg: &xdr::ScVal) -> u128 {
+    match rpc.simulate_call(token, "balance", vec![account_arg.clone()]).await {
         Ok(val) => scval_to_i128(&val).unwrap_or(0).max(0) as u128,
         Err(_) => 0,
     }
@@ -986,10 +978,7 @@ fn collect_common_balance_token_ids() -> Vec<String> {
         .collect()
 }
 
-pub async fn get_balance(
-    State(state): State<AppState>,
-    Query(query): Query<BalanceQuery>,
-) -> impl IntoResponse {
+pub async fn get_balance(State(state): State<AppState>, Query(query): Query<BalanceQuery>) -> impl IntoResponse {
     let user_key = match parse_account_public_key(&query.account) {
         Ok(key) => key,
         Err(error) => {
@@ -1020,10 +1009,7 @@ pub async fn get_balance(
     })
 }
 
-pub async fn get_balances(
-    State(state): State<AppState>,
-    Query(query): Query<BalancesQuery>,
-) -> impl IntoResponse {
+pub async fn get_balances(State(state): State<AppState>, Query(query): Query<BalancesQuery>) -> impl IntoResponse {
     let user_key = match parse_account_public_key(&query.account) {
         Ok(key) => key,
         Err(error) => {

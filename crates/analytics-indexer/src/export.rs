@@ -28,22 +28,15 @@ pub fn export_daily(store: &IndexStore, day: &str) -> Result<DailyStats> {
 }
 
 pub fn export_all_days(store: &IndexStore) -> Result<Vec<DailyStats>> {
-    let mut stmt = store.conn().prepare(
-        "SELECT DISTINCT date(created_at, 'unixepoch') AS d FROM swap_invocations ORDER BY d",
-    )?;
-    let days: Vec<String> = stmt
-        .query_map([], |row| row.get(0))?
-        .collect::<Result<_, _>>()?;
+    let mut stmt = store
+        .conn()
+        .prepare("SELECT DISTINCT date(created_at, 'unixepoch') AS d FROM swap_invocations ORDER BY d")?;
+    let days: Vec<String> = stmt.query_map([], |row| row.get(0))?.collect::<Result<_, _>>()?;
 
     days.iter().map(|d| export_daily(store, d)).collect()
 }
 
-fn export_range(
-    store: &IndexStore,
-    start_ts: i64,
-    end_ts: i64,
-    day_label: &str,
-) -> Result<DailyStats> {
+fn export_range(store: &IndexStore, start_ts: i64, end_ts: i64, day_label: &str) -> Result<DailyStats> {
     let tx_count: i64 = store.conn().query_row(
         "SELECT COUNT(*) FROM swap_invocations WHERE created_at >= ?1 AND created_at < ?2",
         params![start_ts, end_ts],
@@ -122,14 +115,7 @@ fn export_range(
 }
 
 fn parse_day_start(day: &str) -> Result<DateTime<Utc>> {
-    Utc.with_ymd_and_hms(
-        day[0..4].parse()?,
-        day[5..7].parse()?,
-        day[8..10].parse()?,
-        0,
-        0,
-        0,
-    )
-    .single()
-    .ok_or_else(|| anyhow::anyhow!("invalid day {}", day))
+    Utc.with_ymd_and_hms(day[0..4].parse()?, day[5..7].parse()?, day[8..10].parse()?, 0, 0, 0)
+        .single()
+        .ok_or_else(|| anyhow::anyhow!("invalid day {}", day))
 }

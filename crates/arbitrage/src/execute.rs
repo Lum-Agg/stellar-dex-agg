@@ -6,7 +6,9 @@ use {
         callers::CallerPool,
         config::ArbConfig,
         context::ArbContext,
-        invoke::{build_execute_round_trip_op, build_raw_envelope_xdr, build_round_trip_swap_op, min_amount_out_for_profit},
+        invoke::{
+            build_execute_round_trip_op, build_raw_envelope_xdr, build_round_trip_swap_op, min_amount_out_for_profit,
+        },
         optimize::optimize_round_trip,
         prepare::{fetch_account_sequence, prepare_transaction_xdr},
         scanner::ArbOpportunity,

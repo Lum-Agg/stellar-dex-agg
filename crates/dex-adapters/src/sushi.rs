@@ -30,10 +30,7 @@ use {
     anyhow::{anyhow, Result},
     async_trait::async_trait,
     market_snapshot::{ClmmCoverageSnapshot, ClmmPoolSnapshot},
-    std::{
-        collections::HashMap,
-        sync::Arc,
-    },
+    std::{collections::HashMap, sync::Arc},
     stellar_xdr::curr as xdr,
     tokio::sync::RwLock,
     tracing::{debug, info, warn},

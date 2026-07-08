@@ -1,12 +1,13 @@
-use analytics_indexer::{export, ingest, store::IndexStore, IndexerConfig};
-use anyhow::{Context, Result};
+use {
+    analytics_indexer::{export, ingest, store::IndexStore, IndexerConfig},
+    anyhow::{Context, Result},
+};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "analytics_indexer=info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "analytics_indexer=info".into()),
         )
         .init();
 
@@ -51,9 +52,7 @@ async fn main() -> Result<()> {
             Ok(())
         }
         other => {
-            eprintln!(
-                "usage: analytics-indexer [run|backfill|export-daily [YYYY-MM-DD]|status]"
-            );
+            eprintln!("usage: analytics-indexer [run|backfill|export-daily [YYYY-MM-DD]|status]");
             Err(anyhow::anyhow!("unknown command: {}", other))
         }
     }

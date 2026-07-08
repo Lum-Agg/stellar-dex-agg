@@ -400,9 +400,6 @@ mod tests {
             ClmmPoolSnapshot::redis_key("sushi", "POOL"),
             "lumagg:pool:clmm:sushi:POOL"
         );
-        assert_eq!(
-            CometPoolStateValue::redis_key("POOL"),
-            "lumagg:pool:comet:POOL"
-        );
+        assert_eq!(CometPoolStateValue::redis_key("POOL"), "lumagg:pool:comet:POOL");
     }
 }

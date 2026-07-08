@@ -9,9 +9,7 @@
 
 use {
     aggregator_contract::{AggregatorContractClient, SubRoute},
-    soroban_sdk::{
-        contract, contractimpl, contracttype, token, Address, BytesN, Env, Vec,
-    },
+    soroban_sdk::{contract, contractimpl, contracttype, token, Address, BytesN, Env, Vec},
 };
 
 #[contracttype]
@@ -34,40 +32,23 @@ impl VaultContract {
     }
 
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .expect("Not initialized");
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("Not initialized");
         admin.require_auth();
         env.deployer().update_current_contract_wasm(new_wasm_hash);
     }
 
     pub fn admin(env: Env) -> Address {
-        env.storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .expect("Not initialized")
+        env.storage().instance().get(&DataKey::Admin).expect("Not initialized")
     }
 
     pub fn add_caller(env: Env, caller: Address) {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .expect("Not initialized");
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("Not initialized");
         admin.require_auth();
-        env.storage()
-            .persistent()
-            .set(&DataKey::Caller(caller.clone()), &true);
+        env.storage().persistent().set(&DataKey::Caller(caller.clone()), &true);
     }
 
     pub fn remove_caller(env: Env, caller: Address) {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .expect("Not initialized");
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("Not initialized");
         admin.require_auth();
         env.storage().persistent().remove(&DataKey::Caller(caller));
     }
@@ -89,11 +70,7 @@ impl VaultContract {
 
     /// Admin emergency withdrawal from vault balances.
     pub fn admin_withdraw(env: Env, token: Address, to: Address, amount: i128) {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .expect("Not initialized");
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("Not initialized");
         admin.require_auth();
         assert!(amount > 0, "amount must be positive");
         let vault = env.current_contract_address();
@@ -144,9 +121,7 @@ impl VaultContract {
 mod tests {
     use {
         super::*,
-        aggregator_contract::{
-            AggregatorContract, AggregatorContractClient, DexType, SubRoute, SwapStep,
-        },
+        aggregator_contract::{AggregatorContract, AggregatorContractClient, DexType, SubRoute, SwapStep},
         soroban_sdk::{testutils::Address as _, vec, Address, Env},
     };
 
@@ -175,7 +150,7 @@ mod tests {
         (id, vault)
     }
 
-  // ── Mock Aquarius Pool (1:1 swap) ──
+    // ── Mock Aquarius Pool (1:1 swap) ──
     mod aq_mock {
         use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env};
 
@@ -194,14 +169,7 @@ mod tests {
                 env.storage().instance().set(&AqKey::TokenA, &a);
                 env.storage().instance().set(&AqKey::TokenB, &b);
             }
-            pub fn swap(
-                env: Env,
-                user: Address,
-                in_idx: u32,
-                out_idx: u32,
-                in_amount: u128,
-                _min: u128,
-            ) -> u128 {
+            pub fn swap(env: Env, user: Address, in_idx: u32, out_idx: u32, in_amount: u128, _min: u128) -> u128 {
                 user.require_auth();
                 let a: Address = env.storage().instance().get(&AqKey::TokenA).unwrap();
                 let b: Address = env.storage().instance().get(&AqKey::TokenB).unwrap();
@@ -278,16 +246,7 @@ mod tests {
         ];
 
         let vault_before = token::Client::new(&env, &base).balance(&vault_id);
-        let out = vault.execute_round_trip(
-            &caller,
-            &agg.address,
-            &base,
-            &bridge,
-            &5000,
-            &leg_out,
-            &leg_back,
-            &5000,
-        );
+        let out = vault.execute_round_trip(&caller, &agg.address, &base, &bridge, &5000, &leg_out, &leg_back, &5000);
         assert_eq!(out, 5000);
         assert_eq!(token::Client::new(&env, &base).balance(&vault_id), vault_before);
     }

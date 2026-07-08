@@ -182,8 +182,7 @@ impl PathFinder {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::types::TokenId;
+    use {super::*, crate::types::TokenId};
 
     fn contract_token(address: &str) -> TokenId {
         TokenId::Contract {

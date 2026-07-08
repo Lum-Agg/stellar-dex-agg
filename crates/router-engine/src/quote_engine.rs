@@ -1221,18 +1221,20 @@ mod tests {
                     max_hops: Some(1),
                     max_splits: Some(1),
                 },
-                &engine.find_candidate_paths(&RouteRequest {
-                    token_in: TokenId::Contract {
-                        address: blnd.to_string(),
-                    },
-                    token_out: TokenId::Contract {
-                        address: usdc.to_string(),
-                    },
-                    amount_in: 100_000,
-                    slippage_bps: Some(50),
-                    max_hops: Some(1),
-                    max_splits: Some(1),
-                }).await,
+                &engine
+                    .find_candidate_paths(&RouteRequest {
+                        token_in: TokenId::Contract {
+                            address: blnd.to_string(),
+                        },
+                        token_out: TokenId::Contract {
+                            address: usdc.to_string(),
+                        },
+                        amount_in: 100_000,
+                        slippage_bps: Some(50),
+                        max_hops: Some(1),
+                        max_splits: Some(1),
+                    })
+                    .await,
                 Some(&hydration),
             )
             .await;

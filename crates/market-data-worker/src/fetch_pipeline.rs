@@ -31,9 +31,6 @@ use {
     tracing::{debug, info, warn},
 };
 
-/// Minimum reserve on either side (matches pool_state_publish dust filter).
-const MIN_XYK_RESERVE_STROOPS: u128 = 100_000_000;
-
 #[derive(Debug, Clone)]
 pub enum FetchTask {
     SoroswapBatch { pool_addresses: Vec<String> },
@@ -421,9 +418,6 @@ fn xyk_values_from_batch(
         let Some((r0, r1)) = reserves else {
             continue;
         };
-        if *r0 == 0 || *r1 == 0 || *r0 < MIN_XYK_RESERVE_STROOPS || *r1 < MIN_XYK_RESERVE_STROOPS {
-            continue;
-        }
         let Some(pair) = topology.get(addr) else {
             continue;
         };
@@ -463,13 +457,6 @@ async fn collect_xyk_from_adapter_cache(
         let (Some(reserve_a), Some(reserve_b)) = (pair.reserve_a, pair.reserve_b) else {
             continue;
         };
-        if reserve_a == 0 ||
-            reserve_b == 0 ||
-            reserve_a < MIN_XYK_RESERVE_STROOPS ||
-            reserve_b < MIN_XYK_RESERVE_STROOPS
-        {
-            continue;
-        }
         let Some(topo) = topology.get(&pair.pool_address) else {
             continue;
         };

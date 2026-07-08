@@ -1,7 +1,10 @@
 //! Refresh only ledger-touched pools and push updates to Redis.
 
 use {
-    crate::{clmm_metrics::ClmmCoverageMetrics, ledger_watcher::ledger_max_touched_refresh_from_env, pool_state_publish::comet_state_to_value},
+    crate::{
+        clmm_metrics::ClmmCoverageMetrics, ledger_watcher::ledger_max_touched_refresh_from_env,
+        pool_state_publish::comet_state_to_value,
+    },
     anyhow::Result,
     dex_adapters::{
         aquarius::AquariusAdapter, aquarius_clmm::AquariusClmmAdapter, batch_refresh::batch_refresh_soroswap_reserves,

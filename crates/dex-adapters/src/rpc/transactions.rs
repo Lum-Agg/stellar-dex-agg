@@ -37,7 +37,8 @@ pub struct TransactionFilterSpec {
 }
 
 impl SorobanRpc {
-    /// Fetch transactions touching filtered contracts in `[start_ledger, end_ledger)`.
+    /// Fetch transactions touching filtered contracts in `[start_ledger,
+    /// end_ledger)`.
     pub async fn get_contract_transactions(
         &self,
         start_ledger: u32,

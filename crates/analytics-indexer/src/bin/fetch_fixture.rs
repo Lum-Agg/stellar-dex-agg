@@ -1,10 +1,10 @@
-//! One-shot helper: scan mainnet and save the first parsed aggregator swap envelope.
+//! One-shot helper: scan mainnet and save the first parsed aggregator swap
+//! envelope.
 
-use analytics_indexer::{
-    config::DEFAULT_AGGREGATOR_CONTRACT,
-    parser::parse_envelope,
+use {
+    analytics_indexer::{config::DEFAULT_AGGREGATOR_CONTRACT, parser::parse_envelope},
+    dex_adapters::rpc::transactions::{TransactionFilterSpec, DEFAULT_TX_PAGE_LIMIT, MAX_LEDGER_SCAN_PER_REQUEST},
 };
-use dex_adapters::rpc::transactions::{TransactionFilterSpec, DEFAULT_TX_PAGE_LIMIT, MAX_LEDGER_SCAN_PER_REQUEST};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -27,11 +27,9 @@ async fn main() -> anyhow::Result<()> {
             .get_contract_transactions(cursor, Some(end), &filters, DEFAULT_TX_PAGE_LIMIT)
             .await?;
         for tx in txs {
-            if let Ok(Some(parsed)) = parse_envelope(
-                &tx.envelope_xdr,
-                DEFAULT_AGGREGATOR_CONTRACT,
-                tx.result_xdr.as_deref(),
-            ) {
+            if let Ok(Some(parsed)) =
+                parse_envelope(&tx.envelope_xdr, DEFAULT_AGGREGATOR_CONTRACT, tx.result_xdr.as_deref())
+            {
                 std::fs::write(&out, &tx.envelope_xdr)?;
                 println!(
                     "saved {} ({}, {} legs) -> {}",

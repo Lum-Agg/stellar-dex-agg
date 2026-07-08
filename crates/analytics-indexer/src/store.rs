@@ -152,11 +152,9 @@ impl IndexStore {
     }
 
     pub fn oldest_created_at(&self) -> Result<Option<i64>> {
-        let ts: Option<i64> = self.conn.query_row(
-            "SELECT MIN(created_at) FROM swap_invocations",
-            [],
-            |r| r.get(0),
-        )?;
+        let ts: Option<i64> = self
+            .conn
+            .query_row("SELECT MIN(created_at) FROM swap_invocations", [], |r| r.get(0))?;
         Ok(ts)
     }
 
