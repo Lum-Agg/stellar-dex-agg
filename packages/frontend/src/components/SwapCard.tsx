@@ -2,7 +2,8 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { getQuote, type QuoteData } from '@/lib/aggregator';
-import { fetchSpendableBalanceStroops } from '@/lib/balance';
+import { formatBalanceDisplay, percentToAmountInput } from '@/lib/balance';
+import { useAccountBalances } from '@/lib/account-balances-context';
 import { useWallet } from '@/lib/wallet-context';
 import { RouteDisplay } from './RouteDisplay';
 import { TokenSelector, type Token, TOKENS, useTokenList } from './TokenSelector';
@@ -19,6 +20,7 @@ export function SwapCard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { address: walletAddress, signTx, connect, connecting } = useWallet();
+  const { getBalance, ensureBalance, loading: balancesLoading, ready: balancesReady, refresh: refreshBalances } = useAccountBalances();
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
   const tokenList = useTokenList();
   const resolveTokenSymbol = useMemo(() => {
@@ -85,6 +87,23 @@ export function SwapCard() {
   const [swapping, setSwapping] = useState(false);
   const [txResult, setTxResult] = useState<{ success: boolean; hash?: string; error?: string } | null>(null);
 
+  const balanceStroops = walletAddress ? getBalance(tokenIn.id) : null;
+
+  useEffect(() => {
+    if (!walletAddress || !balancesReady) return;
+    void ensureBalance(tokenIn.id);
+  }, [walletAddress, balancesReady, tokenIn.id, ensureBalance]);
+
+  const applyBalancePercent = useCallback(
+    (percent: number) => {
+      if (balanceStroops === null || balanceStroops === BigInt(0)) return;
+      setAmountIn(percentToAmountInput(balanceStroops, percent, tokenIn.decimals, tokenIn.id));
+      setQuote(null);
+      setTxResult(null);
+    },
+    [balanceStroops, tokenIn.decimals, tokenIn.id]
+  );
+
   const handleSwap = useCallback(async () => {
     if (!walletAddress || !quote) return;
     if (!quote.sub_routes?.length) {
@@ -120,12 +139,9 @@ export function SwapCard() {
         return;
       }
 
-      const balance = await fetchSpendableBalanceStroops(
-        walletAddress,
-        tokenIn.id,
-        tokenIn.decimals
-      );
-      if (balance !== null && BigInt(totalAmountIn) > balance) {
+      const cached = getBalance(tokenIn.id);
+      const balance = cached ?? (await ensureBalance(tokenIn.id)) ?? BigInt(0);
+      if (BigInt(totalAmountIn) > balance) {
         const have = Number(balance) / 10 ** tokenIn.decimals;
         const need = Number(totalAmountIn) / 10 ** tokenIn.decimals;
         setTxResult({
@@ -181,6 +197,7 @@ export function SwapCard() {
         setTxResult({ success: true, hash: submitData.hash });
         setAmountIn('');
         setQuote(null);
+        void refreshBalances();
       } else {
         const errMsg = submitData.extras?.result_codes?.operations?.[0] || submitData.title || 'Transaction failed';
         setTxResult({ success: false, error: errMsg });
@@ -190,7 +207,7 @@ export function SwapCard() {
     } finally {
       setSwapping(false);
     }
-  }, [walletAddress, quote, tokenIn, tokenOut, amountIn, signTx]);
+  }, [walletAddress, quote, tokenIn, tokenOut, amountIn, signTx, refreshBalances, getBalance, ensureBalance]);
 
   const handlePrimaryAction = useCallback(() => {
     if (!walletAddress) {
@@ -246,8 +263,19 @@ export function SwapCard() {
         </div>
 
         <div className="surface-panel-raised p-4">
-          <div className="flex justify-between text-[12px] text-zinc-500 mb-2">
+          <div className="flex justify-between items-center text-[12px] text-zinc-500 mb-2 gap-2">
             <span>You pay</span>
+            {walletAddress && (
+              <span className="text-zinc-400 truncate">
+                {balancesLoading && !balancesReady ? (
+                  'Balance…'
+                ) : balanceStroops !== null ? (
+                  <>Balance: {formatBalanceDisplay(balanceStroops, tokenIn.decimals)} {tokenIn.symbol}</>
+                ) : (
+                  'Balance unavailable'
+                )}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <input
@@ -263,10 +291,24 @@ export function SwapCard() {
             />
             <TokenSelector
               selected={tokenIn}
-              onSelect={(t) => { setTokenIn(t); setQuote(null); }}
+              onSelect={(t) => { setTokenIn(t); setQuote(null); setAmountIn(''); }}
               exclude={tokenOut.id}
             />
           </div>
+          {walletAddress && balancesReady && balanceStroops !== null && balanceStroops > BigInt(0) && (
+            <div className="flex items-center gap-1.5 mt-3">
+              {[25, 50, 75, 100].map((pct) => (
+                <button
+                  key={pct}
+                  type="button"
+                  onClick={() => applyBalancePercent(pct)}
+                  className="px-2 py-1 rounded-md text-[11px] text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/80 border border-transparent hover:border-white/[0.08] transition-colors"
+                >
+                  {pct === 100 ? 'Max' : `${pct}%`}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="flex justify-center -my-2.5 relative z-10">

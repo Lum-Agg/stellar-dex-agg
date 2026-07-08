@@ -6,6 +6,7 @@ import { Networks } from '@creit.tech/stellar-wallets-kit/types';
 import { FreighterModule } from '@creit.tech/stellar-wallets-kit/modules/freighter';
 import { xBullModule } from '@creit.tech/stellar-wallets-kit/modules/xbull';
 import { LobstrModule } from '@creit.tech/stellar-wallets-kit/modules/lobstr';
+import { AccountBalancesProvider } from '@/lib/account-balances-context';
 
 export interface WalletState {
   address: string | null;
@@ -80,7 +81,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   return (
     <WalletContext.Provider value={{ address, connecting, connect, disconnect, signTx }}>
-      {children}
+      <AccountBalancesProvider>{children}</AccountBalancesProvider>
     </WalletContext.Provider>
   );
 }

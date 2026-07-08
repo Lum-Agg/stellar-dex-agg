@@ -28,6 +28,7 @@ pub mod classic_dex;
 pub mod clmm_math;
 pub mod comet;
 pub mod comet_math;
+pub mod common_balance_tokens;
 pub mod dex_event_kinds;
 pub mod phoenix;
 pub mod pool_index;
@@ -46,6 +47,7 @@ pub use {
     cache::{default_cache_path, PoolCache},
     classic_dex::{classic_horizon_to_xdr, ClassicDexAdapter, ClassicHorizonAsset, ClassicPathQuote, CLASSIC_ASSETS},
     comet::{quote_comet_pool, CometAdapter, CometPoolQuoteState, COMET_FACTORY_MAINNET},
+    common_balance_tokens::{is_common_balance_token, COMMON_BALANCE_TOKEN_IDS},
     rpc::SorobanRpc,
     sushi::SushiAdapter,
     token_registry::TokenRegistry,

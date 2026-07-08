@@ -28,7 +28,9 @@ pub async fn api_root() -> impl IntoResponse {
             "health": "/api/v1/health",
             "quote": "/api/v1/quote",
             "build_tx": "/api/v1/build_tx",
-            "tokens": "/api/v1/tokens"
+            "tokens": "/api/v1/tokens",
+            "balance": "/api/v1/balance",
+            "balances": "/api/v1/balances"
         },
         "repository": "https://github.com/Lum-Agg/stellar-dex-agg"
     }))
@@ -904,6 +906,175 @@ pub async fn list_tokens(State(state): State<AppState>) -> impl IntoResponse {
         .collect();
 
     Json(TokensResponse { tokens })
+}
+
+// ============================================================
+// GET /api/v1/balance & /api/v1/balances
+// ============================================================
+
+#[derive(Deserialize)]
+pub struct BalanceQuery {
+    pub account: String,
+    pub token: String,
+}
+
+#[derive(Deserialize)]
+pub struct BalancesQuery {
+    pub account: String,
+}
+
+#[derive(Serialize)]
+pub struct BalanceResponse {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub balance: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct BalancesResponse {
+    pub success: bool,
+    pub account: String,
+    /// `common` = curated list in dex-adapters `COMMON_BALANCE_TOKEN_IDS`.
+    pub scope: String,
+    pub tokens_queried: Vec<String>,
+    pub balances: std::collections::HashMap<String, String>,
+    pub updated_at_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+const BALANCE_FETCH_CONCURRENCY: usize = 24;
+
+fn scval_to_i128(val: &xdr::ScVal) -> Option<i128> {
+    match val {
+        xdr::ScVal::I128(parts) => Some(((parts.hi as i128) << 64) | (parts.lo as i128)),
+        _ => None,
+    }
+}
+
+fn parse_account_public_key(account: &str) -> Result<stellar_strkey::ed25519::PublicKey, String> {
+    stellar_strkey::ed25519::PublicKey::from_string(account.trim())
+        .map_err(|_| "Invalid account address".to_string())
+}
+
+fn account_balance_scval(user_key: &stellar_strkey::ed25519::PublicKey) -> xdr::ScVal {
+    xdr::ScVal::Address(xdr::ScAddress::Account(xdr::AccountId(
+        xdr::PublicKey::PublicKeyTypeEd25519(xdr::Uint256(user_key.0)),
+    )))
+}
+
+async fn fetch_sac_balance_stroops(
+    rpc: &dex_adapters::rpc::SorobanRpc,
+    token: &str,
+    account_arg: &xdr::ScVal,
+) -> u128 {
+    match rpc
+        .simulate_call(token, "balance", vec![account_arg.clone()])
+        .await
+    {
+        Ok(val) => scval_to_i128(&val).unwrap_or(0).max(0) as u128,
+        Err(_) => 0,
+    }
+}
+
+fn collect_common_balance_token_ids() -> Vec<String> {
+    dex_adapters::COMMON_BALANCE_TOKEN_IDS
+        .iter()
+        .map(|id| (*id).to_string())
+        .collect()
+}
+
+pub async fn get_balance(
+    State(state): State<AppState>,
+    Query(query): Query<BalanceQuery>,
+) -> impl IntoResponse {
+    let user_key = match parse_account_public_key(&query.account) {
+        Ok(key) => key,
+        Err(error) => {
+            return Json(BalanceResponse {
+                success: false,
+                balance: None,
+                error: Some(error),
+            });
+        }
+    };
+
+    let token = query.token.trim();
+    if token.is_empty() {
+        return Json(BalanceResponse {
+            success: false,
+            balance: None,
+            error: Some("Missing token contract id".to_string()),
+        });
+    }
+
+    let account_arg = account_balance_scval(&user_key);
+    let balance = fetch_sac_balance_stroops(&state.rpc, token, &account_arg).await;
+
+    Json(BalanceResponse {
+        success: true,
+        balance: Some(balance.to_string()),
+        error: None,
+    })
+}
+
+pub async fn get_balances(
+    State(state): State<AppState>,
+    Query(query): Query<BalancesQuery>,
+) -> impl IntoResponse {
+    let user_key = match parse_account_public_key(&query.account) {
+        Ok(key) => key,
+        Err(error) => {
+            return Json(BalancesResponse {
+                success: false,
+                account: query.account,
+                scope: "common".to_string(),
+                tokens_queried: vec![],
+                balances: std::collections::HashMap::new(),
+                updated_at_ms: 0,
+                error: Some(error),
+            });
+        }
+    };
+
+    let token_ids = collect_common_balance_token_ids();
+    let tokens_queried = token_ids.clone();
+    let account_arg = account_balance_scval(&user_key);
+    let rpc = state.rpc.clone();
+
+    let mut balances = std::collections::HashMap::new();
+    for chunk in token_ids.chunks(BALANCE_FETCH_CONCURRENCY) {
+        let mut tasks = Vec::with_capacity(chunk.len());
+        for token in chunk {
+            let rpc = rpc.clone();
+            let account_arg = account_arg.clone();
+            let token = token.clone();
+            tasks.push(async move {
+                let amount = fetch_sac_balance_stroops(&rpc, &token, &account_arg).await;
+                (token, amount)
+            });
+        }
+        for (token, amount) in futures::future::join_all(tasks).await {
+            if amount > 0 {
+                balances.insert(token, amount.to_string());
+            }
+        }
+    }
+
+    Json(BalancesResponse {
+        success: true,
+        account: query.account.trim().to_string(),
+        scope: "common".to_string(),
+        tokens_queried,
+        balances,
+        updated_at_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+        error: None,
+    })
 }
 
 // ============================================================

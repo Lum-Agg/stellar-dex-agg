@@ -35,6 +35,8 @@ pub async fn run_server() -> anyhow::Result<()> {
         .route("/api/v1/quote", get(handlers::get_quote))
         .route("/api/v1/build_tx", post(handlers::build_tx))
         .route("/api/v1/tokens", get(handlers::list_tokens))
+        .route("/api/v1/balance", get(handlers::get_balance))
+        .route("/api/v1/balances", get(handlers::get_balances))
         .route("/api/v1/health", get(handlers::health_check))
         .layer(middleware::from_fn_with_state(
             limiter.clone(),

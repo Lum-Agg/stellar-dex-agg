@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { displayTokenSymbol } from '@/lib/tokenDisplay';
+import { useAccountBalances } from '@/lib/account-balances-context';
+import { formatBalanceDisplay } from '@/lib/balance';
 
 export interface Token {
   id: string;
@@ -140,6 +142,7 @@ export function TokenSelector({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const tokens = useTokenList();
+  const { getBalance, ready: balancesReady } = useAccountBalances();
 
   const filtered = tokens.filter(t =>
     t.id !== exclude &&
@@ -187,7 +190,9 @@ export function TokenSelector({
 
             {/* Token list */}
             <div className="max-h-[400px] overflow-y-auto px-2 pb-4">
-              {filtered.slice(0, 50).map(token => (
+              {filtered.slice(0, 50).map(token => {
+                const bal = balancesReady ? getBalance(token.id) : null;
+                return (
                 <button
                   key={token.id}
                   onClick={() => { onSelect(token); setOpen(false); setSearch(''); }}
@@ -200,13 +205,18 @@ export function TokenSelector({
                     <div className="text-sm font-semibold">{token.symbol}</div>
                     <div className="text-xs text-slate-500 truncate">{token.name}</div>
                   </div>
+                  {bal !== null && bal > BigInt(0) && (
+                    <div className="text-xs text-zinc-400 tabular-nums shrink-0">
+                      {formatBalanceDisplay(bal, token.decimals)}
+                    </div>
+                  )}
                   {token.id === selected.id && (
-                    <svg className="w-4 h-4 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+                    <svg className="w-4 h-4 text-blue-400 shrink-0" fill="currentColor" viewBox="0 0 20 20">
                       <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                     </svg>
                   )}
                 </button>
-              ))}
+              );})}
               {filtered.length > 50 && (
                 <div className="px-4 py-3 text-xs text-slate-500 text-center">
                   {filtered.length - 50} more tokens — type to search
