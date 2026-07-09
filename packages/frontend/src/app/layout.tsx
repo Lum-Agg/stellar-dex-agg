@@ -13,6 +13,10 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: 'LumAgg - Stellar DEX Aggregator',
   description: 'Best swap rates across Stellar DEXes. Split orders for optimal execution.',
+  icons: {
+    icon: '/favicon.ico',
+    shortcut: '/favicon.ico',
+  },
 };
 
 export default function RootLayout({
