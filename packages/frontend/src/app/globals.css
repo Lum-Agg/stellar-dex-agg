@@ -223,6 +223,13 @@ body {
   color: var(--text-secondary);
 }
 
+.docs-hint {
+  margin: 0 0 0.75rem;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
 .docs-section-label {
   margin: 0 0 0.625rem;
   font-size: 0.6875rem;

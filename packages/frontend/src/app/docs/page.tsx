@@ -14,33 +14,48 @@ const TOKENS: Record<string, string> = {
   EURC: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
 };
 
-/** Static Try-it body: 1 XLM, min_out = 1 stroop (docs only; use /quote in production). */
-const BUILD_TX_EXAMPLE_JSON = JSON.stringify(
-  {
-    user_public_key: 'GA6RKSBPI2TSP52OW2IJTPK7LRMX24DF42KF3FBGBNMBYCV6NPDMOCBY',
-    token_in: TOKENS.XLM,
-    token_out: TOKENS.USDC,
-    amount_in: '10000000',
-    min_amount_out: '1',
-    sub_routes: [
-      {
-        amount_in: '10000000',
-        steps: [
-          {
-            dex_type: 'aquarius',
-            pool_address: 'CDKVJYMN34ZIEXSLNFYHVAFF6M6FM5E2U6OHXOTBKH2WLBULXOE53YDP',
-            token_in: TOKENS.XLM,
-            token_out: TOKENS.USDC,
-            in_idx: 0,
-            out_idx: 1,
-          },
-        ],
-      },
-    ],
-  },
-  null,
-  2,
-);
+const DEMO_USER = 'GA6RKSBPI2TSP52OW2IJTPK7LRMX24DF42KF3FBGBNMBYCV6NPDMOCBY';
+
+type QuoteSubRoute = {
+  path: string[];
+  pool_addresses: string[];
+  dex_types: string[];
+  in_indices: number[];
+  out_indices: number[];
+  amount_in: string;
+};
+
+type QuotePayload = {
+  amount_in: string;
+  minimum_output: string;
+  sub_routes: QuoteSubRoute[];
+};
+
+function quoteToBuildTxBody(
+  userPublicKey: string,
+  tokenIn: string,
+  tokenOut: string,
+  quote: QuotePayload,
+) {
+  return {
+    user_public_key: userPublicKey,
+    token_in: tokenIn,
+    token_out: tokenOut,
+    amount_in: quote.amount_in,
+    min_amount_out: quote.minimum_output,
+    sub_routes: quote.sub_routes.map((sr) => ({
+      amount_in: sr.amount_in,
+      steps: sr.dex_types.map((dexType, i) => ({
+        dex_type: dexType,
+        pool_address: sr.pool_addresses[i],
+        token_in: sr.path[i],
+        token_out: sr.path[i + 1],
+        in_idx: sr.in_indices[i],
+        out_idx: sr.out_indices[i],
+      })),
+    })),
+  };
+}
 
 type Param = { name: string; type: string; required: boolean; desc: string };
 
@@ -105,7 +120,7 @@ export default function DocsPage() {
         <Endpoint
           method="POST"
           path="/api/v1/build_tx"
-          description="Optional: unsigned XDR from a quote. You can also assemble txs locally (see sample)."
+          description="Optional: unsigned XDR from a quote. Try-it fetches GET /quote first, then posts the live sub_routes here."
           params={[
             { name: 'user_public_key', type: 'string', required: true, desc: 'G... address' },
             { name: 'token_in', type: 'string', required: true, desc: 'Input token' },
@@ -295,20 +310,47 @@ function QuoteTryIt() {
 }
 
 function BuildTxTryIt() {
-  const [body, setBody] = useState(BUILD_TX_EXAMPLE_JSON);
+  const [userKey, setUserKey] = useState(DEMO_USER);
+  const [tokenIn, setTokenIn] = useState('XLM');
+  const [tokenOut, setTokenOut] = useState('USDC');
+  const [amount, setAmount] = useState('1');
+  const [slippage, setSlippage] = useState('1');
+  const [requestBody, setRequestBody] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const run = async () => {
     setLoading(true);
     setResult(null);
+    setRequestBody(null);
+    const tokenInId = TOKENS[tokenIn];
+    const tokenOutId = TOKENS[tokenOut];
+    const stroops = (parseFloat(amount) * 10_000_000).toFixed(0);
     try {
-      const resp = await fetch(`${API_URL}/api/v1/build_tx`, {
+      const quoteResp = await fetch(
+        `${API_URL}/api/v1/quote?${new URLSearchParams({
+          token_in: tokenInId,
+          token_out: tokenOutId,
+          amount_in: stroops,
+          slippage,
+        })}`,
+      );
+      const quoteJson = await quoteResp.json();
+      if (!quoteJson.success || !quoteJson.data?.sub_routes?.length) {
+        setResult(JSON.stringify(quoteJson, null, 2));
+        setLoading(false);
+        return;
+      }
+
+      const buildBody = quoteToBuildTxBody(userKey.trim(), tokenInId, tokenOutId, quoteJson.data);
+      setRequestBody(JSON.stringify(buildBody, null, 2));
+
+      const buildResp = await fetch(`${API_URL}/api/v1/build_tx`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body,
+        body: JSON.stringify(buildBody),
       });
-      setResult(JSON.stringify(await resp.json(), null, 2));
+      setResult(JSON.stringify(await buildResp.json(), null, 2));
     } catch (e: unknown) {
       setResult(`Error: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -317,10 +359,52 @@ function BuildTxTryIt() {
 
   return (
     <>
-      <textarea className="docs-textarea" value={body} onChange={(e) => setBody(e.target.value)} rows={12} />
-      <button type="button" className="docs-btn docs-btn--spaced" onClick={run} disabled={loading}>
-        {loading ? '…' : 'Send'}
-      </button>
+      <p className="docs-hint">
+        Calls <code>GET /quote</code> first so pool addresses and token indices match live routing.
+      </p>
+      <div className="docs-form-row">
+        <Field label="User (G…)">
+          <input
+            className="docs-input"
+            value={userKey}
+            onChange={(e) => setUserKey(e.target.value)}
+            spellCheck={false}
+          />
+        </Field>
+        <Field label="From">
+          <select className="docs-input" value={tokenIn} onChange={(e) => setTokenIn(e.target.value)}>
+            {Object.keys(TOKENS).map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="To">
+          <select className="docs-input" value={tokenOut} onChange={(e) => setTokenOut(e.target.value)}>
+            {Object.keys(TOKENS).map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Amount">
+          <input className="docs-input docs-input--narrow" value={amount} onChange={(e) => setAmount(e.target.value)} />
+        </Field>
+        <Field label="Slippage %">
+          <input className="docs-input docs-input--narrow" value={slippage} onChange={(e) => setSlippage(e.target.value)} />
+        </Field>
+        <button type="button" className="docs-btn" onClick={run} disabled={loading}>
+          {loading ? '…' : 'Quote → build_tx'}
+        </button>
+      </div>
+      {requestBody && (
+        <>
+          <p className="docs-hint">POST /api/v1/build_tx body (from quote):</p>
+          <pre className="docs-out">{requestBody}</pre>
+        </>
+      )}
       {result && <pre className="docs-out">{result}</pre>}
     </>
   );
