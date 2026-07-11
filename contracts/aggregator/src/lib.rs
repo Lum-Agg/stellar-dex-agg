@@ -12,56 +12,17 @@
 //! Users approve token transfers, the contract executes swaps, and outputs go
 //! directly back to the user — all in one atomic invocation.
 
+pub use lumagg_contract_types::{DexType, SubRoute, SwapStep};
 use soroban_sdk::{
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
     contract, contractimpl, contracttype, token, Address, BytesN, Env, IntoVal, Symbol, Val, Vec,
 };
-
-/// Supported DEX protocol types
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum DexType {
-    Aquarius,
-    SoroswapPair,
-    Phoenix,
-    Sushi,
-    CometDex,
-}
 
 /// Storage keys
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
     Admin,
-}
-
-/// A single swap step in the aggregation path
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct SwapStep {
-    /// DEX pool contract address
-    pub dex_id: Address,
-    /// Which DEX protocol
-    pub dex_type: DexType,
-    /// Input token for this step
-    pub token_in: Address,
-    /// Output token for this step
-    pub token_out: Address,
-    /// Input token index in the pool's token list (0-based)
-    pub in_idx: u32,
-    /// Output token index in the pool's token list (0-based)
-    pub out_idx: u32,
-}
-
-/// A sub-route in a split order.
-/// Each sub-route has its own amount and path (sequence of swap steps).
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct SubRoute {
-    /// Amount of input token allocated to this sub-route
-    pub amount_in: i128,
-    /// Swap steps for this sub-route (multi-hop path)
-    pub steps: Vec<SwapStep>,
 }
 
 #[contract]

@@ -8,9 +8,23 @@
 //! 3. Transfer returned base token from caller → vault (principal + profit)
 
 use {
-    aggregator_contract::{AggregatorContractClient, SubRoute},
-    soroban_sdk::{contract, contractimpl, contracttype, token, Address, BytesN, Env, Vec},
+    lumagg_contract_types::SubRoute,
+    soroban_sdk::{contract, contractclient, contractimpl, contracttype, token, Address, BytesN, Env, Vec},
 };
+
+#[contractclient(name = "AggregatorContractClient")]
+pub trait AggregatorContract {
+    fn round_trip_swap(
+        env: Env,
+        user: Address,
+        base_token: Address,
+        bridge_token: Address,
+        amount_in: i128,
+        leg_out: Vec<SubRoute>,
+        leg_back: Vec<SubRoute>,
+        min_amount_out: i128,
+    ) -> i128;
+}
 
 #[contracttype]
 #[derive(Clone)]
@@ -121,7 +135,8 @@ impl VaultContract {
 mod tests {
     use {
         super::*,
-        aggregator_contract::{AggregatorContract, AggregatorContractClient, DexType, SubRoute, SwapStep},
+        aggregator_contract::AggregatorContract,
+        lumagg_contract_types::{DexType, SubRoute, SwapStep},
         soroban_sdk::{testutils::Address as _, vec, Address, Env},
     };
 
@@ -136,9 +151,9 @@ mod tests {
         (addr, sac)
     }
 
-    fn setup_agg(env: &Env) -> AggregatorContractClient<'_> {
+    fn setup_agg(env: &Env) -> aggregator_contract::AggregatorContractClient<'_> {
         let id = env.register_contract(None, AggregatorContract);
-        let agg = AggregatorContractClient::new(env, &id);
+        let agg = aggregator_contract::AggregatorContractClient::new(env, &id);
         agg.initialize(&gen_addr(env));
         agg
     }

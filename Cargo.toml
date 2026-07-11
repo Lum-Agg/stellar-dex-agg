@@ -9,6 +9,7 @@ members = [
     "crates/analytics-indexer",
     "crates/lumagg-alerts",
     "crates/sdk",
+    "contracts/shared-types",
     "contracts/aggregator",
     "contracts/vault"
 ]

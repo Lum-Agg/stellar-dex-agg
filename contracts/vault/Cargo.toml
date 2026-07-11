@@ -10,11 +10,12 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 soroban-sdk = "22.0.0"
-aggregator-contract = { path = "../aggregator", default-features = false }
+lumagg-contract-types = { path = "../shared-types" }
 
 [dev-dependencies]
 soroban-sdk = { version = "22.0.0", features = ["testutils"] }
 aggregator-contract = { path = "../aggregator", default-features = false }
+lumagg-contract-types = { path = "../shared-types" }
 
 [profile.release]
 opt-level = "z"

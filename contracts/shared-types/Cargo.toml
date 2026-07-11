@@ -1,0 +1,12 @@
+[package]
+name = "lumagg-contract-types"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/Lum-Agg/stellar-dex-agg"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+soroban-sdk = "22.0.0"
