@@ -209,6 +209,7 @@ async fn snapshot_quote_succeeds_for_sushi_clmm_pool() {
             slippage_bps: Some(50),
             max_hops: Some(1),
             max_splits: Some(1),
+            prefer_soroban: None,
         })
         .await;
 
@@ -231,6 +232,7 @@ async fn snapshot_quote_succeeds_for_aquarius_clmm_pool() {
             slippage_bps: Some(50),
             max_hops: Some(1),
             max_splits: Some(1),
+            prefer_soroban: None,
         })
         .await;
 
@@ -254,6 +256,7 @@ async fn snapshot_quote_succeeds_for_classic_when_live_adapter_is_attached() {
             slippage_bps: Some(50),
             max_hops: Some(1),
             max_splits: Some(1),
+            prefer_soroban: None,
         })
         .await;
 

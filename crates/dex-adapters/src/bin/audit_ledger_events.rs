@@ -9,7 +9,10 @@ use {
         dex_event_kinds::{classify_topic_op, primary_topic_op, DexEventKind},
         pool_index::{touched_pools_from_events, KnownPoolIndex},
         router_events::pools_from_router_event,
-        rpc::{events::ContractEvent, SorobanRpc},
+        rpc::{
+            events::{event_value_xdr, ContractEvent},
+            SorobanRpc,
+        },
         soroswap::SOROSWAP_ROUTER,
     },
     market_snapshot::MarketSnapshot,
@@ -201,7 +204,11 @@ fn audit_ledger(events: &[ContractEvent], index: &KnownPoolIndex) -> LedgerStats
         let is_router = event.contract_id == AQUARIUS_ROUTER || event.contract_id == SOROSWAP_ROUTER;
         if is_router {
             stats.router_events += 1;
-            let parsed = pools_from_router_event(&event.contract_id, event.topic.as_deref(), event.value.as_deref());
+            let parsed = pools_from_router_event(
+                &event.contract_id,
+                event.topic.as_deref(),
+                event_value_xdr(event.value.as_ref()),
+            );
             if parsed.is_empty() {
                 stats.router_parse_failed += 1;
             } else {

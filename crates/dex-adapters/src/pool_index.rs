@@ -76,8 +76,11 @@ pub fn touched_pools_from_events(events: &[ContractEvent], index: &KnownPoolInde
             touched.insert(pool.clone());
             continue;
         }
-        for pool_address in pools_from_router_event(&event.contract_id, event.topic.as_deref(), event.value.as_deref())
-        {
+        for pool_address in pools_from_router_event(
+            &event.contract_id,
+            event.topic.as_deref(),
+            crate::rpc::events::event_value_xdr(event.value.as_ref()),
+        ) {
             index.insert_if_known(&mut touched, &pool_address);
         }
     }
@@ -114,6 +117,8 @@ mod tests {
             contract_id: POOL.to_string(),
             id: "1-1".to_string(),
             tx_hash: "a".repeat(64),
+            ledger_closed_at: None,
+            in_successful_contract_call: None,
             value: None,
             topic: None,
         }];
@@ -166,7 +171,9 @@ mod tests {
             contract_id: AQUARIUS_ROUTER.to_string(),
             id: "1-2".to_string(),
             tx_hash: "b".repeat(64),
-            value: Some(b64(&body)),
+            ledger_closed_at: None,
+            in_successful_contract_call: None,
+            value: Some(serde_json::Value::String(b64(&body))),
             topic: Some(vec![b64(&topic)]),
         }];
         let touched = touched_pools_from_events(&events, &index);

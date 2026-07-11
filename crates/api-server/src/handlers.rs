@@ -32,6 +32,14 @@ pub async fn api_root() -> impl IntoResponse {
             "balance": "/api/v1/balance",
             "balances": "/api/v1/balances"
         },
+        "docs": {
+            "openapi": "https://github.com/Lum-Agg/stellar-dex-agg/blob/main/docs/openapi.yaml",
+            "integrator_guide": "https://github.com/Lum-Agg/stellar-dex-agg/blob/main/docs/integrator-guide.md"
+        },
+        "rate_limits": {
+            "anonymous": "10 requests/second per IP",
+            "partner": "60 requests/second per X-API-Key (contact team for key)"
+        },
         "repository": "https://github.com/Lum-Agg/stellar-dex-agg"
     }))
 }
@@ -47,6 +55,8 @@ pub struct QuoteQuery {
     pub amount_in: String,
     pub slippage: Option<f64>,
     pub debug: Option<u8>,
+    /// When `1` or `true`, exclude Classic SDEX paths (Soroban AMMs only).
+    pub prefer_soroban: Option<u8>,
 }
 
 #[derive(Serialize)]
@@ -158,6 +168,7 @@ pub async fn get_quote(State(state): State<AppState>, Query(params): Query<Quote
         slippage_bps: Some(slippage_bps),
         max_hops: None,
         max_splits: None,
+        prefer_soroban: params.prefer_soroban.map(|v| v != 0),
     };
 
     let engine = state.current_engine().await;
@@ -402,6 +413,7 @@ pub async fn build_swap(State(state): State<AppState>, Json(body): Json<SwapRequ
         slippage_bps: Some(slippage_bps),
         max_hops: None,
         max_splits: None,
+        prefer_soroban: None,
     };
 
     let engine = state.current_engine().await;

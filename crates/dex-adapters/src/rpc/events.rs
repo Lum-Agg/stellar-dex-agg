@@ -23,14 +23,26 @@ pub struct ContractEvent {
     #[serde(rename = "type")]
     pub event_type: String,
     pub ledger: u32,
+    #[serde(rename = "contractId")]
     pub contract_id: String,
     pub id: String,
+    #[serde(rename = "txHash")]
     pub tx_hash: String,
-    /// Base64-encoded event payload XDR (when returned by RPC).
+    #[serde(rename = "ledgerClosedAt", default)]
+    pub ledger_closed_at: Option<String>,
+    #[serde(rename = "inSuccessfulContractCall", default)]
+    pub in_successful_contract_call: Option<bool>,
+    /// Base64-encoded event payload XDR (ScVal), or `{"xdr":"..."}` from some
+    /// RPCs.
     #[serde(default)]
-    pub value: Option<String>,
+    pub value: Option<serde_json::Value>,
     #[serde(default)]
     pub topic: Option<Vec<String>>,
+}
+
+/// Event `value` may be a bare XDR base64 string or `{"xdr":"..."}`.
+pub fn event_value_xdr(value: Option<&serde_json::Value>) -> Option<&str> {
+    value.and_then(|v| v.as_str().or_else(|| v.get("xdr").and_then(|x| x.as_str())))
 }
 
 #[derive(Debug, Clone)]
@@ -175,8 +187,12 @@ impl SorobanRpc {
             id: String,
             #[serde(rename = "txHash")]
             tx_hash: String,
+            #[serde(rename = "ledgerClosedAt", default)]
+            ledger_closed_at: Option<String>,
+            #[serde(rename = "inSuccessfulContractCall", default)]
+            in_successful_contract_call: Option<bool>,
             #[serde(default)]
-            value: Option<String>,
+            value: Option<serde_json::Value>,
             #[serde(default)]
             topic: Option<Vec<String>>,
         }
@@ -202,6 +218,8 @@ impl SorobanRpc {
                     contract_id: e.contract_id,
                     id: e.id,
                     tx_hash: e.tx_hash,
+                    ledger_closed_at: e.ledger_closed_at,
+                    in_successful_contract_call: e.in_successful_contract_call,
                     value: e.value,
                     topic: e.topic,
                 })

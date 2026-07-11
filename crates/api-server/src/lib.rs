@@ -28,7 +28,7 @@ pub async fn run_server() -> anyhow::Result<()> {
 
     let listen_addr: SocketAddr = config.listen_addr.parse()?;
     let app_state = AppState::new(config).await?;
-    let limiter = rate_limit::IpRateLimiter::new(10, std::time::Duration::from_secs(1));
+    let rate_limit = rate_limit::RateLimitState::from_env();
 
     let app = Router::new()
         .route("/", get(handlers::api_root))
@@ -39,8 +39,8 @@ pub async fn run_server() -> anyhow::Result<()> {
         .route("/api/v1/balances", get(handlers::get_balances))
         .route("/api/v1/health", get(handlers::health_check))
         .layer(middleware::from_fn_with_state(
-            limiter.clone(),
-            rate_limit::ip_rate_limit_middleware,
+            rate_limit.clone(),
+            rate_limit::rate_limit_middleware,
         ))
         .layer(CorsLayer::permissive())
         .with_state(app_state);

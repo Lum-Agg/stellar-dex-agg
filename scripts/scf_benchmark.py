@@ -15,8 +15,12 @@ from datetime import datetime, timezone
 from typing import Any
 
 LUMAGG_API = os.environ.get("LUMAGG_API", "https://api.lumagg.xyz").rstrip("/")
+LUMAGG_PREFER_SOROBAN = os.environ.get("LUMAGG_PREFER_SOROBAN", "").strip() in ("1", "true", "yes")
 SOROSWAP_API_URL = os.environ.get("SOROSWAP_API_URL", "https://api.soroswap.finance").rstrip("/")
 SOROSWAP_API_KEY = os.environ.get("SOROSWAP_API_KEY", "").strip()
+SOROSWAP_PROTOCOLS = os.environ.get(
+    "SOROSWAP_PROTOCOLS", "soroswap,phoenix,aqua"
+).strip()
 OUTPUT = os.environ.get("OUTPUT", "").strip()
 
 XLM = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
@@ -75,15 +79,16 @@ def http_post_json(url: str, body: dict[str, Any], headers: dict[str, str], time
 
 
 def lumagg_quote(token_in: str, token_out: str, amount_in: int) -> LumAggQuote:
-    params = urllib.parse.urlencode(
-        {
-            "token_in": token_in,
-            "token_out": token_out,
-            "amount_in": str(amount_in),
-            "slippage": "0.5",
-            "debug": "1",
-        }
-    )
+    query = {
+        "token_in": token_in,
+        "token_out": token_out,
+        "amount_in": str(amount_in),
+        "slippage": "0.5",
+        "debug": "1",
+    }
+    if LUMAGG_PREFER_SOROBAN:
+        query["prefer_soroban"] = "1"
+    params = urllib.parse.urlencode(query)
     url = f"{LUMAGG_API}/api/v1/quote?{params}"
     try:
         raw = http_get_json(url)
@@ -107,12 +112,13 @@ def soroswap_quote(token_in: str, token_out: str, amount_in: int) -> SoroswapQuo
     if not SOROSWAP_API_KEY:
         return SoroswapQuote(None, error="SOROSWAP_API_KEY not set")
     url = f"{SOROSWAP_API_URL}/quote?network=mainnet"
+    protocols = [p.strip() for p in SOROSWAP_PROTOCOLS.split(",") if p.strip()]
     body = {
         "assetIn": token_in,
         "assetOut": token_out,
         "amount": str(amount_in),
         "tradeType": "EXACT_IN",
-        "protocols": ["soroswap", "phoenix", "aqua"],
+        "protocols": protocols,
     }
     headers = {
         "Authorization": f"Bearer {SOROSWAP_API_KEY}",
@@ -170,7 +176,7 @@ def notes_for_case(pair: str, lumagg: LumAggQuote) -> str:
         return lumagg.error
     parts: list[str] = []
     if "classic_dex" in lumagg.sources:
-        parts.append("LumAgg picked Classic DEX (Soroswap column is Soroban+SDEX mix — interpret carefully)")
+        parts.append("LumAgg picked Classic DEX")
     if any("clmm" in s or s == "sushi" for s in lumagg.sources):
         parts.append("CLMM venue in route")
     if lumagg.is_split:
@@ -187,20 +193,24 @@ def run_benchmark() -> str:
         "",
         f"Generated: **{ts}**",
         "",
-        f"- LumAgg API: `{LUMAGG_API}`",
-        f"- Soroswap API: `{SOROSWAP_API_URL}` "
+        f"- LumAgg API: `{LUMAGG_API}`"
+        + (" (`prefer_soroban=1`)" if LUMAGG_PREFER_SOROBAN else " (all venues)"),
+        f"- Soroswap API: `{SOROSWAP_API_URL}` protocols=`{SOROSWAP_PROTOCOLS}` "
         + ("(key provided)" if has_soroswap else "(**no API key** — Soroswap column empty)"),
         "",
         "Reproduce:",
         "",
         "```bash",
         "./scripts/scf-benchmark.sh",
-        "# With Soroswap:",
-        "SOROSWAP_API_KEY=sk_... OUTPUT=docs/scf-benchmark-results.md ./scripts/scf-benchmark.sh",
+        "# Soroban-only fair compare:",
+        "LUMAGG_PREFER_SOROBAN=1 SOROSWAP_PROTOCOLS=soroswap,phoenix,aqua SOROSWAP_API_KEY=sk_... ./scripts/scf-benchmark.sh",
+        "# Full compare (include SDEX on both sides when LumAgg omits prefer_soroban):",
+        "SOROSWAP_PROTOCOLS=soroswap,phoenix,aqua,sdex SOROSWAP_API_KEY=sk_... ./scripts/scf-benchmark.sh",
+        "OUTPUT=docs/scf-benchmark-results.md ./scripts/scf-benchmark.sh",
         "```",
         "",
-        "> **Interpretation:** USDC→XLM and XLM→AQUA exercise Soroban pools (often Aquarius CLMM). "
-        "XLM→USDC may route via Classic DEX when SDEX path wins — not apples-to-apples vs Soroswap Soroban-only. "
+        "> **Interpretation:** Use `LUMAGG_PREFER_SOROBAN=1` + Soroswap without `sdex` for Soroban-only rows. "
+        "Include `sdex` in `SOROSWAP_PROTOCOLS` when comparing full aggregation. "
         "Positive Δ = LumAgg higher output for same `amount_in`.",
         "",
     ]
@@ -242,9 +252,9 @@ def run_benchmark() -> str:
             if soroswap.amount_out is not None and not lumagg.error:
                 if not outputs_comparable(lumagg.amount_out, soroswap.amount_out):
                     note = (
-                        f"{note}; ⚠️ outputs not comparable (>3× gap — Classic DEX vs Soroban mix)"
+                        f"{note}; ⚠️ outputs not comparable (>3× gap — check venue / token mismatch)"
                         if note != "—"
-                        else "⚠️ outputs not comparable (>3× gap — Classic DEX vs Soroban mix)"
+                        else "⚠️ outputs not comparable (>3× gap — check venue / token mismatch)"
                     )
                     delta = "n/a"
                 else:

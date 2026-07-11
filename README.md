@@ -357,6 +357,8 @@ Brent tolerance defaults to `0.0001` (0.01%) with up to 18 iterations — simila
 
 | Doc | Topic |
 |-----|-------|
+| [`docs/integrator-guide.md`](docs/integrator-guide.md) | Partner quickstart — quote, build_tx, API keys, `prefer_soroban` |
+| [`docs/openapi.yaml`](docs/openapi.yaml) | OpenAPI 3 spec for `/quote`, `/build_tx`, `/tokens`, `/health` |
 | [`docs/analytics-indexer.md`](docs/analytics-indexer.md) | On-chain analytics indexer v0 — attribution spec, env, export |
 | [`docs/pool-state-architecture.md`](docs/pool-state-architecture.md) | Pool state design, env tables, code pointers |
 | [`docs/scf-venue-comparison.md`](docs/scf-venue-comparison.md) | LumAgg vs Soroswap / Stellar Broker — venue coverage & SCF differentiation evidence |

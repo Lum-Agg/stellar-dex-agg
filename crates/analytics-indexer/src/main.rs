@@ -44,6 +44,8 @@ async fn main() -> Result<()> {
                 serde_json::to_string_pretty(&serde_json::json!({
                     "db_path": config.db_path,
                     "aggregator_contract": config.aggregator_contract,
+                    "index_mode": format!("{:?}", config.index_mode),
+                    "envelope_fallback": config.envelope_fallback,
                     "cursor_ledger": cursor,
                     "invocation_count": count,
                     "oldest_created_at": oldest,

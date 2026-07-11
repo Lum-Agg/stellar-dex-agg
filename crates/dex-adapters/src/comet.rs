@@ -195,7 +195,11 @@ impl CometAdapter {
                 .get_contract_events(cursor_start, Some(end), &filters, 10_000)
                 .await?;
             for event in &events {
-                if let Some(value_b64) = &event.value {
+                let value_b64 = event
+                    .value
+                    .as_ref()
+                    .and_then(|v| v.as_str().or_else(|| v.get("xdr").and_then(|x| x.as_str())));
+                if let Some(value_b64) = value_b64 {
                     if let Some(hash) = contract_hash_from_storage_xdr(value_b64) {
                         pool_hashes.insert(hash);
                     }

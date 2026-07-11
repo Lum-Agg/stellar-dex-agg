@@ -25,6 +25,7 @@ pub async fn quote_leg(
         slippage_bps: Some(ctx.config.slippage_bps),
         max_hops: Some(ctx.config.max_hops),
         max_splits: Some(ctx.config.max_splits),
+        prefer_soroban: None,
     };
 
     let paths = ctx.engine.find_candidate_paths(&request).await;

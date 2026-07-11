@@ -9,7 +9,10 @@ use {
         aquarius::AQUARIUS_ROUTER,
         pool_index::{touched_pools_from_events, KnownPoolIndex},
         router_events::pools_from_router_event,
-        rpc::{events::ContractEvent, SorobanRpc},
+        rpc::{
+            events::{event_value_xdr, ContractEvent},
+            SorobanRpc,
+        },
         soroswap::SOROSWAP_ROUTER,
         utils::is_contract_address,
     },
@@ -109,7 +112,8 @@ async fn main() -> anyhow::Result<()> {
                 soroswap_router_events += 1;
             }
             if e.contract_id == AQUARIUS_ROUTER || e.contract_id == SOROSWAP_ROUTER {
-                let parsed = pools_from_router_event(&e.contract_id, e.topic.as_deref(), e.value.as_deref());
+                let parsed =
+                    pools_from_router_event(&e.contract_id, e.topic.as_deref(), event_value_xdr(e.value.as_ref()));
                 if parsed.is_empty() {
                     router_parse_fail += 1;
                 } else {
@@ -135,7 +139,7 @@ async fn main() -> anyhow::Result<()> {
                 tx_hash: &e.tx_hash,
                 topic: e.topic.as_deref(),
                 topic_decoded: decode_topics(e.topic.as_deref()),
-                value: e.value.as_deref(),
+                value: event_value_xdr(e.value.as_ref()),
                 annotations: EventAnnotations {
                     is_known_pool_contract: index.lookup_contract(&e.contract_id).is_some(),
                     is_aquarius_router: e.contract_id == AQUARIUS_ROUTER,
@@ -143,12 +147,16 @@ async fn main() -> anyhow::Result<()> {
                     router_parsed_pools: pools_from_router_event(
                         &e.contract_id,
                         e.topic.as_deref(),
-                        e.value.as_deref(),
+                        event_value_xdr(e.value.as_ref()),
                     ),
                     in_touched_set: index.lookup_contract(&e.contract_id).is_some() ||
-                        pools_from_router_event(&e.contract_id, e.topic.as_deref(), e.value.as_deref())
-                            .into_iter()
-                            .any(|addr| touched_addrs.contains(&addr)),
+                        pools_from_router_event(
+                            &e.contract_id,
+                            e.topic.as_deref(),
+                            event_value_xdr(e.value.as_ref()),
+                        )
+                        .into_iter()
+                        .any(|addr| touched_addrs.contains(&addr)),
                 },
             };
             use std::io::Write;

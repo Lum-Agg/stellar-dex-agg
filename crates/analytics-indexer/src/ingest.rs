@@ -1,13 +1,17 @@
-//! Poll Soroban RPC and persist aggregator invocations.
+//! Poll Soroban RPC `getEvents` and persist aggregator analytics events.
 
 use {
     crate::{
         config::{IndexerConfig, DEFAULT_LOOKBACK_LEDGERS},
+        events::build_invocations_from_events,
         parser::parse_envelope,
         store::{IndexStore, StoredInvocation},
     },
     anyhow::{Context, Result},
-    dex_adapters::rpc::transactions::{TransactionFilterSpec, MAX_LEDGER_SCAN_PER_REQUEST},
+    dex_adapters::rpc::{
+        events::{EventFilterSpec, MAX_LEDGER_SCAN_PER_REQUEST},
+        transactions::TransactionFilterSpec,
+    },
     tracing::{info, warn},
 };
 
@@ -19,6 +23,7 @@ pub async fn run(config: IndexerConfig) -> Result<()> {
     let mut cursor = resolve_start_ledger(&store, &config, &rpc).await?;
     info!(
         aggregator = %config.aggregator_contract,
+        mode = %config.index_mode,
         cursor,
         db = %config.db_path,
         "analytics indexer started"
@@ -39,7 +44,7 @@ pub async fn run(config: IndexerConfig) -> Result<()> {
                 store.set_cursor_ledger(end)?;
                 cursor = end;
                 if ingested > 0 {
-                    info!(ingested, cursor, "indexed aggregator txs");
+                    info!(ingested, cursor, "indexed invocations");
                 }
             }
             Err(e) => {
@@ -77,39 +82,54 @@ async fn ingest_range(
     start_ledger: u32,
     end_ledger: u32,
 ) -> Result<u64> {
-    let filters = vec![TransactionFilterSpec {
-        contract_ids: Some(vec![config.aggregator_contract.clone()]),
-    }];
+    let mut records = Vec::new();
 
-    let txs = rpc
-        .get_contract_transactions(start_ledger, Some(end_ledger), &filters, config.page_limit)
-        .await
-        .with_context(|| format!("getTransactions [{start_ledger}, {end_ledger})"))?;
+    if config.use_events() {
+        let filters = vec![EventFilterSpec {
+            contract_ids: Some(vec![config.aggregator_contract.clone()]),
+            topics: None,
+        }];
+        let events = rpc
+            .get_contract_events(start_ledger, Some(end_ledger), &filters, config.page_limit)
+            .await
+            .with_context(|| format!("getEvents [{start_ledger}, {end_ledger})"))?;
+        records.extend(build_invocations_from_events(&events)?);
+    }
+
+    if config.envelope_fallback {
+        let filters = vec![TransactionFilterSpec {
+            contract_ids: Some(vec![config.aggregator_contract.clone()]),
+        }];
+        let txs = rpc
+            .get_contract_transactions(start_ledger, Some(end_ledger), &filters, config.page_limit)
+            .await
+            .with_context(|| format!("getTransactions [{start_ledger}, {end_ledger})"))?;
+
+        for tx in txs {
+            let parsed = match parse_envelope(&tx.envelope_xdr, &config.aggregator_contract, tx.result_xdr.as_deref()) {
+                Ok(Some(p)) => p,
+                Ok(None) => continue,
+                Err(e) => {
+                    warn!(tx = %tx.tx_hash, error = %e, "failed to parse envelope");
+                    continue;
+                }
+            };
+            records.push(StoredInvocation {
+                tx_hash: tx.tx_hash.clone(),
+                ledger: tx.ledger,
+                created_at: tx.created_at,
+                status: tx.status.clone(),
+                parsed,
+            });
+        }
+    }
 
     let mut ingested = 0u64;
-    for tx in txs {
-        let parsed = match parse_envelope(&tx.envelope_xdr, &config.aggregator_contract, tx.result_xdr.as_deref()) {
-            Ok(Some(p)) => p,
-            Ok(None) => continue,
-            Err(e) => {
-                warn!(tx = %tx.tx_hash, error = %e, "failed to parse envelope");
-                continue;
-            }
-        };
-
-        let record = StoredInvocation {
-            tx_hash: tx.tx_hash.clone(),
-            ledger: tx.ledger,
-            created_at: tx.created_at,
-            status: tx.status.clone(),
-            parsed,
-        };
-
+    for record in records {
         if store.insert_invocation(&record)? {
             ingested += 1;
         }
     }
-
     Ok(ingested)
 }
 

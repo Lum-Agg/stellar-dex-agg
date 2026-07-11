@@ -126,6 +126,8 @@ pub struct RouteRequest {
     pub max_hops: Option<usize>,
     /// Maximum number of splits (default: 5)
     pub max_splits: Option<usize>,
+    /// When true, exclude Stellar Classic DEX (SDEX) paths — Soroban AMMs only.
+    pub prefer_soroban: Option<bool>,
 }
 
 /// Result of transaction simulation.

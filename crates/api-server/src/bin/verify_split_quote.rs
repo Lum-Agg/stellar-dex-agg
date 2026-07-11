@@ -207,6 +207,7 @@ async fn quote_split_locally(
         slippage_bps: Some(50),
         max_hops: None,
         max_splits: None,
+        prefer_soroban: None,
     };
     let paths = engine.find_candidate_paths(&request).await;
     let hydration = hydrate_for_paths(engine, &paths, pool_store, rpc).await;

@@ -26,6 +26,9 @@ AGGREGATOR="${AGGREGATOR:-CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC
 NETWORK_PASSPHRASE="${NETWORK_PASSPHRASE:-Public Global Stellar Network ; September 2015}"
 RPC_URL="${RPC_URL:-https://mainnet.sorobanrpc.com}"
 TX_POLL_SECS="${TX_POLL_SECS:-180}"
+# Mainnet WASM upload/upgrade often needs higher fees than CLI defaults (TxInsufficientFee).
+RESOURCE_FEE="${RESOURCE_FEE:-200000000}"
+INCLUSION_FEE="${INCLUSION_FEE:-5000000}"
 
 compute_wasm_hash() {
   openssl dgst -sha256 "$1" | awk '{print $2}'
@@ -96,7 +99,7 @@ run_stellar_tx() {
 }
 
 echo "=== Building aggregator WASM (release) ==="
-stellar contract build --release --optimize 2>/dev/null || {
+stellar contract build --optimize 2>/dev/null || {
   echo "stellar contract build --optimize failed, trying cargo + stellar optimize..."
   cargo build -p aggregator-contract --target wasm32v1-none --release
   WASM=""
@@ -143,7 +146,9 @@ echo "=== Uploading WASM via RPC ($RPC_URL) ==="
 if ! run_stellar_tx "WASM upload" stellar contract upload \
   --rpc-url "$RPC_URL" \
   --network-passphrase "$NETWORK_PASSPHRASE" \
-  --source "$ADMIN" \
+  --source-account "$ADMIN" \
+  --resource-fee "$RESOURCE_FEE" \
+  --inclusion-fee "$INCLUSION_FEE" \
   --wasm "$WASM"; then
   echo ""
   echo "Upload did not confirm. You can retry with another RPC:"
@@ -158,9 +163,11 @@ fi
 echo "=== Upgrading contract $AGGREGATOR ==="
 if ! run_stellar_tx "contract upgrade" stellar contract invoke \
   --id "$AGGREGATOR" \
-  --source "$ADMIN" \
+  --source-account "$ADMIN" \
   --rpc-url "$RPC_URL" \
   --network-passphrase "$NETWORK_PASSPHRASE" \
+  --resource-fee "${UPGRADE_RESOURCE_FEE:-50000000}" \
+  --inclusion-fee "$INCLUSION_FEE" \
   -- \
   upgrade \
   --new_wasm_hash "$WASM_HASH"; then

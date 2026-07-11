@@ -230,6 +230,7 @@ mod tests {
                 slippage_bps: Some(50),
                 max_hops: Some(1),
                 max_splits: Some(1),
+                prefer_soroban: None,
             })
             .await;
 
@@ -258,6 +259,7 @@ mod tests {
                 slippage_bps: Some(50),
                 max_hops: Some(1),
                 max_splits: Some(1),
+                prefer_soroban: None,
             })
             .await;
 

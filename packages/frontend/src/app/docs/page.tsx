@@ -72,6 +72,22 @@ export default function DocsPage() {
           <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer">
             github.com/Lum-Agg/stellar-dex-agg
           </a>
+          {' · '}
+          <a
+            href={`${GITHUB_REPO_URL}/blob/main/docs/openapi.yaml`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            OpenAPI
+          </a>
+          {' · '}
+          <a
+            href={`${GITHUB_REPO_URL}/blob/main/docs/integrator-guide.md`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Integrator guide
+          </a>
         </p>
         <dl className="docs-ref">
           <div className="docs-ref-row">
@@ -113,6 +129,7 @@ export default function DocsPage() {
             { name: 'token_out', type: 'string', required: true, desc: 'Output token (contract id)' },
             { name: 'amount_in', type: 'string', required: true, desc: 'Stroops, 7 decimals' },
             { name: 'slippage', type: 'number', required: false, desc: 'Percent, e.g. 0.5' },
+            { name: 'prefer_soroban', type: '0 | 1', required: false, desc: '1 = Soroban AMMs only (exclude Classic SDEX)' },
           ]}
           tryIt={<QuoteTryIt />}
         />

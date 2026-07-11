@@ -145,7 +145,15 @@ impl AggregatorContract {
         let token_in_client = token::Client::new(&env, &token_in);
         token_in_client.transfer(&user, &contract_addr, &total_in);
 
-        let total_output = Self::execute_sub_routes(&env, &token_in, &token_out, &sub_routes, &contract_addr);
+        let mut leg_counter: u32 = 0;
+        let total_output = Self::execute_sub_routes(
+            &env,
+            &token_in,
+            &token_out,
+            &sub_routes,
+            &contract_addr,
+            &mut leg_counter,
+        );
 
         // Slippage: per-hop pool mins are 0; only check total output here (all
         // sub_routes summed).
@@ -154,6 +162,18 @@ impl AggregatorContract {
         // Transfer total output to user
         let token_out_client = token::Client::new(&env, &token_out);
         token_out_client.transfer(&contract_addr, &user, &total_output);
+
+        env.events().publish(
+            (Symbol::new(&env, "swap"),),
+            (
+                user.clone(),
+                token_in.clone(),
+                token_out.clone(),
+                total_in,
+                total_output,
+                sub_routes.len() as u32,
+            ),
+        );
 
         total_output
     }
@@ -188,6 +208,8 @@ impl AggregatorContract {
 
         let contract_addr = env.current_contract_address();
 
+        let mut leg_counter: u32 = 0;
+
         let mut leg_out_in: i128 = 0;
         for sr in leg_out.iter() {
             leg_out_in += sr.amount_in;
@@ -198,7 +220,14 @@ impl AggregatorContract {
         let base_client = token::Client::new(&env, &base_token);
         base_client.transfer(&user, &contract_addr, &amount_in);
 
-        let bridge_total = Self::execute_sub_routes(&env, &base_token, &bridge_token, &leg_out, &contract_addr);
+        let bridge_total = Self::execute_sub_routes(
+            &env,
+            &base_token,
+            &bridge_token,
+            &leg_out,
+            &contract_addr,
+            &mut leg_counter,
+        );
         assert!(bridge_total > 0, "leg_out produced zero bridge token");
 
         let mut leg_back_in: i128 = 0;
@@ -210,11 +239,30 @@ impl AggregatorContract {
             "leg_back amounts must sum to leg_out output"
         );
 
-        let base_total = Self::execute_sub_routes(&env, &bridge_token, &base_token, &leg_back, &contract_addr);
+        let base_total = Self::execute_sub_routes(
+            &env,
+            &bridge_token,
+            &base_token,
+            &leg_back,
+            &contract_addr,
+            &mut leg_counter,
+        );
 
         assert!(base_total >= min_amount_out, "Output below minimum");
 
         base_client.transfer(&contract_addr, &user, &base_total);
+
+        env.events().publish(
+            (Symbol::new(&env, "rt"),),
+            (
+                user.clone(),
+                base_token.clone(),
+                bridge_token.clone(),
+                amount_in,
+                base_total,
+                leg_counter,
+            ),
+        );
 
         base_total
     }
@@ -227,6 +275,7 @@ impl AggregatorContract {
         token_out: &Address,
         sub_routes: &Vec<SubRoute>,
         contract_addr: &Address,
+        leg_counter: &mut u32,
     ) -> i128 {
         assert!(!sub_routes.is_empty(), "Empty sub_routes");
 
@@ -239,7 +288,7 @@ impl AggregatorContract {
             if let Some(last_step) = sr.steps.last() {
                 assert!(last_step.token_out == *token_out, "Sub-route must end with token_out");
             }
-            let output = Self::execute_path(env, &sr.steps, sr.amount_in, contract_addr);
+            let output = Self::execute_path(env, &sr.steps, sr.amount_in, contract_addr, leg_counter);
             total_output += output;
         }
         total_output
@@ -254,18 +303,49 @@ impl AggregatorContract {
 
     /// Execute a path (sequence of swap steps) and return the final output
     /// amount.
-    fn execute_path(env: &Env, steps: &Vec<SwapStep>, amount_in: i128, my_address: &Address) -> i128 {
+    fn execute_path(
+        env: &Env,
+        steps: &Vec<SwapStep>,
+        amount_in: i128,
+        my_address: &Address,
+        leg_counter: &mut u32,
+    ) -> i128 {
         let mut current_amount = amount_in;
 
         for step in steps.iter() {
-            current_amount = Self::execute_step(env, &step, current_amount, my_address);
+            current_amount = Self::execute_step(env, &step, current_amount, my_address, leg_counter);
         }
 
         current_amount
     }
 
+    fn dex_tag(dex_type: &DexType) -> u32 {
+        match dex_type {
+            DexType::Aquarius => 0,
+            DexType::SoroswapPair => 1,
+            DexType::Phoenix => 2,
+            DexType::Sushi => 3,
+            DexType::CometDex => 4,
+        }
+    }
+
     /// Execute a single swap step on the appropriate DEX.
-    fn execute_step(env: &Env, step: &SwapStep, amount_in: i128, my_address: &Address) -> i128 {
+    fn execute_step(env: &Env, step: &SwapStep, amount_in: i128, my_address: &Address, leg_counter: &mut u32) -> i128 {
+        let output = Self::execute_step_inner(env, step, amount_in, my_address);
+        env.events().publish(
+            (Symbol::new(env, "leg"),),
+            (
+                *leg_counter,
+                Self::dex_tag(&step.dex_type),
+                step.dex_id.clone(),
+                amount_in,
+            ),
+        );
+        *leg_counter += 1;
+        output
+    }
+
+    fn execute_step_inner(env: &Env, step: &SwapStep, amount_in: i128, my_address: &Address) -> i128 {
         match step.dex_type {
             DexType::Aquarius => {
                 // Aquarius pool: swap(user, in_idx, out_idx, in_amount, out_min) -> u128

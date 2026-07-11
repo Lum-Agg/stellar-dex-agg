@@ -48,6 +48,7 @@ async fn collect_paths_for_base(ctx: &ArbContext, base: &router_engine::TokenId)
                 slippage_bps: Some(ctx.config.slippage_bps),
                 max_hops: Some(ctx.config.max_hops),
                 max_splits: Some(ctx.config.max_splits),
+                prefer_soroban: None,
             };
             paths.extend(ctx.engine.find_candidate_paths(&request).await);
         }

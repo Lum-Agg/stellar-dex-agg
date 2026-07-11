@@ -307,6 +307,16 @@ impl QuoteEngine {
         let start = std::time::Instant::now();
         let slippage_bps = request.slippage_bps.unwrap_or(50);
 
+        let paths: Vec<Path> = if request.prefer_soroban.unwrap_or(false) {
+            paths
+                .iter()
+                .filter(|path| !Self::is_classic_only_path(path))
+                .cloned()
+                .collect()
+        } else {
+            paths.to_vec()
+        };
+
         if paths.is_empty() {
             debug!(
                 token_in = %request.token_in,
@@ -955,12 +965,64 @@ mod tests {
                 slippage_bps: Some(50),
                 max_hops: Some(1),
                 max_splits: Some(5),
+                prefer_soroban: None,
             })
             .await;
 
         assert_eq!(route.sub_orders.len(), 1);
         assert_eq!(route.sub_orders[0].path.sources, vec![CLASSIC_SOURCE.to_string()]);
         assert!(!route.is_split);
+    }
+
+    #[tokio::test]
+    async fn quote_prefer_soroban_skips_classic_even_when_better() {
+        let engine = QuoteEngine::new(PathFinderConfig::default(), SplitConfig::default());
+        engine
+            .update_pairs_from_cache(
+                CLASSIC_SOURCE,
+                &[pair(CLASSIC_SOURCE, "classic-pool", 100_000_000, 100_000_000)],
+            )
+            .await;
+        engine
+            .update_pairs_from_cache("soroswap", &[pair("soroswap", "soro-pool", 100_000_000, 100_000_000)])
+            .await;
+        engine
+            .update_pairs_from_cache("aquarius", &[pair("aquarius", "aqua-pool", 100_000_000, 100_000_000)])
+            .await;
+
+        let route = engine
+            .get_route(&RouteRequest {
+                token_in: token("token-in"),
+                token_out: token("token-out"),
+                amount_in: 5_000,
+                slippage_bps: Some(50),
+                max_hops: Some(1),
+                max_splits: Some(5),
+                prefer_soroban: Some(true),
+            })
+            .await;
+
+        assert!(!route.sub_orders.is_empty());
+        assert!(route
+            .sub_orders
+            .iter()
+            .all(|order| order.path.sources.iter().all(|source| source != CLASSIC_SOURCE)));
+        // Default routing would pick Classic for this size; prefer_soroban must not.
+        let default_route = engine
+            .get_route(&RouteRequest {
+                token_in: token("token-in"),
+                token_out: token("token-out"),
+                amount_in: 5_000,
+                slippage_bps: Some(50),
+                max_hops: Some(1),
+                max_splits: Some(5),
+                prefer_soroban: None,
+            })
+            .await;
+        assert_eq!(
+            default_route.sub_orders[0].path.sources,
+            vec![CLASSIC_SOURCE.to_string()]
+        );
     }
 
     #[tokio::test]
@@ -984,6 +1046,7 @@ mod tests {
                 slippage_bps: Some(50),
                 max_hops: Some(1),
                 max_splits: Some(5),
+                prefer_soroban: None,
             })
             .await;
 
@@ -1025,6 +1088,7 @@ mod tests {
                 slippage_bps: Some(50),
                 max_hops: Some(1),
                 max_splits: Some(1),
+                prefer_soroban: None,
             })
             .await;
 
@@ -1066,6 +1130,7 @@ mod tests {
                 slippage_bps: Some(50),
                 max_hops: Some(1),
                 max_splits: Some(1),
+                prefer_soroban: None,
             })
             .await;
 
@@ -1105,6 +1170,7 @@ mod tests {
                 slippage_bps: Some(50),
                 max_hops: Some(1),
                 max_splits: Some(1),
+                prefer_soroban: None,
             })
             .await;
 
@@ -1143,6 +1209,7 @@ mod tests {
                 slippage_bps: Some(50),
                 max_hops: Some(1),
                 max_splits: Some(1),
+                prefer_soroban: None,
             })
             .await;
 
@@ -1220,6 +1287,7 @@ mod tests {
                     slippage_bps: Some(50),
                     max_hops: Some(1),
                     max_splits: Some(1),
+                    prefer_soroban: None,
                 },
                 &engine
                     .find_candidate_paths(&RouteRequest {
@@ -1233,6 +1301,7 @@ mod tests {
                         slippage_bps: Some(50),
                         max_hops: Some(1),
                         max_splits: Some(1),
+                        prefer_soroban: None,
                     })
                     .await,
                 Some(&hydration),

@@ -8,8 +8,10 @@
 #
 # Env:
 #   LUMAGG_API          default https://api.lumagg.xyz
+#   LUMAGG_PREFER_SOROBAN  set to 1 for Soroban-only LumAgg quotes
 #   SOROSWAP_API_URL    default https://api.soroswap.finance
 #   SOROSWAP_API_KEY    optional (register at https://api.soroswap.finance/register)
+#   SOROSWAP_PROTOCOLS  comma-separated, default soroswap,phoenix,aqua (add sdex for full compare)
 #   OUTPUT              if set, write markdown to this path (also printed to stdout)
 set -euo pipefail
 
