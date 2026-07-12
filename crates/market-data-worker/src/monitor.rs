@@ -51,6 +51,7 @@ pub fn spawn_telegram_monitor(
     shared: Arc<RwLock<WorkerShared>>,
     pool_state_store: Option<Arc<RedisPoolStateStore>>,
     api_health_url: String,
+    rpc_url: String,
 ) {
     tokio::spawn(async move {
         let heartbeat_secs = std::env::var("TELEGRAM_HEARTBEAT_INTERVAL_SECS")
@@ -69,6 +70,7 @@ pub fn spawn_telegram_monitor(
                 &shared,
                 pool_state_store.as_deref(),
                 &api_health_url,
+                &rpc_url,
             )
             .await
             {
@@ -101,6 +103,7 @@ async fn build_heartbeat_message(
     shared: &RwLock<WorkerShared>,
     pool_store: Option<&RedisPoolStateStore>,
     api_health_url: &str,
+    rpc_url: &str,
 ) -> anyhow::Result<String> {
     let guard = shared.read().await;
     let sources = guard.sources.len();
@@ -135,10 +138,13 @@ async fn build_heartbeat_message(
             .saturating_sub(last_pub) >
             120;
 
+    let rpc_line = format_rpc_block_height(rpc_url).await;
+
     Ok(format!(
         "✅ LumAgg heartbeat\n\
          API health ({api_health_url}): {}\n\
          Redis snapshot: {}\n\
+         {rpc_line}\
          Pool publish stale (>120s): {}\n\
          Topology sources: {sources}\n\
          CLMM tracked: {clmm_tracked}\n\
@@ -155,4 +161,53 @@ async fn build_heartbeat_message(
         clmm_published = clmm_snap.published_complete,
         clmm_skip_bps = clmm_skip_bps,
     ))
+}
+
+async fn format_rpc_block_height(rpc_url: &str) -> String {
+    let mainnet_ref = std::env::var("MAINNET_RPC_REF_URL")
+        .unwrap_or_else(|_| "https://soroban-rpc.mainnet.stellar.gateway.fm".to_string());
+
+    let local = fetch_latest_ledger(rpc_url).await;
+    let mainnet = if rpc_url == mainnet_ref {
+        None
+    } else {
+        fetch_latest_ledger(&mainnet_ref).await
+    };
+
+    match (local, mainnet) {
+        (Some((local_h, local_proto)), Some((main_h, _))) => {
+            let gap = main_h.saturating_sub(local_h);
+            let sync = if gap <= 100 { "OK" } else { "LAGGING" };
+            format!(
+                "RPC block_height (local): {local_h} proto={local_proto}\n\
+                 RPC block_height (mainnet): {main_h}\n\
+                 RPC ledger gap: {gap} ({sync})\n"
+            )
+        }
+        (Some((local_h, local_proto)), None) => {
+            format!("RPC block_height: {local_h} proto={local_proto}\n")
+        }
+        (None, _) => "RPC block_height: unavailable\n".to_string(),
+    }
+}
+
+async fn fetch_latest_ledger(rpc_url: &str) -> Option<(u32, u32)> {
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "getLatestLedger",
+    });
+
+    let resp = reqwest::Client::new()
+        .post(rpc_url)
+        .json(&body)
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+        .ok()?;
+    let parsed: serde_json::Value = resp.json().await.ok()?;
+    let result = parsed.get("result")?;
+    let sequence = result.get("sequence")?.as_u64()? as u32;
+    let protocol_version = result.get("protocolVersion")?.as_u64()? as u32;
+    Some((sequence, protocol_version))
 }

@@ -748,6 +748,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
             shared.clone(),
             pool_state_store.clone(),
             api_health_url,
+            config.rpc_url.clone(),
         );
         info!("Telegram monitoring enabled (heartbeat + alerts)");
         let _ = alerter

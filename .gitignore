@@ -12,6 +12,7 @@ justfile
 data
 contracts/vault/.mainnet-vault-id
 scripts/telegram.env.local
+scripts/arb.env.local
 .worktrees/
 PROJECT_STATUS.md
 agent/
