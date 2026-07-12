@@ -34,7 +34,8 @@ pub struct ArbConfig {
     pub slippage_bps: u32,
     pub max_hops: usize,
     pub max_splits: usize,
-    pub scan_interval_secs: u64,
+    /// Delay between scan rounds (milliseconds).
+    pub scan_interval_ms: u64,
     pub build_tx: bool,
     pub optimize_amount: bool,
     pub min_amount_in: u128,
@@ -102,12 +103,12 @@ impl ArbConfig {
         let min_profit = std::env::var("ARB_MIN_PROFIT")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(1_000_000); // 0.1 XLM
+            .unwrap_or(100_000); // 0.01 XLM
 
         let slippage_bps = std::env::var("ARB_SLIPPAGE_BPS")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(50);
+            .unwrap_or(0);
 
         let max_hops = std::env::var("ARB_MAX_HOPS")
             .ok()
@@ -119,10 +120,16 @@ impl ArbConfig {
             .and_then(|v| v.parse().ok())
             .unwrap_or(5);
 
-        let scan_interval_secs = std::env::var("ARB_SCAN_INTERVAL_SECS")
+        let scan_interval_ms = std::env::var("ARB_SCAN_INTERVAL_MS")
             .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(30);
+            .and_then(|v| v.parse::<u64>().ok())
+            .or_else(|| {
+                std::env::var("ARB_SCAN_INTERVAL_SECS")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .map(|s| s.saturating_mul(1000))
+            })
+            .unwrap_or(500);
 
         let build_tx = std::env::var("ARB_BUILD_TX")
             .ok()
@@ -157,7 +164,7 @@ impl ArbConfig {
         let dry_run = std::env::var("ARB_DRY_RUN")
             .ok()
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(submit_tx);
+            .unwrap_or(!submit_tx);
 
         let submit_dedup_secs = std::env::var("ARB_SUBMIT_DEDUP_SECS")
             .ok()
@@ -182,7 +189,7 @@ impl ArbConfig {
             slippage_bps,
             max_hops,
             max_splits,
-            scan_interval_secs,
+            scan_interval_ms,
             build_tx,
             optimize_amount,
             min_amount_in,

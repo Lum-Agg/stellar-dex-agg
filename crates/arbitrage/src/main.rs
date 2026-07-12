@@ -37,10 +37,10 @@ async fn main() -> Result<()> {
             "scan round finished"
         );
 
-        if runtime.config.scan_interval_secs == 0 {
+        if runtime.config.scan_interval_ms == 0 {
             break;
         }
-        tokio::time::sleep(std::time::Duration::from_secs(runtime.config.scan_interval_secs)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(runtime.config.scan_interval_ms)).await;
     }
 
     Ok(())

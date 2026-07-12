@@ -181,6 +181,60 @@ fn step_to_scval(step: &ArbSwapStep) -> Result<xdr::ScVal> {
     ))))
 }
 
+fn sum_sub_order_amounts(route: &OptimalRoute) -> u128 {
+    route.sub_orders.iter().map(|s| s.amount_in).sum()
+}
+
+/// `round_trip_swap` requires each leg's sub-route `amount_in` values to sum to
+/// the leg total exactly (base input for leg_out, bridge output for leg_back).
+fn normalize_sub_order_amounts(route: &mut OptimalRoute, target_total: u128) {
+    if route.sub_orders.is_empty() || target_total == 0 {
+        return;
+    }
+    let current = sum_sub_order_amounts(route);
+    if current == target_total {
+        return;
+    }
+    if current == 0 {
+        if route.sub_orders.len() == 1 {
+            route.sub_orders[0].amount_in = target_total;
+        }
+        return;
+    }
+
+    let n = route.sub_orders.len();
+    let mut allocated = 0u128;
+    for (i, sub) in route.sub_orders.iter_mut().enumerate() {
+        if i + 1 == n {
+            sub.amount_in = target_total.saturating_sub(allocated);
+        } else {
+            let scaled = (sub.amount_in.saturating_mul(target_total) / current).max(1);
+            sub.amount_in = scaled;
+            allocated += scaled;
+        }
+    }
+
+    let final_sum = sum_sub_order_amounts(route);
+    if final_sum > target_total {
+        let excess = final_sum - target_total;
+        if let Some(last) = route.sub_orders.last_mut() {
+            last.amount_in = last.amount_in.saturating_sub(excess);
+        }
+    }
+}
+
+fn prepare_round_trip_routes(
+    amount_in: i128,
+    leg_out: &OptimalRoute,
+    leg_back: &OptimalRoute,
+) -> (OptimalRoute, OptimalRoute) {
+    let mut out = leg_out.clone();
+    let mut back = leg_back.clone();
+    normalize_sub_order_amounts(&mut out, amount_in as u128);
+    normalize_sub_order_amounts(&mut back, leg_out.total_expected_out);
+    (out, back)
+}
+
 fn route_to_sub_routes_scval(
     route: &OptimalRoute,
     snapshot: &MarketSnapshot,
@@ -241,8 +295,10 @@ pub fn build_round_trip_swap_op(
     let base_hash = contract_hash(base_token)?;
     let bridge_hash = contract_hash(bridge_token)?;
 
-    let leg_out_val = route_to_sub_routes_scval(leg_out, snapshot, hydration)?;
-    let leg_back_val = route_to_sub_routes_scval(leg_back, snapshot, hydration)?;
+    let (leg_out, leg_back) = prepare_round_trip_routes(amount_in, leg_out, leg_back);
+
+    let leg_out_val = route_to_sub_routes_scval(&leg_out, snapshot, hydration)?;
+    let leg_back_val = route_to_sub_routes_scval(&leg_back, snapshot, hydration)?;
 
     let invoke_args = xdr::InvokeContractArgs {
         contract_address: xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(agg_hash))),
@@ -302,8 +358,10 @@ pub fn build_execute_round_trip_op(
     let base_hash = contract_hash(base_token)?;
     let bridge_hash = contract_hash(bridge_token)?;
 
-    let leg_out_val = route_to_sub_routes_scval(leg_out, snapshot, hydration)?;
-    let leg_back_val = route_to_sub_routes_scval(leg_back, snapshot, hydration)?;
+    let (leg_out, leg_back) = prepare_round_trip_routes(amount_in, leg_out, leg_back);
+
+    let leg_out_val = route_to_sub_routes_scval(&leg_out, snapshot, hydration)?;
+    let leg_back_val = route_to_sub_routes_scval(&leg_back, snapshot, hydration)?;
 
     let invoke_args = xdr::InvokeContractArgs {
         contract_address: xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(vault_hash))),
@@ -333,10 +391,10 @@ pub fn build_execute_round_trip_op(
     })
 }
 
-/// Minimum base output for `round_trip_swap` given target absolute profit.
-pub fn min_amount_out_for_profit(amount_in: u128, min_profit: u128) -> i128 {
-    let min_out = amount_in.saturating_add(min_profit.max(1));
-    min_out.min(i128::MAX as u128) as i128
+/// On-chain floor: base output must exceed input (arb only cares that XLM
+/// grows).
+pub fn min_amount_out_break_even(amount_in: u128) -> i128 {
+    amount_in.saturating_add(1).min(i128::MAX as u128) as i128
 }
 
 pub fn build_raw_envelope_xdr(source_public_key: &str, sequence: u64, op: xdr::Operation) -> Result<String> {
@@ -369,8 +427,52 @@ mod tests {
     };
 
     #[test]
-    fn min_amount_out_covers_absolute_profit() {
-        assert_eq!(min_amount_out_for_profit(1_000_000_000, 1_000_000), 1_001_000_000);
+    fn normalize_leg_back_splits_to_bridge_total() {
+        use router_engine::{OptimalRoute, SubOrder};
+
+        let path = router_engine::Path {
+            hops: 1,
+            tokens: vec![TokenId::from_str_auto("A"), TokenId::from_str_auto("B")],
+            sources: vec!["soroswap".into()],
+            pool_addresses: vec!["p1".into()],
+        };
+        let mut leg_back = OptimalRoute {
+            sub_orders: vec![
+                SubOrder {
+                    path: path.clone(),
+                    amount_in: 9370191,
+                    expected_amount_out: 0,
+                    fraction: 0.0,
+                },
+                SubOrder {
+                    path: path.clone(),
+                    amount_in: 7211851,
+                    expected_amount_out: 0,
+                    fraction: 0.0,
+                },
+                SubOrder {
+                    path,
+                    amount_in: 1674582,
+                    expected_amount_out: 0,
+                    fraction: 0.0,
+                },
+            ],
+            total_amount_in: 0,
+            total_expected_out: 0,
+            price_impact_bps: 0,
+            is_split: true,
+            improvement_bps: 0,
+            minimum_out: 0,
+            compute_time_ms: 0,
+            debug: None,
+        };
+        normalize_sub_order_amounts(&mut leg_back, 18_606_031);
+        assert_eq!(sum_sub_order_amounts(&leg_back), 18_606_031);
+    }
+
+    #[test]
+    fn min_amount_out_requires_positive_return() {
+        assert_eq!(min_amount_out_break_even(1_000_000_000), 1_000_000_001);
     }
 
     #[test]

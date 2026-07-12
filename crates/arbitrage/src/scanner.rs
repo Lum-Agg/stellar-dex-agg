@@ -7,6 +7,7 @@ use {
         dedup::round_trip_dedup_key,
         execute::try_execute_opportunity,
         hydrate::hydrate_paths,
+        optimize::optimize_round_trip,
         runtime::ArbRuntime,
     },
     anyhow::Result,
@@ -45,7 +46,11 @@ async fn collect_paths_for_base(ctx: &ArbContext, base: &router_engine::TokenId)
                 token_in: token_in.clone(),
                 token_out: token_out.clone(),
                 amount_in: amount,
-                slippage_bps: Some(ctx.config.slippage_bps),
+                slippage_bps: if ctx.config.slippage_bps == 0 {
+                    None
+                } else {
+                    Some(ctx.config.slippage_bps)
+                },
                 max_hops: Some(ctx.config.max_hops),
                 max_splits: Some(ctx.config.max_splits),
                 prefer_soroban: None,
@@ -96,10 +101,26 @@ async fn scan_with_context(runtime: &ArbRuntime, ctx: &ArbContext) -> Result<Vec
                 continue;
             }
 
-            let Some(quote) = quote_round_trip(ctx, base, bridge, ctx.config.probe_amount_in, &hydration).await else {
+            let Some(probe) = quote_round_trip(ctx, base, bridge, ctx.config.probe_amount_in, &hydration).await else {
                 continue;
             };
             quoted += 1;
+
+            let quote = if ctx.config.optimize_amount {
+                optimize_round_trip(
+                    ctx,
+                    base,
+                    bridge,
+                    &hydration,
+                    ctx.config.min_amount_in,
+                    ctx.config.max_amount_in,
+                    ctx.config.sample_count,
+                )
+                .await
+                .unwrap_or(probe)
+            } else {
+                probe
+            };
 
             let profit = quote.profit();
             let profit_bps = compute_profit_bps(quote.amount_in, quote.amount_out);

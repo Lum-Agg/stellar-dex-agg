@@ -7,7 +7,7 @@ use {
         config::ArbConfig,
         context::ArbContext,
         invoke::{
-            build_execute_round_trip_op, build_raw_envelope_xdr, build_round_trip_swap_op, min_amount_out_for_profit,
+            build_execute_round_trip_op, build_raw_envelope_xdr, build_round_trip_swap_op, min_amount_out_break_even,
         },
         optimize::optimize_round_trip,
         prepare::{fetch_account_sequence, prepare_transaction_xdr},
@@ -69,7 +69,7 @@ pub async fn prepare_opportunity_tx(
     }
 
     let amount_in_i128 = i128::try_from(quote.amount_in).context("amount_in exceeds i128")?;
-    let min_amount_out = min_amount_out_for_profit(quote.amount_in, ctx.config.min_profit);
+    let min_amount_out = min_amount_out_break_even(quote.amount_in);
 
     let op = if let Some(vault) = ctx.config.vault_contract.as_deref() {
         build_execute_round_trip_op(

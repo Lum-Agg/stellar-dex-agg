@@ -22,7 +22,11 @@ pub async fn quote_leg(
         token_in: token_in.clone(),
         token_out: token_out.clone(),
         amount_in,
-        slippage_bps: Some(ctx.config.slippage_bps),
+        slippage_bps: if ctx.config.slippage_bps == 0 {
+            None
+        } else {
+            Some(ctx.config.slippage_bps)
+        },
         max_hops: Some(ctx.config.max_hops),
         max_splits: Some(ctx.config.max_splits),
         prefer_soroban: None,
