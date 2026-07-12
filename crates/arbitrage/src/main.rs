@@ -29,6 +29,7 @@ async fn main() -> Result<()> {
             round_opportunities = opps.len(),
             total_opportunities = stats.opportunities,
             prepared = stats.txs_prepared,
+            sim_profit_rejected = stats.txs_sim_profit_rejected,
             submitted = stats.txs_submitted,
             succeeded = stats.txs_succeeded,
             failed = stats.txs_failed,

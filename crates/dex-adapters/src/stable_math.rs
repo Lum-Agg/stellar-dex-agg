@@ -9,6 +9,13 @@
 /// Fee denominator (10000 = 100%)
 pub const FEE_DENOMINATOR: u128 = 10_000;
 
+fn mul_div(a: u128, b: u128, d: u128) -> Option<u128> {
+    if d == 0 {
+        return None;
+    }
+    a.checked_mul(b).and_then(|v| v.checked_div(d))
+}
+
 /// Pool state for stableswap computation.
 #[derive(Debug, Clone)]
 pub struct StablePool {
@@ -32,7 +39,11 @@ impl StablePool {
     /// Normalize reserves to common precision (xp).
     fn xp(&self) -> Vec<u128> {
         let pmul = self.precision_mul();
-        self.reserves.iter().zip(pmul.iter()).map(|(&r, &m)| r * m).collect()
+        self.reserves
+            .iter()
+            .zip(pmul.iter())
+            .filter_map(|(&r, &m)| r.checked_mul(m))
+            .collect()
     }
 
     /// Compute the StableSwap invariant D.
@@ -51,13 +62,22 @@ impl StablePool {
             // d_p = D^(n+1) / (n^n * prod(x_i))
             let mut d_p = d;
             for &x in xp {
-                d_p = d_p * d / (x * n);
+                if x == 0 {
+                    return 0;
+                }
+                d_p = mul_div(d_p, d, x.saturating_mul(n)).unwrap_or(u128::MAX);
             }
 
             let d_prev = d;
             // Newton step: d = (ann*s + d_p*n) * d / ((ann-1)*d + (n+1)*d_p)
-            let numerator = (ann * s + d_p * n) * d;
-            let denominator = (ann - 1) * d + (n + 1) * d_p;
+            let numerator = ann
+                .saturating_mul(s)
+                .saturating_add(d_p.saturating_mul(n))
+                .saturating_mul(d);
+            let denominator = ann
+                .saturating_sub(1)
+                .saturating_mul(d)
+                .saturating_add((n + 1).saturating_mul(d_p));
             if denominator == 0 {
                 break;
             }
@@ -88,11 +108,14 @@ impl StablePool {
             } else {
                 continue;
             };
-            s += x_i;
-            c = c * d / (x_i * n);
+            s = s.saturating_add(x_i);
+            if x_i == 0 {
+                return 0;
+            }
+            c = mul_div(c, d, x_i.saturating_mul(n)).unwrap_or(0);
         }
 
-        c = c * d / (ann * n);
+        c = mul_div(c, d, ann.saturating_mul(n)).unwrap_or(0);
         let b = s + d / ann; // note: b > d always (since s >= d/ann is not guaranteed, but in practice it
                              // is)
 
@@ -101,7 +124,7 @@ impl StablePool {
         for _ in 0..255 {
             let y_prev = y;
             // y = (y^2 + c) / (2*y + b - d)
-            let numerator = y * y + c;
+            let numerator = y.saturating_mul(y).saturating_add(c);
             let denominator = 2 * y + b - d;
             if denominator == 0 {
                 break;
@@ -127,13 +150,17 @@ impl StablePool {
 
         let pmul = self.precision_mul();
         let xp = self.xp();
+        if xp.len() != self.reserves.len() {
+            return 0;
+        }
 
         // Apply fee to input
         let dx_fee = (dx as u128 * self.fee_bps as u128 + FEE_DENOMINATOR - 1) / FEE_DENOMINATOR;
         let dx_after_fee = dx - dx_fee;
 
         // Scale dx to common precision
-        let x = xp[i] + dx_after_fee * pmul[i];
+        let scaled_in = dx_after_fee.checked_mul(pmul[i]).unwrap_or(0);
+        let x = xp[i].saturating_add(scaled_in);
 
         // Find new y
         let y = self.get_y(i, j, x, &xp);

@@ -1,10 +1,10 @@
-//! Soroban simulate + assemble via RPC (`prepare_transaction`).
+//! Soroban simulate + assemble via RPC (`simulateTransaction` + assemble).
 
 use {
     anyhow::{anyhow, Result},
     soroban_client::{
         network::{NetworkPassphrase, Networks},
-        transaction::{AccountBehavior, TransactionBehavior},
+        transaction::{assemble_transaction, AccountBehavior, TransactionBehavior},
         transaction_builder::{TransactionBuilder, TransactionBuilderBehavior, TIMEOUT_INFINITE},
         xdr::{self, Limits, ReadXdr, WriteXdr},
         Options, Server,
@@ -14,6 +14,24 @@ use {
         curr::{Limits as StellarLimits, WriteXdr as StellarWriteXdr},
     },
 };
+
+/// Successful simulate + assemble: unsigned XDR and on-chain return value
+/// (`base_total`).
+#[derive(Debug, Clone)]
+pub struct PreparedSimulation {
+    pub unsigned_tx_xdr: String,
+    pub amount_out: u128,
+}
+
+fn scval_i128_to_u128(val: &xdr::ScVal) -> Option<u128> {
+    match val {
+        xdr::ScVal::I128(parts) => {
+            let v = ((parts.hi as i128) << 64) | (parts.lo as u64 as i128);
+            u128::try_from(v).ok()
+        }
+        _ => None,
+    }
+}
 
 pub fn default_rpc_url() -> String {
     std::env::var("RPC_URL").unwrap_or_else(|_| "https://soroban-rpc.mainnet.stellar.gateway.fm".to_string())
@@ -47,15 +65,15 @@ pub async fn fetch_account_sequence(horizon_url: &str, public_key: &str) -> Resu
     seq_str.parse().map_err(|e| anyhow!("parse sequence: {}", e))
 }
 
-/// Simulate + assemble footprint/auth and return unsigned envelope XDR
-/// (base64).
+/// Simulate + assemble footprint/auth; return unsigned envelope XDR and
+/// contract return value (`base_total` for round-trip ops).
 pub async fn prepare_transaction_xdr(
     rpc_url: &str,
     public_key: &str,
     sequence: u64,
     operations: &[sxdr::Operation],
     fee: u32,
-) -> Result<String> {
+) -> Result<PreparedSimulation> {
     let mut account = soroban_client::account::Account::new(public_key, &sequence.to_string())
         .map_err(|e| anyhow!("invalid account/sequence: {}", e))?;
 
@@ -77,14 +95,37 @@ pub async fn prepare_transaction_xdr(
         .build();
 
     let server = rpc_server(rpc_url)?;
-    let prepared = server
-        .prepare_transaction(&tx)
+    let sim_response = server
+        .simulate_transaction(&tx, None)
         .await
-        .map_err(|e| anyhow!("prepare_transaction: {:?}", e))?;
+        .map_err(|e| anyhow!("simulate_transaction: {:?}", e))?;
+
+    let amount_out = sim_response
+        .to_result()
+        .and_then(|(ret, _)| scval_i128_to_u128(&ret))
+        .ok_or_else(|| anyhow!("simulation missing i128 return value"))?;
+
+    let prepared = assemble_transaction(&tx, sim_response).map_err(|e| anyhow!("assemble_transaction: {:?}", e))?;
 
     let envelope = prepared.to_envelope().map_err(|e| anyhow!("to_envelope: {}", e))?;
 
-    envelope
+    let unsigned_tx_xdr = envelope
         .to_xdr_base64(Limits::none())
-        .map_err(|e| anyhow!("XDR encode: {:?}", e))
+        .map_err(|e| anyhow!("XDR encode: {:?}", e))?;
+
+    Ok(PreparedSimulation {
+        unsigned_tx_xdr,
+        amount_out,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_i128_return_as_u128() {
+        let val = xdr::ScVal::I128(xdr::Int128Parts { hi: 0, lo: 100_144_152 });
+        assert_eq!(scval_i128_to_u128(&val), Some(100_144_152));
+    }
 }
