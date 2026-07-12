@@ -26,6 +26,9 @@ ADMIN_G="${ADMIN_G:-}"
 NETWORK_PASSPHRASE="${NETWORK_PASSPHRASE:-Public Global Stellar Network ; September 2015}"
 RPC_URL="${RPC_URL:-https://mainnet.sorobanrpc.com}"
 TX_POLL_SECS="${TX_POLL_SECS:-180}"
+RESOURCE_FEE="${RESOURCE_FEE:-200000000}"
+INCLUSION_FEE="${INCLUSION_FEE:-5000000}"
+INVOKE_RESOURCE_FEE="${INVOKE_RESOURCE_FEE:-50000000}"
 CALLER="${CALLER:-}"
 AGGREGATOR="${AGGREGATOR:-CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K}"
 
@@ -101,7 +104,7 @@ run_stellar_tx() {
 }
 
 echo "=== Building vault WASM (release) ==="
-stellar contract build --release --optimize 2>/dev/null || {
+stellar contract build --optimize 2>/dev/null || {
   echo "stellar contract build --optimize failed, trying cargo + stellar optimize..."
   cargo build -p vault-contract --target wasm32v1-none --release
   WASM=""
@@ -141,16 +144,16 @@ if [[ ! -f "$WASM" ]]; then
 fi
 echo "WASM: $WASM ($(wc -c < "$WASM") bytes)"
 
-echo "=== Deploying vault (initialize admin=$ADMIN_G) via RPC ($RPC_URL) ==="
+echo "=== Deploying vault via RPC ($RPC_URL) ==="
 DEPLOY_LOG=$(mktemp)
 set +e
 stellar contract deploy \
   --rpc-url "$RPC_URL" \
   --network-passphrase "$NETWORK_PASSPHRASE" \
-  --source "$ADMIN" \
-  --wasm "$WASM" \
-  -- \
-  initialize --admin "$ADMIN_G" 2>&1 | tee "$DEPLOY_LOG"
+  --source-account "$ADMIN" \
+  --resource-fee "$RESOURCE_FEE" \
+  --inclusion-fee "$INCLUSION_FEE" \
+  --wasm "$WASM" 2>&1 | tee "$DEPLOY_LOG"
 DEPLOY_EC=${PIPESTATUS[0]}
 set -e
 
@@ -181,6 +184,21 @@ else
   echo "(saved to contracts/vault/.mainnet-vault-id — gitignored if you add it)"
 fi
 
+if [[ -n "$VAULT_ID" ]]; then
+  echo "=== initialize(admin=$ADMIN_G) ==="
+  if ! run_stellar_tx "initialize" stellar contract invoke \
+    --id "$VAULT_ID" \
+    --source-account "$ADMIN" \
+    --rpc-url "$RPC_URL" \
+    --network-passphrase "$NETWORK_PASSPHRASE" \
+    --resource-fee "$INVOKE_RESOURCE_FEE" \
+    --inclusion-fee "$INCLUSION_FEE" \
+    -- \
+    initialize --admin "$ADMIN_G"; then
+    exit 1
+  fi
+fi
+
 if [[ -n "$CALLER" && -n "$VAULT_ID" ]]; then
   IFS=',' read -ra CALLERS <<< "$CALLER"
   for c in "${CALLERS[@]}"; do
@@ -189,9 +207,11 @@ if [[ -n "$CALLER" && -n "$VAULT_ID" ]]; then
     echo "=== add_caller $c ==="
     run_stellar_tx "add_caller" stellar contract invoke \
       --id "$VAULT_ID" \
-      --source "$ADMIN" \
+      --source-account "$ADMIN" \
       --rpc-url "$RPC_URL" \
       --network-passphrase "$NETWORK_PASSPHRASE" \
+      --resource-fee "$INVOKE_RESOURCE_FEE" \
+      --inclusion-fee "$INCLUSION_FEE" \
       -- \
       add_caller --caller "$c"
   done
