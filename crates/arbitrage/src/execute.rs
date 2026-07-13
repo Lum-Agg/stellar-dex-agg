@@ -6,18 +6,15 @@ use {
         callers::CallerPool,
         config::ArbConfig,
         context::ArbContext,
-        invoke::{
-            build_execute_round_trip_op, build_raw_envelope_xdr, build_round_trip_swap_op, min_amount_out_break_even,
-        },
+        invoke::{build_execute_round_trip_op, build_raw_envelope_xdr, build_round_trip_swap_op},
         optimize::optimize_round_trip,
-        prepare::{fetch_account_sequence, parse_bridge_received_from_sim_error, prepare_transaction_xdr},
+        prepare::{fetch_account_sequence, prepare_transaction_xdr},
         scanner::ArbOpportunity,
         stats::ArbStats,
         submit::submit_prepared,
         vault::resolve_max_amount_in,
     },
     anyhow::{Context, Result},
-    router_engine::QuoteHydration,
     tracing::{info, warn},
 };
 
@@ -26,7 +23,7 @@ pub struct PreparedArbTx {
     pub route_label: String,
     pub caller_public_key: String,
     pub amount_in: u128,
-    /// Off-chain quoted output (router engine).
+    /// Off-chain quoted output (quote-api).
     pub quoted_amount_out: u128,
     /// On-chain simulated output (`base_total` from contract return).
     pub simulated_amount_out: u128,
@@ -35,7 +32,7 @@ pub struct PreparedArbTx {
     pub simulated: bool,
 }
 
-async fn resolve_quote(ctx: &ArbContext, opp: &ArbOpportunity, hydration: &QuoteHydration) -> Option<RoundTripQuote> {
+async fn resolve_quote(ctx: &ArbContext, opp: &ArbOpportunity) -> Option<RoundTripQuote> {
     let max_in = resolve_max_amount_in(ctx, &opp.quote.base.canonical()).await;
     if max_in < ctx.config.min_amount_in {
         return None;
@@ -45,28 +42,21 @@ async fn resolve_quote(ctx: &ArbContext, opp: &ArbOpportunity, hydration: &Quote
             ctx,
             &opp.quote.base,
             &opp.quote.bridge,
-            hydration,
             ctx.config.min_amount_in,
             max_in,
             ctx.config.sample_count,
         )
         .await
     } else {
-        quote_round_trip(
-            ctx,
-            &opp.quote.base,
-            &opp.quote.bridge,
-            opp.quote.amount_in.min(max_in),
-            hydration,
-        )
-        .await
+        quote_round_trip(ctx, &opp.quote.base, &opp.quote.bridge, opp.quote.amount_in.min(max_in))
+            .await
+            .ok()
     }
 }
 
 pub async fn prepare_opportunity_tx(
     ctx: &ArbContext,
     opp: &ArbOpportunity,
-    hydration: &QuoteHydration,
     caller_public_key: &str,
     stats: &ArbStats,
 ) -> Result<Option<PreparedArbTx>> {
@@ -74,7 +64,7 @@ pub async fn prepare_opportunity_tx(
         return Ok(None);
     };
 
-    let Some(quote) = resolve_quote(ctx, opp, hydration).await else {
+    let Some(quote) = resolve_quote(ctx, opp).await else {
         return Ok(None);
     };
 
@@ -84,42 +74,33 @@ pub async fn prepare_opportunity_tx(
     }
 
     let amount_in_i128 = i128::try_from(quote.amount_in).context("amount_in exceeds i128")?;
-    let min_amount_out = min_amount_out_break_even(quote.amount_in);
+    let min_amount_out =
+        i128::try_from(quote.minimum_out.max(quote.amount_in.saturating_add(1))).context("minimum_out exceeds i128")?;
 
-    let build_op = |bridge_override: Option<u128>| {
-        if let Some(vault) = ctx.config.vault_contract.as_deref() {
-            build_execute_round_trip_op(
-                vault,
-                aggregator,
-                caller_public_key,
-                &quote.base.canonical(),
-                &quote.bridge.canonical(),
-                amount_in_i128,
-                &quote.leg_out,
-                &quote.leg_back,
-                min_amount_out,
-                bridge_override,
-                &ctx.snapshot,
-                hydration,
-            )
-        } else {
-            build_round_trip_swap_op(
-                aggregator,
-                caller_public_key,
-                &quote.base.canonical(),
-                &quote.bridge.canonical(),
-                amount_in_i128,
-                &quote.leg_out,
-                &quote.leg_back,
-                min_amount_out,
-                bridge_override,
-                &ctx.snapshot,
-                hydration,
-            )
-        }
+    let op = if let Some(vault) = ctx.config.vault_contract.as_deref() {
+        build_execute_round_trip_op(
+            vault,
+            aggregator,
+            caller_public_key,
+            &quote.base.canonical(),
+            &quote.bridge.canonical(),
+            amount_in_i128,
+            &quote.leg_out,
+            &quote.leg_back,
+            min_amount_out,
+        )?
+    } else {
+        build_round_trip_swap_op(
+            aggregator,
+            caller_public_key,
+            &quote.base.canonical(),
+            &quote.bridge.canonical(),
+            amount_in_i128,
+            &quote.leg_out,
+            &quote.leg_back,
+            min_amount_out,
+        )?
     };
-
-    let op = build_op(None)?;
 
     let seq = fetch_account_sequence(&ctx.config.horizon_url, caller_public_key).await?;
     let fee = 100_000u32;
@@ -134,79 +115,30 @@ pub async fn prepare_opportunity_tx(
     .await
     {
         Ok(prepared) => (prepared.unsigned_tx_xdr, true, prepared.amount_out),
-        Err(first_err) => {
-            let err_text = format!("{first_err:#}");
-            let bridge_override = ctx
-                .config
-                .aggregator_contract
-                .as_deref()
-                .and_then(|agg| parse_bridge_received_from_sim_error(&err_text, &quote.bridge.canonical(), agg));
-            if let Some(bridge_amt) = bridge_override {
-                if bridge_amt > 0 && bridge_amt != quote.leg_out.total_expected_out {
-                    info!(
-                        route = %quote.route_label(),
-                        quoted_bridge = quote.leg_out.total_expected_out,
-                        simulated_bridge = bridge_amt,
-                        "retrying simulate with on-chain leg_out bridge amount"
-                    );
-                    let retry_op = build_op(Some(bridge_amt))?;
-                    match prepare_transaction_xdr(
-                        &ctx.config.rpc_url,
-                        caller_public_key,
-                        seq as u64,
-                        std::slice::from_ref(&retry_op),
-                        fee,
-                    )
-                    .await
-                    {
-                        Ok(prepared) => (prepared.unsigned_tx_xdr, true, prepared.amount_out),
-                        Err(retry_err) => {
-                            warn!(
-                                error = %retry_err,
-                                route = %opp.route_label,
-                                caller = %caller_public_key,
-                                "Soroban prepare failed after bridge amount retry"
-                            );
-                            (
-                                build_raw_envelope_xdr(caller_public_key, seq as u64, retry_op)?,
-                                false,
-                                0,
-                            )
-                        }
-                    }
-                } else {
-                    warn!(
-                        error = %first_err,
-                        route = %opp.route_label,
-                        caller = %caller_public_key,
-                        "Soroban prepare failed; falling back to raw envelope XDR"
-                    );
-                    (build_raw_envelope_xdr(caller_public_key, seq as u64, op)?, false, 0)
-                }
-            } else {
-                warn!(
-                    error = %first_err,
-                    route = %opp.route_label,
-                    caller = %caller_public_key,
-                    "Soroban prepare failed; falling back to raw envelope XDR"
-                );
-                (build_raw_envelope_xdr(caller_public_key, seq as u64, op)?, false, 0)
-            }
+        Err(err) => {
+            warn!(
+                error = %err,
+                route = %opp.route_label,
+                caller = %caller_public_key,
+                "Soroban prepare failed"
+            );
+            (build_raw_envelope_xdr(caller_public_key, seq as u64, op)?, false, 0)
         }
     };
 
     if simulated {
         let sim_profit = simulated_amount_out.saturating_sub(quote.amount_in);
-        if sim_profit < ctx.config.min_profit {
+        if simulated_amount_out < quote.minimum_out || sim_profit < ctx.config.min_profit {
             warn!(
                 route = %quote.route_label(),
                 caller = %caller_public_key,
                 amount_in = quote.amount_in,
                 quoted_amount_out = quote.amount_out,
+                quoted_minimum_out = quote.minimum_out,
                 simulated_amount_out,
                 simulated_profit = sim_profit,
                 min_profit = ctx.config.min_profit,
-                "simulated profit below minimum — discard"
+                "simulated output below quote-api floor — discard"
             );
             stats
                 .txs_sim_profit_rejected
@@ -228,14 +160,15 @@ pub async fn prepare_opportunity_tx(
         caller = %caller_public_key,
         amount_in = quote.amount_in,
         quoted_amount_out = quote.amount_out,
+        quoted_minimum_out = quote.minimum_out,
         simulated_amount_out,
         simulated_profit,
         profit_bps,
         simulated,
         min_profit = ctx.config.min_profit,
         min_amount_out,
-        leg_out_splits = quote.leg_out.sub_orders.len(),
-        leg_back_splits = quote.leg_back.sub_orders.len(),
+        leg_out_splits = quote.leg_out.route.sub_orders.len(),
+        leg_back_splits = quote.leg_back.route.sub_orders.len(),
         tx_kind,
         "prepared arb tx"
     );
@@ -255,7 +188,6 @@ pub async fn prepare_opportunity_tx(
 pub async fn try_execute_opportunity(
     ctx: &ArbContext,
     opp: &ArbOpportunity,
-    hydration: &QuoteHydration,
     caller_pool: &CallerPool,
     stats: &ArbStats,
     dry_run: bool,
@@ -265,7 +197,7 @@ pub async fn try_execute_opportunity(
         return Ok(());
     };
 
-    let Some(prepared) = prepare_opportunity_tx(ctx, opp, hydration, &guard.public_key(), stats).await? else {
+    let Some(prepared) = prepare_opportunity_tx(ctx, opp, &guard.public_key(), stats).await? else {
         return Ok(());
     };
 

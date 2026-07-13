@@ -1,11 +1,11 @@
-//! Discrete input scan to maximize round-trip profit.
+//! Discrete input scan to maximize round-trip profit (via quote-api).
 
 use {
     crate::{
         bridge::{quote_round_trip, RoundTripQuote},
         context::ArbContext,
     },
-    router_engine::{QuoteHydration, TokenId},
+    router_engine::TokenId,
 };
 
 /// Evenly spaced candidate inputs between `min_in` and `max_in` (inclusive
@@ -36,7 +36,6 @@ pub async fn optimize_round_trip(
     ctx: &ArbContext,
     base: &TokenId,
     bridge: &TokenId,
-    hydration: &QuoteHydration,
     min_in: u128,
     max_in: u128,
     sample_count: usize,
@@ -45,7 +44,7 @@ pub async fn optimize_round_trip(
     let mut best: Option<RoundTripQuote> = None;
 
     for amount_in in candidates {
-        let Some(quote) = quote_round_trip(ctx, base, bridge, amount_in, hydration).await else {
+        let Ok(quote) = quote_round_trip(ctx, base, bridge, amount_in).await else {
             continue;
         };
         let profit = quote.profit();

@@ -58,6 +58,7 @@ impl ArbRuntime {
             submit_tx = self.submit_enabled(),
             dry_run = self.dry_run(),
             callers,
+            quote_api = ?self.config.quote_api_urls,
             aggregator = ?self.config.aggregator_contract,
             vault = ?self.config.vault_contract,
             bridges = self.config.bridge_tokens.len(),

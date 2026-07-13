@@ -1,6 +1,7 @@
 //! Build `aggregator::round_trip_swap` Soroban invoke operations.
 
 use {
+    crate::quote_client::LegQuote,
     anyhow::{anyhow, Context, Result},
     market_snapshot::MarketSnapshot,
     router_engine::{OptimalRoute, Path, QuoteHydration, TokenId},
@@ -224,14 +225,6 @@ fn normalize_sub_order_amounts(route: &mut OptimalRoute, target_total: u128) {
     }
 }
 
-fn prepare_round_trip_routes(
-    amount_in: i128,
-    leg_out: &OptimalRoute,
-    leg_back: &OptimalRoute,
-) -> (OptimalRoute, OptimalRoute) {
-    prepare_round_trip_routes_with_bridge(amount_in, leg_out, leg_back, None)
-}
-
 /// Build contract routes; when `bridge_amount_override` is set (from a prior
 /// simulate), scale `leg_back` inputs to that on-chain leg_out total.
 pub fn prepare_round_trip_routes_with_bridge(
@@ -257,14 +250,17 @@ pub fn prepare_round_trip_routes_with_bridge(
     (out, back)
 }
 
-fn route_to_sub_routes_scval(
-    route: &OptimalRoute,
-    snapshot: &MarketSnapshot,
-    hydration: &QuoteHydration,
-) -> Result<xdr::ScVal> {
-    let mut sub_routes = Vec::with_capacity(route.sub_orders.len());
-    for sub in &route.sub_orders {
-        let steps = path_to_steps(&sub.path, snapshot, hydration)?;
+fn leg_to_sub_routes_scval(prepared_route: &OptimalRoute, step_sets: &[Vec<ArbSwapStep>]) -> Result<xdr::ScVal> {
+    if prepared_route.sub_orders.len() != step_sets.len() {
+        return Err(anyhow!(
+            "sub_order count {} != step_sets count {}",
+            prepared_route.sub_orders.len(),
+            step_sets.len()
+        ));
+    }
+
+    let mut sub_routes = Vec::with_capacity(prepared_route.sub_orders.len());
+    for (sub, steps) in prepared_route.sub_orders.iter().zip(step_sets.iter()) {
         let steps_scval: Vec<xdr::ScVal> = steps.iter().map(step_to_scval).collect::<Result<_>>()?;
 
         let amount_in_entry = xdr::ScMapEntry {
@@ -295,12 +291,9 @@ pub fn build_round_trip_swap_op(
     base_token: &str,
     bridge_token: &str,
     amount_in: i128,
-    leg_out: &OptimalRoute,
-    leg_back: &OptimalRoute,
+    leg_out: &LegQuote,
+    leg_back: &LegQuote,
     min_amount_out: i128,
-    bridge_amount_override: Option<u128>,
-    snapshot: &MarketSnapshot,
-    hydration: &QuoteHydration,
 ) -> Result<xdr::Operation> {
     if amount_in <= 0 {
         return Err(anyhow!("amount_in must be positive"));
@@ -308,7 +301,7 @@ pub fn build_round_trip_swap_op(
     if min_amount_out < amount_in {
         return Err(anyhow!("min_amount_out below principal"));
     }
-    if leg_out.sub_orders.is_empty() || leg_back.sub_orders.is_empty() {
+    if leg_out.route.sub_orders.is_empty() || leg_back.route.sub_orders.is_empty() {
         return Err(anyhow!("round_trip_swap requires non-empty legs"));
     }
 
@@ -318,11 +311,11 @@ pub fn build_round_trip_swap_op(
     let base_hash = contract_hash(base_token)?;
     let bridge_hash = contract_hash(bridge_token)?;
 
-    let (leg_out, leg_back) =
-        prepare_round_trip_routes_with_bridge(amount_in, leg_out, leg_back, bridge_amount_override);
+    let (prepared_out, prepared_back) =
+        prepare_round_trip_routes_with_bridge(amount_in, &leg_out.route, &leg_back.route, None);
 
-    let leg_out_val = route_to_sub_routes_scval(&leg_out, snapshot, hydration)?;
-    let leg_back_val = route_to_sub_routes_scval(&leg_back, snapshot, hydration)?;
+    let leg_out_val = leg_to_sub_routes_scval(&prepared_out, &leg_out.step_sets)?;
+    let leg_back_val = leg_to_sub_routes_scval(&prepared_back, &leg_back.step_sets)?;
 
     let invoke_args = xdr::InvokeContractArgs {
         contract_address: xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(agg_hash))),
@@ -359,12 +352,9 @@ pub fn build_execute_round_trip_op(
     base_token: &str,
     bridge_token: &str,
     amount_in: i128,
-    leg_out: &OptimalRoute,
-    leg_back: &OptimalRoute,
+    leg_out: &LegQuote,
+    leg_back: &LegQuote,
     min_amount_out: i128,
-    bridge_amount_override: Option<u128>,
-    snapshot: &MarketSnapshot,
-    hydration: &QuoteHydration,
 ) -> Result<xdr::Operation> {
     if amount_in <= 0 {
         return Err(anyhow!("amount_in must be positive"));
@@ -372,7 +362,7 @@ pub fn build_execute_round_trip_op(
     if min_amount_out < amount_in {
         return Err(anyhow!("min_amount_out below principal"));
     }
-    if leg_out.sub_orders.is_empty() || leg_back.sub_orders.is_empty() {
+    if leg_out.route.sub_orders.is_empty() || leg_back.route.sub_orders.is_empty() {
         return Err(anyhow!("round_trip_swap requires non-empty legs"));
     }
 
@@ -383,11 +373,11 @@ pub fn build_execute_round_trip_op(
     let base_hash = contract_hash(base_token)?;
     let bridge_hash = contract_hash(bridge_token)?;
 
-    let (leg_out, leg_back) =
-        prepare_round_trip_routes_with_bridge(amount_in, leg_out, leg_back, bridge_amount_override);
+    let (prepared_out, prepared_back) =
+        prepare_round_trip_routes_with_bridge(amount_in, &leg_out.route, &leg_back.route, None);
 
-    let leg_out_val = route_to_sub_routes_scval(&leg_out, snapshot, hydration)?;
-    let leg_back_val = route_to_sub_routes_scval(&leg_back, snapshot, hydration)?;
+    let leg_out_val = leg_to_sub_routes_scval(&prepared_out, &leg_out.step_sets)?;
+    let leg_back_val = leg_to_sub_routes_scval(&prepared_back, &leg_back.step_sets)?;
 
     let invoke_args = xdr::InvokeContractArgs {
         contract_address: xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(vault_hash))),

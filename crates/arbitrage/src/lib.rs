@@ -6,11 +6,11 @@ pub mod config;
 pub mod context;
 pub mod dedup;
 pub mod execute;
-pub mod hydrate;
 pub mod invoke;
 pub mod keypair;
 pub mod optimize;
 pub mod prepare;
+pub mod quote_client;
 pub mod runtime;
 pub mod scanner;
 pub mod stats;
@@ -23,7 +23,8 @@ pub use {
     context::ArbContext,
     execute::{execution_enabled, PreparedArbTx},
     invoke::{path_to_steps, ArbSwapStep},
+    quote_client::{LegQuote, QuoteApiClient},
     runtime::{ArbRuntime, SharedRuntime},
-    scanner::{collect_paths_for_base, scan_once, ArbOpportunity},
+    scanner::{scan_once, ArbOpportunity},
     stats::{ArbStats, ArbStatsSnapshot},
 };

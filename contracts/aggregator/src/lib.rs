@@ -496,28 +496,18 @@ impl AggregatorContract {
 
             DexType::CometDex => {
                 // Comet: swap_exact_amount_in(token_in, amount_in, token_out, min_out,
-                // max_price, user) user = aggregator (funds already here).
-                // Comet uses approve + transfer_from
-                // (comet token_utility::pull_underlying).
+                // max_price, user). user = aggregator (funds already here).
+                //
+                // pull_underlying (Comet token_utility) does:
+                //   token.approve(from=user, spender=pool, amount, ledger)
+                //   token.transfer_from(spender=pool, from=user, to=pool, amount)
+                //
+                // SAC approve requires auth from `from` (aggregator). transfer_from requires
+                // auth from `spender` (the pool), not the aggregator — same pattern as
+                // Aquarius/Phoenix flat token.transfer pre-auth before pool.swap.
                 let max_price = i128::MAX;
-
-                let build_swap_args = || {
-                    soroban_sdk::vec![
-                        env,
-                        step.token_in.into_val(env),
-                        amount_in.into_val(env),
-                        step.token_out.into_val(env),
-                        0i128.into_val(env),
-                        max_price.into_val(env),
-                        my_address.into_val(env),
-                    ]
-                };
-
                 let approval_ledger = Self::comet_approval_ledger(env);
-                let token_in_client = token::Client::new(env, &step.token_in);
 
-                // SAC: approve(from, spender, amount, expiration) — aggregator invokes directly
-                // so simulation records auth before Comet pulls via transfer_from.
                 env.authorize_as_current_contract(soroban_sdk::vec![
                     env,
                     InvokerContractAuthEntry::Contract(SubContractInvocation {
@@ -535,41 +525,19 @@ impl AggregatorContract {
                         sub_invocations: soroban_sdk::vec![env],
                     }),
                 ]);
-                token_in_client.approve(my_address, &step.dex_id, &amount_in, &approval_ledger);
-
-                // Comet pull: transfer_from(spender, from, to, amount)
-                env.authorize_as_current_contract(soroban_sdk::vec![
-                    env,
-                    InvokerContractAuthEntry::Contract(SubContractInvocation {
-                        context: ContractContext {
-                            contract: step.dex_id.clone(),
-                            fn_name: Symbol::new(env, "swap_exact_amount_in"),
-                            args: build_swap_args(),
-                        },
-                        sub_invocations: soroban_sdk::vec![
-                            env,
-                            InvokerContractAuthEntry::Contract(SubContractInvocation {
-                                context: ContractContext {
-                                    contract: step.token_in.clone(),
-                                    fn_name: Symbol::new(env, "transfer_from"),
-                                    args: soroban_sdk::vec![
-                                        env,
-                                        step.dex_id.into_val(env),
-                                        my_address.into_val(env),
-                                        step.dex_id.into_val(env),
-                                        amount_in.into_val(env),
-                                    ],
-                                },
-                                sub_invocations: soroban_sdk::vec![env],
-                            }),
-                        ],
-                    }),
-                ]);
 
                 let (amount_out, _): (i128, i128) = env.invoke_contract(
                     &step.dex_id,
                     &Symbol::new(env, "swap_exact_amount_in"),
-                    build_swap_args(),
+                    soroban_sdk::vec![
+                        env,
+                        step.token_in.into_val(env),
+                        amount_in.into_val(env),
+                        step.token_out.into_val(env),
+                        0i128.into_val(env),
+                        max_price.into_val(env),
+                        my_address.into_val(env),
+                    ],
                 );
                 amount_out
             }
@@ -783,9 +751,12 @@ mod test {
             ) -> (i128, i128) {
                 assert!(token_amount_in > 0);
                 let me = env.current_contract_address();
-                // Same pull pattern as mainnet Comet: transfer_from(spender=pool, from=user,
-                // to=pool)
-                token::Client::new(&env, &token_in).transfer_from(&me, &user, &me, &token_amount_in);
+                // Mainnet Comet pull_underlying: approve(user, pool) then transfer_from.
+                let seq = env.ledger().sequence();
+                let approval_ledger = (seq / 100_000 + 1) * 100_000;
+                let token_in_client = token::Client::new(&env, &token_in);
+                token_in_client.approve(&user, &me, &token_amount_in, &approval_ledger);
+                token_in_client.transfer_from(&me, &user, &me, &token_amount_in);
                 token::Client::new(&env, &token_out).transfer(&me, &user, &token_amount_in);
                 assert!(token_amount_in >= min_amount_out);
                 (token_amount_in, 0)
@@ -996,7 +967,7 @@ mod test {
     #[test]
     fn test_comet_swap_exact_amount_in() {
         let env = Env::default();
-        env.mock_all_auths();
+        env.mock_all_auths_allowing_non_root_auth();
         let user = gen_addr(&env);
         let (_, agg) = setup_agg(&env);
 

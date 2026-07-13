@@ -202,7 +202,10 @@ async fn main() -> Result<()> {
             }
 
             if close_ops.is_empty() {
-                let with_balance = entries.iter().filter(|e| !is_native_only(e) && e.balance_stroops > 0).count();
+                let with_balance = entries
+                    .iter()
+                    .filter(|e| !is_native_only(e) && e.balance_stroops > 0)
+                    .count();
                 if with_balance > 0 {
                     println!("index={idx}: {with_balance} trustlines kept (non-zero balance)");
                 } else {

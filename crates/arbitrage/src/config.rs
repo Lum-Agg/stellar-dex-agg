@@ -13,8 +13,8 @@ const DEFAULT_BASE_TOKENS: &[&str] = &[
 
 #[derive(Debug, Clone)]
 pub struct ArbConfig {
-    pub snapshot_redis_url: String,
-    pub pool_state_redis_url: String,
+    /// LumAgg quote-api base URLs (round-robin). Same stack as `lumagg-api@{3100..3103}`.
+    pub quote_api_urls: Vec<String>,
     /// Deployed LumAgg aggregator contract (round_trip_swap target).
     pub aggregator_contract: Option<String>,
     /// Optional arb vault; when set, txs call vault.execute_round_trip instead
@@ -48,10 +48,7 @@ pub struct ArbConfig {
 
 impl ArbConfig {
     pub fn from_env() -> Result<Self> {
-        let snapshot_redis_url = std::env::var("SNAPSHOT_REDIS_URL")
-            .or_else(|_| std::env::var("REDIS_URL"))
-            .context("SNAPSHOT_REDIS_URL or REDIS_URL required")?;
-        let pool_state_redis_url = std::env::var("POOL_STATE_REDIS_URL").unwrap_or_else(|_| snapshot_redis_url.clone());
+        let quote_api_urls = parse_quote_api_urls_from_env();
 
         let aggregator_contract = std::env::var("ARB_AGGREGATOR_CONTRACT")
             .or_else(|_| std::env::var("AGGREGATOR_CONTRACT"))
@@ -172,8 +169,7 @@ impl ArbConfig {
             .unwrap_or(6);
 
         Ok(Self {
-            snapshot_redis_url,
-            pool_state_redis_url,
+            quote_api_urls,
             aggregator_contract,
             vault_contract,
             caller_secrets,
@@ -200,6 +196,43 @@ impl ArbConfig {
             submit_dedup_secs,
         })
     }
+}
+
+const DEFAULT_QUOTE_API_PORTS: &[u16] = &[3100, 3101, 3102, 3103];
+
+fn parse_quote_api_urls_from_env() -> Vec<String> {
+    if let Ok(raw) = std::env::var("ARB_QUOTE_API_URLS") {
+        let urls = parse_url_list(&raw);
+        if !urls.is_empty() {
+            return urls;
+        }
+    }
+    for key in ["ARB_QUOTE_API_URL", "QUOTE_API_URL", "LUMAGG_API_URL"] {
+        if let Ok(raw) = std::env::var(key) {
+            if raw.contains(',') {
+                let urls = parse_url_list(&raw);
+                if !urls.is_empty() {
+                    return urls;
+                }
+            }
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() {
+                return vec![trimmed.trim_end_matches('/').to_string()];
+            }
+        }
+    }
+    DEFAULT_QUOTE_API_PORTS
+        .iter()
+        .map(|port| format!("http://127.0.0.1:{port}"))
+        .collect()
+}
+
+fn parse_url_list(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.trim_end_matches('/').to_string())
+        .collect()
 }
 
 fn parse_token_list(raw: &str) -> Vec<TokenId> {
