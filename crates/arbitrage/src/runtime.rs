@@ -1,7 +1,10 @@
 //! Bot runtime: config, caller pool, dedup, stats.
 
 use {
-    crate::{callers::CallerPool, config::ArbConfig, context::ArbContext, dedup::SubmittedPathCache, stats::ArbStats},
+    crate::{
+        callers::CallerPool, config::ArbConfig, context::ArbContext, dedup::SubmittedPathCache, profit::ProfitBook,
+        stats::ArbStats,
+    },
     anyhow::Result,
     tokio::sync::Mutex,
     tracing::info,
@@ -10,6 +13,7 @@ use {
 pub struct ArbRuntime {
     pub config: ArbConfig,
     pub stats: ArbStats,
+    pub profit: ProfitBook,
     pub path_cache: Mutex<SubmittedPathCache>,
     pub caller_pool: Option<CallerPool>,
 }
@@ -24,6 +28,7 @@ impl ArbRuntime {
         Ok(Self {
             config,
             stats: ArbStats::default(),
+            profit: ProfitBook::default(),
             path_cache: Mutex::new(SubmittedPathCache::new(std::time::Duration::from_secs(
                 dedup_secs.max(1),
             ))),

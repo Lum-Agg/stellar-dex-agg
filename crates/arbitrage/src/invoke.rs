@@ -294,6 +294,7 @@ pub fn build_round_trip_swap_op(
     leg_out: &LegQuote,
     leg_back: &LegQuote,
     min_amount_out: i128,
+    bridge_amount_override: Option<u128>,
 ) -> Result<xdr::Operation> {
     if amount_in <= 0 {
         return Err(anyhow!("amount_in must be positive"));
@@ -312,7 +313,7 @@ pub fn build_round_trip_swap_op(
     let bridge_hash = contract_hash(bridge_token)?;
 
     let (prepared_out, prepared_back) =
-        prepare_round_trip_routes_with_bridge(amount_in, &leg_out.route, &leg_back.route, None);
+        prepare_round_trip_routes_with_bridge(amount_in, &leg_out.route, &leg_back.route, bridge_amount_override);
 
     let leg_out_val = leg_to_sub_routes_scval(&prepared_out, &leg_out.step_sets)?;
     let leg_back_val = leg_to_sub_routes_scval(&prepared_back, &leg_back.step_sets)?;
@@ -355,6 +356,7 @@ pub fn build_execute_round_trip_op(
     leg_out: &LegQuote,
     leg_back: &LegQuote,
     min_amount_out: i128,
+    bridge_amount_override: Option<u128>,
 ) -> Result<xdr::Operation> {
     if amount_in <= 0 {
         return Err(anyhow!("amount_in must be positive"));
@@ -374,7 +376,7 @@ pub fn build_execute_round_trip_op(
     let bridge_hash = contract_hash(bridge_token)?;
 
     let (prepared_out, prepared_back) =
-        prepare_round_trip_routes_with_bridge(amount_in, &leg_out.route, &leg_back.route, None);
+        prepare_round_trip_routes_with_bridge(amount_in, &leg_out.route, &leg_back.route, bridge_amount_override);
 
     let leg_out_val = leg_to_sub_routes_scval(&prepared_out, &leg_out.step_sets)?;
     let leg_back_val = leg_to_sub_routes_scval(&prepared_back, &leg_back.step_sets)?;

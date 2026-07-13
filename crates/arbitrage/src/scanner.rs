@@ -129,7 +129,10 @@ async fn scan_with_context(runtime: &ArbRuntime, ctx: &ArbContext) -> Result<Vec
                         cache.mark_submitted(path_key);
                     }
 
-                    if let Err(e) = try_execute_opportunity(ctx, &opp, pool, &runtime.stats, runtime.dry_run()).await {
+                    if let Err(e) =
+                        try_execute_opportunity(ctx, &opp, pool, &runtime.stats, &runtime.profit, runtime.dry_run())
+                            .await
+                    {
                         warn!(route = %opp.route_label, error = %e, "round_trip_swap pipeline failed");
                     }
                 }

@@ -4,7 +4,10 @@ use {
     crate::keypair::ExecutorKeypair,
     anyhow::{anyhow, Context, Result},
     soroban_client::keypair::{Keypair, KeypairBehavior},
-    std::sync::Arc,
+    std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     tokio::sync::Mutex,
     tracing::info,
 };
@@ -16,6 +19,8 @@ pub struct CallerSlot {
 
 pub struct CallerPool {
     slots: Vec<Arc<CallerSlot>>,
+    /// Round-robin cursor so sequential acquires rotate callers.
+    next: AtomicUsize,
 }
 
 impl CallerPool {
@@ -59,16 +64,29 @@ impl CallerPool {
             .collect();
 
         info!(callers = slots.len(), "caller pool initialized");
-        Ok(Some(Self { slots }))
+        Ok(Some(Self {
+            slots,
+            next: AtomicUsize::new(0),
+        }))
     }
 
     pub fn len(&self) -> usize {
         self.slots.len()
     }
 
-    /// Acquire a free caller; returns None if all busy (drop opportunity).
+    pub fn public_keys(&self) -> Vec<String> {
+        self.slots.iter().map(|s| s.keypair.public_key()).collect()
+    }
+
+    /// Acquire a free caller (round-robin); returns None if all busy.
     pub async fn try_acquire(&self) -> Option<CallerGuard<'_>> {
-        for slot in &self.slots {
+        let n = self.slots.len();
+        if n == 0 {
+            return None;
+        }
+        let start = self.next.fetch_add(1, Ordering::Relaxed) % n;
+        for i in 0..n {
+            let slot = &self.slots[(start + i) % n];
             if let Ok(guard) = slot.lock.try_lock() {
                 return Some(CallerGuard { slot, _guard: guard });
             }
@@ -100,4 +118,33 @@ fn mnemonic_keypair(phrase: &str, index: u32) -> Result<Keypair> {
     let path = [0x8000_0000 + 44, 0x8000_0000 + 148, 0x8000_0000 + index];
     let derived = slip10_ed25519::derive_ed25519_private_key(&seed, &path);
     Keypair::from_raw_ed25519_seed(&derived).map_err(|e| anyhow!("derive keypair: {:?}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn round_robin_rotates_across_free_callers() {
+        let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let dir = std::env::temp_dir().join(format!("arb-caller-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("mnemonic.txt");
+        std::fs::write(&path, phrase).unwrap();
+
+        let pool = CallerPool::from_config(Some(path.to_str().unwrap()), &[1, 2, 3], &[])
+            .unwrap()
+            .unwrap();
+        assert_eq!(pool.len(), 3);
+
+        let a = pool.try_acquire().await.unwrap();
+        let b = pool.try_acquire().await.unwrap();
+        let c = pool.try_acquire().await.unwrap();
+        assert_ne!(a.public_key(), b.public_key());
+        assert_ne!(b.public_key(), c.public_key());
+        assert_ne!(a.public_key(), c.public_key());
+        assert!(pool.try_acquire().await.is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

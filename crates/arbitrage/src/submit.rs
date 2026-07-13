@@ -80,12 +80,13 @@ pub async fn poll_transaction(rpc_url: &str, hash: &str) -> Result<()> {
     Err(anyhow!("tx status poll timeout"))
 }
 
-/// Full submit + poll; updates stats.
+/// Full submit + poll; updates stats and profit book.
 pub async fn submit_prepared(
     rpc_url: &str,
     keypair: &ExecutorKeypair,
     prepared: &PreparedArbTx,
     stats: &ArbStats,
+    profit: &crate::profit::ProfitBook,
 ) -> Result<()> {
     if !prepared.simulated {
         return Err(anyhow!(
@@ -96,21 +97,31 @@ pub async fn submit_prepared(
 
     let hash = sign_and_submit(rpc_url, keypair, &prepared.unsigned_tx_xdr).await?;
     stats.txs_submitted.fetch_add(1, Ordering::Relaxed);
+    profit.record_submitted();
     info!(
         hash = %hash,
         route = %prepared.route_label,
         profit_bps = prepared.profit_bps,
+        estimated_fee_stroops = prepared.estimated_fee_stroops,
         "arb tx submitted"
     );
 
     match poll_transaction(rpc_url, &hash).await {
         Ok(()) => {
             stats.txs_succeeded.fetch_add(1, Ordering::Relaxed);
-            info!(hash = %hash, "arb tx SUCCESS");
+            let gross = prepared.simulated_amount_out.saturating_sub(prepared.amount_in);
+            profit.record_success(&hash, prepared.amount_in, gross, prepared.estimated_fee_stroops);
+            info!(
+                hash = %hash,
+                gross_profit = gross,
+                estimated_fee = prepared.estimated_fee_stroops,
+                "arb tx SUCCESS"
+            );
             Ok(())
         }
         Err(e) => {
             stats.txs_failed.fetch_add(1, Ordering::Relaxed);
+            profit.record_failed();
             error!(hash = %hash, error = %e, "arb tx failed");
             Err(e)
         }

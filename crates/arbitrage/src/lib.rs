@@ -10,11 +10,13 @@ pub mod invoke;
 pub mod keypair;
 pub mod optimize;
 pub mod prepare;
+pub mod profit;
 pub mod quote_client;
 pub mod runtime;
 pub mod scanner;
 pub mod stats;
 pub mod submit;
+pub mod telegram;
 pub mod vault;
 
 pub use {

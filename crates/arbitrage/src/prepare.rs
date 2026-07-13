@@ -21,6 +21,8 @@ use {
 pub struct PreparedSimulation {
     pub unsigned_tx_xdr: String,
     pub amount_out: u128,
+    /// Inclusion fee + simulated Soroban resource fee (stroops).
+    pub estimated_fee_stroops: u128,
 }
 
 fn scval_i128_to_u128(val: &xdr::ScVal) -> Option<u128> {
@@ -48,21 +50,83 @@ pub fn rpc_server(rpc_url: &str) -> Result<Server> {
     .map_err(|e| anyhow!("create Soroban RPC client: {}", e))
 }
 
-pub async fn fetch_account_sequence(horizon_url: &str, public_key: &str) -> Result<i64> {
-    let url = format!("{}/accounts/{}", horizon_url.trim_end_matches('/'), public_key);
-    let data: serde_json::Value = reqwest::Client::new()
-        .get(&url)
+/// Read account ledger entry XDR via Soroban RPC `getLedgerEntries`.
+async fn fetch_account_entry_xdr(rpc_url: &str, public_key: &str) -> Result<String> {
+    use {
+        serde_json::json,
+        stellar_strkey::ed25519::PublicKey,
+        stellar_xdr::curr::{Limits, WriteXdr},
+    };
+
+    let pk = PublicKey::from_string(public_key).map_err(|e| anyhow!("invalid public key: {:?}", e))?;
+    let account_id = sxdr::AccountId(sxdr::PublicKey::PublicKeyTypeEd25519(sxdr::Uint256(pk.0)));
+    let key = sxdr::LedgerKey::Account(sxdr::LedgerKeyAccount { account_id });
+    let key_b64 = key
+        .to_xdr_base64(Limits::none())
+        .map_err(|e| anyhow!("encode account ledger key: {:?}", e))?;
+
+    let body = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "getLedgerEntries",
+        "params": { "keys": [key_b64] }
+    });
+
+    let resp: serde_json::Value = reqwest::Client::new()
+        .post(rpc_url)
+        .json(&body)
         .send()
         .await
-        .map_err(|e| anyhow!("Horizon account request: {}", e))?
+        .map_err(|e| anyhow!("RPC getLedgerEntries request: {}", e))?
         .json()
         .await
-        .map_err(|e| anyhow!("Horizon account JSON: {}", e))?;
-    let seq_str = data
-        .get("sequence")
-        .and_then(|s| s.as_str())
-        .ok_or_else(|| anyhow!("missing sequence in Horizon account"))?;
-    seq_str.parse().map_err(|e| anyhow!("parse sequence: {}", e))
+        .map_err(|e| anyhow!("RPC getLedgerEntries JSON: {}", e))?;
+
+    if let Some(error) = resp.get("error") {
+        return Err(anyhow!("RPC getLedgerEntries error: {}", error));
+    }
+
+    resp.pointer("/result/entries/0/xdr")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow!("account not found on ledger: {public_key}"))
+}
+
+fn decode_account_entry_xdr(xdr_b64: &str) -> Result<sxdr::AccountEntry> {
+    use stellar_xdr::curr::{Limits, ReadXdr};
+
+    if let Ok(entry) = sxdr::LedgerEntry::from_xdr_base64(xdr_b64, Limits::none()) {
+        if let sxdr::LedgerEntryData::Account(data) = entry.data {
+            return Ok(data);
+        }
+    }
+    if let Ok(data) = sxdr::LedgerEntryData::from_xdr_base64(xdr_b64, Limits::none()) {
+        if let sxdr::LedgerEntryData::Account(data) = data {
+            return Ok(data);
+        }
+    }
+    if let Ok(data) = sxdr::AccountEntry::from_xdr_base64(xdr_b64, Limits::none()) {
+        return Ok(data);
+    }
+    Err(anyhow!("cannot decode account entry from ledger XDR"))
+}
+
+fn decode_account_sequence_xdr(xdr_b64: &str) -> Result<i64> {
+    Ok(decode_account_entry_xdr(xdr_b64)?.seq_num.0)
+}
+
+/// Read the account sequence from Soroban RPC (`getLedgerEntries`). Arb is
+/// Soroban-only — no Horizon / SDEX.
+pub async fn fetch_account_sequence(rpc_url: &str, public_key: &str) -> Result<i64> {
+    let xdr_b64 = fetch_account_entry_xdr(rpc_url, public_key).await?;
+    decode_account_sequence_xdr(&xdr_b64)
+}
+
+/// Native XLM balance (stroops) for a G... account via Soroban RPC.
+pub async fn fetch_account_native_balance(rpc_url: &str, public_key: &str) -> Result<u128> {
+    let xdr_b64 = fetch_account_entry_xdr(rpc_url, public_key).await?;
+    let entry = decode_account_entry_xdr(&xdr_b64)?;
+    u128::try_from(entry.balance).map_err(|_| anyhow!("negative account balance"))
 }
 
 /// Simulate + assemble footprint/auth; return unsigned envelope XDR and
@@ -111,6 +175,13 @@ pub async fn prepare_transaction_xdr(
         }
     };
 
+    let resource_fee: u128 = sim_response
+        .min_resource_fee
+        .as_deref()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let estimated_fee_stroops = u128::from(fee).saturating_add(resource_fee);
+
     let prepared = assemble_transaction(&tx, sim_response).map_err(|e| anyhow!("assemble_transaction: {:?}", e))?;
 
     let envelope = prepared.to_envelope().map_err(|e| anyhow!("to_envelope: {}", e))?;
@@ -122,20 +193,98 @@ pub async fn prepare_transaction_xdr(
     Ok(PreparedSimulation {
         unsigned_tx_xdr,
         amount_out,
+        estimated_fee_stroops,
     })
 }
 
-/// Sum bridge-token transfers to the aggregator seen in a failed simulation
-/// log.
-pub fn parse_bridge_received_from_sim_error(error: &str, bridge_token: &str, aggregator: &str) -> Option<u128> {
-    let contract_tag = format!("contract:{bridge_token}");
+/// Sum unique token transfers to `aggregator` for `token` (dedup identical
+/// lines).
+fn parse_token_received_by_aggregator(error: &str, token: &str, aggregator: &str) -> Option<u128> {
+    let contract_tag = format!("contract:{token}");
     let mut total = 0u128;
     let mut saw = false;
+    let mut seen_lines = std::collections::HashSet::new();
     for line in error.lines() {
+        if !seen_lines.insert(line.to_string()) {
+            continue;
+        }
         if !line.contains(&contract_tag) || !line.contains("topics:[transfer,") {
             continue;
         }
-        if !line.contains(aggregator) {
+        // topics:[transfer, FROM, TO, ...] — require TO == aggregator.
+        let Some(topics) = line.split("topics:[").nth(1).and_then(|s| s.split(']').next()) else {
+            continue;
+        };
+        let parts: Vec<&str> = topics.split(',').map(str::trim).collect();
+        if parts.len() < 3 || parts[0] != "transfer" {
+            continue;
+        }
+        if parts[2] != aggregator {
+            continue;
+        }
+        let Some(rest) = line.split("data:").nth(1) else {
+            continue;
+        };
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if let Ok(amt) = digits.parse::<u128>() {
+            total = total.saturating_add(amt);
+            saw = true;
+        }
+    }
+    saw.then_some(total)
+}
+
+/// Bridge output from leg_out: sum deduped bridge-token transfers to the
+/// aggregator, or fall back to the last `fn_return, swap` before leg_back.
+pub fn parse_bridge_received_from_sim_error(error: &str, bridge_token: &str, aggregator: &str) -> Option<u128> {
+    if let Some(total) = parse_token_received_by_aggregator(error, bridge_token, aggregator) {
+        return Some(total);
+    }
+
+    // Single-hop leg_out: pool swap return equals bridge received.
+    let mut last_swap_out = None;
+    for line in error.lines() {
+        if line.contains("topics:[fn_return, swap]") && line.contains("data:") {
+            let Some(rest) = line.split("data:").nth(1) else {
+                continue;
+            };
+            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if let Ok(amt) = digits.parse::<u128>() {
+                last_swap_out = Some(amt);
+            }
+        }
+    }
+    last_swap_out
+}
+
+/// Base token returned by leg_back pool swaps (transfers into aggregator),
+/// excluding the initial caller→aggregator principal pull.
+pub fn parse_base_received_from_sim_error(
+    error: &str,
+    base_token: &str,
+    aggregator: &str,
+    caller: &str,
+) -> Option<u128> {
+    let contract_tag = format!("contract:{base_token}");
+    let mut total = 0u128;
+    let mut saw = false;
+    let mut seen_lines = std::collections::HashSet::new();
+    for line in error.lines() {
+        if !seen_lines.insert(line.to_string()) {
+            continue;
+        }
+        if !line.contains(&contract_tag) || !line.contains("topics:[transfer,") {
+            continue;
+        }
+        let Some(topics) = line.split("topics:[").nth(1).and_then(|s| s.split(']').next()) else {
+            continue;
+        };
+        let parts: Vec<&str> = topics.split(',').map(str::trim).collect();
+        if parts.len() < 3 || parts[0] != "transfer" {
+            continue;
+        }
+        // Only pool → aggregator returns (skip caller → aggregator pull).
+        if parts[2] != aggregator || parts[1] == caller {
             continue;
         }
         let Some(rest) = line.split("data:").nth(1) else {
@@ -161,6 +310,54 @@ mod bridge_parse_tests {
         let bridge = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75";
         assert_eq!(parse_bridge_received_from_sim_error(log, bridge, agg), Some(18_252_396));
     }
+
+    #[test]
+    fn parses_production_usdc_leg_out_mismatch() {
+        let log = r#"   9: [Failed Contract Event (not emitted)] contract:CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75, topics:[transfer, CBBMQBNHB2FYVZYV7VNHOJHUMTFJLR4PUMRVQYNW6RHIKZO2NQMIBUCV, CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K, "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"], data:1014904660"#;
+        let agg = "CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K";
+        let bridge = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75";
+        assert_eq!(
+            parse_bridge_received_from_sim_error(log, bridge, agg),
+            Some(1_014_904_660)
+        );
+    }
+
+    #[test]
+    fn dedupes_duplicate_transfer_lines_in_event_log() {
+        let line = r#"   9: [Failed Contract Event (not emitted)] contract:CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75, topics:[transfer, POOL, CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K, "USDC"], data:18372538"#;
+        let log = format!("{line}\n{line}");
+        let agg = "CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K";
+        let bridge = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75";
+        assert_eq!(
+            parse_bridge_received_from_sim_error(&log, bridge, agg),
+            Some(18_372_538)
+        );
+    }
+
+    #[test]
+    fn falls_back_to_swap_return_when_no_transfer_line() {
+        let log = r#"   4: [Failed Diagnostic Event (not emitted)] contract:CBBMQBNHB2FYVZYV7VNHOJHUMTFJLR4PUMRVQYNW6RHIKZO2NQMIBUCV, topics:[fn_return, swap], data:18372538"#;
+        let agg = "CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K";
+        let bridge = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75";
+        assert_eq!(parse_bridge_received_from_sim_error(log, bridge, agg), Some(18_372_538));
+    }
+
+    #[test]
+    fn parses_base_out_excluding_caller_pull() {
+        use super::parse_base_received_from_sim_error;
+        let log = r#"
+   10: [Failed Contract Event] contract:CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA, topics:[transfer, CCY2PXGMKNQHO7WNYXEWX76L2C5BH3JUW3RCATGUYKY7QQTRILBZIFWV, CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K, "native"], data:841208923
+   16: [Failed Contract Event] contract:CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA, topics:[transfer, GCMDWFAHD6PYI5SI2N2M6XINZDITECUV4XN7LYQGOWKQSIMQPRNK2DLN, CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K, "native"], data:1832045401
+   32: [Failed Contract Event] contract:CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA, topics:[transfer, CA4HTZNY2RBZWEQE5GBMNREZMFRPAZSVJ6OGPC7T3VM7NHRJYFAVID2S, CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K, "native"], data:984439379
+"#;
+        let agg = "CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K";
+        let base = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";
+        let caller = "GCMDWFAHD6PYI5SI2N2M6XINZDITECUV4XN7LYQGOWKQSIMQPRNK2DLN";
+        assert_eq!(
+            parse_base_received_from_sim_error(log, base, agg, caller),
+            Some(841_208_923 + 984_439_379)
+        );
+    }
 }
 
 #[cfg(test)]
@@ -171,5 +368,26 @@ mod tests {
     fn parses_i128_return_as_u128() {
         let val = xdr::ScVal::I128(xdr::Int128Parts { hi: 0, lo: 100_144_152 });
         assert_eq!(scval_i128_to_u128(&val), Some(100_144_152));
+    }
+
+    #[test]
+    fn decodes_account_sequence_from_ledger_entry_data_xdr() {
+        use stellar_xdr::curr::{Limits, WriteXdr};
+
+        let entry = sxdr::AccountEntry {
+            account_id: sxdr::AccountId(sxdr::PublicKey::PublicKeyTypeEd25519(sxdr::Uint256([1u8; 32]))),
+            balance: 1,
+            seq_num: sxdr::SequenceNumber(42),
+            num_sub_entries: 0,
+            inflation_dest: None,
+            flags: 0,
+            home_domain: sxdr::String32::default(),
+            thresholds: sxdr::Thresholds([0; 4]),
+            signers: sxdr::VecM::default(),
+            ext: sxdr::AccountEntryExt::V0,
+        };
+        let data = sxdr::LedgerEntryData::Account(entry);
+        let b64 = data.to_xdr_base64(Limits::none()).unwrap();
+        assert_eq!(super::decode_account_sequence_xdr(&b64).unwrap(), 42);
     }
 }

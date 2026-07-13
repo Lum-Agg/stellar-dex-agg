@@ -13,7 +13,8 @@ const DEFAULT_BASE_TOKENS: &[&str] = &[
 
 #[derive(Debug, Clone)]
 pub struct ArbConfig {
-    /// LumAgg quote-api base URLs (round-robin). Same stack as `lumagg-api@{3100..3103}`.
+    /// LumAgg quote-api base URLs (round-robin). Same stack as
+    /// `lumagg-api@{3100..3103}`.
     pub quote_api_urls: Vec<String>,
     /// Deployed LumAgg aggregator contract (round_trip_swap target).
     pub aggregator_contract: Option<String>,
@@ -25,7 +26,6 @@ pub struct ArbConfig {
     pub mnemonic_path: Option<String>,
     pub caller_indices: Vec<u32>,
     pub rpc_url: String,
-    pub horizon_url: String,
     pub base_tokens: Vec<TokenId>,
     pub bridge_tokens: Vec<TokenId>,
     pub probe_amount_in: u128,
@@ -79,7 +79,6 @@ impl ArbConfig {
 
         let rpc_url =
             std::env::var("RPC_URL").unwrap_or_else(|_| "https://soroban-rpc.mainnet.stellar.gateway.fm".to_string());
-        let horizon_url = std::env::var("HORIZON_URL").unwrap_or_else(|_| "https://horizon.stellar.org".to_string());
 
         let base_tokens = std::env::var("ARB_BASE_TOKENS")
             .ok()
@@ -100,7 +99,7 @@ impl ArbConfig {
         let min_profit = std::env::var("ARB_MIN_PROFIT")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(100_000); // 0.01 XLM
+            .unwrap_or(200_000); // 0.02 XLM net after estimated fees
 
         let slippage_bps = std::env::var("ARB_SLIPPAGE_BPS")
             .ok()
@@ -146,7 +145,7 @@ impl ArbConfig {
         let max_amount_in = std::env::var("ARB_MAX_AMOUNT_IN")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(17_000_000_000); // 1700 XLM
+            .unwrap_or(180_000_000_000); // soft ceiling; vault float is the real cap
 
         let sample_count = std::env::var("ARB_SAMPLE_COUNT")
             .ok()
@@ -177,7 +176,6 @@ impl ArbConfig {
             mnemonic_path,
             caller_indices,
             rpc_url,
-            horizon_url,
             base_tokens,
             bridge_tokens,
             probe_amount_in,

@@ -88,6 +88,26 @@ impl RateLimitState {
     }
 }
 
+/// Loopback and optional extra IPs/CIDRs skip the public IP bucket (arb bot on
+/// same host).
+fn is_ip_rate_limit_exempt(ip: IpAddr) -> bool {
+    if ip.is_loopback() {
+        return true;
+    }
+    static EXEMPT: std::sync::OnceLock<HashSet<IpAddr>> = std::sync::OnceLock::new();
+    EXEMPT.get_or_init(parse_rate_limit_bypass_ips_from_env).contains(&ip)
+}
+
+fn parse_rate_limit_bypass_ips_from_env() -> HashSet<IpAddr> {
+    std::env::var("QUOTE_RATE_LIMIT_BYPASS_IPS")
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| s.parse().ok())
+        .collect()
+}
+
 pub async fn rate_limit_middleware(State(state): State<RateLimitState>, request: Request, next: Next) -> Response {
     let now = Instant::now();
     if let Some(api_key) = request
@@ -113,7 +133,8 @@ pub async fn rate_limit_middleware(State(state): State<RateLimitState>, request:
     }
 
     if let Some(ConnectInfo(addr)) = request.extensions().get::<ConnectInfo<SocketAddr>>() {
-        if !state.ip.allow_now(addr.ip(), now) {
+        let ip = addr.ip();
+        if !is_ip_rate_limit_exempt(ip) && !state.ip.allow_now(ip, now) {
             return (
                 StatusCode::TOO_MANY_REQUESTS,
                 "rate limit exceeded: max 10 requests/second per IP (use X-API-Key for higher limits)",
@@ -126,7 +147,10 @@ pub async fn rate_limit_middleware(State(state): State<RateLimitState>, request:
 
 #[cfg(test)]
 mod tests {
-    use {super::*, std::net::Ipv4Addr};
+    use {
+        super::*,
+        std::net::{Ipv4Addr, Ipv6Addr},
+    };
 
     #[test]
     fn limits_requests_per_window() {
@@ -148,5 +172,12 @@ mod tests {
         };
         assert!(state.is_partner_key("key-a"));
         assert!(!state.is_partner_key("key-c"));
+    }
+
+    #[test]
+    fn loopback_is_rate_limit_exempt() {
+        assert!(is_ip_rate_limit_exempt(IpAddr::V4(Ipv4Addr::LOCALHOST)));
+        assert!(is_ip_rate_limit_exempt(IpAddr::V6(Ipv6Addr::LOCALHOST)));
+        assert!(!is_ip_rate_limit_exempt(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));
     }
 }

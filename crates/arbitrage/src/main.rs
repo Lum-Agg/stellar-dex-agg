@@ -5,7 +5,8 @@
 
 use {
     anyhow::Result,
-    arbitrage::{ArbConfig, ArbRuntime},
+    arbitrage::{telegram, ArbConfig, ArbRuntime},
+    std::sync::Arc,
     tracing::info,
     tracing_subscriber::EnvFilter,
 };
@@ -17,8 +18,18 @@ async fn main() -> Result<()> {
         .init();
 
     let config = ArbConfig::from_env()?;
-    let runtime = ArbRuntime::from_config(config)?;
+    let runtime = Arc::new(ArbRuntime::from_config(config)?);
     runtime.log_startup();
+
+    if let Some(alerter) = lumagg_alerts::TelegramAlerter::from_env().map(Arc::new) {
+        info!("Telegram profit reports enabled");
+        let _ = alerter
+            .send("🚀 LumAgg arb-scanner started (hourly profit reports)")
+            .await;
+        telegram::spawn_hourly_profit_report(runtime.clone(), alerter);
+    } else {
+        info!("Telegram disabled (set TELEGRAM_ALERTS_ENABLED + token/chat in telegram.env)");
+    }
 
     loop {
         let opps = arbitrage::scan_once(&runtime).await?;
