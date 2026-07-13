@@ -21,6 +21,7 @@ pub struct ArbSwapStep {
 
 pub fn source_to_dex_type(source: &str) -> Result<&'static str> {
     match source {
+        // Aquarius xy=k, stableswap, and CLMM pools share swap(user, in_idx, out_idx, ...).
         "aquarius" | "aquarius_clmm" => Ok("aquarius"),
         "soroswap" => Ok("soroswap"),
         "phoenix" => Ok("phoenix"),
@@ -228,10 +229,31 @@ fn prepare_round_trip_routes(
     leg_out: &OptimalRoute,
     leg_back: &OptimalRoute,
 ) -> (OptimalRoute, OptimalRoute) {
+    prepare_round_trip_routes_with_bridge(amount_in, leg_out, leg_back, None)
+}
+
+/// Build contract routes; when `bridge_amount_override` is set (from a prior
+/// simulate), scale `leg_back` inputs to that on-chain leg_out total.
+pub fn prepare_round_trip_routes_with_bridge(
+    amount_in: i128,
+    leg_out: &OptimalRoute,
+    leg_back: &OptimalRoute,
+    bridge_amount_override: Option<u128>,
+) -> (OptimalRoute, OptimalRoute) {
     let mut out = leg_out.clone();
     let mut back = leg_back.clone();
     normalize_sub_order_amounts(&mut out, amount_in as u128);
-    normalize_sub_order_amounts(&mut back, leg_out.total_expected_out);
+    let bridge_total = bridge_amount_override.unwrap_or(out.total_expected_out);
+    if out.sub_orders.len() == back.sub_orders.len() && out.sub_orders.len() > 1 {
+        for (o, b) in out.sub_orders.iter().zip(back.sub_orders.iter_mut()) {
+            b.amount_in = o.expected_amount_out;
+        }
+        if bridge_amount_override.is_some() {
+            normalize_sub_order_amounts(&mut back, bridge_total);
+        }
+    } else {
+        normalize_sub_order_amounts(&mut back, bridge_total);
+    }
     (out, back)
 }
 
@@ -276,6 +298,7 @@ pub fn build_round_trip_swap_op(
     leg_out: &OptimalRoute,
     leg_back: &OptimalRoute,
     min_amount_out: i128,
+    bridge_amount_override: Option<u128>,
     snapshot: &MarketSnapshot,
     hydration: &QuoteHydration,
 ) -> Result<xdr::Operation> {
@@ -295,7 +318,8 @@ pub fn build_round_trip_swap_op(
     let base_hash = contract_hash(base_token)?;
     let bridge_hash = contract_hash(bridge_token)?;
 
-    let (leg_out, leg_back) = prepare_round_trip_routes(amount_in, leg_out, leg_back);
+    let (leg_out, leg_back) =
+        prepare_round_trip_routes_with_bridge(amount_in, leg_out, leg_back, bridge_amount_override);
 
     let leg_out_val = route_to_sub_routes_scval(&leg_out, snapshot, hydration)?;
     let leg_back_val = route_to_sub_routes_scval(&leg_back, snapshot, hydration)?;
@@ -338,6 +362,7 @@ pub fn build_execute_round_trip_op(
     leg_out: &OptimalRoute,
     leg_back: &OptimalRoute,
     min_amount_out: i128,
+    bridge_amount_override: Option<u128>,
     snapshot: &MarketSnapshot,
     hydration: &QuoteHydration,
 ) -> Result<xdr::Operation> {
@@ -358,7 +383,8 @@ pub fn build_execute_round_trip_op(
     let base_hash = contract_hash(base_token)?;
     let bridge_hash = contract_hash(bridge_token)?;
 
-    let (leg_out, leg_back) = prepare_round_trip_routes(amount_in, leg_out, leg_back);
+    let (leg_out, leg_back) =
+        prepare_round_trip_routes_with_bridge(amount_in, leg_out, leg_back, bridge_amount_override);
 
     let leg_out_val = route_to_sub_routes_scval(&leg_out, snapshot, hydration)?;
     let leg_back_val = route_to_sub_routes_scval(&leg_back, snapshot, hydration)?;

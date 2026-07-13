@@ -100,10 +100,16 @@ pub async fn prepare_transaction_xdr(
         .await
         .map_err(|e| anyhow!("simulate_transaction: {:?}", e))?;
 
-    let amount_out = sim_response
-        .to_result()
-        .and_then(|(ret, _)| scval_i128_to_u128(&ret))
-        .ok_or_else(|| anyhow!("simulation missing i128 return value"))?;
+    let amount_out = match sim_response.to_result().and_then(|(ret, _)| scval_i128_to_u128(&ret)) {
+        Some(v) => v,
+        None => {
+            let detail = sim_response
+                .error
+                .clone()
+                .unwrap_or_else(|| "no simulation error detail".to_string());
+            return Err(anyhow!("simulation missing i128 return value: {detail}"));
+        }
+    };
 
     let prepared = assemble_transaction(&tx, sim_response).map_err(|e| anyhow!("assemble_transaction: {:?}", e))?;
 
@@ -117,6 +123,44 @@ pub async fn prepare_transaction_xdr(
         unsigned_tx_xdr,
         amount_out,
     })
+}
+
+/// Sum bridge-token transfers to the aggregator seen in a failed simulation
+/// log.
+pub fn parse_bridge_received_from_sim_error(error: &str, bridge_token: &str, aggregator: &str) -> Option<u128> {
+    let contract_tag = format!("contract:{bridge_token}");
+    let mut total = 0u128;
+    let mut saw = false;
+    for line in error.lines() {
+        if !line.contains(&contract_tag) || !line.contains("topics:[transfer,") {
+            continue;
+        }
+        if !line.contains(aggregator) {
+            continue;
+        }
+        let Some(rest) = line.split("data:").nth(1) else {
+            continue;
+        };
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if let Ok(amt) = digits.parse::<u128>() {
+            total = total.saturating_add(amt);
+            saw = true;
+        }
+    }
+    saw.then_some(total)
+}
+
+#[cfg(test)]
+mod bridge_parse_tests {
+    use super::parse_bridge_received_from_sim_error;
+
+    #[test]
+    fn sums_bridge_transfers_to_aggregator() {
+        let log = r#"   13: [Failed Contract Event] contract:CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75, topics:[transfer, POOL, CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K, "USDC"], data:18252396"#;
+        let agg = "CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K";
+        let bridge = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75";
+        assert_eq!(parse_bridge_received_from_sim_error(log, bridge, agg), Some(18_252_396));
+    }
 }
 
 #[cfg(test)]

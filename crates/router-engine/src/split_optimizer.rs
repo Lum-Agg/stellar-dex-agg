@@ -120,6 +120,45 @@ impl SplitOptimizer {
             })
             .unwrap_or(false);
 
+        let max_splits = max_splits_override.unwrap_or(self.config.max_splits);
+
+        if max_splits <= 1 {
+            let minimum_out = apply_slippage(best_single_out, slippage_bps);
+            return OptimalRoute {
+                sub_orders: vec![SubOrder {
+                    path: best_single.path.clone(),
+                    amount_in: total_amount,
+                    expected_amount_out: best_single_out,
+                    fraction: 1.0,
+                }],
+                total_amount_in: total_amount,
+                total_expected_out: best_single_out,
+                price_impact_bps: best_single_impact,
+                is_split: false,
+                improvement_bps: 0,
+                minimum_out,
+                compute_time_ms: start.elapsed().as_millis() as u64,
+                debug: Some(RouteDebug {
+                    quoted_paths_count: quoted_paths.len(),
+                    candidate_paths_count: 1,
+                    best_single_out,
+                    second_best_out,
+                    best_single_impact_bps: best_single_impact,
+                    split_threshold_bps: self.config.split_threshold_bps,
+                    competitive_delta_bps,
+                    min_split_fraction_bps: self.config.min_split_fraction_bps,
+                    split_attempted: false,
+                    split_rejected_reason: Some("max_splits_1".to_string()),
+                    optimization_strategy: "single_path_only".to_string(),
+                    used_rest_best_approximation: false,
+                    split_total_out: None,
+                    dust_filtered_legs: 0,
+                    candidate_routes: vec![],
+                    planned_split: vec![],
+                }),
+            };
+        }
+
         if sorted.len() < 2 {
             let minimum_out = apply_slippage(best_single_out, slippage_bps);
             return OptimalRoute {
@@ -198,10 +237,7 @@ impl SplitOptimizer {
             };
         }
 
-        let candidates: Vec<&QuotedPath> = sorted
-            .into_iter()
-            .take(max_splits_override.unwrap_or(self.config.max_splits).max(2))
-            .collect();
+        let candidates: Vec<&QuotedPath> = sorted.into_iter().take(max_splits).collect();
         let candidate_paths_count = candidates.len();
         let optimization_strategy = if candidate_paths_count > 2 {
             "recursive_pairwise_approx_rest".to_string()

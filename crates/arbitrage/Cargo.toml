@@ -9,6 +9,14 @@ description = "Round-trip arbitrage scanner via aggregator.round_trip_swap"
 name = "arb-scanner"
 path = "src/main.rs"
 
+[[bin]]
+name = "diag_simulate"
+path = "src/bin/diag_simulate.rs"
+
+[[bin]]
+name = "clean_caller_trustlines"
+path = "src/bin/clean_caller_trustlines.rs"
+
 [dependencies]
 market-snapshot = { path = "../market-snapshot" }
 router-engine = { path = "../router-engine" }
@@ -27,3 +35,4 @@ stellar-baselib.workspace = true
 reqwest.workspace = true
 bip39 = "2"
 slip10_ed25519 = "0.1"
+hex.workspace = true

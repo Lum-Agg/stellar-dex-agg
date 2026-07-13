@@ -61,16 +61,27 @@ async fn resolve_start_ledger(
     config: &IndexerConfig,
     rpc: &dex_adapters::SorobanRpc,
 ) -> Result<u32> {
-    if let Some(saved) = store.cursor_ledger()? {
-        return Ok(saved);
-    }
-    if let Some(start) = config.start_ledger {
-        store.set_cursor_ledger(start)?;
-        return Ok(start);
+    let (oldest_available, latest) = rpc
+        .get_events_ledger_bounds(&config.aggregator_contract)
+        .await
+        .context("probe getEvents ledger bounds")?;
+
+    let mut start = if let Some(saved) = store.cursor_ledger()? {
+        saved
+    } else if let Some(start) = config.start_ledger {
+        start
+    } else {
+        latest.saturating_sub(DEFAULT_LOOKBACK_LEDGERS)
+    };
+
+    if start < oldest_available {
+        info!(
+            requested = start,
+            oldest_available, latest, "clamping indexer cursor to RPC oldest available ledger"
+        );
+        start = oldest_available;
     }
 
-    let latest = rpc.get_latest_ledger().await?.sequence;
-    let start = latest.saturating_sub(DEFAULT_LOOKBACK_LEDGERS);
     store.set_cursor_ledger(start)?;
     Ok(start)
 }

@@ -49,6 +49,8 @@ pub fn event_value_xdr(value: Option<&serde_json::Value>) -> Option<&str> {
 pub struct GetEventsPage {
     pub events: Vec<ContractEvent>,
     pub latest_ledger: u32,
+    /// Earliest ledger retained by this RPC node's event store.
+    pub oldest_ledger: Option<u32>,
     pub cursor: Option<String>,
 }
 
@@ -79,6 +81,20 @@ impl SorobanRpc {
         Ok(LatestLedger {
             sequence: sequence as u32,
         })
+    }
+
+    /// Probe `getEvents` at `latest` to learn RPC event retention bounds.
+    pub async fn get_events_ledger_bounds(&self, contract_id: &str) -> Result<(u32, u32)> {
+        let latest = self.get_latest_ledger().await?.sequence;
+        let filters = [EventFilterSpec {
+            contract_ids: Some(vec![contract_id.to_string()]),
+            topics: None,
+        }];
+        let page = self
+            .get_contract_events_page(latest, Some(latest), &filters, 1, None)
+            .await?;
+        let oldest = page.oldest_ledger.unwrap_or(latest);
+        Ok((oldest, page.latest_ledger))
     }
 
     /// Fetch contract events in `[start_ledger, end_ledger)` with pagination.
@@ -202,6 +218,8 @@ impl SorobanRpc {
             events: Vec<RawEvent>,
             #[serde(rename = "latestLedger")]
             latest_ledger: u32,
+            #[serde(rename = "oldestLedger")]
+            oldest_ledger: Option<u32>,
             cursor: Option<String>,
         }
 
@@ -225,6 +243,7 @@ impl SorobanRpc {
                 })
                 .collect(),
             latest_ledger: parsed.latest_ledger,
+            oldest_ledger: parsed.oldest_ledger,
             cursor: parsed.cursor,
         })
     }

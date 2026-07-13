@@ -9,6 +9,7 @@ use {
         hydrate::hydrate_paths,
         optimize::optimize_round_trip,
         runtime::ArbRuntime,
+        vault::resolve_max_amount_in,
     },
     anyhow::Result,
     router_engine::{Path, RouteRequest},
@@ -32,7 +33,8 @@ pub fn compute_profit_bps(amount_in: u128, amount_out: u128) -> i64 {
     (aout - ain) * 10_000 / ain
 }
 
-async fn collect_paths_for_base(ctx: &ArbContext, base: &router_engine::TokenId) -> Vec<Path> {
+/// Collect candidate paths for all configured bridges (used by scanner + diag).
+pub async fn collect_paths_for_base(ctx: &ArbContext, base: &router_engine::TokenId) -> Vec<Path> {
     let mut paths = Vec::new();
     let amount = ctx.config.probe_amount_in;
 
@@ -53,7 +55,7 @@ async fn collect_paths_for_base(ctx: &ArbContext, base: &router_engine::TokenId)
                 },
                 max_hops: Some(ctx.config.max_hops),
                 max_splits: Some(ctx.config.max_splits),
-                prefer_soroban: None,
+                prefer_soroban: Some(true),
             };
             paths.extend(ctx.engine.find_candidate_paths(&request).await);
         }
@@ -96,6 +98,18 @@ async fn scan_with_context(runtime: &ArbRuntime, ctx: &ArbContext) -> Result<Vec
         }
 
         let mut quoted = 0usize;
+        let max_in = resolve_max_amount_in(ctx, &base.canonical()).await;
+        if max_in < ctx.config.min_amount_in {
+            warn!(
+                base = %base.canonical(),
+                max_in,
+                min_amount_in = ctx.config.min_amount_in,
+                vault_balance = ?ctx.vault_base_balance,
+                "skipping base — vault float below min trade size"
+            );
+            continue;
+        }
+
         for bridge in &ctx.config.bridge_tokens {
             if bridge.canonical() == base.canonical() {
                 continue;
@@ -113,7 +127,7 @@ async fn scan_with_context(runtime: &ArbRuntime, ctx: &ArbContext) -> Result<Vec
                     bridge,
                     &hydration,
                     ctx.config.min_amount_in,
-                    ctx.config.max_amount_in,
+                    max_in,
                     ctx.config.sample_count,
                 )
                 .await

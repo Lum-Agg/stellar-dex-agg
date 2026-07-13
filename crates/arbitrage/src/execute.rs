@@ -10,10 +10,11 @@ use {
             build_execute_round_trip_op, build_raw_envelope_xdr, build_round_trip_swap_op, min_amount_out_break_even,
         },
         optimize::optimize_round_trip,
-        prepare::{fetch_account_sequence, prepare_transaction_xdr},
+        prepare::{fetch_account_sequence, parse_bridge_received_from_sim_error, prepare_transaction_xdr},
         scanner::ArbOpportunity,
         stats::ArbStats,
         submit::submit_prepared,
+        vault::resolve_max_amount_in,
     },
     anyhow::{Context, Result},
     router_engine::QuoteHydration,
@@ -35,6 +36,10 @@ pub struct PreparedArbTx {
 }
 
 async fn resolve_quote(ctx: &ArbContext, opp: &ArbOpportunity, hydration: &QuoteHydration) -> Option<RoundTripQuote> {
+    let max_in = resolve_max_amount_in(ctx, &opp.quote.base.canonical()).await;
+    if max_in < ctx.config.min_amount_in {
+        return None;
+    }
     if ctx.config.optimize_amount {
         optimize_round_trip(
             ctx,
@@ -42,12 +47,19 @@ async fn resolve_quote(ctx: &ArbContext, opp: &ArbOpportunity, hydration: &Quote
             &opp.quote.bridge,
             hydration,
             ctx.config.min_amount_in,
-            ctx.config.max_amount_in,
+            max_in,
             ctx.config.sample_count,
         )
         .await
     } else {
-        quote_round_trip(ctx, &opp.quote.base, &opp.quote.bridge, opp.quote.amount_in, hydration).await
+        quote_round_trip(
+            ctx,
+            &opp.quote.base,
+            &opp.quote.bridge,
+            opp.quote.amount_in.min(max_in),
+            hydration,
+        )
+        .await
     }
 }
 
@@ -74,34 +86,40 @@ pub async fn prepare_opportunity_tx(
     let amount_in_i128 = i128::try_from(quote.amount_in).context("amount_in exceeds i128")?;
     let min_amount_out = min_amount_out_break_even(quote.amount_in);
 
-    let op = if let Some(vault) = ctx.config.vault_contract.as_deref() {
-        build_execute_round_trip_op(
-            vault,
-            aggregator,
-            caller_public_key,
-            &quote.base.canonical(),
-            &quote.bridge.canonical(),
-            amount_in_i128,
-            &quote.leg_out,
-            &quote.leg_back,
-            min_amount_out,
-            &ctx.snapshot,
-            hydration,
-        )?
-    } else {
-        build_round_trip_swap_op(
-            aggregator,
-            caller_public_key,
-            &quote.base.canonical(),
-            &quote.bridge.canonical(),
-            amount_in_i128,
-            &quote.leg_out,
-            &quote.leg_back,
-            min_amount_out,
-            &ctx.snapshot,
-            hydration,
-        )?
+    let build_op = |bridge_override: Option<u128>| {
+        if let Some(vault) = ctx.config.vault_contract.as_deref() {
+            build_execute_round_trip_op(
+                vault,
+                aggregator,
+                caller_public_key,
+                &quote.base.canonical(),
+                &quote.bridge.canonical(),
+                amount_in_i128,
+                &quote.leg_out,
+                &quote.leg_back,
+                min_amount_out,
+                bridge_override,
+                &ctx.snapshot,
+                hydration,
+            )
+        } else {
+            build_round_trip_swap_op(
+                aggregator,
+                caller_public_key,
+                &quote.base.canonical(),
+                &quote.bridge.canonical(),
+                amount_in_i128,
+                &quote.leg_out,
+                &quote.leg_back,
+                min_amount_out,
+                bridge_override,
+                &ctx.snapshot,
+                hydration,
+            )
+        }
     };
+
+    let op = build_op(None)?;
 
     let seq = fetch_account_sequence(&ctx.config.horizon_url, caller_public_key).await?;
     let fee = 100_000u32;
@@ -115,36 +133,87 @@ pub async fn prepare_opportunity_tx(
     )
     .await
     {
-        Ok(prepared) => {
-            let sim_profit = prepared.amount_out.saturating_sub(quote.amount_in);
-            if sim_profit < ctx.config.min_profit {
+        Ok(prepared) => (prepared.unsigned_tx_xdr, true, prepared.amount_out),
+        Err(first_err) => {
+            let err_text = format!("{first_err:#}");
+            let bridge_override = ctx
+                .config
+                .aggregator_contract
+                .as_deref()
+                .and_then(|agg| parse_bridge_received_from_sim_error(&err_text, &quote.bridge.canonical(), agg));
+            if let Some(bridge_amt) = bridge_override {
+                if bridge_amt > 0 && bridge_amt != quote.leg_out.total_expected_out {
+                    info!(
+                        route = %quote.route_label(),
+                        quoted_bridge = quote.leg_out.total_expected_out,
+                        simulated_bridge = bridge_amt,
+                        "retrying simulate with on-chain leg_out bridge amount"
+                    );
+                    let retry_op = build_op(Some(bridge_amt))?;
+                    match prepare_transaction_xdr(
+                        &ctx.config.rpc_url,
+                        caller_public_key,
+                        seq as u64,
+                        std::slice::from_ref(&retry_op),
+                        fee,
+                    )
+                    .await
+                    {
+                        Ok(prepared) => (prepared.unsigned_tx_xdr, true, prepared.amount_out),
+                        Err(retry_err) => {
+                            warn!(
+                                error = %retry_err,
+                                route = %opp.route_label,
+                                caller = %caller_public_key,
+                                "Soroban prepare failed after bridge amount retry"
+                            );
+                            (
+                                build_raw_envelope_xdr(caller_public_key, seq as u64, retry_op)?,
+                                false,
+                                0,
+                            )
+                        }
+                    }
+                } else {
+                    warn!(
+                        error = %first_err,
+                        route = %opp.route_label,
+                        caller = %caller_public_key,
+                        "Soroban prepare failed; falling back to raw envelope XDR"
+                    );
+                    (build_raw_envelope_xdr(caller_public_key, seq as u64, op)?, false, 0)
+                }
+            } else {
                 warn!(
-                    route = %quote.route_label(),
+                    error = %first_err,
+                    route = %opp.route_label,
                     caller = %caller_public_key,
-                    amount_in = quote.amount_in,
-                    quoted_amount_out = quote.amount_out,
-                    simulated_amount_out = prepared.amount_out,
-                    simulated_profit = sim_profit,
-                    min_profit = ctx.config.min_profit,
-                    "simulated profit below minimum — discard"
+                    "Soroban prepare failed; falling back to raw envelope XDR"
                 );
-                stats
-                    .txs_sim_profit_rejected
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                return Ok(None);
+                (build_raw_envelope_xdr(caller_public_key, seq as u64, op)?, false, 0)
             }
-            (prepared.unsigned_tx_xdr, true, prepared.amount_out)
-        }
-        Err(e) => {
-            warn!(
-                error = %e,
-                route = %opp.route_label,
-                caller = %caller_public_key,
-                "Soroban prepare failed; falling back to raw envelope XDR"
-            );
-            (build_raw_envelope_xdr(caller_public_key, seq as u64, op)?, false, 0)
         }
     };
+
+    if simulated {
+        let sim_profit = simulated_amount_out.saturating_sub(quote.amount_in);
+        if sim_profit < ctx.config.min_profit {
+            warn!(
+                route = %quote.route_label(),
+                caller = %caller_public_key,
+                amount_in = quote.amount_in,
+                quoted_amount_out = quote.amount_out,
+                simulated_amount_out,
+                simulated_profit = sim_profit,
+                min_profit = ctx.config.min_profit,
+                "simulated profit below minimum — discard"
+            );
+            stats
+                .txs_sim_profit_rejected
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Ok(None);
+        }
+    }
 
     let profit_bps = crate::scanner::compute_profit_bps(quote.amount_in, simulated_amount_out);
     let simulated_profit = simulated_amount_out.saturating_sub(quote.amount_in);

@@ -29,7 +29,7 @@ pub async fn quote_leg(
         },
         max_hops: Some(ctx.config.max_hops),
         max_splits: Some(ctx.config.max_splits),
-        prefer_soroban: None,
+        prefer_soroban: Some(true),
     };
 
     let paths = ctx.engine.find_candidate_paths(&request).await;
@@ -47,6 +47,9 @@ pub async fn quote_leg(
 }
 
 /// Quote strict two-leg round trip at a fixed base input.
+///
+/// When `leg_out` is split, quote each split's bridge output back to base
+/// separately so on-chain `leg_back` amounts match `leg_out` outputs.
 pub async fn quote_round_trip(
     ctx: &ArbContext,
     base: &TokenId,
@@ -55,8 +58,34 @@ pub async fn quote_round_trip(
     hydration: &QuoteHydration,
 ) -> Option<RoundTripQuote> {
     let leg_out = quote_leg(ctx, base, bridge, amount_in, hydration).await?;
-    let bridge_amount = leg_out.total_expected_out;
-    let leg_back = quote_leg(ctx, bridge, base, bridge_amount, hydration).await?;
+
+    let leg_back = if leg_out.sub_orders.len() <= 1 {
+        quote_leg(ctx, bridge, base, leg_out.total_expected_out, hydration).await?
+    } else {
+        let mut back_subs = Vec::new();
+        let mut total_back_out = 0u128;
+        for sub in &leg_out.sub_orders {
+            let bridge_in = sub.expected_amount_out;
+            if bridge_in == 0 {
+                return None;
+            }
+            let partial = quote_leg(ctx, bridge, base, bridge_in, hydration).await?;
+            total_back_out = total_back_out.saturating_add(partial.total_expected_out);
+            back_subs.extend(partial.sub_orders);
+        }
+        router_engine::OptimalRoute {
+            sub_orders: back_subs,
+            total_amount_in: leg_out.total_expected_out,
+            total_expected_out: total_back_out,
+            price_impact_bps: 0,
+            is_split: leg_out.sub_orders.len() > 1,
+            improvement_bps: 0,
+            minimum_out: 0,
+            compute_time_ms: 0,
+            debug: None,
+        }
+    };
+
     let amount_out = leg_back.total_expected_out;
 
     Some(RoundTripQuote {

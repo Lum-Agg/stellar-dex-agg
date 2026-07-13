@@ -15,6 +15,7 @@ pub mod runtime;
 pub mod scanner;
 pub mod stats;
 pub mod submit;
+pub mod vault;
 
 pub use {
     bridge::RoundTripQuote,
@@ -23,6 +24,6 @@ pub use {
     execute::{execution_enabled, PreparedArbTx},
     invoke::{path_to_steps, ArbSwapStep},
     runtime::{ArbRuntime, SharedRuntime},
-    scanner::{scan_once, ArbOpportunity},
+    scanner::{collect_paths_for_base, scan_once, ArbOpportunity},
     stats::{ArbStats, ArbStatsSnapshot},
 };
