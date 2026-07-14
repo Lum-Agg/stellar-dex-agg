@@ -44,6 +44,8 @@ const { unsignedTxXdr } = await client.buildTx({
 | `listTokens()` | `GET /tokens` | Routable tokens + logos |
 | `quote()` | `GET /quote` | Best route; optional `preferSoroban` |
 | `buildTx()` | `POST /build_tx` | Unsigned envelope XDR |
+| `getStats()` | `GET /stats` | On-chain indexer rollup; optional CSV |
+| `quoteAndBuild()` | quote + build_tx | One-call integrator flow |
 
 Partner rate limit: pass `apiKey` in constructor → `X-API-Key` header (60 req/s).
 
@@ -52,6 +54,7 @@ Partner rate limit: pass `apiKey` in constructor → `X-API-Key` header (60 req/
 ```bash
 npx tsx packages/sdk/examples/basic-usage.ts
 npx tsx packages/sdk/examples/quote-build.ts
+npx tsx packages/sdk/examples/stats.ts
 ```
 
 ## Docs

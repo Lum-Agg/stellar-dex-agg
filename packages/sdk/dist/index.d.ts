@@ -50,6 +50,30 @@ export interface BuildTxResult {
     execution: string;
     numOperations: number;
 }
+export interface DailyStats {
+    day: string;
+    txCount: number;
+    uniqueUsers: number;
+    totalAmountIn: string;
+    splitSwapCount: number;
+    successCount: number;
+    failedCount: number;
+    byFunction?: Record<string, number>;
+    byDex?: Record<string, number>;
+}
+export interface StatsResult {
+    dbPath: string;
+    invocationCount: number;
+    cursorLedger?: number;
+    oldestCreatedAt?: number;
+    daily: DailyStats[];
+}
+export interface StatsParams {
+    /** UTC day YYYY-MM-DD; omit for full rollup. */
+    day?: string;
+    /** When `csv`, returns raw CSV string instead of parsed JSON. */
+    format?: 'json' | 'csv';
+}
 export interface TokenInfo {
     id: string;
     symbol: string;
@@ -76,6 +100,8 @@ export declare class LumAggClient {
         quote: QuoteResult;
         tx: BuildTxResult;
     }>;
+    /** Public on-chain stats from analytics-indexer (Tranche 3). */
+    getStats(params?: StatsParams): Promise<StatsResult | string>;
 }
 /** @deprecated Use LumAggClient */
 export declare class StellarAggregator extends LumAggClient {

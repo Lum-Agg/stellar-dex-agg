@@ -10,6 +10,7 @@
 #   USER_G          required — funded mainnet account (sequence on chain)
 #   AMOUNT_IN       stroops, default 10000000 (1 XLM)
 #   PREFER_SOROBAN  set to 1 for Soroban-only quote
+#   OUT             optional directory — saves quote.json + build_resp.json for D2 evidence
 set -euo pipefail
 
 API="${API:-https://api.lumagg.xyz}"
@@ -106,6 +107,18 @@ if [[ -n "$XDR" ]]; then
   echo
   echo "SUCCESS: unsigned_tx_xdr prefix: ${XDR}…"
   echo "Next: sign with Freighter / wallet and submit."
+  if [[ -n "${OUT:-}" ]]; then
+    mkdir -p "$OUT"
+    cp "$TMP/quote.json" "$TMP/build.json" "$TMP/build_resp.json" "$OUT/"
+    cat > "$OUT/README.txt" <<EOF
+LumAgg integrator smoke evidence
+API=$API
+USER_G=${USER_G:0:12}…
+Generated: $(date -u +%Y-%m-%dT%H:%MZ)
+Files: quote.json, build.json, build_resp.json
+EOF
+    echo "Evidence saved to $OUT/"
+  fi
 else
   echo "build_tx did not return XDR — check error above" >&2
   exit 1

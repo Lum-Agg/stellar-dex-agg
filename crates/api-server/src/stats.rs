@@ -1,4 +1,5 @@
-//! Public analytics stats from the analytics-indexer SQLite DB (Tranche 3 handoff).
+//! Public analytics stats from the analytics-indexer SQLite DB (Tranche 3
+//! handoff).
 
 use {
     analytics_indexer::{export, store::IndexStore},
@@ -41,11 +42,7 @@ fn indexer_db_path() -> Option<String> {
     std::env::var("INDEXER_DB_PATH")
         .ok()
         .filter(|s| !s.is_empty())
-        .or_else(|| {
-            std::env::var("LUMAGG_INDEXER_DB_PATH")
-                .ok()
-                .filter(|s| !s.is_empty())
-        })
+        .or_else(|| std::env::var("LUMAGG_INDEXER_DB_PATH").ok().filter(|s| !s.is_empty()))
 }
 
 pub async fn get_stats(Query(params): Query<StatsQuery>) -> Response {
@@ -55,9 +52,7 @@ pub async fn get_stats(Query(params): Query<StatsQuery>) -> Response {
             Json(StatsResponse {
                 success: false,
                 data: None,
-                error: Some(
-                    "Analytics DB not configured (set INDEXER_DB_PATH on api-server)".into(),
-                ),
+                error: Some("Analytics DB not configured (set INDEXER_DB_PATH on api-server)".into()),
             }),
         )
             .into_response();
@@ -135,10 +130,7 @@ pub async fn get_stats(Query(params): Query<StatsQuery>) -> Response {
             StatusCode::OK,
             [
                 (header::CONTENT_TYPE, "text/csv; charset=utf-8"),
-                (
-                    header::CONTENT_DISPOSITION,
-                    "attachment; filename=\"lumagg-stats.csv\"",
-                ),
+                (header::CONTENT_DISPOSITION, "attachment; filename=\"lumagg-stats.csv\""),
             ],
             body,
         )

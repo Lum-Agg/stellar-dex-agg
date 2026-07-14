@@ -117,6 +117,46 @@ export class LumAggClient {
         });
         return { quote, tx };
     }
+    /** Public on-chain stats from analytics-indexer (Tranche 3). */
+    async getStats(params = {}) {
+        const search = new URLSearchParams();
+        if (params.day)
+            search.set('day', params.day);
+        if (params.format === 'csv')
+            search.set('format', 'csv');
+        const qs = search.toString();
+        const url = `${this.baseUrl}/api/v1/stats${qs ? `?${qs}` : ''}`;
+        const resp = await fetch(url, { headers: this.headers() });
+        if (params.format === 'csv') {
+            if (!resp.ok)
+                throw new Error(`stats csv: HTTP ${resp.status}`);
+            return resp.text();
+        }
+        const json = await resp.json();
+        if (!json.success)
+            throw new Error(json.error || 'stats failed');
+        const d = json.data;
+        return {
+            dbPath: d.db_path,
+            invocationCount: d.invocation_count,
+            cursorLedger: d.cursor_ledger,
+            oldestCreatedAt: d.oldest_created_at,
+            daily: (d.daily || []).map(mapDailyStats),
+        };
+    }
+}
+function mapDailyStats(raw) {
+    return {
+        day: String(raw.day ?? ''),
+        txCount: Number(raw.tx_count ?? 0),
+        uniqueUsers: Number(raw.unique_users ?? 0),
+        totalAmountIn: String(raw.total_amount_in ?? '0'),
+        splitSwapCount: Number(raw.split_swap_count ?? 0),
+        successCount: Number(raw.success_count ?? 0),
+        failedCount: Number(raw.failed_count ?? 0),
+        byFunction: raw.by_function,
+        byDex: raw.by_dex,
+    };
 }
 function mapSubRoute(raw) {
     const poolAddresses = raw.pool_addresses ?? raw.poolAddresses ?? [];
