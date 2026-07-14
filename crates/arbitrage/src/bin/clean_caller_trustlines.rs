@@ -253,9 +253,17 @@ fn asset_from_key(key: &str) -> Option<Asset> {
     Asset::new(code, Some(issuer)).ok()
 }
 
+fn horizon_client() -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent("lumagg-clean-trustlines/1.0")
+        .timeout(Duration::from_secs(30))
+        .build()
+        .context("build horizon http client")
+}
+
 async fn fetch_sequence(horizon_url: &str, public_key: &str) -> Result<i64> {
     let url = format!("{}/accounts/{}", horizon_url.trim_end_matches('/'), public_key);
-    let data: serde_json::Value = reqwest::Client::new()
+    let data: serde_json::Value = horizon_client()?
         .get(&url)
         .send()
         .await?
@@ -282,7 +290,7 @@ async fn fetch_trustline_keys(horizon_url: &str, public_key: &str) -> Result<Has
 
 async fn fetch_balances(horizon_url: &str, public_key: &str) -> Result<Vec<BalanceEntry>> {
     let url = format!("{}/accounts/{}", horizon_url.trim_end_matches('/'), public_key);
-    let data: serde_json::Value = reqwest::Client::new()
+    let data: serde_json::Value = horizon_client()?
         .get(&url)
         .send()
         .await?
@@ -344,7 +352,7 @@ fn decode_pool_id(hex_str: &str) -> Result<[u8; 32]> {
 async fn pool_change_trust_asset(horizon_url: &str, pool_id: &[u8; 32]) -> Result<xdr::ChangeTrustAsset> {
     let pool_id_hex = hex::encode(pool_id);
     let url = format!("{}/liquidity_pools/{}", horizon_url.trim_end_matches('/'), pool_id_hex);
-    let data: serde_json::Value = reqwest::Client::new()
+    let data: serde_json::Value = horizon_client()?
         .get(&url)
         .send()
         .await?
@@ -472,8 +480,7 @@ async fn submit_ops(
     }
 
     println!("submit {label} ...");
-    let client = reqwest::Client::new();
-    let resp = client
+    let resp = horizon_client()?
         .post(format!("{}/transactions", horizon_url.trim_end_matches('/')))
         .form(&[("tx", xdr_b64)])
         .send()
