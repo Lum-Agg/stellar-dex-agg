@@ -9,11 +9,15 @@ use {
         soroban_rpc::{SendTransactionStatus, TransactionStatus},
         transaction::{Transaction, TransactionBehavior},
     },
-    std::{sync::atomic::Ordering, time::Duration},
+    std::{
+        sync::{atomic::Ordering, Arc},
+        time::Duration,
+    },
     tracing::{error, info, warn},
 };
 
-const POLL_ATTEMPTS: usize = 10;
+/// ~one Stellar ledger; poll runs **without** holding caller mutex.
+const POLL_ATTEMPTS: usize = 3;
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 /// `stellar_baselib::Transaction::from_xdr_envelope` drops `TransactionExt::V1`
@@ -80,13 +84,52 @@ pub async fn poll_transaction(rpc_url: &str, hash: &str) -> Result<()> {
     Err(anyhow!("tx status poll timeout"))
 }
 
-/// Full submit + poll; updates stats and profit book.
+struct PollContext {
+    hash: String,
+    route_label: String,
+    amount_in: u128,
+    simulated_amount_out: u128,
+    estimated_fee_stroops: u128,
+}
+
+/// Poll in background so caller mutex is not held (~6s ledger window).
+pub fn spawn_poll_outcome(
+    rpc_url: String,
+    ctx: PollContext,
+    stats: Arc<ArbStats>,
+    profit: Arc<crate::profit::ProfitBook>,
+) {
+    tokio::spawn(async move {
+        match poll_transaction(&rpc_url, &ctx.hash).await {
+            Ok(()) => {
+                stats.txs_succeeded.fetch_add(1, Ordering::Relaxed);
+                let gross = ctx.simulated_amount_out.saturating_sub(ctx.amount_in);
+                profit.record_success(&ctx.hash, ctx.amount_in, gross, ctx.estimated_fee_stroops);
+                info!(
+                    hash = %ctx.hash,
+                    route = %ctx.route_label,
+                    gross_profit = gross,
+                    estimated_fee = ctx.estimated_fee_stroops,
+                    "arb tx SUCCESS"
+                );
+            }
+            Err(e) => {
+                stats.txs_failed.fetch_add(1, Ordering::Relaxed);
+                profit.record_failed();
+                error!(hash = %ctx.hash, route = %ctx.route_label, error = %e, "arb tx failed");
+            }
+        }
+    });
+}
+
+/// Sign + broadcast; optionally poll outcome in background (see `ARB_POLL_TX`).
 pub async fn submit_prepared(
     rpc_url: &str,
     keypair: &ExecutorKeypair,
     prepared: &PreparedArbTx,
-    stats: &ArbStats,
-    profit: &crate::profit::ProfitBook,
+    stats: Arc<ArbStats>,
+    profit: Arc<crate::profit::ProfitBook>,
+    poll_tx: bool,
 ) -> Result<()> {
     if !prepared.simulated {
         return Err(anyhow!(
@@ -106,26 +149,22 @@ pub async fn submit_prepared(
         "arb tx submitted"
     );
 
-    match poll_transaction(rpc_url, &hash).await {
-        Ok(()) => {
-            stats.txs_succeeded.fetch_add(1, Ordering::Relaxed);
-            let gross = prepared.simulated_amount_out.saturating_sub(prepared.amount_in);
-            profit.record_success(&hash, prepared.amount_in, gross, prepared.estimated_fee_stroops);
-            info!(
-                hash = %hash,
-                gross_profit = gross,
-                estimated_fee = prepared.estimated_fee_stroops,
-                "arb tx SUCCESS"
-            );
-            Ok(())
-        }
-        Err(e) => {
-            stats.txs_failed.fetch_add(1, Ordering::Relaxed);
-            profit.record_failed();
-            error!(hash = %hash, error = %e, "arb tx failed");
-            Err(e)
-        }
+    if poll_tx {
+        spawn_poll_outcome(
+            rpc_url.to_string(),
+            PollContext {
+                hash,
+                route_label: prepared.route_label.clone(),
+                amount_in: prepared.amount_in,
+                simulated_amount_out: prepared.simulated_amount_out,
+                estimated_fee_stroops: prepared.estimated_fee_stroops,
+            },
+            stats,
+            profit,
+        );
     }
+
+    Ok(())
 }
 
 #[cfg(test)]

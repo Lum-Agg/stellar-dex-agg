@@ -34,8 +34,12 @@ pub struct ArbConfig {
     pub slippage_bps: u32,
     pub max_hops: usize,
     pub max_splits: usize,
-    /// Delay between scan rounds (milliseconds).
+    /// Delay between full base×bridge cycles (milliseconds). 0 = no pause.
     pub scan_interval_ms: u64,
+    /// Gap between yielding consecutive bridge scan items (milliseconds).
+    pub item_gap_ms: u64,
+    /// Parallel quote/sim workers (stellar-arb style).
+    pub worker_count: usize,
     pub build_tx: bool,
     pub optimize_amount: bool,
     pub min_amount_in: u128,
@@ -43,6 +47,8 @@ pub struct ArbConfig {
     pub sample_count: usize,
     pub submit_tx: bool,
     pub dry_run: bool,
+    /// Poll `get_transaction` after submit (Telegram stats). Default off.
+    pub poll_tx: bool,
     pub submit_dedup_secs: u64,
 }
 
@@ -127,6 +133,17 @@ impl ArbConfig {
             })
             .unwrap_or(500);
 
+        let item_gap_ms = std::env::var("ARB_ITEM_GAP_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10);
+
+        let worker_count = std::env::var("ARB_WORKER_COUNT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4)
+            .max(1);
+
         let build_tx = std::env::var("ARB_BUILD_TX")
             .ok()
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -145,7 +162,7 @@ impl ArbConfig {
         let max_amount_in = std::env::var("ARB_MAX_AMOUNT_IN")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(180_000_000_000); // soft ceiling; vault float is the real cap
+            .unwrap_or(18_000_000_000); // 1800 XLM default
 
         let sample_count = std::env::var("ARB_SAMPLE_COUNT")
             .ok()
@@ -161,6 +178,11 @@ impl ArbConfig {
             .ok()
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(!submit_tx);
+
+        let poll_tx = std::env::var("ARB_POLL_TX")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
 
         let submit_dedup_secs = std::env::var("ARB_SUBMIT_DEDUP_SECS")
             .ok()
@@ -184,6 +206,8 @@ impl ArbConfig {
             max_hops,
             max_splits,
             scan_interval_ms,
+            item_gap_ms,
+            worker_count,
             build_tx,
             optimize_amount,
             min_amount_in,
@@ -191,6 +215,7 @@ impl ArbConfig {
             sample_count,
             submit_tx,
             dry_run,
+            poll_tx,
             submit_dedup_secs,
         })
     }

@@ -3,7 +3,7 @@
 use {
     crate::{
         bridge::{quote_leg, quote_round_trip, RoundTripQuote},
-        callers::CallerPool,
+        callers::{CallerPool, DEFAULT_CALLER_COOLDOWN_MS},
         config::ArbConfig,
         context::ArbContext,
         invoke::{
@@ -16,10 +16,10 @@ use {
         },
         scanner::ArbOpportunity,
         stats::ArbStats,
-        submit::submit_prepared,
         vault::resolve_max_amount_in,
     },
     anyhow::{Context, Result},
+    std::sync::Arc,
     stellar_xdr::curr as sxdr,
     tracing::{info, warn},
 };
@@ -41,7 +41,7 @@ pub struct PreparedArbTx {
 }
 
 async fn resolve_quote(ctx: &ArbContext, opp: &ArbOpportunity) -> Option<RoundTripQuote> {
-    let max_in = resolve_max_amount_in(ctx, &opp.quote.base.canonical()).await;
+    let max_in = resolve_max_amount_in(ctx, &opp.quote.base.canonical());
     if max_in < ctx.config.min_amount_in {
         return None;
     }
@@ -342,8 +342,8 @@ pub async fn try_execute_opportunity(
     ctx: &ArbContext,
     opp: &ArbOpportunity,
     caller_pool: &CallerPool,
-    stats: &ArbStats,
-    profit: &crate::profit::ProfitBook,
+    stats: Arc<ArbStats>,
+    profit: Arc<crate::profit::ProfitBook>,
     dry_run: bool,
 ) -> Result<()> {
     let Some(guard) = caller_pool.try_acquire().await else {
@@ -351,7 +351,7 @@ pub async fn try_execute_opportunity(
         return Ok(());
     };
 
-    let Some(prepared) = prepare_opportunity_tx(ctx, opp, &guard.public_key(), stats).await? else {
+    let Some(prepared) = prepare_opportunity_tx(ctx, opp, &guard.public_key(), stats.as_ref()).await? else {
         return Ok(());
     };
 
@@ -381,7 +381,25 @@ pub async fn try_execute_opportunity(
         return Ok(());
     }
 
-    submit_prepared(&ctx.config.rpc_url, guard.keypair(), &prepared, stats, profit).await?;
+    let cooldown_ms = std::env::var("ARB_CALLER_COOLDOWN_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_CALLER_COOLDOWN_MS);
+
+    crate::submit::submit_prepared(
+        &ctx.config.rpc_url,
+        guard.keypair(),
+        &prepared,
+        stats.clone(),
+        profit,
+        ctx.config.poll_tx,
+    )
+    .await?;
+
+    // Release mutex immediately; in-flight cooldown prevents seq reuse for ~one
+    // ledger.
+    guard.mark_in_flight(cooldown_ms);
+
     Ok(())
 }
 

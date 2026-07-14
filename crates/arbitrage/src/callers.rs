@@ -4,17 +4,33 @@ use {
     crate::keypair::ExecutorKeypair,
     anyhow::{anyhow, Context, Result},
     soroban_client::keypair::{Keypair, KeypairBehavior},
-    std::sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
+    std::{
+        sync::{
+            atomic::{AtomicU64, AtomicUsize, Ordering},
+            Arc,
+        },
+        time::{SystemTime, UNIX_EPOCH},
     },
     tokio::sync::Mutex,
     tracing::info,
 };
 
+/// After send, block caller reuse for ~one ledger (Stellar ~5s).
+pub const DEFAULT_CALLER_COOLDOWN_MS: u64 = 5_000;
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 pub struct CallerSlot {
     pub keypair: ExecutorKeypair,
+    /// Short mutex: prepare + sign only (not poll).
     lock: Mutex<()>,
+    /// Millis since epoch; caller skipped until this instant.
+    busy_until_ms: AtomicU64,
 }
 
 pub struct CallerPool {
@@ -59,6 +75,7 @@ impl CallerPool {
                 Arc::new(CallerSlot {
                     keypair: kp,
                     lock: Mutex::new(()),
+                    busy_until_ms: AtomicU64::new(0),
                 })
             })
             .collect();
@@ -78,20 +95,34 @@ impl CallerPool {
         self.slots.iter().map(|s| s.keypair.public_key()).collect()
     }
 
-    /// Acquire a free caller (round-robin); returns None if all busy.
+    /// Acquire a free caller (round-robin); returns None if all busy or in
+    /// ledger cooldown.
     pub async fn try_acquire(&self) -> Option<CallerGuard<'_>> {
         let n = self.slots.len();
         if n == 0 {
             return None;
         }
+        let now = now_ms();
         let start = self.next.fetch_add(1, Ordering::Relaxed) % n;
         for i in 0..n {
             let slot = &self.slots[(start + i) % n];
+            if slot.busy_until_ms.load(Ordering::Relaxed) > now {
+                continue;
+            }
             if let Ok(guard) = slot.lock.try_lock() {
                 return Some(CallerGuard { slot, _guard: guard });
             }
         }
         None
+    }
+}
+
+impl CallerSlot {
+    /// Reserve caller until ~one ledger after broadcast (seq safety without
+    /// long mutex).
+    pub fn mark_in_flight(&self, cooldown_ms: u64) {
+        self.busy_until_ms
+            .store(now_ms().saturating_add(cooldown_ms), Ordering::Relaxed);
     }
 }
 
@@ -107,6 +138,10 @@ impl CallerGuard<'_> {
 
     pub fn public_key(&self) -> String {
         self.slot.keypair.public_key()
+    }
+
+    pub fn mark_in_flight(&self, cooldown_ms: u64) {
+        self.slot.mark_in_flight(cooldown_ms);
     }
 }
 

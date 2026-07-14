@@ -6,14 +6,15 @@ use {
         stats::ArbStats,
     },
     anyhow::Result,
+    std::sync::Arc,
     tokio::sync::Mutex,
     tracing::info,
 };
 
 pub struct ArbRuntime {
     pub config: ArbConfig,
-    pub stats: ArbStats,
-    pub profit: ProfitBook,
+    pub stats: Arc<ArbStats>,
+    pub profit: Arc<ProfitBook>,
     pub path_cache: Mutex<SubmittedPathCache>,
     pub caller_pool: Option<CallerPool>,
 }
@@ -27,8 +28,8 @@ impl ArbRuntime {
         let dedup_secs = config.submit_dedup_secs;
         Ok(Self {
             config,
-            stats: ArbStats::default(),
-            profit: ProfitBook::default(),
+            stats: Arc::new(ArbStats::default()),
+            profit: Arc::new(ProfitBook::default()),
             path_cache: Mutex::new(SubmittedPathCache::new(std::time::Duration::from_secs(
                 dedup_secs.max(1),
             ))),
