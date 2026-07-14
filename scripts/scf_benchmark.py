@@ -148,7 +148,8 @@ def outputs_comparable(lumagg_out: int, soroswap_out: int | None) -> bool:
     if soroswap_out is None or soroswap_out <= 0 or lumagg_out <= 0:
         return True
     ratio = lumagg_out / soroswap_out if lumagg_out >= soroswap_out else soroswap_out / lumagg_out
-    return ratio <= 3.0
+    # ~2× already implies different pool class / bad quote for SCF fair rows.
+    return ratio <= 2.0
 
 
 def fmt_stroops(v: int) -> str:
@@ -226,6 +227,8 @@ def run_benchmark() -> str:
 
     lines.extend([header, sep])
 
+    split_cases: list[str] = []
+
     for pair, token_in, token_out, amount_in, size_label in CASES:
         lumagg = lumagg_quote(token_in, token_out, amount_in)
         time.sleep(0.12)  # api-server IP limiter: 10 req/s
@@ -239,7 +242,16 @@ def run_benchmark() -> str:
         else:
             lumagg_out = fmt_stroops(lumagg.amount_out)
             split = "yes" if lumagg.is_split else "no"
-            sources = unique_sources(lumagg.sources)
+            # Avoid `|` in cells — it breaks markdown tables.
+            sources = (
+                " ;; ".join(lumagg.sources)
+                if lumagg.is_split
+                else unique_sources(lumagg.sources)
+            )
+            if lumagg.is_split:
+                split_cases.append(
+                    f"{pair} {size_label}: {lumagg.legs} paths (`{'` ;; `'.join(lumagg.sources)}`)"
+                )
 
         if soroswap.error or soroswap.amount_out is None:
             ss_out = "—" if not has_soroswap else f"ERR"
@@ -252,9 +264,9 @@ def run_benchmark() -> str:
             if soroswap.amount_out is not None and not lumagg.error:
                 if not outputs_comparable(lumagg.amount_out, soroswap.amount_out):
                     note = (
-                        f"{note}; ⚠️ outputs not comparable (>3× gap — check venue / token mismatch)"
+                        f"{note}; ⚠️ outputs not comparable (>2× gap — check venue / token mismatch)"
                         if note != "—"
-                        else "⚠️ outputs not comparable (>3× gap — check venue / token mismatch)"
+                        else "⚠️ outputs not comparable (>2× gap — check venue / token mismatch)"
                     )
                     delta = "n/a"
                 else:
@@ -275,11 +287,20 @@ def run_benchmark() -> str:
             "## Summary",
             "",
             "- **Venue coverage:** See [scf-venue-comparison.md](scf-venue-comparison.md) for Stellar Broker CLMM gap (source-based).",
-            "- **Split routing:** LumAgg `is_split=true` when Brent optimizer splits across paths; Soroswap API returns a single best route.",
-            "- **Soroswap API key:** Free registration at https://api.soroswap.finance/register — re-run this script before SCF resubmission to fill the comparison column.",
-            "",
+            "- **Split routing:** LumAgg `is_split=true` when Brent optimizer splits `amount_in` across distinct paths; Soroswap API returns a single best route.",
+            "- **Fair compare:** Prefer `LUMAGG_PREFER_SOROBAN=1` + Soroswap `protocols` without `sdex` so Classic SDEX does not dominate LumAgg while Soroswap stays Soroban-only.",
+            "- **Soroswap API key:** Free registration at https://api.soroswap.finance/register — pass via `SOROSWAP_API_KEY` (never commit the key).",
         ]
     )
+    if split_cases:
+        lines.append("- **Split cases in this run:**")
+        for c in split_cases:
+            lines.append(f"  - {c}")
+    else:
+        lines.append(
+            "- **Split cases in this run:** none — re-run at other sizes; splits are market-state dependent."
+        )
+    lines.append("")
 
     return "\n".join(lines) + "\n"
 

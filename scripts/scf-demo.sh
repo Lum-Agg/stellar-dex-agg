@@ -38,4 +38,10 @@ for i, r in enumerate(routes):
 "
 
 echo
-echo "=== Done (see docs/scf-build.md for full checklist) ==="
+echo "=== 4. Stats (when INDEXER_DB_PATH configured on API) ==="
+curl -sf "$API/api/v1/stats" 2>/dev/null | python3 -m json.tool | head -25 || echo "(stats endpoint not configured yet)"
+echo
+echo "=== Done ==="
+echo "Full integrator path: USER_G=G... ./scripts/integrator-smoke.sh"
+echo "Arb evidence: ./scripts/collect-arb-evidence.sh"
+echo "See docs/scf-build.md · docs/integrator-guide.md"

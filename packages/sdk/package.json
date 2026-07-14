@@ -1,9 +1,19 @@
 {
   "name": "@stellar-dex-aggregator/sdk",
   "version": "0.1.0",
-  "description": "TypeScript SDK for Stellar DEX Aggregator",
+  "description": "TypeScript SDK for LumAgg Stellar DEX Aggregator API",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Lum-Agg/stellar-dex-agg.git",
+    "directory": "packages/sdk"
+  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch"

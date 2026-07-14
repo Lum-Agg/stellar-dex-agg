@@ -22,7 +22,7 @@
  *   API_URL=http://localhost:3000 TOKEN_IN=<contract> TOKEN_OUT=<contract> npx tsx packages/sdk/examples/basic-usage.ts
  */
 
-import { StellarAggregator, type QuoteResult, type TokenInfo } from '../src/index';
+import { LumAggClient, type QuoteResult, type TokenInfo } from '../src/index';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -99,7 +99,7 @@ function buildTokenMap(
 // ---------------------------------------------------------------------------
 
 async function main() {
-  const sdk = new StellarAggregator({ apiUrl: API_URL });
+  const sdk = new LumAggClient({ apiUrl: API_URL });
 
   // ---- 1. Health check --------------------------------------------------
   printDivider('1. Health check');
@@ -147,7 +147,7 @@ async function main() {
 
   let quote: QuoteResult;
   try {
-    quote = await sdk.getQuote({
+    quote = await sdk.quote({
       tokenIn: TOKEN_IN,
       tokenOut: TOKEN_OUT,
       amountIn: amountStroops,
@@ -196,34 +196,26 @@ async function main() {
     }
   }
 
-  // ---- 4. Build unsigned swap tx ----------------------------------------
-  printDivider('4. Build swap transaction (unsigned)');
+  // ---- 4. Build unsigned tx ----------------------------------------
+  printDivider('4. Build transaction (unsigned)');
 
   const PLACEHOLDER_PUBKEY = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
   try {
-    const swap = await sdk.buildSwap({
+    const tx = await sdk.buildTx({
+      userPublicKey: PLACEHOLDER_PUBKEY,
       tokenIn: TOKEN_IN,
       tokenOut: TOKEN_OUT,
-      amountIn: amountStroops,
-      slippage: 0.5,
-      userPublicKey: PLACEHOLDER_PUBKEY,
+      amountIn: quote.amountIn,
+      minAmountOut: quote.minimumOutput,
+      subRoutes: quote.subRoutes,
     });
 
-    console.log(`Simulation:   ${swap.simulation.success ? '✅ success' : '❌ failed'}`);
-    if (swap.simulation.actualOutput) {
-      console.log(`Actual out:   ${stroopsToUnits(swap.simulation.actualOutput, outDecimals)} ${outSymbol}`);
-    }
-    if (swap.simulation.fee) {
-      console.log(`Fee:          ${stroopsToUnits(swap.simulation.fee, 7)} XLM`);
-    }
-    if (swap.simulation.error) {
-      console.log(`Sim error:    ${swap.simulation.error}`);
-    }
-
-    console.log(`\nUnsigned XDR (first 80 chars):  ${swap.unsignedTxXdr.slice(0, 80)}…`);
-    console.log('👉  Sign with wallet, then POST to Horizon /transactions');
+    console.log(`Execution:    ${tx.execution}`);
+    console.log(`Fee stroops:  ${tx.fee}`);
+    console.log(`\nUnsigned XDR (first 80 chars):  ${tx.unsignedTxXdr.slice(0, 80)}…`);
+    console.log('👉  Sign with wallet, then submit via Soroban RPC or Horizon');
   } catch (err: any) {
-    console.warn(`⚠️  buildSwap failed (expected with placeholder key): ${err.message}`);
+    console.warn(`⚠️  buildTx failed: ${err.message}`);
   }
 
   printDivider('Done');

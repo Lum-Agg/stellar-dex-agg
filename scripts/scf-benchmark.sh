@@ -7,18 +7,20 @@
 #   OUTPUT=docs/scf-benchmark-results.md ./scripts/scf-benchmark.sh
 #
 # Env:
-#   LUMAGG_API          default https://api.lumagg.xyz
-#   LUMAGG_PREFER_SOROBAN  set to 1 for Soroban-only LumAgg quotes
-#   SOROSWAP_API_URL    default https://api.soroswap.finance
-#   SOROSWAP_API_KEY    optional (register at https://api.soroswap.finance/register)
-#   SOROSWAP_PROTOCOLS  comma-separated, default soroswap,phoenix,aqua (add sdex for full compare)
-#   OUTPUT              if set, write markdown to this path (also printed to stdout)
+#   LUMAGG_API             default https://api.lumagg.xyz
+#   LUMAGG_PREFER_SOROBAN  set to 1 for Soroban-only LumAgg quotes (recommended fair vs Soroswap)
+#   SOROSWAP_API_URL       default https://api.soroswap.finance
+#   SOROSWAP_API_KEY       optional (register at https://api.soroswap.finance/register)
+#   SOROSWAP_PROTOCOLS     comma-separated, default soroswap,phoenix,aqua (add sdex for full compare)
+#   OUTPUT                 if set, write markdown to this path (also printed to stdout)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export LUMAGG_API="${LUMAGG_API:-https://api.lumagg.xyz}"
+export LUMAGG_PREFER_SOROBAN="${LUMAGG_PREFER_SOROBAN:-}"
 export SOROSWAP_API_URL="${SOROSWAP_API_URL:-https://api.soroswap.finance}"
 export SOROSWAP_API_KEY="${SOROSWAP_API_KEY:-}"
+export SOROSWAP_PROTOCOLS="${SOROSWAP_PROTOCOLS:-soroswap,phoenix,aqua}"
 export OUTPUT="${OUTPUT:-}"
 
 python3 "$ROOT/scripts/scf_benchmark.py"

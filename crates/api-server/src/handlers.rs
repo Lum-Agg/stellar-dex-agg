@@ -30,7 +30,8 @@ pub async fn api_root() -> impl IntoResponse {
             "build_tx": "/api/v1/build_tx",
             "tokens": "/api/v1/tokens",
             "balance": "/api/v1/balance",
-            "balances": "/api/v1/balances"
+            "balances": "/api/v1/balances",
+            "stats": "/api/v1/stats"
         },
         "docs": {
             "openapi": "https://github.com/Lum-Agg/stellar-dex-agg/blob/main/docs/openapi.yaml",

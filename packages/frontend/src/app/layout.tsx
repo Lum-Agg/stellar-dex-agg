@@ -49,6 +49,9 @@ export default function RootLayout({
                   <a href="/docs" className="hover:text-zinc-100 transition-colors">
                     API Docs
                   </a>
+                  <a href="/stats" className="hover:text-zinc-100 transition-colors">
+                    Stats
+                  </a>
                   <a
                     href={GITHUB_REPO_URL}
                     target="_blank"
