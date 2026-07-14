@@ -1,0 +1,359 @@
+openapi: 3.0.3
+info:
+  title: LumAgg API
+  description: |
+    Stellar DEX aggregator — quotes and unsigned swap transactions across Soroban AMMs
+    (Soroswap, Aquarius, Phoenix, Sushi V3, Comet) and optionally Classic SDEX.
+
+    **Rate limits:** 10 req/s per IP; 60 req/s with valid `X-API-Key` (partner keys).
+    See [integrator-guide.md](./integrator-guide.md).
+  version: 1.0.0
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+servers:
+  - url: https://api.lumagg.xyz
+    description: Production
+  - url: http://127.0.0.1:3100
+    description: Local dev
+tags:
+  - name: routing
+  - name: tokens
+  - name: health
+paths:
+  /api/v1/health:
+    get:
+      tags: [health]
+      summary: Service health
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /api/v1/tokens:
+    get:
+      tags: [tokens]
+      summary: Supported tokens
+      responses:
+        '200':
+          description: Token list with logos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Token'
+  /api/v1/quote:
+    get:
+      tags: [routing]
+      summary: Best swap route
+      description: |
+        Returns optimal route(s) and expected output. Set `prefer_soroban=1` to exclude
+        Classic SDEX paths (apples-to-apples vs Soroban-only aggregators).
+      parameters:
+        - $ref: '#/components/parameters/token_in'
+        - $ref: '#/components/parameters/token_out'
+        - $ref: '#/components/parameters/amount_in'
+        - name: slippage
+          in: query
+          required: false
+          schema:
+            type: number
+            format: double
+            example: 0.5
+          description: Slippage tolerance in percent (default 0.5)
+        - name: prefer_soroban
+          in: query
+          required: false
+          schema:
+            type: integer
+            enum: [0, 1]
+            default: 0
+          description: When `1`, exclude Classic SDEX — Soroban AMMs only
+        - name: debug
+          in: query
+          required: false
+          schema:
+            type: integer
+            enum: [0, 1]
+          description: Include split optimizer debug when `1`
+      responses:
+        '200':
+          description: Quote result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteResponse'
+        '400':
+          description: Invalid parameters
+        '429':
+          description: Rate limit exceeded
+  /api/v1/build_tx:
+    post:
+      tags: [routing]
+      summary: Build unsigned swap transaction
+      description: |
+        Builds wallet-ready XDR from quote `sub_routes`. Classic routes return PathPayment XDR;
+        Soroban routes return invoke host function XDR (simulated).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BuildTxRequest'
+      responses:
+        '200':
+          description: Unsigned transaction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BuildTxResponse'
+        '400':
+          description: Invalid body or unsupported route mix
+        '429':
+          description: Rate limit exceeded
+  /api/v1/stats:
+    get:
+      tags: [health]
+      summary: On-chain aggregator stats (indexer DB)
+      description: |
+        Daily rollups from `analytics-indexer` SQLite. Requires `INDEXER_DB_PATH` on the API server.
+        Optional `day=YYYY-MM-DD` filters to a single UTC day. Set `format=csv` for grant report download.
+      parameters:
+        - name: day
+          in: query
+          required: false
+          schema:
+            type: string
+            example: "2026-07-13"
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [json, csv]
+            default: json
+      responses:
+        '200':
+          description: Stats rollup (JSON or CSV)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatsResponse'
+            text/csv:
+              schema:
+                type: string
+        '503':
+          description: INDEXER_DB_PATH not configured
+components:
+  parameters:
+    token_in:
+      name: token_in
+      in: query
+      required: true
+      schema:
+        type: string
+      description: Input token contract ID (or `native` for XLM)
+    token_out:
+      name: token_out
+      in: query
+      required: true
+      schema:
+        type: string
+      description: Output token contract ID
+    amount_in:
+      name: amount_in
+      in: query
+      required: true
+      schema:
+        type: string
+      description: Input amount in stroops (7 decimals for most SAC tokens)
+  schemas:
+    Token:
+      type: object
+      properties:
+        id:
+          type: string
+        symbol:
+          type: string
+        name:
+          type: string
+        decimals:
+          type: integer
+        logo:
+          type: string
+    QuoteResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            amount_in:
+              type: string
+            expected_output:
+              type: string
+            minimum_output:
+              type: string
+            price_impact:
+              type: number
+            is_split:
+              type: boolean
+            sub_routes:
+              type: array
+              items:
+                $ref: '#/components/schemas/SubRoute'
+            compute_time_ms:
+              type: integer
+        error:
+          type: string
+    SubRoute:
+      type: object
+      properties:
+        source:
+          type: string
+        path:
+          type: array
+          items:
+            type: string
+        pool_addresses:
+          type: array
+          items:
+            type: string
+        dex_types:
+          type: array
+          items:
+            type: string
+        in_indices:
+          type: array
+          items:
+            type: integer
+        out_indices:
+          type: array
+          items:
+            type: integer
+        amount_in:
+          type: string
+        amount_out:
+          type: string
+        percentage:
+          type: number
+    BuildTxRequest:
+      type: object
+      required:
+        - user_public_key
+        - token_in
+        - token_out
+        - amount_in
+        - min_amount_out
+        - sub_routes
+      properties:
+        user_public_key:
+          type: string
+          description: Stellar G-address (signer)
+        token_in:
+          type: string
+        token_out:
+          type: string
+        amount_in:
+          type: string
+        min_amount_out:
+          type: string
+        sub_routes:
+          type: array
+          items:
+            type: object
+            properties:
+              amount_in:
+                type: string
+              steps:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    dex_type:
+                      type: string
+                    pool_address:
+                      type: string
+                    token_in:
+                      type: string
+                    token_out:
+                      type: string
+                    in_idx:
+                      type: integer
+                    out_idx:
+                      type: integer
+    BuildTxResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            xdr:
+              type: string
+            execution:
+              type: string
+              enum: [soroban, classic]
+            hash:
+              type: string
+        error:
+          type: string
+    StatsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            db_path:
+              type: string
+            invocation_count:
+              type: integer
+            cursor_ledger:
+              type: integer
+            oldest_created_at:
+              type: integer
+            daily:
+              type: array
+              items:
+                type: object
+                properties:
+                  day:
+                    type: string
+                  tx_count:
+                    type: integer
+                  unique_users:
+                    type: integer
+                  total_amount_in:
+                    type: string
+                  split_swap_count:
+                    type: integer
+                  success_count:
+                    type: integer
+                  failed_count:
+                    type: integer
+        error:
+          type: string
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Optional partner key for higher rate limits
+security:
+  - ApiKeyAuth: []

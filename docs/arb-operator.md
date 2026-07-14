@@ -1,0 +1,120 @@
+# LumAgg atomic arbitrage — operator playbook
+
+Tranche 2 deliverable: self-deploy **aggregator + vault + arb scanner** on mainnet.
+
+**Not for retail users.** The vault pools trading capital; bot callers only need XLM for Soroban fees.
+
+## Architecture
+
+```text
+quote-api (×N) ──► arb-scanner ──► vault.execute_round_trip ──► aggregator.round_trip_swap ──► DEX pools
+                      ▲                    │
+                 Redis pool state          └── principal + profit back to vault
+```
+
+| Component | Role |
+|-----------|------|
+| `market-data-worker` + Redis | Live pool snapshots for quotes |
+| `api-server` | `/api/v1/quote` (arb uses `prefer_soroban=1`) |
+| `contracts/vault` | Pooled XLM; allowlisted callers |
+| `crates/arbitrage` | Scan → simulate → submit round-trips |
+
+Contract details: [contracts/vault/README.md](../contracts/vault/README.md).
+
+## Prerequisites
+
+- Mainnet Soroban RPC (local node or gateway)
+- Redis with pool-state keys (same as production quote API)
+- Admin wallet: deploy vault, `deposit`, `add_caller`
+- Mnemonic or secrets for N caller accounts (hot wallets, fee-only)
+
+## 1. Deploy vault (one-time)
+
+```bash
+cd contracts/vault
+ADMIN=admin ADMIN_G=G... CALLER=G... ./deploy.sh
+# Record VAULT contract id → ARB_VAULT_CONTRACT
+```
+
+Fund vault:
+
+```bash
+# deposit XLM (SAC) into vault from ops wallet
+stellar contract invoke --id $VAULT -- deposit --from OPS_G --token $XLM_SAC --amount <stroops>
+```
+
+Allowlist each bot caller:
+
+```bash
+stellar contract invoke --id $VAULT -- add_caller --caller GCALLER...
+```
+
+## 2. Configure arb bot
+
+Copy [scripts/arb.env.example](../scripts/arb.env.example) → `deploy/arb.env` on server.
+
+| Variable | Purpose |
+|----------|---------|
+| `ARB_VAULT_CONTRACT` | Vault contract id |
+| `ARB_AGGREGATOR_CONTRACT` | LumAgg aggregator |
+| `ARB_MNEMONIC_PATH` + `ARB_CALLER_INDICES` | HD-derived callers (e.g. `1,2,…,9`) |
+| `ARB_QUOTE_API_URLS` | Round-robin quote APIs (`3100–3103`) |
+| `ARB_BRIDGE_TOKENS` | SAC hubs for round-trip bridge legs |
+| `ARB_BASE_TOKENS` | Usually XLM SAC |
+| `ARB_SUBMIT_TX` | `0` = build/simulate only; `1` = live submit |
+| `ARB_DRY_RUN` | `1` = log opportunities without chain tx |
+| `ARB_MIN_PROFIT` | Net profit floor after fees (stroops) |
+| `ARB_MAX_AMOUNT_IN` | Soft ceiling; vault float is hard cap |
+| `ARB_TELEGRAM_INTERVAL_SECS` | Hourly P&amp;L report (optional) |
+
+Deploy:
+
+```bash
+./deploy_arb.sh
+systemctl status lumagg-arb
+```
+
+## 3. Safe rollout
+
+1. **`ARB_DRY_RUN=1`, `ARB_SUBMIT_TX=0`** — confirm quotes and route labels in logs.
+2. **`ARB_SUBMIT_TX=0`, build+simulate** — verify `min_amount_out` and fee estimates.
+3. **`ARB_SUBMIT_TX=1`** with one caller — watch vault balance and first SUCCESS hashes.
+4. Scale callers — vault balance ≥ `concurrent_txs × amount_in`.
+
+## 4. Monitoring
+
+| Signal | Where |
+|--------|-------|
+| SUCCESS / FAILED txs | `journalctl -u lumagg-arb` |
+| Hourly gross/fees/net | Telegram (`deploy/telegram.env`) |
+| On-chain volume | `analytics-indexer status` / `/api/v1/stats` |
+| Caller XLM | Horizon account balance (fee float only) |
+
+Example log grep:
+
+```bash
+journalctl -u lumagg-arb --since today | grep 'arb tx SUCCESS'
+```
+
+## 5. Risk & limits
+
+- **Arb-only vault** — no public withdraw; callers cannot drain in a separate tx.
+- **Multi-hop fees** — Soroban resource fees scale with legs; gate on **net** profit (`ARB_MIN_PROFIT`).
+- **Caller rotation** — round-robin acquire avoids single-caller starvation.
+- **Trustlines** — arb uses SAC; callers should **not** need classic trustlines (clean with `clean_caller_trustlines` if legacy cron ran).
+- **Contract upgrades** — WASM upload costs ~20 XLM on mainnet; coordinate before upgrade.
+
+## 6. Evidence for grant review
+
+| Criterion | Artifact |
+|-----------|----------|
+| Mainnet vault id | `contracts/vault/README.md` + deploy tx |
+| ≥10 DRY_RUN / simulated txs | `journalctl` excerpts |
+| ≥1 on-chain round-trip | tx hash in logs + [analytics indexer](../docs/analytics-indexer.md) |
+| Operator doc | this file |
+
+## 7. Related docs
+
+- [integrator-guide.md](./integrator-guide.md) — quote API for integrators
+- [analytics-indexer.md](./analytics-indexer.md) — on-chain stats pipeline
+- [scf-benchmark-results.md](./scf-benchmark-results.md) — differentiation vs Soroswap

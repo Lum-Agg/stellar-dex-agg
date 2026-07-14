@@ -18,10 +18,9 @@ PROJECT_STATUS.md
 agent/
 deploy/
 !scripts/scf-quote-regression.sh
-docs/*
-!docs/pool-state-architecture.md
 .DS_Store
 broker/
+todo.org
 
 # Optional upstream clones (see thirdparty/README.md)
 thirdparty/*

@@ -1,0 +1,36 @@
+[
+  {
+    "day": "2026-07-13",
+    "tx_count": 25,
+    "unique_users": 3,
+    "total_amount_in": 11832140279,
+    "by_function": {
+      "round_trip_swap": 25
+    },
+    "by_dex": {
+      "aquarius": 104,
+      "comet": 17,
+      "soroswap": 18,
+      "sushi": 1
+    },
+    "split_swap_count": 0,
+    "success_count": 25,
+    "failed_count": 0
+  },
+  {
+    "day": "2026-07-14",
+    "tx_count": 1,
+    "unique_users": 1,
+    "total_amount_in": 1254788447,
+    "by_function": {
+      "round_trip_swap": 1
+    },
+    "by_dex": {
+      "aquarius": 5,
+      "comet": 1
+    },
+    "split_swap_count": 0,
+    "success_count": 1,
+    "failed_count": 0
+  }
+]
