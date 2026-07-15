@@ -2,18 +2,14 @@
 
 use {
     crate::{
-        bridge::{quote_leg, quote_round_trip, RoundTripQuote},
+        bridge::{quote_round_trip, RoundTripQuote},
         callers::{CallerPool, DEFAULT_CALLER_COOLDOWN_MS},
         config::ArbConfig,
         context::ArbContext,
         invoke::{
             build_execute_round_trip_op, build_raw_envelope_xdr, build_round_trip_swap_op, min_amount_out_break_even,
         },
-        optimize::optimize_round_trip,
-        prepare::{
-            fetch_account_sequence, parse_base_received_from_sim_error, parse_bridge_received_from_sim_error,
-            prepare_transaction_xdr,
-        },
+        prepare::{fetch_account_sequence, parse_base_received_from_sim_error, prepare_transaction_xdr},
         scanner::ArbOpportunity,
         stats::ArbStats,
         vault::resolve_max_amount_in,
@@ -40,26 +36,16 @@ pub struct PreparedArbTx {
     pub simulated: bool,
 }
 
-async fn resolve_quote(ctx: &ArbContext, opp: &ArbOpportunity) -> Option<RoundTripQuote> {
+/// Reuse scanner quote (already sized/optimized). Cap by config max.
+fn quote_for_execute<'a>(ctx: &ArbContext, opp: &'a ArbOpportunity) -> Option<&'a RoundTripQuote> {
     let max_in = resolve_max_amount_in(ctx, &opp.quote.base.canonical());
-    if max_in < ctx.config.min_amount_in {
+    if opp.quote.amount_in < ctx.config.min_amount_in || opp.quote.amount_in > max_in {
         return None;
     }
-    if ctx.config.optimize_amount {
-        optimize_round_trip(
-            ctx,
-            &opp.quote.base,
-            &opp.quote.bridge,
-            ctx.config.min_amount_in,
-            max_in,
-            ctx.config.sample_count,
-        )
-        .await
-    } else {
-        quote_round_trip(ctx, &opp.quote.base, &opp.quote.bridge, opp.quote.amount_in.min(max_in))
-            .await
-            .ok()
+    if opp.quote.profit() < ctx.config.min_profit {
+        return None;
     }
+    Some(&opp.quote)
 }
 
 fn build_op_for_quote(
@@ -68,7 +54,6 @@ fn build_op_for_quote(
     caller_public_key: &str,
     quote: &RoundTripQuote,
     min_amount_out: i128,
-    bridge_amount_override: Option<u128>,
 ) -> Result<sxdr::Operation> {
     let amount_in_i128 = i128::try_from(quote.amount_in).context("amount_in exceeds i128")?;
     if let Some(vault) = ctx.config.vault_contract.as_deref() {
@@ -82,7 +67,6 @@ fn build_op_for_quote(
             &quote.leg_out,
             &quote.leg_back,
             min_amount_out,
-            bridge_amount_override,
         )
     } else {
         build_round_trip_swap_op(
@@ -94,50 +78,8 @@ fn build_op_for_quote(
             &quote.leg_out,
             &quote.leg_back,
             min_amount_out,
-            bridge_amount_override,
         )
     }
-}
-
-/// Re-quote leg_back at the on-chain bridge amount from leg_out.
-async fn refresh_leg_back_at_bridge(ctx: &ArbContext, quote: &mut RoundTripQuote, bridge_total: u128) -> Result<()> {
-    if quote.leg_out.route.sub_orders.len() <= 1 {
-        quote.leg_back = quote_leg(ctx, &quote.bridge, &quote.base, bridge_total).await?;
-    } else {
-        let mut back_subs = Vec::new();
-        let mut back_steps = Vec::new();
-        let mut total_back_out = 0u128;
-        let mut total_minimum_out = 0u128;
-        for sub in &quote.leg_out.route.sub_orders {
-            let bridge_in = sub.expected_amount_out;
-            if bridge_in == 0 {
-                return Err(anyhow::anyhow!("leg_out split produced zero bridge output"));
-            }
-            let partial = quote_leg(ctx, &quote.bridge, &quote.base, bridge_in).await?;
-            total_back_out = total_back_out.saturating_add(partial.route.total_expected_out);
-            total_minimum_out = total_minimum_out.saturating_add(partial.minimum_out);
-            back_subs.extend(partial.route.sub_orders);
-            back_steps.extend(partial.step_sets);
-        }
-        quote.leg_back = crate::quote_client::LegQuote {
-            route: router_engine::OptimalRoute {
-                sub_orders: back_subs,
-                total_amount_in: bridge_total,
-                total_expected_out: total_back_out,
-                price_impact_bps: 0,
-                is_split: quote.leg_out.route.sub_orders.len() > 1,
-                improvement_bps: 0,
-                minimum_out: total_minimum_out,
-                compute_time_ms: 0,
-                debug: None,
-            },
-            step_sets: back_steps,
-            minimum_out: total_minimum_out,
-        };
-    }
-    quote.amount_out = quote.leg_back.route.total_expected_out;
-    quote.minimum_out = quote.leg_back.minimum_out;
-    Ok(())
 }
 
 pub async fn prepare_opportunity_tx(
@@ -150,36 +92,23 @@ pub async fn prepare_opportunity_tx(
         return Ok(None);
     };
 
-    let mut quote = match resolve_quote(ctx, opp).await {
-        Some(q) => q,
-        None => return Ok(None),
-    };
-
-    if quote.profit() < ctx.config.min_profit {
+    let Some(initial) = quote_for_execute(ctx, opp) else {
         return Ok(None);
-    }
+    };
+    let mut quote = initial.clone();
 
     let seq = fetch_account_sequence(&ctx.config.rpc_url, caller_public_key).await?;
     let fee = 100_000u32;
-    let mut bridge_override = None;
     let mut unsigned_tx_xdr = String::new();
     let mut simulated = false;
     let mut simulated_amount_out = 0u128;
     let mut estimated_fee_stroops = 0u128;
-    let mut tried_bridge_fix = false;
     let mut tried_probe_fallback = false;
 
-    // Up to 3 sims: initial → bridge-corrected → optional probe-size fallback.
-    for _attempt in 0..3 {
+    // Up to 2 sims: sized quote → optional probe-size fallback on phantom profit.
+    for _attempt in 0..2 {
         let min_amount_out = min_amount_out_break_even(quote.amount_in);
-        let op = build_op_for_quote(
-            ctx,
-            aggregator,
-            caller_public_key,
-            &quote,
-            min_amount_out,
-            bridge_override,
-        )?;
+        let op = build_op_for_quote(ctx, aggregator, caller_public_key, &quote, min_amount_out)?;
 
         match prepare_transaction_xdr(
             &ctx.config.rpc_url,
@@ -200,28 +129,8 @@ pub async fn prepare_opportunity_tx(
             Err(err) => {
                 let err_str = err.to_string();
 
-                // 1) Align leg_back to on-chain leg_out bridge amount (once).
-                if !tried_bridge_fix {
-                    if let Some(bridge_total) =
-                        parse_bridge_received_from_sim_error(&err_str, &quote.bridge.canonical(), aggregator)
-                    {
-                        if bridge_total > 0 && bridge_total != quote.leg_out.route.total_expected_out {
-                            info!(
-                                route = %quote.route_label(),
-                                quoted_bridge = quote.leg_out.route.total_expected_out,
-                                simulated_bridge = bridge_total,
-                                "leg_out quote vs simulate mismatch — re-quote leg_back"
-                            );
-                            tried_bridge_fix = true;
-                            refresh_leg_back_at_bridge(ctx, &mut quote, bridge_total).await?;
-                            bridge_override = Some(bridge_total);
-                            continue;
-                        }
-                    }
-                }
-
-                // 2) Legs completed but break-even assert failed → quote-api phantom profit.
-                //    Fall back to probe size so small real opportunities are not skipped.
+                // Legs ran but break-even assert failed → quote-api phantom profit.
+                // Fall back to probe size so small real opportunities are not skipped.
                 if !tried_probe_fallback && quote.amount_in > ctx.config.min_amount_in {
                     if let Some(base_out) = parse_base_received_from_sim_error(
                         &err_str,
@@ -242,8 +151,6 @@ pub async fn prepare_opportunity_tx(
                         match quote_round_trip(ctx, &quote.base, &quote.bridge, ctx.config.min_amount_in).await {
                             Ok(probe) if probe.profit() >= ctx.config.min_profit => {
                                 quote = probe;
-                                bridge_override = None;
-                                tried_bridge_fix = false;
                                 continue;
                             }
                             Ok(_) => {

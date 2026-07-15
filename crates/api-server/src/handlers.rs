@@ -58,6 +58,10 @@ pub struct QuoteQuery {
     pub debug: Option<u8>,
     /// When `1` or `true`, exclude Classic SDEX paths (Soroban AMMs only).
     pub prefer_soroban: Option<u8>,
+    /// Path-finder hop limit (pool hops). Omit = server default.
+    pub max_hops: Option<usize>,
+    /// Max parallel sub-routes in a split quote. Omit = server default.
+    pub max_splits: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -167,8 +171,8 @@ pub async fn get_quote(State(state): State<AppState>, Query(params): Query<Quote
         token_out: TokenId::from_str_auto(&params.token_out),
         amount_in,
         slippage_bps: Some(slippage_bps),
-        max_hops: None,
-        max_splits: None,
+        max_hops: params.max_hops,
+        max_splits: params.max_splits,
         prefer_soroban: params.prefer_soroban.map(|v| v != 0),
     };
 

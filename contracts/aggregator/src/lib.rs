@@ -48,6 +48,40 @@ fn soroswap_get_amount_out(amount_in: i128, reserve_in: i128, reserve_out: i128)
     in_less * reserve_out / (reserve_in + in_less)
 }
 
+/// Treat each `SubRoute.amount_in` as a positive weight and allocate
+/// `target_total` across routes. Intermediate routes use floor division; the
+/// last route receives the remainder so the sum is exact (`= target_total`).
+fn scale_sub_routes_to_total(env: &Env, routes: &Vec<SubRoute>, target_total: i128) -> Vec<SubRoute> {
+    assert!(!routes.is_empty(), "Empty sub_routes");
+    assert!(target_total > 0, "target_total must be positive");
+
+    let mut weight_sum: i128 = 0;
+    for sr in routes.iter() {
+        assert!(sr.amount_in > 0, "sub-route weight must be positive");
+        weight_sum = weight_sum.checked_add(sr.amount_in).expect("weight sum overflow");
+    }
+
+    let n = routes.len();
+    let mut out: Vec<SubRoute> = Vec::new(env);
+    let mut allocated: i128 = 0;
+    for i in 0..n {
+        let sr = routes.get(i).unwrap();
+        let amount = if i + 1 == n {
+            target_total - allocated
+        } else {
+            let scaled = sr.amount_in.checked_mul(target_total).expect("weight scale overflow") / weight_sum;
+            allocated = allocated.checked_add(scaled).expect("allocated overflow");
+            scaled
+        };
+        assert!(amount >= 0, "scaled amount underflow");
+        out.push_back(SubRoute {
+            amount_in: amount,
+            steps: sr.steps.clone(),
+        });
+    }
+    out
+}
+
 #[contractimpl]
 impl AggregatorContract {
     /// Initialize the contract with an admin address.
@@ -146,12 +180,25 @@ impl AggregatorContract {
     /// returned to `user`. The contract does not retain funds after
     /// execution.
     ///
-    /// - `leg_out`: sub-routes from `base_token` to `bridge_token`; `amount_in`
-    ///   must sum to `amount_in`
-    /// - `leg_back`: sub-routes from `bridge_token` to `base_token`;
-    ///   `amount_in` must sum to leg_out output
+    /// # Parameters
+    ///
+    /// - `leg_out`: sub-routes from `base_token` to `bridge_token`. Each
+    ///   `SubRoute.amount_in` is an absolute base-token input; they **must**
+    ///   sum to `amount_in`.
+    /// - `leg_back`: sub-routes from `bridge_token` to `base_token`. Each
+    ///   `SubRoute.amount_in` is a **positive weight** (quoted bridge amounts
+    ///   are fine). After `leg_out` produces actual bridge total `o1`, weights
+    ///   are rescaled so executed inputs sum **exactly** to `o1` (last
+    ///   sub-route receives the remainder). Callers do **not** need to know
+    ///   `o1` at submit time.
     /// - `min_amount_out`: minimum total `base_token` returned (principal +
     ///   profit floor)
+    ///
+    /// # Integrator note
+    ///
+    /// Same `SubRoute` type for both legs — no extra fields. Semantics of
+    /// `amount_in` differ by leg: absolute on `leg_out`, proportional weight
+    /// on `leg_back`.
     pub fn round_trip_swap(
         env: Env,
         user: Address,
@@ -191,20 +238,14 @@ impl AggregatorContract {
         );
         assert!(bridge_total > 0, "leg_out produced zero bridge token");
 
-        let mut leg_back_in: i128 = 0;
-        for sr in leg_back.iter() {
-            leg_back_in += sr.amount_in;
-        }
-        assert!(
-            leg_back_in == bridge_total,
-            "leg_back amounts must sum to leg_out output"
-        );
+        // Scale leg_back weights → absolute bridge inputs that sum to o1.
+        let scaled_back = scale_sub_routes_to_total(&env, &leg_back, bridge_total);
 
         let base_total = Self::execute_sub_routes(
             &env,
             &bridge_token,
             &base_token,
-            &leg_back,
+            &scaled_back,
             &contract_addr,
             &mut leg_counter,
         );
@@ -1257,6 +1298,186 @@ mod test {
         let out = agg.round_trip_swap(&user, &base, &bridge, &5000, &leg_out, &leg_back, &5000);
         assert_eq!(out, 5000);
         assert_eq!(tok_base.balance(&user) - before, 0);
+    }
+
+    /// Single leg_back: `amount_in` need not equal on-chain bridge — weight
+    /// becomes the entire `o1`.
+    #[test]
+    fn test_round_trip_leg_back_weight_mismatch_single() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let user = gen_addr(&env);
+        let (_, agg) = setup_agg(&env);
+
+        let (base, sac_base, tok_base) = create_token(&env);
+        let (bridge, sac_bridge, _) = create_token(&env);
+        sac_base.mint(&user, &1_000_000);
+
+        let out_pid = env.register_contract(None, aq_mock::AqPool);
+        let out_pool = out_pid.clone();
+        AqPoolClient::new(&env, &out_pid).init(&base, &bridge);
+        sac_bridge.mint(&out_pool, &10_000_000);
+
+        let back_pid = env.register_contract(None, aq_mock::AqPool);
+        let back_pool = back_pid.clone();
+        AqPoolClient::new(&env, &back_pid).init(&bridge, &base);
+        sac_base.mint(&back_pool, &10_000_000);
+
+        let leg_out = vec![
+            &env,
+            SubRoute {
+                amount_in: 5000,
+                steps: vec![
+                    &env,
+                    SwapStep {
+                        dex_id: out_pool,
+                        dex_type: DexType::Aquarius,
+                        token_in: base.clone(),
+                        token_out: bridge.clone(),
+                        in_idx: 0,
+                        out_idx: 1,
+                    },
+                ],
+            },
+        ];
+        // Quoted bridge 9100; mock leg_out yields 5000. Rescale → 5000.
+        let leg_back = vec![
+            &env,
+            SubRoute {
+                amount_in: 9100,
+                steps: vec![
+                    &env,
+                    SwapStep {
+                        dex_id: back_pool,
+                        dex_type: DexType::Aquarius,
+                        token_in: bridge.clone(),
+                        token_out: base.clone(),
+                        in_idx: 0,
+                        out_idx: 1,
+                    },
+                ],
+            },
+        ];
+
+        let before = tok_base.balance(&user);
+        let out = agg.round_trip_swap(&user, &base, &bridge, &5000, &leg_out, &leg_back, &5000);
+        assert_eq!(out, 5000);
+        assert_eq!(tok_base.balance(&user) - before, 0);
+    }
+
+    /// Split leg_back: weights 600:310 of quoted USDC, rescaled to actual o1.
+    #[test]
+    fn test_round_trip_leg_back_split_rescale() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let user = gen_addr(&env);
+        let (_, agg) = setup_agg(&env);
+
+        let (base, sac_base, tok_base) = create_token(&env);
+        let (bridge, sac_bridge, _) = create_token(&env);
+        sac_base.mint(&user, &1_000_000);
+
+        let out_pid = env.register_contract(None, aq_mock::AqPool);
+        let out_pool = out_pid.clone();
+        AqPoolClient::new(&env, &out_pid).init(&base, &bridge);
+        sac_bridge.mint(&out_pool, &10_000_000);
+
+        let back1_id = env.register_contract(None, aq_mock::AqPool);
+        let back1 = back1_id.clone();
+        AqPoolClient::new(&env, &back1_id).init(&bridge, &base);
+        sac_base.mint(&back1, &10_000_000);
+
+        let back2_id = env.register_contract(None, aq_mock::AqPool);
+        let back2 = back2_id.clone();
+        AqPoolClient::new(&env, &back2_id).init(&bridge, &base);
+        sac_base.mint(&back2, &10_000_000);
+
+        let leg_out = vec![
+            &env,
+            SubRoute {
+                amount_in: 5000,
+                steps: vec![
+                    &env,
+                    SwapStep {
+                        dex_id: out_pool,
+                        dex_type: DexType::Aquarius,
+                        token_in: base.clone(),
+                        token_out: bridge.clone(),
+                        in_idx: 0,
+                        out_idx: 1,
+                    },
+                ],
+            },
+        ];
+        let leg_back = vec![
+            &env,
+            SubRoute {
+                amount_in: 600,
+                steps: vec![
+                    &env,
+                    SwapStep {
+                        dex_id: back1,
+                        dex_type: DexType::Aquarius,
+                        token_in: bridge.clone(),
+                        token_out: base.clone(),
+                        in_idx: 0,
+                        out_idx: 1,
+                    },
+                ],
+            },
+            SubRoute {
+                amount_in: 310,
+                steps: vec![
+                    &env,
+                    SwapStep {
+                        dex_id: back2,
+                        dex_type: DexType::Aquarius,
+                        token_in: bridge.clone(),
+                        token_out: base.clone(),
+                        in_idx: 0,
+                        out_idx: 1,
+                    },
+                ],
+            },
+        ];
+
+        let before = tok_base.balance(&user);
+        let out = agg.round_trip_swap(&user, &base, &bridge, &5000, &leg_out, &leg_back, &5000);
+        assert_eq!(out, 5000);
+        assert_eq!(tok_base.balance(&user) - before, 0);
+    }
+
+    #[test]
+    fn test_scale_sub_routes_remainder() {
+        let env = Env::default();
+        let dummy = gen_addr(&env);
+        let step = SwapStep {
+            dex_id: dummy.clone(),
+            dex_type: DexType::Aquarius,
+            token_in: dummy.clone(),
+            token_out: dummy.clone(),
+            in_idx: 0,
+            out_idx: 1,
+        };
+        let routes = vec![
+            &env,
+            SubRoute {
+                amount_in: 600,
+                steps: vec![&env, step.clone()],
+            },
+            SubRoute {
+                amount_in: 310,
+                steps: vec![&env, step],
+            },
+        ];
+        let scaled = scale_sub_routes_to_total(&env, &routes, 5000);
+        assert_eq!(scaled.len(), 2);
+        assert_eq!(scaled.get(0).unwrap().amount_in, 3296); // 5000 * 600 / 910
+        assert_eq!(scaled.get(1).unwrap().amount_in, 1704); // remainder
+        assert_eq!(
+            scaled.get(0).unwrap().amount_in + scaled.get(1).unwrap().amount_in,
+            5000
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════

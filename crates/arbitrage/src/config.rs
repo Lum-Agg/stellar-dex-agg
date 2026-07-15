@@ -115,12 +115,12 @@ impl ArbConfig {
         let max_hops = std::env::var("ARB_MAX_HOPS")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(4);
+            .unwrap_or(3);
 
         let max_splits = std::env::var("ARB_MAX_SPLITS")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(5);
+            .unwrap_or(2);
 
         let scan_interval_ms = std::env::var("ARB_SCAN_INTERVAL_MS")
             .ok()

@@ -10,9 +10,11 @@ round_trip_swap(user, base_token, bridge_token, amount_in, leg_out, leg_back, mi
 ```
 
 - `user`: bot G-address (`require_auth`); holds XLM/USDC float — **no custodial deposit**
-- `leg_out`: `Vec<SubRoute>` base → bridge (split OK)
-- `leg_back`: `Vec<SubRoute>` bridge → base (split OK); `amount_in` must sum to leg_out output
+- `leg_out`: `Vec<SubRoute>` base → bridge (split OK). Each `amount_in` is an **absolute** base input; they must sum to `amount_in`.
+- `leg_back`: `Vec<SubRoute>` bridge → base (split OK). Each `amount_in` is a **positive weight** (quoted bridge amounts work). After `leg_out` yields actual bridge total `o1`, the contract rescales weights so executed inputs sum exactly to `o1` (last sub-route gets the remainder). Callers do **not** need to know `o1` at submit time.
 - `min_amount_out`: minimum base returned (principal + profit floor)
+
+Same `SubRoute` type for both legs — no extra fields. Semantics of `amount_in` differ by leg.
 
 One `InvokeHostFunction` per transaction (Stellar protocol limit).
 

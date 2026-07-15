@@ -70,7 +70,6 @@ async fn main() -> Result<()> {
         &quote.leg_out,
         &quote.leg_back,
         min_out,
-        None,
     )?;
 
     let seq: u64 = arbitrage::prepare::fetch_account_sequence(&ctx.config.rpc_url, caller).await? as u64;

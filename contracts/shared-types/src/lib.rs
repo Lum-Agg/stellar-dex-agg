@@ -26,6 +26,12 @@ pub struct SwapStep {
 }
 
 /// A sub-route in a split order.
+///
+/// Semantics of `amount_in` depend on the call site:
+/// - `swap` / `leg_out` of `round_trip_swap`: absolute token input.
+/// - `leg_back` of `round_trip_swap`: positive **weight**; the contract
+///   rescales weights to the actual bridge output after `leg_out` (last
+///   sub-route receives the remainder).
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct SubRoute {

@@ -26,9 +26,10 @@ AGGREGATOR="${AGGREGATOR:-CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC
 NETWORK_PASSPHRASE="${NETWORK_PASSPHRASE:-Public Global Stellar Network ; September 2015}"
 RPC_URL="${RPC_URL:-https://mainnet.sorobanrpc.com}"
 TX_POLL_SECS="${TX_POLL_SECS:-180}"
-# Mainnet WASM upload/upgrade often needs higher fees than CLI defaults (TxInsufficientFee).
-RESOURCE_FEE="${RESOURCE_FEE:-200000000}"
-INCLUSION_FEE="${INCLUSION_FEE:-5000000}"
+# Prefer simulated resource fee (do not override unless needed). Manually setting
+# --resource-fee too low/high can cause InsufficientRefundableFee / fee-bump fails.
+INCLUSION_FEE="${INCLUSION_FEE:-1000000}"
+INSTRUCTION_LEEWAY="${INSTRUCTION_LEEWAY:-5000000}"
 
 compute_wasm_hash() {
   openssl dgst -sha256 "$1" | awk '{print $2}'
@@ -143,13 +144,19 @@ WASM_HASH=$(compute_wasm_hash "$WASM")
 echo "WASM hash (sha256): $WASM_HASH"
 
 echo "=== Uploading WASM via RPC ($RPC_URL) ==="
-if ! run_stellar_tx "WASM upload" stellar contract upload \
-  --rpc-url "$RPC_URL" \
-  --network-passphrase "$NETWORK_PASSPHRASE" \
-  --source-account "$ADMIN" \
-  --resource-fee "$RESOURCE_FEE" \
-  --inclusion-fee "$INCLUSION_FEE" \
-  --wasm "$WASM"; then
+UPLOAD_ARGS=(
+  --rpc-url "$RPC_URL"
+  --network-passphrase "$NETWORK_PASSPHRASE"
+  --source-account "$ADMIN"
+  --inclusion-fee "$INCLUSION_FEE"
+  --instruction-leeway "$INSTRUCTION_LEEWAY"
+  --wasm "$WASM"
+)
+# Optional override only when explicitly set.
+if [[ -n "${RESOURCE_FEE:-}" ]]; then
+  UPLOAD_ARGS+=(--resource-fee "$RESOURCE_FEE")
+fi
+if ! run_stellar_tx "WASM upload" stellar contract upload "${UPLOAD_ARGS[@]}"; then
   echo ""
   echo "Upload did not confirm. You can retry with another RPC:"
   echo "  RPC_URL=https://soroban-rpc.mainnet.stellar.gateway.fm TX_POLL_SECS=300 ./contracts/aggregator/upgrade.sh"
@@ -161,13 +168,19 @@ if ! run_stellar_tx "WASM upload" stellar contract upload \
 fi
 
 echo "=== Upgrading contract $AGGREGATOR ==="
+UPGRADE_ARGS=(
+  --id "$AGGREGATOR"
+  --source-account "$ADMIN"
+  --rpc-url "$RPC_URL"
+  --network-passphrase "$NETWORK_PASSPHRASE"
+  --inclusion-fee "$INCLUSION_FEE"
+  --instruction-leeway "$INSTRUCTION_LEEWAY"
+)
+if [[ -n "${UPGRADE_RESOURCE_FEE:-}" ]]; then
+  UPGRADE_ARGS+=(--resource-fee "$UPGRADE_RESOURCE_FEE")
+fi
 if ! run_stellar_tx "contract upgrade" stellar contract invoke \
-  --id "$AGGREGATOR" \
-  --source-account "$ADMIN" \
-  --rpc-url "$RPC_URL" \
-  --network-passphrase "$NETWORK_PASSPHRASE" \
-  --resource-fee "${UPGRADE_RESOURCE_FEE:-50000000}" \
-  --inclusion-fee "$INCLUSION_FEE" \
+  "${UPGRADE_ARGS[@]}" \
   -- \
   upgrade \
   --new_wasm_hash "$WASM_HASH"; then
