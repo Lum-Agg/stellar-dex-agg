@@ -16,7 +16,10 @@ async fn main() -> Result<()> {
     let bridge_sym = env::args().nth(1).unwrap_or_else(|| "USDC".into());
     let bridge = match bridge_sym.as_str() {
         "USDC" => "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
-        "AQUA" => "CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV",
+        "EURC" => "CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV",
+        "AQUA" => "CAUIKL3IYGMERDRUN6YSCLWVAKIFG5Q4YJHUKM4S4NJZQIA3BAS6OJPK",
+        "yXLM" => "CBZVSNVB55ANF24QVJL2K5QCLOAB6XITGTGXYEAF6NPTXYKEJUYQOHFC",
+        "SHX" => "CCKCKCPHYVXQD4NECBFJTFSCU2AMSJGCNG4O6K4JVRE2BLPR7WNDBQIQ",
         other if other.starts_with('C') && other.len() == 56 => other,
         other => anyhow::bail!("unknown bridge {other}"),
     };
