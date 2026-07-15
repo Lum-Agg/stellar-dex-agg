@@ -162,12 +162,12 @@ impl ArbConfig {
         let max_amount_in = std::env::var("ARB_MAX_AMOUNT_IN")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(18_000_000_000); // 1800 XLM default
+            .unwrap_or(5_000_000_000); // 500 XLM default
 
         let sample_count = std::env::var("ARB_SAMPLE_COUNT")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(8);
+            .unwrap_or(10);
 
         let submit_tx = std::env::var("ARB_SUBMIT_TX")
             .ok()

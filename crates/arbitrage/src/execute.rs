@@ -166,6 +166,22 @@ pub async fn prepare_opportunity_tx(
                     }
                 }
 
+                // Structural host traps (InvalidAction / footprint): no usable
+                // envelope — skip building a dead XDR and don't retry this path
+                // via simulated=false bookkeeping.
+                if is_structural_sim_failure(&err_str) {
+                    warn!(
+                        error = %err,
+                        route = %opp.route_label,
+                        caller = %caller_public_key,
+                        "structural sim failure — discard"
+                    );
+                    stats
+                        .txs_sim_rejected
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    return Ok(None);
+                }
+
                 warn!(
                     error = %err,
                     route = %opp.route_label,
@@ -252,14 +268,14 @@ pub async fn try_execute_opportunity(
     stats: Arc<ArbStats>,
     profit: Arc<crate::profit::ProfitBook>,
     dry_run: bool,
-) -> Result<()> {
+) -> Result<bool> {
     let Some(guard) = caller_pool.try_acquire().await else {
         warn!(route = %opp.route_label, "all callers busy, dropping opportunity");
-        return Ok(());
+        return Ok(false);
     };
 
     let Some(prepared) = prepare_opportunity_tx(ctx, opp, &guard.public_key(), stats.as_ref()).await? else {
-        return Ok(());
+        return Ok(false);
     };
 
     stats.txs_prepared.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -269,7 +285,7 @@ pub async fn try_execute_opportunity(
             .txs_sim_rejected
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         warn!(route = %prepared.route_label, "simulation missing — skip submit");
-        return Ok(());
+        return Ok(false);
     }
 
     if dry_run {
@@ -285,7 +301,7 @@ pub async fn try_execute_opportunity(
             profit_bps = prepared.profit_bps,
             "DRY_RUN: would submit round_trip_swap"
         );
-        return Ok(());
+        return Ok(false);
     }
 
     let cooldown_ms = std::env::var("ARB_CALLER_COOLDOWN_MS")
@@ -307,9 +323,45 @@ pub async fn try_execute_opportunity(
     // ledger.
     guard.mark_in_flight(cooldown_ms);
 
-    Ok(())
+    Ok(true)
+}
+
+/// Host traps that will not produce a usable assembled tx (retrying the same
+/// quote envelope is wasted work).
+fn is_structural_sim_failure(err: &str) -> bool {
+    let e = err.to_ascii_lowercase();
+    e.contains("invalidaction") ||
+        e.contains("outside of the footprint") ||
+        e.contains("exceededlimit") ||
+        (e.contains("footprint") && (e.contains("hosterror") || e.contains("trapped")))
 }
 
 pub fn execution_enabled(config: &ArbConfig) -> bool {
     config.build_tx && config.aggregator_contract.is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_structural_sim_failure;
+
+    #[test]
+    fn detects_invalid_action() {
+        assert!(is_structural_sim_failure(
+            "simulation missing i128 return value: HostError: Error(WasmVm, InvalidAction)"
+        ));
+    }
+
+    #[test]
+    fn detects_footprint() {
+        assert!(is_structural_sim_failure(
+            "trying to access contract data key outside of the footprint"
+        ));
+    }
+
+    #[test]
+    fn ignores_economic_failures() {
+        assert!(!is_structural_sim_failure(
+            "Error(Contract, #1) assert min_amount_out not met"
+        ));
+    }
 }

@@ -10,7 +10,7 @@
 
 use {
     crate::{
-        rpc::{get_map_field, scval_to_address, scval_to_i128, scval_to_string, SorobanRpc},
+        rpc::{get_map_field, scval_to_address, scval_to_i128, SorobanRpc},
         traits::*,
     },
     anyhow::Result,
@@ -109,8 +109,8 @@ impl PhoenixAdapter {
         let (token_a_addr, reserve_a) = self.parse_asset_field(pool_response, "asset_a")?;
         let (token_b_addr, reserve_b) = self.parse_asset_field(pool_response, "asset_b")?;
 
-        let token_a = self.resolve_token(&token_a_addr).await;
-        let token_b = self.resolve_token(&token_b_addr).await;
+        let token_a = Self::token_from_contract_address(&token_a_addr);
+        let token_b = Self::token_from_contract_address(&token_b_addr);
 
         Ok(Some((
             AdapterTradingPair {
@@ -170,20 +170,8 @@ impl PhoenixAdapter {
         Ok(updated)
     }
 
-    async fn resolve_token(&self, contract_address: &str) -> TokenId {
-        match self.rpc.call_no_args(contract_address, "name").await {
-            Ok(val) => {
-                if let Ok(name) = scval_to_string(&val) {
-                    if name == "native" {
-                        return TokenId::Native;
-                    }
-                    if name.contains(':') {
-                        return TokenId::from_str_auto(&name);
-                    }
-                }
-            }
-            Err(_) => {}
-        }
+    /// SAC contract address — same identity as Aquarius/Soroswap graph edges.
+    fn token_from_contract_address(contract_address: &str) -> TokenId {
         TokenId::Contract {
             address: contract_address.to_string(),
         }

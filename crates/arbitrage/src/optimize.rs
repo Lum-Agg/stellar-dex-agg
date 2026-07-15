@@ -8,23 +8,35 @@ use {
     router_engine::TokenId,
 };
 
-/// Evenly spaced candidate inputs between `min_in` and `max_in` (inclusive
-/// endpoints).
+/// Logarithmically spaced candidate inputs between `min_in` and `max_in`
+/// (inclusive endpoints). Dense at small sizes where historical arb profit
+/// concentrates; sparse near the ceiling.
 pub fn build_candidate_inputs(min_in: u128, max_in: u128, sample_count: usize) -> Vec<u128> {
     if sample_count == 0 || min_in == 0 || max_in == 0 || min_in > max_in {
         return Vec::new();
     }
-    if sample_count == 1 {
+    if sample_count == 1 || min_in == max_in {
         return vec![min_in];
     }
+
     let mut out = Vec::with_capacity(sample_count);
+    let log_min = (min_in as f64).ln();
+    let log_max = (max_in as f64).ln();
+    let den = (sample_count - 1) as f64;
     for i in 0..sample_count {
-        let num = i as u128;
-        let den = (sample_count - 1) as u128;
-        let v = min_in + (max_in - min_in) * num / den;
+        let t = i as f64 / den;
+        let v = (log_min + (log_max - log_min) * t).exp().round() as u128;
+        let v = v.clamp(min_in, max_in);
         if v > 0 {
             out.push(v);
         }
+    }
+    // Keep endpoints exact after float round-trip.
+    if let Some(first) = out.first_mut() {
+        *first = min_in;
+    }
+    if let Some(last) = out.last_mut() {
+        *last = max_in;
     }
     out.sort_unstable();
     out.dedup();
@@ -68,5 +80,20 @@ mod tests {
         assert_eq!(v.first(), Some(&100));
         assert_eq!(v.last(), Some(&1000));
         assert!(v.len() >= 2);
+    }
+
+    #[test]
+    fn candidate_inputs_are_log_spaced() {
+        // 10 → 500 XLM, 10 samples: denser below ~200 than linear would be.
+        let min_in = 100_000_000u128;
+        let max_in = 5_000_000_000u128;
+        let v = build_candidate_inputs(min_in, max_in, 10);
+        assert_eq!(v.first(), Some(&min_in));
+        assert_eq!(v.last(), Some(&max_in));
+        assert_eq!(v.len(), 10);
+        // Midpoint by index should be well below linear midpoint (255 XLM).
+        let mid = v[4] as f64 / 1e7;
+        assert!(mid < 100.0, "expected log-mid < 100 XLM, got {mid}");
+        assert!(mid > 40.0, "expected log-mid > 40 XLM, got {mid}");
     }
 }

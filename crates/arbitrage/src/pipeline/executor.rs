@@ -42,8 +42,8 @@ impl Executor<ArbOpportunity> for TxExecutor {
                 }
             };
 
+            let path_key = round_trip_dedup_key(&opp.quote.base, &opp.quote.bridge);
             if runtime.submit_enabled() {
-                let path_key = round_trip_dedup_key(&opp.quote.base, &opp.quote.bridge);
                 let mut cache = runtime.path_cache.lock().await;
                 if cache.recently_submitted(&path_key) {
                     runtime
@@ -52,10 +52,9 @@ impl Executor<ArbOpportunity> for TxExecutor {
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     return;
                 }
-                cache.mark_submitted(path_key);
             }
 
-            if let Err(e) = try_execute_opportunity(
+            match try_execute_opportunity(
                 &ctx,
                 &opp,
                 pool,
@@ -65,7 +64,16 @@ impl Executor<ArbOpportunity> for TxExecutor {
             )
             .await
             {
-                warn!(route = %opp.route_label, error = %e, "round_trip_swap pipeline failed");
+                Ok(true) if runtime.submit_enabled() => {
+                    // Only lock the pair after a successful broadcast, so failed
+                    // sims / busy callers do not burn the dedup window.
+                    let mut cache = runtime.path_cache.lock().await;
+                    cache.mark_submitted(path_key);
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    warn!(route = %opp.route_label, error = %e, "round_trip_swap pipeline failed");
+                }
             }
         });
 
