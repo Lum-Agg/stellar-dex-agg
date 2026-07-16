@@ -9,6 +9,10 @@ use {
         xdr::{self, Limits, ReadXdr, WriteXdr},
         Options, Server,
     },
+    std::{
+        sync::Mutex,
+        time::{Duration, Instant},
+    },
     stellar_xdr::{
         curr as sxdr,
         curr::{Limits as StellarLimits, WriteXdr as StellarWriteXdr},
@@ -165,8 +169,49 @@ pub async fn fetch_latest_ledger(rpc_url: &str) -> Result<u32> {
 /// ~100k ledgers is well under typical max entry lifetime (~1M).
 pub const VAULT_ALLOWANCE_LEDGER_CUSHION: u32 = 100_000;
 
+/// How long a cached `getLatestLedger` stays valid for allowance expiry.
+/// Cushion is ~100k ledgers; being minutes stale is fine and avoids an RPC
+/// per prepare under arb load.
+pub const LATEST_LEDGER_CACHE_TTL: Duration = Duration::from_secs(60);
+
 pub fn vault_allowance_expiration(latest_ledger: u32) -> u32 {
     latest_ledger.saturating_add(VAULT_ALLOWANCE_LEDGER_CUSHION)
+}
+
+/// Shared `getLatestLedger` cache (process / runtime scoped).
+#[derive(Debug, Default)]
+pub struct LatestLedgerCache {
+    inner: Mutex<Option<(u32, Instant)>>,
+}
+
+impl LatestLedgerCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Return a recent ledger sequence, refreshing via RPC when the cache is
+    /// empty or older than [`LATEST_LEDGER_CACHE_TTL`].
+    pub async fn get(&self, rpc_url: &str) -> Result<u32> {
+        if let Some(seq) = self.cached() {
+            return Ok(seq);
+        }
+        let seq = fetch_latest_ledger(rpc_url).await?;
+        if let Ok(mut g) = self.inner.lock() {
+            *g = Some((seq, Instant::now()));
+        }
+        Ok(seq)
+    }
+
+    fn cached(&self) -> Option<u32> {
+        let g = self.inner.lock().ok()?;
+        let (seq, at) = (*g)?;
+        (at.elapsed() < LATEST_LEDGER_CACHE_TTL).then_some(seq)
+    }
+}
+
+/// `latest + cushion` using a shared ledger cache (no RPC on cache hit).
+pub async fn vault_allowance_expiration_cached(cache: &LatestLedgerCache, rpc_url: &str) -> Result<u32> {
+    Ok(vault_allowance_expiration(cache.get(rpc_url).await?))
 }
 
 /// Native XLM balance (stroops) for a G... account via Soroban RPC.
@@ -436,5 +481,17 @@ mod tests {
         let data = sxdr::LedgerEntryData::Account(entry);
         let b64 = data.to_xdr_base64(Limits::none()).unwrap();
         assert_eq!(super::decode_account_sequence_xdr(&b64).unwrap(), 42);
+    }
+
+    #[test]
+    fn latest_ledger_cache_hits_within_ttl() {
+        let cache = LatestLedgerCache::new();
+        assert!(cache.cached().is_none());
+        *cache.inner.lock().unwrap() = Some((63_500_000, Instant::now()));
+        assert_eq!(cache.cached(), Some(63_500_000));
+        assert_eq!(
+            vault_allowance_expiration(63_500_000),
+            63_500_000 + VAULT_ALLOWANCE_LEDGER_CUSHION
+        );
     }
 }

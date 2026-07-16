@@ -2,8 +2,8 @@
 
 use {
     crate::{
-        callers::CallerPool, config::ArbConfig, context::ArbContext, dedup::SubmittedPathCache, profit::ProfitBook,
-        stats::ArbStats,
+        callers::CallerPool, config::ArbConfig, context::ArbContext, dedup::SubmittedPathCache,
+        prepare::LatestLedgerCache, profit::ProfitBook, stats::ArbStats,
     },
     anyhow::Result,
     std::sync::Arc,
@@ -17,6 +17,7 @@ pub struct ArbRuntime {
     pub profit: Arc<ProfitBook>,
     pub path_cache: Mutex<SubmittedPathCache>,
     pub caller_pool: Option<CallerPool>,
+    pub latest_ledger: Arc<LatestLedgerCache>,
 }
 
 impl ArbRuntime {
@@ -34,11 +35,12 @@ impl ArbRuntime {
                 dedup_secs.max(1),
             ))),
             caller_pool,
+            latest_ledger: Arc::new(LatestLedgerCache::new()),
         })
     }
 
     pub async fn connect(&self) -> Result<ArbContext> {
-        ArbContext::connect(self.config.clone()).await
+        ArbContext::connect_with_ledger_cache(self.config.clone(), self.latest_ledger.clone()).await
     }
 
     pub fn build_enabled(&self) -> bool {

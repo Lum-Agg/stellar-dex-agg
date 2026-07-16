@@ -10,8 +10,8 @@ use {
             build_execute_round_trip_op, build_raw_envelope_xdr, build_round_trip_swap_op, min_amount_out_break_even,
         },
         prepare::{
-            fetch_account_sequence, fetch_latest_ledger, parse_base_received_from_sim_error, prepare_transaction_xdr,
-            vault_allowance_expiration,
+            fetch_account_sequence, parse_base_received_from_sim_error, prepare_transaction_xdr,
+            vault_allowance_expiration_cached,
         },
         scanner::ArbOpportunity,
         stats::ArbStats,
@@ -104,10 +104,10 @@ pub async fn prepare_opportunity_tx(
 
     let seq = fetch_account_sequence(&ctx.config.rpc_url, caller_public_key).await?;
     // Vault reclaim approve expiry: fixed op arg (not vault-side sequence()+N).
-    // See prepare::vault_allowance_expiration / vault crate auth pitfall docs.
+    // Cached getLatestLedger — cushion is ~100k ledgers, so a 60s-stale value is
+    // fine.
     let allowance_expiration = if ctx.config.vault_contract.is_some() {
-        let latest = fetch_latest_ledger(&ctx.config.rpc_url).await?;
-        vault_allowance_expiration(latest)
+        vault_allowance_expiration_cached(&ctx.latest_ledger, &ctx.config.rpc_url).await?
     } else {
         0
     };
