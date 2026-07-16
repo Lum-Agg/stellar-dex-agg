@@ -19,12 +19,14 @@ For normal swaps, use the [aggregator](../aggregator/) `swap()` or `round_trip_s
 `execute_round_trip` completes atomically in a **single contract invocation**:
 
 ```text
+caller ──approve(ceiling)──► token
 vault ──amount_in──► caller ──round_trip_swap──► aggregator ──► DEX
                       ▲                              │
                       └──── base_total (principal + profit) ──┘
-                      caller ──base_total──► vault
+vault ──transfer_from(base_total)──► caller   (allowance; amount not pre-signed)
 ```
 
+- Reclaim uses `approve` + `transfer_from` with a **fixed** allowance ceiling so Soroban auth is not pinned to the simulated return (sim vs live mismatch used to cause `auth: invalid_action`).
 - No standalone public `withdraw` — callers cannot drain the vault in a separate transaction.
 - Profit is returned to the vault with `base_total`.
 - `min_amount_out` matches the aggregator semantics (on-chain slippage / profit floor).

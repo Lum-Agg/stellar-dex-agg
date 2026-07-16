@@ -14,6 +14,7 @@ contracts/vault/.mainnet-vault-id
 scripts/telegram.env.local
 scripts/arb.env.local
 .worktrees/
+.superpowers/
 PROJECT_STATUS.md
 agent/
 deploy/

@@ -3,9 +3,10 @@
 //! swaps via the aggregator without pre-funding bot wallets with principal.
 //!
 //! Flow inside `execute_round_trip`:
-//! 1. Transfer `amount_in` base token from vault → caller
-//! 2. Cross-call `aggregator.round_trip_swap(user = caller, ...)`
-//! 3. Transfer returned base token from caller → vault (principal + profit)
+//! 1. Caller approves vault for a fixed ceiling (not the simulated return)
+//! 2. Transfer `amount_in` base token from vault → caller
+//! 3. Cross-call `aggregator.round_trip_swap(user = caller, ...)`
+//! 4. `transfer_from` reclaim of actual `base_total` (no exact-amount pre-sign)
 
 use {
     lumagg_contract_types::SubRoute,
@@ -112,6 +113,13 @@ impl VaultContract {
         let vault = env.current_contract_address();
         let base_client = token::Client::new(&env, &base_token);
 
+        // Approve a fixed ceiling so Soroban auth does not pin the reclaim
+        // amount to the simulated `base_total` (sim vs live mismatch →
+        // auth invalid_action). Reclaim uses transfer_from with the actual
+        // return; spender=vault needs no caller-signed amount.
+        let expiration = env.ledger().sequence().saturating_add(20);
+        base_client.approve(&caller, &vault, &i128::MAX, &expiration);
+
         base_client.transfer(&vault, &caller, &amount_in);
 
         let agg = AggregatorContractClient::new(&env, &aggregator);
@@ -125,7 +133,7 @@ impl VaultContract {
             &min_amount_out,
         );
 
-        base_client.transfer(&caller, &vault, &base_total);
+        base_client.transfer_from(&vault, &caller, &vault, &base_total);
 
         base_total
     }

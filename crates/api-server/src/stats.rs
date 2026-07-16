@@ -2,6 +2,7 @@
 //! handoff).
 
 use {
+    crate::xlm_price::enrich_daily_with_historical_usd,
     analytics_indexer::{export, store::IndexStore},
     axum::{
         extract::Query,
@@ -36,6 +37,9 @@ pub struct StatsData {
     pub cursor_ledger: Option<u32>,
     pub oldest_created_at: Option<i64>,
     pub daily: Vec<export::DailyStats>,
+    /// How USD notional was priced (when enrichment succeeded).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usd_pricing: Option<&'static str>,
 }
 
 fn indexer_db_path() -> Option<String> {
@@ -73,7 +77,7 @@ pub async fn get_stats(Query(params): Query<StatsQuery>) -> Response {
         }
     };
 
-    let daily = if let Some(ref day) = params.day {
+    let mut daily = if let Some(ref day) = params.day {
         match export::export_daily(&store, day) {
             Ok(one) => vec![one],
             Err(e) => {
@@ -105,21 +109,34 @@ pub async fn get_stats(Query(params): Query<StatsQuery>) -> Response {
         }
     };
 
+    enrich_daily_with_historical_usd(&mut daily).await;
+    let usd_pricing = daily
+        .iter()
+        .any(|d| d.total_amount_in_usd.is_some())
+        .then_some("per_token_historical_usd_daily");
+
     let invocation_count = store.count_invocations().unwrap_or(0);
     let cursor_ledger = store.cursor_ledger().ok().flatten();
     let oldest_created_at = store.oldest_created_at().ok().flatten();
 
     if params.format.as_deref() == Some("csv") {
         let mut lines = vec![
-            "day,tx_count,unique_users,total_amount_in_stroops,split_swap_count,success_count,failed_count".into(),
+            "day,tx_count,unique_users,notional_in_stroops,notional_in_usd,routed_dex_volume_stroops,routed_dex_volume_usd,xlm_usd,split_swap_count,success_count,failed_count"
+                .into(),
         ];
         for d in &daily {
             lines.push(format!(
-                "{},{},{},{},{},{},{}",
+                "{},{},{},{},{},{},{},{},{},{},{}",
                 d.day,
                 d.tx_count,
                 d.unique_users,
                 d.total_amount_in,
+                d.total_amount_in_usd.map(|v| format!("{v:.6}")).unwrap_or_default(),
+                d.total_routed_dex_volume,
+                d.total_routed_dex_volume_usd
+                    .map(|v| format!("{v:.6}"))
+                    .unwrap_or_default(),
+                d.xlm_usd.map(|v| format!("{v:.8}")).unwrap_or_default(),
                 d.split_swap_count,
                 d.success_count,
                 d.failed_count
@@ -147,6 +164,7 @@ pub async fn get_stats(Query(params): Query<StatsQuery>) -> Response {
                 cursor_ledger,
                 oldest_created_at,
                 daily,
+                usd_pricing,
             }),
             error: None,
         }),

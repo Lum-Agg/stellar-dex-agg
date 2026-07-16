@@ -1486,6 +1486,15 @@ pub async fn build_tx(State(_state): State<AppState>, Json(body): Json<BuildTxRe
                 "Swap failed: Comet pool token approval was rejected by simulation. \
                  The on-chain aggregator may need an upgrade; try refreshing the quote or a route without Comet."
                     .to_string()
+            } else if e.contains("account not found") ||
+                e.contains("No sequence") ||
+                e.contains("Horizon") ||
+                e.contains("rate limit") ||
+                e.contains("Rate Limit")
+            {
+                // Sequence lookup failed before SimulateTransaction — don't label as sim
+                // failure.
+                e
             } else {
                 format!("Swap simulation failed: {}", e)
             };
@@ -1501,8 +1510,87 @@ pub async fn build_tx(State(_state): State<AppState>, Json(body): Json<BuildTxRe
     }
 }
 
-/// Fetch account sequence number from Horizon.
+/// Fetch account sequence via Soroban RPC (preferred) with Horizon fallback.
+/// Public Horizon is often rate-limited (429); RPC is what we already use for
+/// simulate.
 async fn fetch_sequence_number(public_key: &str) -> Result<i64, String> {
+    let rpc_url =
+        std::env::var("RPC_URL").unwrap_or_else(|_| "https://soroban-rpc.mainnet.stellar.gateway.fm".to_string());
+
+    match fetch_sequence_via_rpc(&rpc_url, public_key).await {
+        Ok(seq) => return Ok(seq),
+        Err(rpc_err) => {
+            tracing::warn!(error = %rpc_err, "RPC sequence lookup failed — trying Horizon");
+            match fetch_sequence_via_horizon(public_key).await {
+                Ok(seq) => Ok(seq),
+                Err(hz_err) => Err(format!(
+                    "Could not load account sequence for {public_key}. RPC: {rpc_err}. Horizon: {hz_err}"
+                )),
+            }
+        }
+    }
+}
+
+async fn fetch_sequence_via_rpc(rpc_url: &str, public_key: &str) -> Result<i64, String> {
+    use {
+        serde_json::json,
+        stellar_xdr::{
+            curr as xdr,
+            curr::{Limits, ReadXdr, WriteXdr},
+        },
+    };
+
+    let pk = stellar_strkey::ed25519::PublicKey::from_string(public_key)
+        .map_err(|e| format!("Invalid public key: {:?}", e))?;
+    let account_id = xdr::AccountId(xdr::PublicKey::PublicKeyTypeEd25519(xdr::Uint256(pk.0)));
+    let key = xdr::LedgerKey::Account(xdr::LedgerKeyAccount { account_id });
+    let key_b64 = key
+        .to_xdr_base64(Limits::none())
+        .map_err(|e| format!("encode account ledger key: {:?}", e))?;
+
+    let body = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "getLedgerEntries",
+        "params": { "keys": [key_b64] }
+    });
+
+    let resp: serde_json::Value = reqwest::Client::new()
+        .post(rpc_url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("RPC getLedgerEntries failed: {}", e))?
+        .json()
+        .await
+        .map_err(|e| format!("RPC getLedgerEntries JSON failed: {}", e))?;
+
+    if let Some(error) = resp.get("error") {
+        return Err(format!("RPC getLedgerEntries error: {}", error));
+    }
+
+    let xdr_b64 = resp
+        .pointer("/result/entries/0/xdr")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("account not found on ledger (fund it on mainnet first): {}", public_key))?;
+
+    if let Ok(entry) = xdr::LedgerEntry::from_xdr_base64(xdr_b64, Limits::none()) {
+        if let xdr::LedgerEntryData::Account(data) = entry.data {
+            return Ok(data.seq_num.0);
+        }
+    }
+    if let Ok(data) = xdr::LedgerEntryData::from_xdr_base64(xdr_b64, Limits::none()) {
+        if let xdr::LedgerEntryData::Account(data) = data {
+            return Ok(data.seq_num.0);
+        }
+    }
+    if let Ok(data) = xdr::AccountEntry::from_xdr_base64(xdr_b64, Limits::none()) {
+        return Ok(data.seq_num.0);
+    }
+    Err("cannot decode account entry from ledger XDR".to_string())
+}
+
+async fn fetch_sequence_via_horizon(public_key: &str) -> Result<i64, String> {
     let url = format!("https://horizon.stellar.org/accounts/{}", public_key);
     let client = reqwest::Client::new();
     let resp = client
@@ -1510,14 +1598,33 @@ async fn fetch_sequence_number(public_key: &str) -> Result<i64, String> {
         .send()
         .await
         .map_err(|e| format!("Horizon request failed: {}", e))?;
+    let status = resp.status();
     let data: serde_json::Value = resp
         .json()
         .await
         .map_err(|e| format!("Horizon response parse failed: {}", e))?;
+
+    if status.as_u16() == 429 {
+        return Err(
+            "Horizon rate limit exceeded (429). Retry in a moment, or ensure RPC_URL is reachable.".to_string(),
+        );
+    }
+    if status.as_u16() == 404 {
+        return Err(format!("account not found on Horizon (unfunded?): {}", public_key));
+    }
+    if !status.is_success() {
+        let detail = data
+            .get("detail")
+            .and_then(|v| v.as_str())
+            .or_else(|| data.get("title").and_then(|v| v.as_str()))
+            .unwrap_or("unknown Horizon error");
+        return Err(format!("Horizon HTTP {}: {}", status.as_u16(), detail));
+    }
+
     let seq_str = data
         .get("sequence")
         .and_then(|s| s.as_str())
-        .ok_or_else(|| "No sequence in response".to_string())?;
+        .ok_or_else(|| "Horizon response missing sequence field".to_string())?;
     seq_str.parse::<i64>().map_err(|e| format!("Invalid sequence: {}", e))
 }
 

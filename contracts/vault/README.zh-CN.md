@@ -19,12 +19,14 @@
 `execute_round_trip` 在 **单次合约调用** 内原子完成：
 
 ```text
+caller ──approve(ceiling)──► token
 vault ──amount_in──► caller ──round_trip_swap──► aggregator ──► DEX
                       ▲                              │
                       └──── base_total（本金+利润）──┘
-                      caller ──base_total──► vault
+vault ──transfer_from(base_total)──► caller   （走 allowance，金额不预签）
 ```
 
+- 回收用固定额度的 `approve` + `transfer_from`，避免 Soroban auth 锁死模拟返回额（sim/live 不一致会触发 `auth: invalid_action`）。
 - 不对外暴露独立的 `withdraw`，避免 caller 单独提走资金。
 - 利润随 `base_total` 一并回到 vault。
 - `min_amount_out` 与 aggregator 相同，用于链上滑点/利润下限保护。
