@@ -349,6 +349,12 @@ pub fn build_round_trip_swap_op(
 }
 
 /// Build `InvokeHostFunction` calling `vault.execute_round_trip`.
+///
+/// `allowance_expiration_ledger` must be chosen here (e.g.
+/// [`crate::prepare::vault_allowance_expiration`]) and embedded in the op
+/// args. Nested SAC `approve` auth pins this value at simulate time — if the
+/// vault instead computed `sequence()+N`, inclusion failed with
+/// `Unauthorized function call for address` (mainnet 2026-07-16).
 pub fn build_execute_round_trip_op(
     vault_contract: &str,
     aggregator_contract: &str,
@@ -359,6 +365,7 @@ pub fn build_execute_round_trip_op(
     leg_out: &LegQuote,
     leg_back: &LegQuote,
     min_amount_out: i128,
+    allowance_expiration_ledger: u32,
 ) -> Result<xdr::Operation> {
     if amount_in <= 0 {
         return Err(anyhow!("amount_in must be positive"));
@@ -396,6 +403,7 @@ pub fn build_execute_round_trip_op(
             leg_out_val,
             leg_back_val,
             i128_scval(min_amount_out),
+            xdr::ScVal::U32(allowance_expiration_ledger),
         ]
         .try_into()
         .map_err(|_| anyhow!("execute_round_trip args"))?,

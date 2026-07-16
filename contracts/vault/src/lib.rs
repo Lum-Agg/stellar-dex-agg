@@ -7,6 +7,25 @@
 //! 2. Transfer `amount_in` base token from vault → caller
 //! 3. Cross-call `aggregator.round_trip_swap(user = caller, ...)`
 //! 4. `transfer_from` reclaim of actual `base_total` (no exact-amount pre-sign)
+//!
+//! # Soroban auth pitfall (do not regress)
+//!
+//! Any value that ends up in a nested `require_auth` call (SAC `approve`,
+//! `transfer`, …) is **pinned into the signed auth tree at simulate time**.
+//! If the contract recomputes that value from `env.ledger().sequence()` (or
+//! from a simulated return amount), inclusion a ledger or two later uses
+//! different args → auth miss.
+//!
+//! Symptom on mainnet (2026-07-16, after `approve(MAX, sequence()+20)`):
+//! `Unauthorized function call for address` on the caller G-address at the
+//! nested `approve`, while simulate still succeeds.
+//!
+//! Rules:
+//! - Reclaim **amount**: use `i128::MAX` approve + `transfer_from(actual)` —
+//!   never pin `base_total` from sim into auth.
+//! - Approve **expiration**: pass as a call argument from the bot
+//!   (`allowance_expiration_ledger`). Never `sequence()+N` inside this
+//!   contract. Do not use `u32::MAX` either (SAC rejects past max TTL).
 
 use {
     lumagg_contract_types::SubRoute,
@@ -94,6 +113,10 @@ impl VaultContract {
 
     /// Authorized caller executes a round-trip arb atomically:
     /// vault → caller → aggregator → caller → vault.
+    ///
+    /// `allowance_expiration_ledger` — client-chosen SAC approve expiry (see
+    /// crate-level "Soroban auth pitfall"). Must be ≥ current ledger and
+    /// within network max entry TTL; bot typically sends `latest + ~100k`.
     pub fn execute_round_trip(
         env: Env,
         caller: Address,
@@ -104,21 +127,26 @@ impl VaultContract {
         leg_out: Vec<SubRoute>,
         leg_back: Vec<SubRoute>,
         min_amount_out: i128,
+        allowance_expiration_ledger: u32,
     ) -> i128 {
         caller.require_auth();
         assert!(Self::is_caller(env.clone(), caller.clone()), "caller not authorized");
         assert!(amount_in > 0, "amount_in must be positive");
         assert!(min_amount_out >= amount_in, "min_amount_out below principal");
+        assert!(
+            allowance_expiration_ledger >= env.ledger().sequence(),
+            "allowance expiration in the past"
+        );
 
         let vault = env.current_contract_address();
         let base_client = token::Client::new(&env, &base_token);
 
-        // Approve a fixed ceiling so Soroban auth does not pin the reclaim
-        // amount to the simulated `base_total` (sim vs live mismatch →
-        // auth invalid_action). Reclaim uses transfer_from with the actual
-        // return; spender=vault needs no caller-signed amount.
-        let expiration = env.ledger().sequence().saturating_add(20);
-        base_client.approve(&caller, &vault, &i128::MAX, &expiration);
+        // Fixed-ceiling approve + transfer_from(actual): amount is not pinned
+        // to simulated `base_total` (that caused auth invalid_action).
+        // Expiration comes from the call arg above — do NOT replace with
+        // `env.ledger().sequence().saturating_add(N)` (Unauthorized on
+        // inclusion; see crate docs).
+        base_client.approve(&caller, &vault, &i128::MAX, &allowance_expiration_ledger);
 
         base_client.transfer(&vault, &caller, &amount_in);
 
@@ -269,7 +297,18 @@ mod tests {
         ];
 
         let vault_before = token::Client::new(&env, &base).balance(&vault_id);
-        let out = vault.execute_round_trip(&caller, &agg.address, &base, &bridge, &5000, &leg_out, &leg_back, &5000);
+        let allowance_exp = env.ledger().sequence().saturating_add(10_000);
+        let out = vault.execute_round_trip(
+            &caller,
+            &agg.address,
+            &base,
+            &bridge,
+            &5000,
+            &leg_out,
+            &leg_back,
+            &5000,
+            &allowance_exp,
+        );
         assert_eq!(out, 5000);
         assert_eq!(token::Client::new(&env, &base).balance(&vault_id), vault_before);
     }
@@ -290,6 +329,7 @@ mod tests {
         let (bridge, _) = create_token(&env);
         let empty_legs = vec![&env];
 
+        let allowance_exp = env.ledger().sequence().saturating_add(10_000);
         let result = vault.try_execute_round_trip(
             &stranger,
             &agg.address,
@@ -299,6 +339,7 @@ mod tests {
             &empty_legs,
             &empty_legs,
             &1000,
+            &allowance_exp,
         );
         assert!(result.is_err());
     }

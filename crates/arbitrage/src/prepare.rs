@@ -122,6 +122,53 @@ pub async fn fetch_account_sequence(rpc_url: &str, public_key: &str) -> Result<i
     decode_account_sequence_xdr(&xdr_b64)
 }
 
+/// Latest closed ledger sequence from Soroban RPC (`getLatestLedger`).
+pub async fn fetch_latest_ledger(rpc_url: &str) -> Result<u32> {
+    use serde_json::json;
+
+    let body = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "getLatestLedger"
+    });
+
+    let resp: serde_json::Value = reqwest::Client::new()
+        .post(rpc_url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| anyhow!("RPC getLatestLedger request: {}", e))?
+        .json()
+        .await
+        .map_err(|e| anyhow!("RPC getLatestLedger JSON: {}", e))?;
+
+    if let Some(error) = resp.get("error") {
+        return Err(anyhow!("RPC getLatestLedger error: {}", error));
+    }
+
+    resp.pointer("/result/sequence")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as u32)
+        .ok_or_else(|| anyhow!("getLatestLedger missing result.sequence"))
+}
+
+/// Ledger cushion for vault reclaim `approve` expiry.
+///
+/// Passed into `vault.execute_round_trip` as `allowance_expiration_ledger` so
+/// the value is fixed in the op/auth tree (same at simulate and inclusion).
+///
+/// **Do not** move this into the vault as `env.ledger().sequence() + N`:
+/// that drifted by 1–2 ledgers on mainnet (2026-07-16) and surfaced as
+/// `Unauthorized function call for address` on the nested SAC `approve`
+/// while simulate still succeeded. Also avoid `u32::MAX` (SAC max TTL).
+///
+/// ~100k ledgers is well under typical max entry lifetime (~1M).
+pub const VAULT_ALLOWANCE_LEDGER_CUSHION: u32 = 100_000;
+
+pub fn vault_allowance_expiration(latest_ledger: u32) -> u32 {
+    latest_ledger.saturating_add(VAULT_ALLOWANCE_LEDGER_CUSHION)
+}
+
 /// Native XLM balance (stroops) for a G... account via Soroban RPC.
 pub async fn fetch_account_native_balance(rpc_url: &str, public_key: &str) -> Result<u128> {
     let xdr_b64 = fetch_account_entry_xdr(rpc_url, public_key).await?;

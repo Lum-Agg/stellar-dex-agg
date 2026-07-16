@@ -63,6 +63,8 @@ async fn main() -> Result<()> {
     let agg = ctx.config.aggregator_contract.as_deref().context("ARB_AGGREGATOR")?;
     let caller = "GCMDWFAHD6PYI5SI2N2M6XINZDITECUV4XN7LYQGOWKQSIMQPRNK2DLN";
     let min_out = i128::try_from(quote.minimum_out.max(quote.amount_in.saturating_add(1)))?;
+    let latest = arbitrage::prepare::fetch_latest_ledger(&ctx.config.rpc_url).await?;
+    let allowance_exp = arbitrage::prepare::vault_allowance_expiration(latest);
     let op = build_execute_round_trip_op(
         vault,
         agg,
@@ -73,6 +75,7 @@ async fn main() -> Result<()> {
         &quote.leg_out,
         &quote.leg_back,
         min_out,
+        allowance_exp,
     )?;
 
     let seq: u64 = arbitrage::prepare::fetch_account_sequence(&ctx.config.rpc_url, caller).await? as u64;

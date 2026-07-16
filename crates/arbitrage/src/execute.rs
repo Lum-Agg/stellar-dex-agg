@@ -9,7 +9,10 @@ use {
         invoke::{
             build_execute_round_trip_op, build_raw_envelope_xdr, build_round_trip_swap_op, min_amount_out_break_even,
         },
-        prepare::{fetch_account_sequence, parse_base_received_from_sim_error, prepare_transaction_xdr},
+        prepare::{
+            fetch_account_sequence, fetch_latest_ledger, parse_base_received_from_sim_error, prepare_transaction_xdr,
+            vault_allowance_expiration,
+        },
         scanner::ArbOpportunity,
         stats::ArbStats,
         vault::resolve_max_amount_in,
@@ -54,6 +57,7 @@ fn build_op_for_quote(
     caller_public_key: &str,
     quote: &RoundTripQuote,
     min_amount_out: i128,
+    allowance_expiration_ledger: u32,
 ) -> Result<sxdr::Operation> {
     let amount_in_i128 = i128::try_from(quote.amount_in).context("amount_in exceeds i128")?;
     if let Some(vault) = ctx.config.vault_contract.as_deref() {
@@ -67,6 +71,7 @@ fn build_op_for_quote(
             &quote.leg_out,
             &quote.leg_back,
             min_amount_out,
+            allowance_expiration_ledger,
         )
     } else {
         build_round_trip_swap_op(
@@ -98,6 +103,14 @@ pub async fn prepare_opportunity_tx(
     let mut quote = initial.clone();
 
     let seq = fetch_account_sequence(&ctx.config.rpc_url, caller_public_key).await?;
+    // Vault reclaim approve expiry: fixed op arg (not vault-side sequence()+N).
+    // See prepare::vault_allowance_expiration / vault crate auth pitfall docs.
+    let allowance_expiration = if ctx.config.vault_contract.is_some() {
+        let latest = fetch_latest_ledger(&ctx.config.rpc_url).await?;
+        vault_allowance_expiration(latest)
+    } else {
+        0
+    };
     let fee = 100_000u32;
     let mut unsigned_tx_xdr = String::new();
     let mut simulated = false;
@@ -108,7 +121,14 @@ pub async fn prepare_opportunity_tx(
     // Up to 2 sims: sized quote → optional probe-size fallback on phantom profit.
     for _attempt in 0..2 {
         let min_amount_out = min_amount_out_break_even(quote.amount_in);
-        let op = build_op_for_quote(ctx, aggregator, caller_public_key, &quote, min_amount_out)?;
+        let op = build_op_for_quote(
+            ctx,
+            aggregator,
+            caller_public_key,
+            &quote,
+            min_amount_out,
+            allowance_expiration,
+        )?;
 
         match prepare_transaction_xdr(
             &ctx.config.rpc_url,
