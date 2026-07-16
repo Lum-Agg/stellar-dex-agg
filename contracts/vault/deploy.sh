@@ -106,9 +106,11 @@ run_stellar_tx() {
 echo "=== Building vault WASM (release) ==="
 stellar contract build --optimize 2>/dev/null || {
   echo "stellar contract build --optimize failed, trying cargo + stellar optimize..."
-  cargo build -p vault-contract --target wasm32v1-none --release
+  cargo build -p vault-contract --target wasm32v1-none --profile contract-release
   WASM=""
   for CANDIDATE in \
+    "$ROOT/target/wasm32v1-none/contract-release/vault_contract.wasm" \
+    "$ROOT/contracts/vault/target/wasm32v1-none/contract-release/vault_contract.wasm" \
     "$ROOT/target/wasm32v1-none/release/vault_contract.wasm" \
     "$ROOT/contracts/vault/target/wasm32v1-none/release/vault_contract.wasm" \
     "$ROOT/target/wasm32-unknown-unknown/release/vault_contract.wasm" \
@@ -128,6 +130,8 @@ stellar contract build --optimize 2>/dev/null || {
 
 WASM=""
 for CANDIDATE in \
+  "$ROOT/target/wasm32v1-none/contract-release/vault_contract.wasm" \
+  "$ROOT/contracts/vault/target/wasm32v1-none/contract-release/vault_contract.wasm" \
   "$ROOT/target/wasm32v1-none/release/vault_contract.wasm" \
   "$ROOT/contracts/vault/target/wasm32v1-none/release/vault_contract.wasm" \
   "$ROOT/target/wasm32-unknown-unknown/release/vault_contract.wasm" \

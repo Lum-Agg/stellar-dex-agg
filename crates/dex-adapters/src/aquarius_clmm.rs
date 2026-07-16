@@ -556,18 +556,6 @@ impl AquariusClmmAdapter {
         Ok(())
     }
 
-    /// On-chain quote via pool `estimate_swap`.
-    async fn quote_on_chain(&self, pool: &AquaClmmPool, token_in: &str, amount_in: u128) -> Result<Option<u128>> {
-        let (in_idx, out_idx) = if token_in == pool.token0 {
-            (0u32, 1u32)
-        } else if token_in == pool.token1 {
-            (1u32, 0u32)
-        } else {
-            return Ok(None);
-        };
-        crate::on_chain_quote::estimate_swap(&self.rpc, &pool.pool_address, in_idx, out_idx, amount_in).await
-    }
-
     /// Get a local quote using the CLMM math.
     fn local_quote(&self, pool: &AquaClmmPool, token_in: &str, amount_in: u128) -> Option<u128> {
         let zero_for_one = token_in == pool.token0;
@@ -781,54 +769,6 @@ impl DexAdapter for AquariusClmmAdapter {
 // XDR Parsing Helpers
 // ============================================================================
 
-/// Variants of the DataKey enum for building ledger keys.
-enum DataKeyVariant {
-    TickChunk(i32),
-    ChunkBitmap(i32),
-    WordBitmap(i32),
-}
-
-/// Build a persistent storage ledger key for a given contract and data key
-/// variant.
-fn make_persistent_key(contract_hash: &[u8; 32], variant: &DataKeyVariant) -> xdr::LedgerKey {
-    let key_val = match variant {
-        DataKeyVariant::TickChunk(pos) => {
-            // DataKey::TickChunk(i32) is enum variant index 23 (counting from storage.rs)
-            // In XDR, Soroban enums with data are encoded as Vec [symbol, val]
-            xdr::ScVal::Vec(Some(xdr::ScVec(
-                vec![
-                    xdr::ScVal::Symbol(xdr::ScSymbol("TickChunk".try_into().unwrap())),
-                    xdr::ScVal::I32(*pos),
-                ]
-                .try_into()
-                .unwrap(),
-            )))
-        }
-        DataKeyVariant::ChunkBitmap(pos) => xdr::ScVal::Vec(Some(xdr::ScVec(
-            vec![
-                xdr::ScVal::Symbol(xdr::ScSymbol("ChunkBitmap".try_into().unwrap())),
-                xdr::ScVal::I32(*pos),
-            ]
-            .try_into()
-            .unwrap(),
-        ))),
-        DataKeyVariant::WordBitmap(pos) => xdr::ScVal::Vec(Some(xdr::ScVec(
-            vec![
-                xdr::ScVal::Symbol(xdr::ScSymbol("WordBitmap".try_into().unwrap())),
-                xdr::ScVal::I32(*pos),
-            ]
-            .try_into()
-            .unwrap(),
-        ))),
-    };
-
-    xdr::LedgerKey::ContractData(xdr::LedgerKeyContractData {
-        contract: xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(*contract_hash))),
-        key: key_val,
-        durability: xdr::ContractDataDurability::Persistent,
-    })
-}
-
 /// Parse instance storage from a ledger entry into a map of field name ->
 /// ScVal.
 fn parse_instance_storage(entry: &xdr::LedgerEntryData) -> Result<HashMap<String, xdr::ScVal>> {
@@ -908,29 +848,6 @@ fn extract_u128_field(map: &HashMap<String, xdr::ScVal>, name: &str) -> Result<u
         xdr::ScVal::U32(v) => Ok(*v as u128),
         _ => Err(anyhow!("Cannot parse {} as u128", name)),
     }
-}
-
-fn extract_u32_field(map: &HashMap<String, xdr::ScVal>, name: &str) -> Result<u32> {
-    let val = map.get(name).ok_or_else(|| anyhow!("No {} in instance", name))?;
-    match val {
-        xdr::ScVal::U32(v) => Ok(*v),
-        xdr::ScVal::U64(v) => Ok(*v as u32),
-        _ => Err(anyhow!("Cannot parse {} as u32", name)),
-    }
-}
-
-fn extract_i32_field(map: &HashMap<String, xdr::ScVal>, name: &str) -> Result<i32> {
-    let val = map.get(name).ok_or_else(|| anyhow!("No {} in instance", name))?;
-    match val {
-        xdr::ScVal::I32(v) => Ok(*v),
-        xdr::ScVal::I64(v) => Ok(*v as i32),
-        _ => Err(anyhow!("Cannot parse {} as i32", name)),
-    }
-}
-
-fn extract_address_field(map: &HashMap<String, xdr::ScVal>, name: &str) -> Result<String> {
-    let val = map.get(name).ok_or_else(|| anyhow!("No {} in instance", name))?;
-    crate::rpc::scval_to_address(val).map_err(|e| anyhow!("Cannot parse {} as address: {}", name, e))
 }
 
 fn extract_tick_spacing_from_info(val: &xdr::ScVal) -> Option<i32> {
@@ -1044,69 +961,6 @@ fn parse_tick_info_scval(val: &xdr::ScVal) -> Option<(u128, i128)> {
     None
 }
 
-/// Parse pool state from get_pool_state_with_balances result.
-fn parse_pool_state_with_balances(val: &xdr::ScVal) -> Result<(ClmmU256, i32, u128)> {
-    // Expected format: struct { reserve0, reserve1, state: { fee, liquidity,
-    // sqrt_price_x96, tick, ... } }
-    if let xdr::ScVal::Map(Some(map)) = val {
-        let mut sqrt_price = None;
-        let mut tick = None;
-        let mut liquidity = None;
-
-        for entry in map.0.iter() {
-            let key_name = match &entry.key {
-                xdr::ScVal::Symbol(s) => String::from_utf8(s.0.to_vec()).unwrap_or_default(),
-                _ => continue,
-            };
-
-            match key_name.as_str() {
-                "liquidity" => {
-                    liquidity = parse_u128_scval(&entry.val);
-                }
-                "sqrt_price_x96" => {
-                    sqrt_price = parse_u256_scval(&entry.val).ok();
-                }
-                "tick" => {
-                    if let xdr::ScVal::I32(v) = &entry.val {
-                        tick = Some(*v);
-                    }
-                }
-                "state" => {
-                    // Nested state struct
-                    if let xdr::ScVal::Map(Some(inner)) = &entry.val {
-                        for inner_entry in inner.0.iter() {
-                            let inner_key = match &inner_entry.key {
-                                xdr::ScVal::Symbol(s) => String::from_utf8(s.0.to_vec()).unwrap_or_default(),
-                                _ => continue,
-                            };
-                            match inner_key.as_str() {
-                                "liquidity" => {
-                                    liquidity = parse_u128_scval(&inner_entry.val);
-                                }
-                                "sqrt_price_x96" => {
-                                    sqrt_price = parse_u256_scval(&inner_entry.val).ok();
-                                }
-                                "tick" => {
-                                    if let xdr::ScVal::I32(v) = &inner_entry.val {
-                                        tick = Some(*v);
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        if let (Some(sp), Some(t), Some(l)) = (sqrt_price, tick, liquidity) {
-            return Ok((sp, t, l));
-        }
-    }
-    Err(anyhow!("Cannot parse pool state"))
-}
-
 /// Parse a U256 from ScVal (stored as Bytes<32> big-endian on chain).
 fn parse_u256_scval(val: &xdr::ScVal) -> Result<ClmmU256> {
     match val {
@@ -1138,63 +992,6 @@ fn parse_u256_scval(val: &xdr::ScVal) -> Result<ClmmU256> {
         }
         _ => Err(anyhow!("Cannot parse ScVal as U256: {:?}", std::mem::discriminant(val))),
     }
-}
-
-/// Parse a U256 from a ledger entry (persistent storage value).
-fn parse_u256_entry(entry: &xdr::LedgerEntryData) -> Option<[u8; 32]> {
-    if let xdr::LedgerEntryData::ContractData(data) = entry {
-        match &data.val {
-            xdr::ScVal::Bytes(bytes) if bytes.0.len() == 32 => {
-                let mut arr = [0u8; 32];
-                arr.copy_from_slice(&bytes.0);
-                return Some(arr);
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-/// Parse a tick chunk entry: Vec<TickData(U256, U256, u128, i128)>
-/// We only need liquidity_gross and liquidity_net for swap simulation.
-fn parse_tick_chunk_entry(entry: &xdr::LedgerEntryData) -> Option<Vec<TickState>> {
-    if let xdr::LedgerEntryData::ContractData(data) = entry {
-        if let xdr::ScVal::Vec(Some(vec)) = &data.val {
-            let mut ticks = Vec::with_capacity(TICKS_PER_CHUNK as usize);
-            for item in vec.0.iter() {
-                // Each TickData is a tuple struct: Vec [U256, U256, u128, i128]
-                if let xdr::ScVal::Vec(Some(tuple)) = item {
-                    if tuple.0.len() >= 4 {
-                        let liquidity_gross = parse_u128_scval(&tuple.0[2]).unwrap_or(0);
-                        let liquidity_net = parse_i128_scval(&tuple.0[3]).unwrap_or(0);
-                        ticks.push(TickState {
-                            liquidity_gross,
-                            liquidity_net,
-                        });
-                    } else {
-                        ticks.push(TickState {
-                            liquidity_gross: 0,
-                            liquidity_net: 0,
-                        });
-                    }
-                } else {
-                    ticks.push(TickState {
-                        liquidity_gross: 0,
-                        liquidity_net: 0,
-                    });
-                }
-            }
-            // Pad to TICKS_PER_CHUNK if needed
-            while ticks.len() < TICKS_PER_CHUNK as usize {
-                ticks.push(TickState {
-                    liquidity_gross: 0,
-                    liquidity_net: 0,
-                });
-            }
-            return Some(ticks);
-        }
-    }
-    None
 }
 
 fn parse_u128_scval(val: &xdr::ScVal) -> Option<u128> {

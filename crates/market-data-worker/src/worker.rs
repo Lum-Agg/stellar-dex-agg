@@ -281,13 +281,6 @@ fn upsert_source_snapshot(
     current_sources
 }
 
-async fn refresh_sources(
-    adapters: &[Arc<dyn DexAdapter>],
-    current_sources: Vec<SourceSnapshot>,
-) -> Vec<SourceSnapshot> {
-    refresh_sources_parallel(adapters, current_sources).await
-}
-
 /// Refresh every adapter concurrently (each may batch RPC internally).
 async fn refresh_sources_parallel(
     adapters: &[Arc<dyn DexAdapter>],

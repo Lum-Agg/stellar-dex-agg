@@ -42,11 +42,10 @@ struct MetadataCache {
 
 pub struct TokenMetadataStore {
     cache: Arc<RwLock<HashMap<String, TokenMetadata>>>,
-    rpc: Arc<SorobanRpc>,
 }
 
 impl TokenMetadataStore {
-    pub fn new(rpc: Arc<SorobanRpc>) -> Self {
+    pub fn new(_rpc: Arc<SorobanRpc>) -> Self {
         let mut cache = HashMap::new();
 
         // Load from file
@@ -59,7 +58,6 @@ impl TokenMetadataStore {
 
         Self {
             cache: Arc::new(RwLock::new(cache)),
-            rpc,
         }
     }
 

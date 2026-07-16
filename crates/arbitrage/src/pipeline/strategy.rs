@@ -53,11 +53,10 @@ impl Strategy<Event, Action> for BridgeStrategy {
     }
 
     async fn process_event(&mut self, event: Event, _submitter: Arc<dyn ActionSubmitter<Action>>) {
-        if let Event::BridgeScan(item) = event {
-            if let Some(sender) = &self.item_sender {
-                if let Err(e) = sender.send(item).await {
-                    error!("bridge scan channel send failed: {e}");
-                }
+        let Event::BridgeScan(item) = event;
+        if let Some(sender) = &self.item_sender {
+            if let Err(e) = sender.send(item).await {
+                error!("bridge scan channel send failed: {e}");
             }
         }
     }

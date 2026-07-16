@@ -53,7 +53,7 @@ where
     }
 }
 
-pub type IpRateLimiter = SlidingWindowLimiter<IpAddr>;
+type IpRateLimiter = SlidingWindowLimiter<IpAddr>;
 type PartnerRateLimiter = SlidingWindowLimiter<String>;
 
 #[derive(Clone)]

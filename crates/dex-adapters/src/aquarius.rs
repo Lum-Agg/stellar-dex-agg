@@ -10,7 +10,7 @@
 
 use {
     crate::{
-        rpc::{scval_to_address, scval_to_string, scval_to_u128, SorobanRpc},
+        rpc::{scval_to_address, scval_to_u128, SorobanRpc},
         traits::*,
     },
     anyhow::Result,
@@ -98,8 +98,6 @@ pub fn quote_aquarius_pool(
 struct PoolMeta {
     is_stable: bool,
     fee_bps: u32,
-    /// Number of tokens in the pool (2 or 3)
-    n_tokens: usize,
     /// All token addresses in order (for multi-token pools)
     all_tokens: Vec<String>,
     /// All reserves in order (for multi-token pools)
@@ -285,7 +283,6 @@ impl AquariusAdapter {
         let meta = PoolMeta {
             is_stable,
             fee_bps,
-            n_tokens: n,
             all_tokens: tokens.clone(),
             all_reserves: reserves.clone(),
             amp,
@@ -432,17 +429,6 @@ impl AquariusAdapter {
         }
     }
 
-    /// Fetch reserves for a single Aquarius pool by calling get_reserves on the
-    /// pool contract.
-    async fn fetch_pool_reserves(&self, pool_address: &str) -> Result<(u128, u128)> {
-        let reserves = self.fetch_pool_reserves_vec(pool_address).await?;
-        if reserves.len() >= 2 {
-            Ok((reserves[0], reserves[1]))
-        } else {
-            Err(anyhow::anyhow!("Could not parse reserves for pool {}", pool_address))
-        }
-    }
-
     fn parse_address_vec(&self, val: &xdr::ScVal) -> Option<Vec<String>> {
         let mut addrs = Vec::new();
         if let xdr::ScVal::Vec(Some(vec)) = val {
@@ -478,25 +464,6 @@ impl AquariusAdapter {
                 name == "stable"
             }
             _ => false,
-        }
-    }
-
-    async fn resolve_token(&self, contract_address: &str) -> TokenId {
-        match self.rpc.call_no_args(contract_address, "name").await {
-            Ok(val) => {
-                if let Ok(name) = scval_to_string(&val) {
-                    if name == "native" {
-                        return TokenId::Native;
-                    }
-                    if name.contains(':') {
-                        return TokenId::from_str_auto(&name);
-                    }
-                }
-            }
-            Err(_) => {}
-        }
-        TokenId::Contract {
-            address: contract_address.to_string(),
         }
     }
 
@@ -600,7 +567,6 @@ impl DexAdapter for AquariusAdapter {
         let meta = meta_map.get(pool_address).cloned().unwrap_or(PoolMeta {
             is_stable: false,
             fee_bps: 30,
-            n_tokens: 2,
             all_tokens: vec![],
             all_reserves: vec![],
             amp: DEFAULT_STABLE_AMP,
@@ -783,82 +749,4 @@ mod tests {
 
         assert!(hop2 > 9_000_000 && hop2 < 11_000_000, "expected ~1 XLM out, got {hop2}");
     }
-}
-
-// ===== Curve math =====
-
-fn compute_d(xp: [u128; 2], ann: u128) -> u128 {
-    let sum = xp[0].saturating_add(xp[1]);
-    if sum == 0 {
-        return 0;
-    }
-
-    let mut d = sum;
-    for _ in 0..255 {
-        let d_prod = d
-            .checked_mul(d)
-            .and_then(|v| v.checked_mul(d))
-            .and_then(|v| v.checked_div(4 * xp[0]))
-            .and_then(|v| v.checked_div(xp[1]))
-            .unwrap_or(u128::MAX);
-
-        let d_prev = d;
-        let numerator = ann
-            .saturating_mul(sum)
-            .saturating_add(d_prod.saturating_mul(2))
-            .saturating_mul(d);
-        let denominator = ann
-            .saturating_sub(1)
-            .saturating_mul(d)
-            .saturating_add(d_prod.saturating_mul(3));
-        if denominator == 0 {
-            break;
-        }
-        d = numerator / denominator;
-        if d.abs_diff(d_prev) <= 1 {
-            break;
-        }
-    }
-    d
-}
-
-fn compute_y(x_new: u128, ann: u128, d: u128) -> u128 {
-    let c = d
-        .checked_mul(d)
-        .and_then(|v| v.checked_mul(d))
-        .and_then(|v| v.checked_div(ann))
-        .and_then(|v| v.checked_div(4 * x_new))
-        .unwrap_or(0);
-
-    let d_over_ann = d / ann;
-    let b_raw = x_new.saturating_add(d_over_ann);
-    let (b_abs, b_negative) = if b_raw >= d {
-        (b_raw - d, false)
-    } else {
-        (d - b_raw, true)
-    };
-
-    let mut y = d;
-    for _ in 0..255 {
-        let y_prev = y;
-        let numerator = y.saturating_mul(y).saturating_add(c);
-        let denominator = if b_negative {
-            let two_y = 2 * y;
-            if two_y > b_abs {
-                two_y - b_abs
-            } else {
-                1
-            }
-        } else {
-            2 * y + b_abs
-        };
-        if denominator == 0 {
-            break;
-        }
-        y = numerator / denominator;
-        if y.abs_diff(y_prev) <= 1 {
-            break;
-        }
-    }
-    y
 }

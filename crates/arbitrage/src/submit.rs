@@ -93,12 +93,7 @@ struct PollContext {
 }
 
 /// Poll in background so caller mutex is not held (~6s ledger window).
-pub fn spawn_poll_outcome(
-    rpc_url: String,
-    ctx: PollContext,
-    stats: Arc<ArbStats>,
-    profit: Arc<crate::profit::ProfitBook>,
-) {
+fn spawn_poll_outcome(rpc_url: String, ctx: PollContext, stats: Arc<ArbStats>, profit: Arc<crate::profit::ProfitBook>) {
     tokio::spawn(async move {
         match poll_transaction(&rpc_url, &ctx.hash).await {
             Ok(()) => {

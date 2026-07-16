@@ -15,7 +15,6 @@ use {
     anyhow::{Context, Result},
     async_trait::async_trait,
     reqwest::Client,
-    serde::Deserialize,
     stellar_xdr::curr::{self as xdr},
     tokio::sync::RwLock,
     tracing::{debug, info},
@@ -261,36 +260,6 @@ pub fn classic_horizon_to_xdr(asset: &ClassicHorizonAsset) -> Result<xdr::Asset>
                     issuer: issuer_id,
                 }))
             }
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct HorizonPathsResponse {
-    #[serde(rename = "_embedded")]
-    embedded: Option<HorizonEmbedded>,
-    #[serde(default)]
-    records: Vec<HorizonPathRecord>,
-}
-
-#[derive(Debug, Deserialize)]
-struct HorizonEmbedded {
-    records: Vec<HorizonPathRecord>,
-}
-
-#[derive(Debug, Deserialize)]
-struct HorizonPathRecord {
-    destination_amount: String,
-    source_amount: String,
-}
-
-// Custom deserialize: Horizon wraps records in _embedded
-impl HorizonPathsResponse {
-    fn records(&self) -> &[HorizonPathRecord] {
-        if let Some(embedded) = &self.embedded {
-            &embedded.records
-        } else {
-            &self.records
         }
     }
 }

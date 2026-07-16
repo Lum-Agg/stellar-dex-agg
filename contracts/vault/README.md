@@ -79,7 +79,7 @@ VAULT=C... ./contracts/vault/upgrade.sh
 ## Build & test
 
 ```bash
-cargo build -p vault-contract --target wasm32v1-none --release
+cargo build -p vault-contract --target wasm32v1-none --profile contract-release
 cargo test -p vault-contract
 ```
 

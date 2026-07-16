@@ -96,9 +96,6 @@ impl SushiAdapter {
 
     fn snapshot_pool(pool: &SushiPoolCache) -> ClmmPoolSnapshot {
         let coverage_range = loaded_tick_range(&pool.tick_store, pool.tick_spacing);
-        let compressed_tick = floor_div(pool.tick, pool.tick_spacing);
-        let current_word = floor_div(compressed_tick, 256);
-        let scan_words = bitmap_scan_words(pool.tick_spacing);
         let word_start = pool.scanned_word_start;
         let word_end = pool.scanned_word_end;
         let in_scan_window = !tick_outside_word_scan(pool.tick, pool.tick_spacing, word_start, word_end);

@@ -68,3 +68,14 @@ burberry = { git = "https://github.com/ligulfzhou/burberry", rev = "7cf9d163228b
 opt-level = 2
 lto = "thin"
 overflow-checks = true
+
+# Soroban WASM release (workspace members cannot define [profile.*] locally).
+[profile.contract-release]
+inherits = "release"
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "debuginfo"
+panic = "abort"
+codegen-units = 1
+lto = true

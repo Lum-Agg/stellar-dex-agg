@@ -94,10 +94,6 @@ impl LedgerWatcher {
         Ok(())
     }
 
-    pub fn last_ledger(&self) -> Option<u32> {
-        self.last_ledger
-    }
-
     /// Poll for new ledgers and return pools that emitted contract events.
     pub async fn poll_touched_pools(&mut self, index: &KnownPoolIndex) -> Result<HashSet<PoolRef>> {
         let latest = self.rpc.get_latest_ledger().await?.sequence;

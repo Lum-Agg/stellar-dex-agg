@@ -204,7 +204,6 @@ impl U256 {
         }
 
         let dividend_bits = self.bit_length();
-        let divisor_bits = divisor.bit_length();
 
         let mut quotient = Self::ZERO;
         let mut remainder = Self::ZERO;
@@ -356,7 +355,6 @@ pub const MAX_TICK: i32 = 887_272;
 pub const FEE_DENOMINATOR: u128 = 10_000;
 pub const TICKS_PER_CHUNK: i32 = 16;
 
-const Q96: u128 = 1u128 << 96;
 const Q96_U256: U256 = U256([0, 0x100000000, 0, 0]); // 2^96
 
 const MIN_SQRT_RATIO: u128 = 4_295_128_739;
