@@ -13,6 +13,7 @@ LumAgg 在 **Soroswap**、**Aquarius**（xy=k、稳定币、CLMM）、**Phoenix*
 ## 目录
 
 - [架构](#架构)
+- [套利与 Vault](#套利与-vault)
 - [DEX 数据源](#dex-数据源)
 - [核心特性](#核心特性)
 - [为何不用 Classic DEX 路由？](#为何不用-classic-dex-路由)
@@ -169,6 +170,78 @@ getLatestLedger
 
 **CLMM 策略：** tick 数据在池合约 storage 中。Worker 仅在 `coverage.is_complete` 时写 Redis；否则报价引擎跳过该跳。
 
+## 套利与 Vault
+
+面向运营方的原子往返套利栈（**非**零售产品）。交易本金放在 **vault**；热钱包只付 Soroban 手续费。完整手册：[`docs/arb-operator.md`](docs/arb-operator.md)。合约说明：[`contracts/vault/README.zh-CN.md`](contracts/vault/README.zh-CN.md)。
+
+### 运营架构
+
+```mermaid
+flowchart LR
+  W[market-data-worker] -->|Redis 池状态| Q[api-server ×N]
+  Q -->|GET /quote prefer_soroban| S[arb-scanner]
+  S -->|simulate + 签名| V[vault.execute_round_trip]
+  V -->|CPI| A[aggregator.round_trip_swap]
+  A --> D[DEX 池]
+  V -->|本金 + 利润| V
+```
+
+| 组件 | 包 / 合约 | 职责 |
+|------|-----------|------|
+| 报价 | `api-server` | 与 UI 同一套 `/quote`；套利侧通常 `prefer_soroban=1`、`max_splits=1` |
+| 扫描器 | `crates/arbitrage` | 扫 bridge → 规模优化 → simulate → 可选上链 |
+| Vault | `contracts/vault` | 白名单 caller；持有 base（如 XLM SAC）本金 |
+| 聚合器 | `contracts/aggregator` | `round_trip_swap`（leg_out + leg_back） |
+
+未设置 `ARB_VAULT_CONTRACT` 时，bot 直接调 `aggregator.round_trip_swap`，caller 需自己持有交易浮存。
+
+### Vault 资金流
+
+单次 host 调用（`execute_round_trip`）：
+
+```text
+1. caller 授权嵌套 SAC approve(vault, i128::MAX, expiration_ledger)
+2. vault ──amount_in──► caller
+3. aggregator.round_trip_swap(user=caller, leg_out, leg_back, min_amount_out)
+4. vault transfer_from(caller → vault, 实际 base_total)
+```
+
+- **白名单** — 仅 `add_caller` 地址可执行；bot 无公开提款入口。
+- **回收授权** — approve 上限为 `i128::MAX`；回收金额**不**锁死在模拟返回值上（避免 live ≠ sim 时 `auth: invalid_action`）。
+- **Expiration** — `allowance_expiration_ledger` 由 bot **作为调用参数**传入（`latest_ledger + cushion`）。**不要**在 vault 内算 `sequence()+N`：simulate 与上链差 1–2 个 ledger 时，主网曾出现嵌套 `approve` 的 `Unauthorized function call for address`（2026-07-16）。详见 `contracts/vault/src/lib.rs` 注释。
+
+### Bot 流水线（`crates/arbitrage`）
+
+```text
+bridges × base
+  → quote-api 轮询（利润 / 路径）
+  → 可选规模优化（对数采样）
+  → 获取 caller（轮询池）
+  → 构建 vault.execute_round_trip | aggregator.round_trip_swap
+  → simulateTransaction + assemble auth
+  → 按模拟净利（扣费后）门槛过滤（ARB_MIN_PROFIT）
+  → 签名发送（ARB_SUBMIT_TX=1）；可选 getTransaction 轮询
+```
+
+| 关注点 | 行为 |
+|--------|------|
+| Caller | 助记词 index 或私钥；发送后约 1 个 ledger 冷却 |
+| 去重 | `ARB_SUBMIT_DEDUP_SECS` 内跳过同路径 |
+| 安全 | 单元默认 `ARB_SUBMIT_TX=0`；线上在 `deploy/arb.env` 打开 |
+| 监控 | `journalctl -u lumagg-arb`；可选 Telegram 盈亏 |
+
+### 部署套利
+
+```bash
+# Vault 一次性：deploy / deposit / add_caller — 见 contracts/vault/README.zh-CN.md
+./deploy_arb.sh                 # rsync、构建 arb-scanner、重启 lumagg-arb
+# 实盘：服务器 deploy/arb.env 中 ARB_SUBMIT_TX=1
+```
+
+| 单元 | 角色 |
+|------|------|
+| `lumagg-arb.service` | 往返套利扫描（依赖 Redis + 报价 API） |
+
 ## DEX 数据源
 
 | 来源 | 池类型 | 在路由图中 | Redis 池状态 | 报价数学 |
@@ -190,6 +263,7 @@ getLatestLedger
 - **API 水平扩展** — 无状态 `api-server` 可挂负载均衡
 - **热池亚 2 秒新鲜度** — 0.1s ledger 轮询 + fetch pipeline
 - **链上原子执行** — 可选聚合合约（`split_swap`、`round_trip_swap`）
+- **原子套利运营栈** — vault 集中本金 + `arb-scanner` 往返（见 [套利与 Vault](#套利与-vault)）
 - **Classic 基准** — 每单 Horizon PathPayment，不污染 Soroban 图
 
 ## 为何不用 Classic DEX 路由？
@@ -201,21 +275,27 @@ getLatestLedger
 ## 项目结构
 
 ```
-├── contracts/aggregator/       # Soroban 合约（split_swap, round_trip_swap）
+├── contracts/
+│   ├── aggregator/             # split_swap、round_trip_swap
+│   └── vault/                  # 套利浮存 + execute_round_trip（bot 白名单）
 ├── crates/
 │   ├── market-snapshot/        # MarketSnapshot 模式、Redis pool_state_store
 │   ├── market-data-worker/     # Discovery、ledger watcher、fetch pipeline
 │   ├── dex-adapters/           # 各 DEX 适配器、RPC、pool index、router events
 │   ├── router-engine/          # PathFinder、QuoteEngine、split_optimizer（Brent）
 │   ├── api-server/             # REST API（/quote、/build_tx、/tokens）
-│   ├── arbitrage/              # 往返套利扫描（aggregator.round_trip_swap）
+│   ├── arbitrage/              # 往返扫描（vault 或直连聚合器）
+│   ├── analytics-indexer/      # 链上聚合器交易索引
 │   ├── lumagg-alerts/          # Telegram / 监控告警
 │   └── sdk/                    # 客户端 SDK
 ├── docs/
-│   └── pool-state-architecture.md
+│   ├── pool-state-architecture.md
+│   ├── arb-operator.md         # Vault + arb 部署 / 放量手册
+│   └── analytics-indexer.md
 ├── thirdparty/                 # 可选：本地 clone 上游参考（不入库；见 README）
-├── deploy/                     # systemd 单元（lumagg-api@、lumagg-worker）
-├── deploy_server.sh            # 远程 rsync + 构建 + 重启
+├── deploy/                     # systemd（lumagg-api@、lumagg-worker、lumagg-arb）
+├── deploy_server.sh            # API + worker
+├── deploy_arb.sh               # 套利扫描器
 └── frontend/                   # SvelteKit 演示 UI
 ```
 
@@ -269,6 +349,7 @@ DUMP_DIR=./ledger-events-dump DUMP_LEDGERS=5 \
 ./deploy_server.sh          # api-server（4 实例）+ worker
 ./deploy_server.sh api      # 仅 api-server
 ./deploy_server.sh worker   # 仅 market-data-worker
+./deploy_arb.sh             # arb-scanner（需 vault + 报价 API）
 ```
 
 Systemd 单元在 `deploy/`：
@@ -277,6 +358,7 @@ Systemd 单元在 `deploy/`：
 |------|------|
 | `lumagg-worker.service` | 单写者 — discovery、ledger watcher、Redis 发布 |
 | `lumagg-api@.service` | 无状态 API 实例（端口 3100–3103） |
+| `lumagg-arb.service` | 往返套利 bot（`ARB_SUBMIT_TX` 见 `deploy/arb.env`） |
 
 Worker 默认：`LEDGER_POLL_SECS=0.1`、`FETCH_PIPELINE_ENABLED=true`、`DISCOVERY_INTERVAL_SECS=600`。
 
@@ -333,6 +415,22 @@ Worker 默认：`LEDGER_POLL_SECS=0.1`、`FETCH_PIPELINE_ENABLED=true`、`DISCOV
 | `COMET_FACTORY` | Blend mainnet factory | Comet factory 合约 |
 | `COMET_EXTRA_POOLS` | — | 额外 Comet 池 ID（逗号分隔） |
 
+### 套利 bot（详见 `docs/arb-operator.md`）
+
+| 变量 | 默认 / 说明 | 含义 |
+|------|-------------|------|
+| `ARB_AGGREGATOR_CONTRACT` | 构建时必填 | LumAgg 聚合器 |
+| `ARB_VAULT_CONTRACT` | 可选 | Vault 模式；未设则直连 `round_trip_swap` |
+| `ARB_QUOTE_API_URLS` | `http://127.0.0.1:3100,…` | 轮询报价 API |
+| `ARB_BRIDGE_TOKENS` | SAC 列表 | XLM↔token↔XLM 的 bridge |
+| `ARB_BASE_TOKENS` | XLM SAC | 往返 base |
+| `ARB_MNEMONIC_PATH` + `ARB_CALLER_INDICES` | — | HD 派生 caller（手续费钱包） |
+| `ARB_BUILD_TX` | `0` | 构建 / 模拟 |
+| `ARB_SUBMIT_TX` | `0` | 实盘广播 |
+| `ARB_MIN_PROFIT` | stroops | 扣费后净利下限 |
+| `ARB_MAX_SPLITS` | 套利侧常为 `1` | 路径更简单、费用更低 |
+| `ARB_POLL_TX` | `0` | 后台 `getTransaction` 统计 SUCCESS/FAILED |
+
 ## 拆单路由
 
 生产环境 `deploy/lumagg-api@.service` 显式设置拆单相关环境变量。
@@ -355,11 +453,15 @@ Brent 默认容差 `0.0001`（0.01%），最多 18 次迭代 — 思路类似 Ju
 
 | 文档 | 主题 |
 |------|------|
+| [`docs/integrator-guide.md`](docs/integrator-guide.md) | 集成方快速上手 — quote、build_tx、API key |
+| [`docs/openapi.yaml`](docs/openapi.yaml) | OpenAPI 3（`/quote`、`/build_tx`、`/tokens`、`/health`） |
 | [`docs/pool-state-architecture.md`](docs/pool-state-architecture.md) | 池状态设计、环境变量、代码索引 |
+| [`docs/arb-operator.md`](docs/arb-operator.md) | Vault + arb-scanner 部署、放量、监控 |
+| [`contracts/vault/README.zh-CN.md`](contracts/vault/README.zh-CN.md) | Vault 接口、资金流、Soroban auth 注意事项 |
+| [`docs/arb-executor.md`](docs/arb-executor.md) | 旧命名说明 → vault + `round_trip_swap` |
 | [`docs/scf-venue-comparison.md`](docs/scf-venue-comparison.md) | LumAgg vs Soroswap / Stellar Broker — venue 覆盖与 SCF 差异化证据 |
 | [`docs/scf-resubmission-budget.md`](docs/scf-resubmission-budget.md) | SCF #44 重新提交 — $80k 三档 deliverables |
 | [`docs/scf-benchmark-results.md`](docs/scf-benchmark-results.md) | 实时 quote 对比结果（`./scripts/scf-benchmark.sh`） |
-| [`docs/arb-executor.md`](docs/arb-executor.md) | 原子套利运营栈（vault + `round_trip_swap` bot） |
 
 ## 许可证
 

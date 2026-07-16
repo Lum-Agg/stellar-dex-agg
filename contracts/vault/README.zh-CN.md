@@ -26,7 +26,7 @@ vault ──amount_in──► caller ──round_trip_swap──► aggregator 
 vault ──transfer_from(base_total)──► caller   （走 allowance，金额不预签）
 ```
 
-- 回收用固定额度的 `approve` + `transfer_from`，避免 Soroban auth 锁死模拟返回额（sim/live 不一致会触发 `auth: invalid_action`）。
+- 回收用固定额度的 `approve`（`i128::MAX`）+ `transfer_from`。allowance 的 **expiration 由调用参数传入**（bot 取 `latest_ledger + cushion`），不要在合约内用 `sequence()+N`——否则 simulate 与上链 ledger 差 1–2 会导致 SAC auth 对不上（`Unauthorized function call for address`）。
 - 不对外暴露独立的 `withdraw`，避免 caller 单独提走资金。
 - 利润随 `base_total` 一并回到 vault。
 - `min_amount_out` 与 aggregator 相同，用于链上滑点/利润下限保护。
@@ -39,11 +39,11 @@ vault ──transfer_from(base_total)──► caller   （走 allowance，金�
 | `add_caller` / `remove_caller` | admin | 管理可执行套利的 bot 账号白名单 |
 | `is_caller` | 只读 | 查询是否在白名单 |
 | `deposit(from, token, amount)` | `from` 签名 | 向 vault 注资（通常 admin 或运营钱包） |
-| `execute_round_trip(...)` | 白名单 caller 签名 | 唯一套利入口 |
+| `execute_round_trip(..., allowance_expiration_ledger)` | 白名单 caller 签名 | 唯一套利入口 |
 | `admin_withdraw(token, to, amount)` | admin | 紧急提款 |
 | `upgrade` | admin | 升级 WASM |
 
-`execute_round_trip` 参数与 `aggregator.round_trip_swap` 对齐，额外需要传入 `aggregator` 合约地址。
+`execute_round_trip` 参数与 `aggregator.round_trip_swap` 对齐，额外需要传入 `aggregator` 合约地址，以及 bot 选定的 `allowance_expiration_ledger`（用于 reclaim 的 `approve`）。
 
 ## 与 arb bot 的配置
 

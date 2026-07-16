@@ -26,7 +26,7 @@ vault ──amount_in──► caller ──round_trip_swap──► aggregator 
 vault ──transfer_from(base_total)──► caller   (allowance; amount not pre-signed)
 ```
 
-- Reclaim uses `approve` + `transfer_from` with a **fixed** allowance ceiling so Soroban auth is not pinned to the simulated return (sim vs live mismatch used to cause `auth: invalid_action`).
+- Reclaim uses `approve` + `transfer_from` with a **fixed** allowance ceiling (`i128::MAX`). The allowance **expiration ledger is a call argument** (chosen by the bot as `latest_ledger + cushion`), not `sequence()+N` inside the contract — otherwise simulate vs inclusion ledger drift makes SAC auth miss (`Unauthorized function call for address`).
 - No standalone public `withdraw` — callers cannot drain the vault in a separate transaction.
 - Profit is returned to the vault with `base_total`.
 - `min_amount_out` matches the aggregator semantics (on-chain slippage / profit floor).
@@ -39,11 +39,11 @@ vault ──transfer_from(base_total)──► caller   (allowance; amount not p
 | `add_caller` / `remove_caller` | admin | Manage bot allowlist |
 | `is_caller` | read-only | Check allowlist |
 | `deposit(from, token, amount)` | `from` | Fund the vault (admin / ops wallet) |
-| `execute_round_trip(...)` | allowlisted caller | **Only** arb entrypoint |
+| `execute_round_trip(..., allowance_expiration_ledger)` | allowlisted caller | **Only** arb entrypoint |
 | `admin_withdraw(token, to, amount)` | admin | Emergency withdrawal |
 | `upgrade` | admin | WASM upgrade |
 
-`execute_round_trip` takes the same route args as `aggregator.round_trip_swap`, plus the `aggregator` contract address.
+`execute_round_trip` takes the same route args as `aggregator.round_trip_swap`, plus the `aggregator` contract address and a client-chosen `allowance_expiration_ledger` for the reclaim `approve`.
 
 ## Arb bot configuration
 

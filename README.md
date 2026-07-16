@@ -13,6 +13,7 @@ LumAgg routes swaps across **Soroswap**, **Aquarius** (xy=k, stable, CLMM), **Ph
 ## Contents
 
 - [Architecture](#architecture)
+- [Arbitrage & vault](#arbitrage--vault)
 - [DEX sources](#dex-sources)
 - [Key features](#key-features)
 - [Why not Classic DEX routing?](#why-not-classic-dex-routing)
@@ -169,6 +170,78 @@ Active pools typically refresh within **~0.1–2s** after a swap / add / remove 
 
 **CLMM policy:** tick data lives in pool contract storage. Worker writes Redis only when `coverage.is_complete`; otherwise quote engine skips those hops.
 
+## Arbitrage & vault
+
+Operator-facing atomic round-trip stack (not a retail product). Trading principal sits in a **vault**; hot wallets only pay Soroban fees. Full playbook: [`docs/arb-operator.md`](docs/arb-operator.md). Contract detail: [`contracts/vault/README.md`](contracts/vault/README.md).
+
+### Operator architecture
+
+```mermaid
+flowchart LR
+  W[market-data-worker] -->|Redis pool state| Q[api-server ×N]
+  Q -->|GET /quote prefer_soroban| S[arb-scanner]
+  S -->|simulate + sign| V[vault.execute_round_trip]
+  V -->|CPI| A[aggregator.round_trip_swap]
+  A --> D[DEX pools]
+  V -->|principal + profit| V
+```
+
+| Piece | Crate / contract | Role |
+|-------|------------------|------|
+| Quotes | `api-server` | Same `/quote` stack as the UI; arb sets `prefer_soroban=1`, usually `max_splits=1` |
+| Scanner | `crates/arbitrage` | Bridge scan → size optimize → simulate → optional submit |
+| Vault | `contracts/vault` | Allowlisted callers; holds base (e.g. XLM SAC) float |
+| Aggregator | `contracts/aggregator` | `round_trip_swap` (leg_out + leg_back) |
+
+Without `ARB_VAULT_CONTRACT`, the bot calls `aggregator.round_trip_swap` directly and callers must hold the trade float themselves.
+
+### Vault fund flow
+
+One host invocation (`execute_round_trip`):
+
+```text
+1. caller authorizes nested SAC approve(vault, i128::MAX, expiration_ledger)
+2. vault ──amount_in──► caller
+3. aggregator.round_trip_swap(user=caller, leg_out, leg_back, min_amount_out)
+4. vault transfer_from(caller → vault, actual base_total)
+```
+
+- **Allowlist** — only `add_caller` addresses may execute; no public withdraw for bots.
+- **Reclaim auth** — approve ceiling is `i128::MAX`; reclaim amount is **not** pinned to the simulated return (avoids `auth: invalid_action` when live ≠ sim).
+- **Expiration** — `allowance_expiration_ledger` is a **call argument** from the bot (`latest_ledger + cushion`). Do **not** compute `sequence()+N` inside the vault: simulate vs inclusion drift caused mainnet `Unauthorized function call for address` on the nested `approve` (2026-07-16). See comments in `contracts/vault/src/lib.rs`.
+
+### Bot pipeline (`crates/arbitrage`)
+
+```text
+bridges × base
+  → quote-api round-robin (profit / route)
+  → optional amount optimize (log-spaced samples)
+  → acquire caller (round-robin pool)
+  → build vault.execute_round_trip | aggregator.round_trip_swap
+  → simulateTransaction + assemble auth
+  → gate on simulated net profit after fees (ARB_MIN_PROFIT)
+  → sign + send (ARB_SUBMIT_TX=1); optional getTransaction poll
+```
+
+| Concern | Behavior |
+|---------|----------|
+| Callers | Mnemonic indices or secrets; mutex + cooldown ~1 ledger after send |
+| Dedup | Skip same path within `ARB_SUBMIT_DEDUP_SECS` |
+| Safety | Default unit has `ARB_SUBMIT_TX=0`; enable via `deploy/arb.env` |
+| Monitoring | `journalctl -u lumagg-arb`; optional Telegram P&amp;L |
+
+### Deploy arb
+
+```bash
+# Vault once: deploy / deposit / add_caller — see contracts/vault/README.md
+./deploy_arb.sh                 # rsync, build arb-scanner, restart lumagg-arb
+# Live submit: ARB_SUBMIT_TX=1 in deploy/arb.env on the server
+```
+
+| Unit | Role |
+|------|------|
+| `lumagg-arb.service` | Round-trip scanner (depends on Redis + quote APIs) |
+
 ## DEX sources
 
 | Source | Pool type | In routing graph | Pool state in Redis | Quote math |
@@ -190,6 +263,7 @@ Active pools typically refresh within **~0.1–2s** after a swap / add / remove 
 - **Horizontally scalable API** — stateless `api-server` instances behind a load balancer
 - **Sub-2s hot pool freshness** — 0.1s ledger poll + fetch pipeline for touched pools
 - **Atomic on-chain execution** — optional aggregator contract (`split_swap`, `round_trip_swap`)
+- **Atomic arb operator stack** — vault-pooled capital + `arb-scanner` round-trips (see [Arbitrage & vault](#arbitrage--vault))
 - **Classic benchmark** — Horizon PathPayment per quote without polluting the Soroban graph
 
 ## Why not Classic DEX routing?
@@ -201,23 +275,27 @@ This aggregator targets **Soroban DEXes** where each hop is a deterministic cont
 ## Project structure
 
 ```
-├── contracts/aggregator/       # Soroban contract (split_swap, round_trip_swap)
+├── contracts/
+│   ├── aggregator/             # split_swap, round_trip_swap
+│   └── vault/                  # Arb float + execute_round_trip (bot allowlist)
 ├── crates/
 │   ├── market-snapshot/        # MarketSnapshot schema, Redis pool_state_store
 │   ├── market-data-worker/     # Discovery, ledger watcher, fetch pipeline
 │   ├── dex-adapters/           # Per-DEX adapters, RPC, pool index, router events
 │   ├── router-engine/          # PathFinder, QuoteEngine, split optimizer
 │   ├── api-server/             # REST API (/quote, /build_tx, /tokens)
-│   ├── arbitrage/              # Round-trip arb scanner (aggregator.round_trip_swap)
+│   ├── arbitrage/              # Round-trip scanner (vault or direct aggregator)
 │   ├── analytics-indexer/      # On-chain aggregator tx indexer (SCF analytics v0)
 │   ├── lumagg-alerts/          # Telegram / monitoring alerts
 │   └── sdk/                    # Client SDK
 ├── docs/
 │   ├── pool-state-architecture.md
-│   └── analytics-indexer.md    # Volume attribution spec + indexer ops
+│   ├── arb-operator.md         # Vault + arb deploy / rollout playbook
+│   └── analytics-indexer.md
 ├── thirdparty/                 # Optional local upstream clones (not tracked; see README there)
-├── deploy/                     # systemd units (lumagg-api@, lumagg-worker)
-├── deploy_server.sh            # rsync + build + restart on remote host
+├── deploy/                     # systemd units (lumagg-api@, lumagg-worker, lumagg-arb)
+├── deploy_server.sh            # API + worker
+├── deploy_arb.sh               # Arb scanner
 └── frontend/                   # SvelteKit demo UI
 ```
 
@@ -278,6 +356,7 @@ DUMP_DIR=./ledger-events-dump DUMP_LEDGERS=5 \
 ./deploy_server.sh          # api-server (4 instances) + worker
 ./deploy_server.sh api      # api-server only
 ./deploy_server.sh worker   # market-data-worker only
+./deploy_arb.sh             # arb-scanner (needs vault + quote APIs)
 ```
 
 Systemd units live in `deploy/`:
@@ -286,6 +365,7 @@ Systemd units live in `deploy/`:
 |------|------|
 | `lumagg-worker.service` | Single writer — discovery, ledger watcher, Redis publish |
 | `lumagg-api@.service` | Stateless API instances (ports 3100–3103) |
+| `lumagg-arb.service` | Round-trip arb bot (`ARB_SUBMIT_TX` via `deploy/arb.env`) |
 
 Worker defaults include `LEDGER_POLL_SECS=0.1`, `FETCH_PIPELINE_ENABLED=true`, `DISCOVERY_INTERVAL_SECS=600`.
 
@@ -343,6 +423,22 @@ Worker defaults include `LEDGER_POLL_SECS=0.1`, `FETCH_PIPELINE_ENABLED=true`, `
 | `COMET_FACTORY` | Blend mainnet factory | Comet factory contract |
 | `COMET_EXTRA_POOLS` | — | Comma-separated extra Comet pool IDs |
 
+### Arbitrage bot (see also `docs/arb-operator.md`)
+
+| Variable | Default / notes | Meaning |
+|----------|-----------------|---------|
+| `ARB_AGGREGATOR_CONTRACT` | required for build | LumAgg aggregator |
+| `ARB_VAULT_CONTRACT` | optional | Vault mode; unset → direct `round_trip_swap` |
+| `ARB_QUOTE_API_URLS` | `http://127.0.0.1:3100,…` | Round-robin quote APIs |
+| `ARB_BRIDGE_TOKENS` | SAC list | Bridge hubs for XLM↔token↔XLM |
+| `ARB_BASE_TOKENS` | XLM SAC | Round-trip base |
+| `ARB_MNEMONIC_PATH` + `ARB_CALLER_INDICES` | — | HD callers (fee wallets) |
+| `ARB_BUILD_TX` | `0` | Build/simulate path |
+| `ARB_SUBMIT_TX` | `0` | Live broadcast |
+| `ARB_MIN_PROFIT` | stroops | Net profit floor after estimated fees |
+| `ARB_MAX_SPLITS` | often `1` for arb | Keep routes simple / cheaper fees |
+| `ARB_POLL_TX` | `0` | Background `getTransaction` for SUCCESS/FAILED stats |
+
 ## Split routing
 
 Production `deploy/lumagg-api@.service` sets split env vars explicitly.
@@ -371,7 +467,9 @@ Brent tolerance defaults to `0.0001` (0.01%) with up to 18 iterations — simila
 | [`docs/pool-state-architecture.md`](docs/pool-state-architecture.md) | Pool state design, env tables, code pointers |
 | [`docs/scf-venue-comparison.md`](docs/scf-venue-comparison.md) | LumAgg vs Soroswap / Stellar Broker — venue coverage & SCF differentiation evidence |
 | [`docs/scf-resubmission-budget.md`](docs/scf-resubmission-budget.md) | SCF #44 resubmission — $80k tranche deliverables (copy-paste) |
-| [`docs/arb-executor.md`](docs/arb-executor.md) | Atomic arb operator stack (vault + `round_trip_swap` bot) |
+| [`docs/arb-operator.md`](docs/arb-operator.md) | Vault + arb-scanner deploy, rollout, monitoring |
+| [`contracts/vault/README.md`](contracts/vault/README.md) | Vault API, fund flow, Soroban auth notes |
+| [`docs/arb-executor.md`](docs/arb-executor.md) | Historical naming → vault + `round_trip_swap` |
 
 ## License
 
