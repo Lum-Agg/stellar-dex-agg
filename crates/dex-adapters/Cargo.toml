@@ -44,5 +44,10 @@ path = "src/bin/sushi_quote_compare.rs"
 required-features = []
 
 [[bin]]
+name = "quote-hop-compare"
+path = "src/bin/quote_hop_compare.rs"
+required-features = []
+
+[[bin]]
 name = "list-sushi-pools"
 path = "src/bin/list_sushi_pools.rs"

@@ -128,16 +128,17 @@ pub async fn prepare_opportunity_tx(
             }
             Err(err) => {
                 let err_str = err.to_string();
+                let recovered_base_out = parse_base_received_from_sim_error(
+                    &err_str,
+                    &quote.base.canonical(),
+                    aggregator,
+                    caller_public_key,
+                );
 
                 // Legs ran but break-even assert failed → quote-api phantom profit.
                 // Fall back to probe size so small real opportunities are not skipped.
                 if !tried_probe_fallback && quote.amount_in > ctx.config.min_amount_in {
-                    if let Some(base_out) = parse_base_received_from_sim_error(
-                        &err_str,
-                        &quote.base.canonical(),
-                        aggregator,
-                        caller_public_key,
-                    ) {
+                    if let Some(base_out) = recovered_base_out {
                         let on_chain_profit = base_out.saturating_sub(quote.amount_in);
                         warn!(
                             route = %quote.route_label(),
@@ -166,9 +167,31 @@ pub async fn prepare_opportunity_tx(
                     }
                 }
 
-                // Structural host traps (InvalidAction / footprint): no usable
-                // envelope — skip building a dead XDR and don't retry this path
-                // via simulated=false bookkeeping.
+                // Some HostError/InvalidAction cases are still economic failures:
+                // the route executed and returned base token, but the final
+                // break-even/min_out assert trapped. Treat those as phantom
+                // profit, not structural path breakage.
+                if let Some(base_out) = recovered_base_out {
+                    let on_chain_profit = base_out.saturating_sub(quote.amount_in);
+                    warn!(
+                        route = %quote.route_label(),
+                        caller = %caller_public_key,
+                        amount_in = quote.amount_in,
+                        quoted_amount_out = quote.amount_out,
+                        on_chain_base_out = base_out,
+                        on_chain_profit,
+                        tried_probe_fallback,
+                        "simulated route below quoted profit — discard"
+                    );
+                    stats
+                        .txs_sim_profit_rejected
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    return Ok(None);
+                }
+
+                // Structural host traps (InvalidAction / footprint) only count
+                // as dead-path failures when we cannot recover a meaningful
+                // base-token output from the event log.
                 if is_structural_sim_failure(&err_str) {
                     warn!(
                         error = %err,
@@ -342,7 +365,7 @@ pub fn execution_enabled(config: &ArbConfig) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_structural_sim_failure;
+    use {super::is_structural_sim_failure, crate::prepare::parse_base_received_from_sim_error};
 
     #[test]
     fn detects_invalid_action() {
@@ -363,5 +386,22 @@ mod tests {
         assert!(!is_structural_sim_failure(
             "Error(Contract, #1) assert min_amount_out not met"
         ));
+    }
+
+    #[test]
+    fn production_invalid_action_can_still_be_economic() {
+        let log = r#"
+   2: [Failed Diagnostic Event (not emitted)] contract:CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K, topics:[error, Error(WasmVm, InvalidAction)], data:["VM call trapped: UnreachableCodeReached", round_trip_swap]
+   10: [Failed Contract Event (not emitted)] contract:CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA, topics:[transfer, CBDRLPPJBF2LQNGEEGRBHNLFL5QCMKLKP5BUCQVX3HKRTXODHTXEQRZ6, CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K, "native"], data:99990273
+   59: [Failed Contract Event (not emitted)] contract:CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA, topics:[transfer, GCMDWFAHD6PYI5SI2N2M6XINZDITECUV4XN7LYQGOWKQSIMQPRNK2DLN, CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K, "native"], data:100000000
+"#;
+        let agg = "CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K";
+        let base = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";
+        let caller = "GCMDWFAHD6PYI5SI2N2M6XINZDITECUV4XN7LYQGOWKQSIMQPRNK2DLN";
+        assert!(is_structural_sim_failure(log));
+        assert_eq!(
+            parse_base_received_from_sim_error(log, base, agg, caller),
+            Some(99_990_273)
+        );
     }
 }

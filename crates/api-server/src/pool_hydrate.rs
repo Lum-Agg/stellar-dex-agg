@@ -8,7 +8,7 @@ use {
     },
     market_snapshot::{
         pool_state_store::{
-            parse_quote_hydrate_max_pools_from_env, AquariusPoolStateValue, CometPoolStateValue, RedisPoolStateStore,
+            parse_quote_hydrate_max_pools_from_env, AquariusPoolStateValue, CometPoolStateValue, PoolStateStore,
             XykPoolStateValue,
         },
         ClmmPoolSnapshot,
@@ -135,22 +135,26 @@ fn comet_state_to_value(pool_address: &str, state: &CometPoolQuoteState) -> Come
             })
             .collect(),
         swap_fee: state.swap_fee,
+        updated_at_ms: 0,
     }
 }
 
 /// Load per-pool state for candidate paths from Redis; optional batched xy=k
 /// RPC for misses.
+///
+/// Returns `(hydration, redis_miss_xyk, soroswap_refs, oldest_age_ms)`.
+/// `oldest_age_ms` is `None` when no stamped ages are present (legacy keys).
 pub async fn hydrate_paths(
     engine: &QuoteEngine,
     paths: &[Path],
-    store: &RedisPoolStateStore,
+    store: &dyn PoolStateStore,
     rpc: &SorobanRpc,
     config: &PoolHydrateConfig,
-) -> (QuoteHydration, usize, usize) {
+) -> (QuoteHydration, usize, usize, Option<u64>) {
     let (xyk_refs, clmm_refs, comet_pools, aquarius_refs) = collect_pool_refs(paths);
     let soroswap_ref_count = xyk_refs.iter().filter(|(s, _)| s == "soroswap").count();
     if xyk_refs.is_empty() && clmm_refs.is_empty() && comet_pools.is_empty() && aquarius_refs.is_empty() {
-        return (QuoteHydration::default(), 0, 0);
+        return (QuoteHydration::default(), 0, 0, None);
     }
 
     let mut xyk_pools = store.fetch_xyk(&xyk_refs).await.unwrap_or_default();
@@ -158,6 +162,27 @@ pub async fn hydrate_paths(
     let aquarius_raw = store.fetch_aquarius(&aquarius_refs).await.unwrap_or_default();
     let comet_raw = store.fetch_comet(&comet_pools).await.unwrap_or_default();
 
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let mut oldest_age_ms: Option<u64> = None;
+    let mut note_age = |updated_at_ms: u64| {
+        if updated_at_ms == 0 || now_ms <= updated_at_ms {
+            return;
+        }
+        let age = now_ms - updated_at_ms;
+        oldest_age_ms = Some(oldest_age_ms.map_or(age, |cur| cur.max(age)));
+    };
+    for v in xyk_pools.values() {
+        note_age(v.updated_at_ms);
+    }
+    for v in aquarius_raw.values() {
+        note_age(v.updated_at_ms);
+    }
+    for v in comet_raw.values() {
+        note_age(v.updated_at_ms);
+    }
     let clmm_pools: HashMap<String, SnapshotClmmQuoteState> = clmm_snapshots
         .into_iter()
         .map(|(key, snapshot)| (key, clmm_state_from_snapshot(&snapshot)))
@@ -310,6 +335,7 @@ pub async fn hydrate_paths(
         },
         redis_miss_xyk,
         soroswap_ref_count,
+        oldest_age_ms,
     )
 }
 

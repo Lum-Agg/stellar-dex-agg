@@ -14,7 +14,7 @@ use {
         DexAdapter,
     },
     market_snapshot::{
-        pool_state_store::build_pool_state_store,
+        pool_state_store::{build_pool_state_store, PoolStateStore},
         store::{
             build_snapshot_store, SnapshotStore, SnapshotStoreBackend, DEFAULT_REDIS_EVENTS_CHANNEL,
             DEFAULT_REDIS_SNAPSHOT_HISTORY,
@@ -39,7 +39,7 @@ pub(crate) struct WorkerShared {
     pub(crate) clmm_pools: Vec<ClmmPoolSnapshot>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct WorkerConfig {
     pub rpc_url: String,
     pub network_passphrase: String,
@@ -62,6 +62,35 @@ pub struct WorkerConfig {
     pub ledger_watcher_enabled: bool,
     /// Use FetchTask pipeline (RPC → Redis) instead of 2s cache publish loop.
     pub fetch_pipeline_enabled: bool,
+    /// Injected snapshot store (embedded mode). When `None`, built from
+    /// env/backend in [`run`].
+    pub snapshot_store: Option<Arc<dyn SnapshotStore>>,
+    /// Injected pool-state store (embedded memory or cluster Redis). When
+    /// `None`, built from env in [`run`].
+    pub pool_store: Option<Arc<dyn PoolStateStore>>,
+}
+
+impl std::fmt::Debug for WorkerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WorkerConfig")
+            .field("rpc_url", &self.rpc_url)
+            .field("network_passphrase", &self.network_passphrase)
+            .field("snapshot_backend", &self.snapshot_backend)
+            .field("snapshot_dir", &self.snapshot_dir)
+            .field("snapshot_redis_url", &self.snapshot_redis_url)
+            .field("snapshot_redis_channel", &self.snapshot_redis_channel)
+            .field("snapshot_redis_keep_latest", &self.snapshot_redis_keep_latest)
+            .field("refresh_interval_secs", &self.refresh_interval_secs)
+            .field("pool_publish_interval_secs", &self.pool_publish_interval_secs)
+            .field("pool_state_refresh_concurrency", &self.pool_state_refresh_concurrency)
+            .field("discovery_interval_secs", &self.discovery_interval_secs)
+            .field("ledger_poll", &self.ledger_poll)
+            .field("ledger_watcher_enabled", &self.ledger_watcher_enabled)
+            .field("fetch_pipeline_enabled", &self.fetch_pipeline_enabled)
+            .field("snapshot_store", &self.snapshot_store.as_ref().map(|_| "<store>"))
+            .field("pool_store", &self.pool_store.as_ref().map(|_| "<store>"))
+            .finish()
+    }
 }
 
 impl WorkerConfig {
@@ -105,6 +134,8 @@ impl WorkerConfig {
             ledger_poll: crate::ledger_watcher::ledger_poll_duration_from_env(),
             ledger_watcher_enabled: crate::ledger_watcher::ledger_watcher_enabled_from_env(),
             fetch_pipeline_enabled: crate::fetch_pipeline::fetch_pipeline_enabled_from_env(),
+            snapshot_store: None,
+            pool_store: None,
         })
     }
 }
@@ -317,7 +348,7 @@ fn spawn_fast_pool_publish(
     adapters: Vec<Arc<dyn DexAdapter>>,
     aquarius: Arc<AquariusAdapter>,
     comet: Arc<CometAdapter>,
-    pool_state_store: Option<Arc<market_snapshot::pool_state_store::RedisPoolStateStore>>,
+    pool_state_store: Option<Arc<dyn PoolStateStore>>,
     metrics: Option<Arc<crate::monitor::WorkerMonitorMetrics>>,
     telegram: Option<Arc<lumagg_alerts::TelegramAlerter>>,
 ) {
@@ -348,15 +379,21 @@ fn spawn_fast_pool_publish(
 }
 
 /// Slow path: refresh adapter reserves in background; coalesced via
-/// `in_flight`.
+/// `in_flight`. When Redis is configured, publish refreshed caches so quotes
+/// do not sit on ledger-touch-only / discovery-only pool state.
 fn spawn_background_reserve_refresh(
     in_flight: Arc<PoolRefreshInFlight>,
     shared: Arc<RwLock<WorkerShared>>,
     adapters: Vec<Arc<dyn DexAdapter>>,
     sushi: Arc<SushiAdapter>,
     aquarius_clmm: Arc<AquariusClmmAdapter>,
+    aquarius: Arc<AquariusAdapter>,
+    comet: Arc<CometAdapter>,
+    pool_state_store: Option<Arc<dyn PoolStateStore>>,
     refresh_clmm: bool,
+    publish_redis: bool,
     clmm_metrics: Arc<crate::clmm_metrics::ClmmCoverageMetrics>,
+    metrics: Option<Arc<crate::monitor::WorkerMonitorMetrics>>,
 ) {
     if !in_flight.try_start() {
         debug!("reserve refresh skipped (previous cycle still running)");
@@ -382,9 +419,28 @@ fn spawn_background_reserve_refresh(
         } else {
             shared.read().await.clmm_pools.clone()
         };
-        let mut guard = shared.write().await;
-        guard.sources = refreshed;
-        guard.clmm_pools = clmm_pools;
+        {
+            let mut guard = shared.write().await;
+            guard.sources = refreshed;
+            guard.clmm_pools = clmm_pools.clone();
+        }
+
+        if publish_redis {
+            if let Err(error) = publish_pool_state_only(
+                pool_state_store.as_ref(),
+                &adapters,
+                aquarius.as_ref(),
+                comet.as_ref(),
+                &clmm_pools,
+                metrics.as_ref(),
+            )
+            .await
+            {
+                warn!("post-refresh Redis publish failed: {}", error);
+            } else {
+                debug!("post-refresh Redis pool state published");
+            }
+        }
     });
 }
 
@@ -452,7 +508,7 @@ fn log_clmm_coverage_stats(
 }
 
 async fn publish_pool_state_only(
-    pool_state_store: Option<&Arc<market_snapshot::pool_state_store::RedisPoolStateStore>>,
+    pool_state_store: Option<&Arc<dyn PoolStateStore>>,
     adapters: &[Arc<dyn DexAdapter>],
     aquarius: &AquariusAdapter,
     comet: &CometAdapter,
@@ -483,15 +539,14 @@ async fn publish_pool_state_only(
         aquarius_pools = aquarius_values.len(),
         comet_pools = comet_values.len(),
         clmm_pools = clmm_complete,
-        ttl_secs = pool_store.ttl_secs(),
-        "Published pool state to Redis"
+        "Published pool state"
     );
     Ok(())
 }
 
 async fn publish_snapshot_and_pool_state(
     snapshot_store: &dyn market_snapshot::store::SnapshotStore,
-    pool_state_store: Option<&Arc<market_snapshot::pool_state_store::RedisPoolStateStore>>,
+    pool_state_store: Option<&Arc<dyn PoolStateStore>>,
     adapters: &[Arc<dyn DexAdapter>],
     aquarius: &AquariusAdapter,
     comet: &CometAdapter,
@@ -514,19 +569,25 @@ enum WorkerTick {
 }
 
 pub async fn run(config: WorkerConfig) -> Result<()> {
-    let snapshot_store: Arc<dyn SnapshotStore> = Arc::from(build_snapshot_store(
-        config.snapshot_backend,
-        Some(config.snapshot_dir.clone()),
-        config.snapshot_redis_url.as_deref(),
-        Some(config.snapshot_redis_channel.as_str()),
-        Some(config.snapshot_redis_keep_latest),
-    )?);
-    let pool_state_store: Option<Arc<market_snapshot::pool_state_store::RedisPoolStateStore>> = config
-        .snapshot_redis_url
-        .as_deref()
-        .map(build_pool_state_store)
-        .transpose()?
-        .map(Arc::new);
+    let snapshot_store = match &config.snapshot_store {
+        Some(store) => store.clone(),
+        None => build_snapshot_store(
+            config.snapshot_backend,
+            Some(config.snapshot_dir.clone()),
+            config.snapshot_redis_url.as_deref(),
+            Some(config.snapshot_redis_channel.as_str()),
+            Some(config.snapshot_redis_keep_latest),
+        )?,
+    };
+    let pool_state_store: Option<Arc<dyn PoolStateStore>> = match &config.pool_store {
+        Some(store) => Some(store.clone()),
+        None => config
+            .snapshot_redis_url
+            .as_deref()
+            .map(build_pool_state_store)
+            .transpose()?
+            .map(|store| Arc::new(store) as Arc<dyn PoolStateStore>),
+    };
     let rpc = Arc::new(SorobanRpc::new(&config.rpc_url, &config.network_passphrase));
     let token_metadata = Arc::new(TokenMetadataStore::new(rpc.clone()));
     let soroswap = Arc::new(SoroswapAdapter::new(rpc.clone()));
@@ -706,7 +767,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
                                 rpc: &rpc,
                                 pool_store: pool_store.as_ref(),
                                 _soroswap: &soroswap_ledger,
-                                _aquarius: &aquarius_ledger,
+                                aquarius: &aquarius_ledger,
                                 phoenix: &phoenix_ledger,
                                 comet: &comet_ledger,
                                 sushi: &sushi_ledger,
@@ -761,7 +822,7 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
         pool_state_refresh_concurrency = config.pool_state_refresh_concurrency,
         fetch_pipeline = fetch_pipeline.is_some(),
         mode = if fetch_pipeline.is_some() {
-            "event-driven (ledger → fetch pipeline; discovery/bootstrap → Redis)"
+            "event-driven + periodic refresh→Redis"
         } else {
             "legacy cache publish + background refresh"
         },
@@ -795,8 +856,13 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
                     adapters.clone(),
                     sushi.clone(),
                     aquarius_clmm.clone(),
+                    aquarius.clone(),
+                    comet.clone(),
+                    pool_state_store.clone(),
                     false,
+                    true,
                     clmm_metrics.clone(),
+                    Some(monitor_metrics.clone()),
                 );
             }
             WorkerTick::Refresh => {
@@ -806,8 +872,13 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
                     adapters.clone(),
                     sushi.clone(),
                     aquarius_clmm.clone(),
+                    aquarius.clone(),
+                    comet.clone(),
+                    pool_state_store.clone(),
+                    true,
                     true,
                     clmm_metrics.clone(),
+                    Some(monitor_metrics.clone()),
                 );
             }
             WorkerTick::Discovery => {
@@ -884,6 +955,7 @@ fn snapshot_destination(config: &WorkerConfig) -> String {
     match config.snapshot_backend {
         SnapshotStoreBackend::File => config.snapshot_dir.display().to_string(),
         SnapshotStoreBackend::Redis => config.snapshot_redis_url.clone().unwrap_or_else(|| "redis".to_string()),
+        SnapshotStoreBackend::Memory => "memory".to_string(),
     }
 }
 

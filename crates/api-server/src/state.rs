@@ -1,6 +1,6 @@
 use {
     crate::{
-        config::AppConfig,
+        config::{AppConfig, LumaggMode},
         pool_hydrate::{self, PoolHydrateConfig},
         snapshot_loader::{build_engine_from_snapshot, path_finder_config_from_app},
     },
@@ -20,10 +20,10 @@ use {
         DexAdapter,
     },
     market_snapshot::{
-        pool_state_store::{build_pool_state_store, RedisPoolStateStore},
+        pool_state_store::{build_pool_state_store, MemoryPoolStateStore, PoolStateStore},
         store::{
-            build_snapshot_store, should_reload_snapshot_version, subscribe_to_snapshot_events, SnapshotListenerEvent,
-            SnapshotStore, SnapshotStoreBackend,
+            build_snapshot_store, should_reload_snapshot_version, subscribe_to_snapshot_events, MemorySnapshotStore,
+            SnapshotListenerEvent, SnapshotStore, SnapshotStoreBackend,
         },
         MarketSnapshot,
     },
@@ -40,7 +40,7 @@ pub struct AppState {
     pub config: AppConfig,
     pub token_metadata: Arc<TokenMetadataStore>,
     pub rpc: Arc<SorobanRpc>,
-    pub pool_state_store: Option<Arc<RedisPoolStateStore>>,
+    pub pool_state_store: Option<Arc<dyn PoolStateStore>>,
     pub telegram: Option<Arc<lumagg_alerts::TelegramAlerter>>,
 }
 
@@ -112,7 +112,7 @@ fn configured_snapshot_backend(config: &AppConfig) -> Result<Option<SnapshotStor
     Ok(None)
 }
 
-fn configured_pool_state_store(config: &AppConfig) -> Result<Option<Arc<RedisPoolStateStore>>> {
+fn configured_pool_state_store(config: &AppConfig) -> Result<Option<Arc<dyn PoolStateStore>>> {
     let Some(redis_url) = config.snapshot_redis_url.as_deref() else {
         return Ok(None);
     };
@@ -158,6 +158,75 @@ fn configured_snapshot_event_listener(
             Ok(None)
         }
     }
+}
+
+/// Bridge [`MemorySnapshotStore`] version watch → same event channel as Redis
+/// pub/sub.
+fn subscribe_memory_snapshot_versions(
+    store: Arc<MemorySnapshotStore>,
+) -> mpsc::UnboundedReceiver<SnapshotListenerEvent> {
+    let (tx, rx) = mpsc::unbounded_channel();
+    let mut version_rx = store.subscribe_versions();
+    tokio::spawn(async move {
+        let _ = tx.send(SnapshotListenerEvent::ListenerHealthy);
+        loop {
+            if version_rx.changed().await.is_err() {
+                break;
+            }
+            let version = version_rx.borrow().clone();
+            let Some(version) = version else {
+                continue;
+            };
+            if tx.send(SnapshotListenerEvent::SnapshotVersion(version)).is_err() {
+                break;
+            }
+        }
+    });
+    rx
+}
+
+async fn new_embedded(config: AppConfig) -> Result<AppState> {
+    info!("LUMAGG_MODE=embedded: in-process market-data-worker + memory stores (no Redis required)");
+
+    let memory_snapshot = MemorySnapshotStore::shared();
+    let memory_pool = MemoryPoolStateStore::shared();
+    let snapshot_store: Arc<dyn SnapshotStore> = memory_snapshot.clone();
+    let pool_state_store: Option<Arc<dyn PoolStateStore>> = Some(memory_pool.clone());
+
+    let mut worker_cfg = market_data_worker::worker::WorkerConfig::from_env()?;
+    worker_cfg.rpc_url = config.rpc_url.clone();
+    worker_cfg.network_passphrase = config.network_passphrase.clone();
+    worker_cfg.snapshot_backend = SnapshotStoreBackend::Memory;
+    worker_cfg.snapshot_redis_url = None;
+    worker_cfg.snapshot_store = Some(snapshot_store.clone());
+    worker_cfg.pool_store = pool_state_store.clone();
+
+    tokio::spawn(async move {
+        if let Err(error) = market_data_worker::worker::run(worker_cfg).await {
+            tracing::error!("embedded market-data-worker exited: {:#}", error);
+        }
+    });
+
+    let rpc = Arc::new(SorobanRpc::new(&config.rpc_url, &config.network_passphrase));
+    let token_metadata = Arc::new(TokenMetadataStore::new(rpc.clone()));
+    let snapshot_events = Some(subscribe_memory_snapshot_versions(memory_snapshot));
+    let (engine, initial_version, initial_token_metadata) =
+        load_initial_snapshot_engine(&config, snapshot_store.as_ref()).await?;
+    if let Some(token_metadata_map) = initial_token_metadata {
+        token_metadata.replace_all(token_metadata_map).await;
+    }
+
+    let telegram = lumagg_alerts::TelegramAlerter::from_env_api_primary().map(Arc::new);
+    let state = AppState {
+        engine: Arc::new(RwLock::new(engine)),
+        config,
+        token_metadata,
+        rpc,
+        pool_state_store,
+        telegram,
+    };
+    state.spawn_snapshot_reloader(snapshot_store, snapshot_events, initial_version);
+    Ok(state)
 }
 
 fn normalize_snapshot_poll_interval_ms(interval_ms: u64) -> u64 {
@@ -327,11 +396,11 @@ impl AppState {
         };
 
         let hydrate_started = std::time::Instant::now();
-        let (hydration, redis_miss_xyk, soroswap_refs) = if let Some(store) = &self.pool_state_store {
-            pool_hydrate::hydrate_paths(&engine, &paths, store, &self.rpc, &hydrate_config).await
+        let (hydration, redis_miss_xyk, soroswap_refs, oldest_age_ms) = if let Some(store) = &self.pool_state_store {
+            pool_hydrate::hydrate_paths(&engine, &paths, store.as_ref(), &self.rpc, &hydrate_config).await
         } else {
             tracing::warn!("pool_state_store missing — Soroban quotes will not hydrate from Redis");
-            (router_engine::QuoteHydration::default(), 0, 0)
+            (router_engine::QuoteHydration::default(), 0, 0, None)
         };
         if should_alert_quote_redis_miss(redis_miss_xyk, soroswap_refs) {
             if let Some(alerter) = &self.telegram {
@@ -365,9 +434,13 @@ impl AppState {
             hydrate_ms,
             redis_miss_xyk,
             soroswap_refs,
+            oldest_pool_age_ms = oldest_age_ms,
             rpc_hydrate_enabled = hydrate_config.rpc_hydrate_enabled,
             "quote_route hydration"
         );
+
+        // Do not gate public splits on pool age — /quote serves swap UI as well as
+        // arb. Freshness is handled by worker refresh→Redis + thin-split filter.
         let quote_started = std::time::Instant::now();
         let route = engine.get_route_with_paths(request, &paths, Some(&hydration)).await;
         tracing::info!(
@@ -479,6 +552,10 @@ impl AppState {
     }
 
     pub async fn new(config: AppConfig) -> Result<Self> {
+        if config.lumagg_mode == LumaggMode::Embedded {
+            return new_embedded(config).await;
+        }
+
         let rpc = Arc::new(SorobanRpc::new(&config.rpc_url, &config.network_passphrase));
         let token_metadata = Arc::new(TokenMetadataStore::new(rpc.clone()));
 

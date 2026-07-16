@@ -238,6 +238,12 @@ cargo test --workspace --exclude aggregator-contract
 SNAPSHOT_DIR=data/snapshots cargo run -p market-data-worker
 SNAPSHOT_DIR=data/snapshots cargo run -p api-server
 
+# Self-host / Jupiter-like: one binary, in-process worker, memory stores (no Redis)
+LUMAGG_MODE=embedded \
+RPC_URL=https://mainnet.sorobanrpc.com \
+LISTEN_ADDR=127.0.0.1:3100 \
+cargo run -p api-server
+
 # Local Redis-backed stack (production-style)
 redis-server --port 6380 --save "" --appendonly no
 
@@ -253,6 +259,7 @@ SNAPSHOT_REDIS_CHANNEL=lumagg:snapshot:events \
 cargo run -p api-server
 ```
 
+`LUMAGG_MODE=embedded` reuses the **same** worker + quote code as cluster mode; only the store backend changes (memory vs Redis). Production should keep the Redis split (`LUMAGG_MODE=cluster`, default).
 **Utility binaries** (`dex-adapters`):
 
 ```bash
@@ -295,7 +302,8 @@ Worker defaults include `LEDGER_POLL_SECS=0.1`, `FETCH_PIPELINE_ENABLED=true`, `
 | Variable | Default | Component | Meaning |
 |----------|---------|-----------|---------|
 | `SNAPSHOT_BACKEND` | — | worker, API | `file` or `redis` |
-| `SNAPSHOT_REDIS_URL` | — | worker, API | Redis URL (snapshots + pool state) |
+| `LUMAGG_MODE` | `cluster` | API | `cluster` = Redis + separate worker; `embedded` = one process, memory stores |
+| `SNAPSHOT_REDIS_URL` | — | worker, API | Redis URL (snapshots + pool state); not required for `embedded` |
 | `SNAPSHOT_REDIS_CHANNEL` | `lumagg:snapshot:events` | worker, API | Pub/Sub for snapshot hot-reload |
 | `SNAPSHOT_POLL_INTERVAL_MS` | `1000` | API | Polling fallback if Pub/Sub missed |
 | `POOL_STATE_TTL_SECS` | `86400` | worker | Redis EX on pool keys (eviction, not freshness SLA) |

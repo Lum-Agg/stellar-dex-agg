@@ -5,7 +5,7 @@ use {
     futures::StreamExt,
     redis::{AsyncCommands, Script},
     std::{path::PathBuf, sync::Arc},
-    tokio::sync::mpsc,
+    tokio::sync::{mpsc, watch, RwLock},
     tracing::warn,
 };
 
@@ -16,6 +16,8 @@ pub const DEFAULT_REDIS_SNAPSHOT_HISTORY: usize = 10;
 pub enum SnapshotStoreBackend {
     File,
     Redis,
+    /// In-process snapshot for embedded API+worker (no Redis).
+    Memory,
 }
 
 impl SnapshotStoreBackend {
@@ -23,6 +25,7 @@ impl SnapshotStoreBackend {
         match value.trim().to_ascii_lowercase().as_str() {
             "file" => Ok(Self::File),
             "redis" => Ok(Self::Redis),
+            "memory" | "embedded" => Ok(Self::Memory),
             other => Err(anyhow!("unsupported snapshot backend: {}", other)),
         }
     }
@@ -55,6 +58,10 @@ pub fn build_snapshot_store(
                 redis_channel.unwrap_or(DEFAULT_REDIS_EVENTS_CHANNEL),
                 keep_latest_versions.unwrap_or(DEFAULT_REDIS_SNAPSHOT_HISTORY),
             )))
+        }
+        SnapshotStoreBackend::Memory => {
+            let store: Arc<dyn SnapshotStore> = MemorySnapshotStore::shared();
+            Ok(store)
         }
     }
 }
@@ -150,6 +157,58 @@ impl SnapshotStore for FileSnapshotStore {
 
     async fn publish_snapshot(&self, snapshot: &MarketSnapshot) -> Result<()> {
         write_snapshot_to_dir(&self.snapshot_dir, snapshot)
+    }
+}
+
+/// In-process topology store for embedded mode. Shares one instance between
+/// worker (publisher) and API (reader); version updates via [`watch`].
+pub struct MemorySnapshotStore {
+    current: RwLock<Option<MarketSnapshot>>,
+    version_tx: watch::Sender<Option<String>>,
+}
+
+impl MemorySnapshotStore {
+    pub fn new() -> Self {
+        let (version_tx, _) = watch::channel(None);
+        Self {
+            current: RwLock::new(None),
+            version_tx,
+        }
+    }
+
+    pub fn shared() -> Arc<Self> {
+        Arc::new(Self::new())
+    }
+
+    /// Subscribe to snapshot version changes (replaces Redis pub/sub in
+    /// embedded).
+    pub fn subscribe_versions(&self) -> watch::Receiver<Option<String>> {
+        self.version_tx.subscribe()
+    }
+}
+
+impl Default for MemorySnapshotStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl SnapshotStore for MemorySnapshotStore {
+    async fn load_current_snapshot(&self) -> Result<MarketSnapshot> {
+        self.current
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| anyhow!("no snapshot published yet (memory store)"))
+    }
+
+    async fn publish_snapshot(&self, snapshot: &MarketSnapshot) -> Result<()> {
+        let version = snapshot.version.clone();
+        *self.current.write().await = Some(snapshot.clone());
+        // send_replace keeps the value even when no receivers are subscribed yet.
+        self.version_tx.send_replace(Some(version));
+        Ok(())
     }
 }
 
@@ -493,6 +552,24 @@ mod tests {
             SnapshotStoreBackend::parse("redis").unwrap(),
             SnapshotStoreBackend::Redis
         );
+        assert_eq!(
+            SnapshotStoreBackend::parse("memory").unwrap(),
+            SnapshotStoreBackend::Memory
+        );
+        assert_eq!(
+            SnapshotStoreBackend::parse("embedded").unwrap(),
+            SnapshotStoreBackend::Memory
+        );
         assert!(SnapshotStoreBackend::parse("unknown").is_err());
+    }
+
+    #[tokio::test]
+    async fn memory_snapshot_store_publish_and_load() {
+        let store = MemorySnapshotStore::new();
+        let snap = sample_snapshot("v-mem");
+        store.publish_snapshot(&snap).await.unwrap();
+        let loaded = store.load_current_snapshot().await.unwrap();
+        assert_eq!(loaded.version, "v-mem");
+        assert_eq!(store.subscribe_versions().borrow().as_deref(), Some("v-mem"));
     }
 }

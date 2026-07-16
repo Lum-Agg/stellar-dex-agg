@@ -565,23 +565,7 @@ impl AquariusClmmAdapter {
         } else {
             return Ok(None);
         };
-
-        let args = vec![
-            xdr::ScVal::U32(in_idx),
-            xdr::ScVal::U32(out_idx),
-            xdr::ScVal::U128(xdr::UInt128Parts {
-                hi: (amount_in >> 64) as u64,
-                lo: amount_in as u64,
-            }),
-        ];
-
-        match self.rpc.simulate_call(&pool.pool_address, "estimate_swap", args).await {
-            Ok(result) => Ok(crate::rpc::scval_to_u128(&result).ok()),
-            Err(e) => {
-                debug!("Aquarius CLMM estimate_swap failed for {}: {}", pool.pool_address, e);
-                Ok(None)
-            }
-        }
+        crate::on_chain_quote::estimate_swap(&self.rpc, &pool.pool_address, in_idx, out_idx, amount_in).await
     }
 
     /// Get a local quote using the CLMM math.

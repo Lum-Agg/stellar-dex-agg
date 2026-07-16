@@ -29,6 +29,7 @@ pub fn comet_state_to_value(pool_address: &str, state: &CometPoolQuoteState) -> 
             })
             .collect(),
         swap_fee: state.swap_fee,
+        updated_at_ms: 0,
     }
 }
 
@@ -99,6 +100,7 @@ pub async fn collect_aquarius_pool_state(aquarius: &AquariusAdapter) -> Vec<Aqua
             fee_bps: state.fee_bps,
             is_stable: state.is_stable,
             amp: state.amp,
+            updated_at_ms: 0,
         })
         .collect()
 }

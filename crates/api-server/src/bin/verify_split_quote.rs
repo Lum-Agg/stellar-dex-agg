@@ -23,7 +23,7 @@ use {
     },
     dex_adapters::{classic_dex::ClassicDexAdapter, rpc::SorobanRpc},
     market_snapshot::{
-        pool_state_store::build_pool_state_store,
+        pool_state_store::{build_pool_state_store, PoolStateStore},
         store::{build_snapshot_store, SnapshotStoreBackend},
     },
     router_engine::{Path, QuoteEngine, RouteRequest, TokenId},
@@ -137,11 +137,7 @@ fn legs_from_quote(data: &ApiQuoteData) -> Result<Vec<LegPlan>> {
 
 async fn build_local_engine(
     config: &AppConfig,
-) -> Result<(
-    Arc<QuoteEngine>,
-    Arc<SorobanRpc>,
-    Arc<market_snapshot::pool_state_store::RedisPoolStateStore>,
-)> {
+) -> Result<(Arc<QuoteEngine>, Arc<SorobanRpc>, Arc<dyn PoolStateStore>)> {
     let redis_url = config
         .snapshot_redis_url
         .as_deref()
@@ -165,7 +161,7 @@ async fn build_local_engine(
 async fn hydrate_for_paths(
     engine: &QuoteEngine,
     paths: &[Path],
-    pool_store: &market_snapshot::pool_state_store::RedisPoolStateStore,
+    pool_store: &dyn PoolStateStore,
     rpc: &SorobanRpc,
 ) -> router_engine::QuoteHydration {
     let rpc_hydrate = std::env::var("QUOTE_RPC_HYDRATE")
@@ -176,7 +172,7 @@ async fn hydrate_for_paths(
         rpc_hydrate_enabled: rpc_hydrate,
         ..PoolHydrateConfig::default()
     };
-    let (hydration, redis_miss, soroswap_refs) =
+    let (hydration, redis_miss, soroswap_refs, _oldest_age_ms) =
         pool_hydrate::hydrate_paths(engine, paths, pool_store, rpc, &config).await;
     engine.set_aquarius_pools(hydration.aquarius_pools.clone()).await;
     println!(
@@ -194,7 +190,7 @@ async fn hydrate_for_paths(
 
 async fn quote_split_locally(
     engine: &QuoteEngine,
-    pool_store: &market_snapshot::pool_state_store::RedisPoolStateStore,
+    pool_store: &dyn PoolStateStore,
     rpc: &SorobanRpc,
     token_in: &str,
     token_out: &str,
@@ -264,7 +260,7 @@ async fn main() -> Result<()> {
     let (engine, rpc, pool_store) = build_local_engine(&config).await?;
 
     let (total_in, total_out, price_impact, legs) = if local_only {
-        quote_split_locally(&engine, &pool_store, &rpc, &token_in, &token_out, amount_in).await?
+        quote_split_locally(&engine, pool_store.as_ref(), &rpc, &token_in, &token_out, amount_in).await?
     } else {
         let data = fetch_api_quote(&api_url, &token_in, &token_out, amount_in).await?;
         (
@@ -292,7 +288,7 @@ async fn main() -> Result<()> {
     );
 
     let paths: Vec<Path> = legs.iter().map(|l| l.path.clone()).collect();
-    let hydration = hydrate_for_paths(&engine, &paths, &pool_store, &rpc).await;
+    let hydration = hydrate_for_paths(&engine, &paths, pool_store.as_ref(), &rpc).await;
 
     println!("\n=== Path-constrained re-quote (fixed pool/path per leg) ===");
     println!(

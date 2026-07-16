@@ -24,8 +24,12 @@ use {
 pub async fn run_server() -> anyhow::Result<()> {
     let config = AppConfig::from_env();
     info!(
-        "Config: rpc_url={}, listen={}, discovery={}s, refresh={}s",
-        config.rpc_url, config.listen_addr, config.discovery_interval_secs, config.refresh_interval_secs
+        "Config: mode={:?}, rpc_url={}, listen={}, discovery={}s, refresh={}s",
+        config.lumagg_mode,
+        config.rpc_url,
+        config.listen_addr,
+        config.discovery_interval_secs,
+        config.refresh_interval_secs
     );
 
     let listen_addr: SocketAddr = config.listen_addr.parse()?;

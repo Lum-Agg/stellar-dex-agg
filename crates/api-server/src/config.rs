@@ -9,6 +9,35 @@ fn normalize_snapshot_poll_interval_ms(interval_ms: u64) -> u64 {
     interval_ms.max(1)
 }
 
+/// Deployment topology for quote + market data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum LumaggMode {
+    /// Separate `market-data-worker` + Redis + API (production default).
+    #[default]
+    Cluster,
+    /// Single process: embedded worker + in-memory stores (self-host /
+    /// Jupiter-like).
+    Embedded,
+}
+
+impl LumaggMode {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "cluster" | "redis" => Some(Self::Cluster),
+            "embedded" | "all-in-one" | "single" | "memory" => Some(Self::Embedded),
+            _ => None,
+        }
+    }
+
+    pub fn from_env() -> Self {
+        std::env::var("LUMAGG_MODE")
+            .ok()
+            .and_then(|v| Self::parse(&v))
+            .unwrap_or_default()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     /// Soroban RPC endpoint URL
@@ -49,8 +78,9 @@ pub struct AppConfig {
     /// Max xy=k pools to RPC-fetch per quote when `quote_rpc_hydrate_enabled`
     /// is true.
     pub quote_hydrate_max_pools: usize,
-    /// Optional snapshot backend selector (`file` or `redis`). When unset,
-    /// snapshot mode is enabled only if `snapshot_dir` is set.
+    /// `cluster` (Redis worker) or `embedded` (in-process worker + memory).
+    pub lumagg_mode: LumaggMode,
+    /// Optional snapshot backend selector (`file`, `redis`, or `memory`).
     pub snapshot_backend: Option<String>,
     /// Optional directory containing file-backed market snapshots.
     pub snapshot_dir: Option<String>,
@@ -82,6 +112,7 @@ impl Default for AppConfig {
             path_finder_max_direct_paths: 0,
             quote_rpc_hydrate_enabled: false,
             quote_hydrate_max_pools: 12,
+            lumagg_mode: LumaggMode::Cluster,
             snapshot_backend: None,
             snapshot_dir: None,
             snapshot_redis_url: None,
@@ -146,6 +177,7 @@ impl AppConfig {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(Self::default().quote_hydrate_max_pools),
+            lumagg_mode: LumaggMode::from_env(),
             snapshot_backend: std::env::var("SNAPSHOT_BACKEND").ok(),
             snapshot_dir: std::env::var("SNAPSHOT_DIR").ok(),
             snapshot_redis_url: std::env::var("SNAPSHOT_REDIS_URL").ok(),
@@ -183,6 +215,14 @@ mod tests {
 
         assert_eq!(config.snapshot_redis_channel, "lumagg:snapshot:events");
         assert_eq!(config.snapshot_redis_keep_latest, 10);
+        assert_eq!(config.lumagg_mode, LumaggMode::Cluster);
+    }
+
+    #[test]
+    fn lumagg_mode_parses_embedded_aliases() {
+        assert_eq!(LumaggMode::parse("embedded"), Some(LumaggMode::Embedded));
+        assert_eq!(LumaggMode::parse("all-in-one"), Some(LumaggMode::Embedded));
+        assert_eq!(LumaggMode::parse("cluster"), Some(LumaggMode::Cluster));
     }
 
     #[test]
@@ -215,7 +255,6 @@ mod tests {
         std::env::set_var("SNAPSHOT_POLL_INTERVAL_MS", "0");
 
         let config = AppConfig::from_env();
-
         assert_eq!(config.snapshot_poll_interval_ms, 1);
 
         match original {

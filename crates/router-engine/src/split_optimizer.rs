@@ -34,6 +34,9 @@ pub struct SplitConfig {
     /// Reject a leg when its out/in ratio deviates from the path's full-size
     /// quote by more than this.
     pub max_leg_rate_deviation_bps: u32,
+    /// Require split to beat best single by at least this many bps (filters
+    /// phantom gains from slightly stale multi-pool state).
+    pub min_split_improvement_bps: u32,
     /// Maximum number of splits.
     pub max_splits: usize,
     /// Brent's method tolerance (fraction, e.g., 0.0001 = 0.01%)
@@ -50,6 +53,7 @@ impl Default for SplitConfig {
             min_split_fraction_bps: 5,       // 0.05% minimum share of total output
             min_split_amount_in_bps: 10,     // 0.10% minimum share of total input
             max_leg_rate_deviation_bps: 500, // 5% vs full-size quote for that path
+            min_split_improvement_bps: 15,   // 0.15% — ignore thin split "wins"
             max_splits: 5,
             tolerance: 0.0001, // 0.01% precision
             max_iterations: 18,
@@ -310,6 +314,42 @@ impl SplitOptimizer {
             .collect();
 
         let improvement_bps = ((total_out - best_single_out) * 10_000 / best_single_out) as u32;
+        if improvement_bps < self.config.min_split_improvement_bps {
+            let minimum_out = apply_slippage(best_single_out, slippage_bps);
+            return OptimalRoute {
+                sub_orders: vec![SubOrder {
+                    path: best_single.path.clone(),
+                    amount_in: total_amount,
+                    expected_amount_out: best_single_out,
+                    fraction: 1.0,
+                }],
+                total_amount_in: total_amount,
+                total_expected_out: best_single_out,
+                price_impact_bps: best_single_impact,
+                is_split: false,
+                improvement_bps: 0,
+                minimum_out,
+                compute_time_ms: start.elapsed().as_millis() as u64,
+                debug: Some(RouteDebug {
+                    quoted_paths_count: quoted_paths.len(),
+                    candidate_paths_count,
+                    best_single_out,
+                    second_best_out,
+                    best_single_impact_bps: best_single_impact,
+                    split_threshold_bps: self.config.split_threshold_bps,
+                    competitive_delta_bps,
+                    min_split_fraction_bps: self.config.min_split_fraction_bps,
+                    split_attempted: true,
+                    split_rejected_reason: Some("improvement_below_min".to_string()),
+                    optimization_strategy,
+                    used_rest_best_approximation,
+                    split_total_out: Some(total_out),
+                    dust_filtered_legs,
+                    candidate_routes,
+                    planned_split,
+                }),
+            };
+        }
         let minimum_out = apply_split_minimum_slippage(total_out, slippage_bps);
         let compute_time_ms = start.elapsed().as_millis() as u64;
 

@@ -3,7 +3,7 @@
 use {
     crate::{clmm_metrics::ClmmCoverageMetrics, worker::WorkerShared},
     lumagg_alerts::TelegramAlerter,
-    market_snapshot::pool_state_store::RedisPoolStateStore,
+    market_snapshot::pool_state_store::PoolStateStore,
     std::sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -49,7 +49,7 @@ pub fn spawn_telegram_monitor(
     metrics: Arc<WorkerMonitorMetrics>,
     clmm_metrics: Arc<ClmmCoverageMetrics>,
     shared: Arc<RwLock<WorkerShared>>,
-    pool_state_store: Option<Arc<RedisPoolStateStore>>,
+    pool_state_store: Option<Arc<dyn PoolStateStore>>,
     api_health_url: String,
     rpc_url: String,
 ) {
@@ -101,7 +101,7 @@ async fn build_heartbeat_message(
     metrics: &WorkerMonitorMetrics,
     clmm_metrics: &ClmmCoverageMetrics,
     shared: &RwLock<WorkerShared>,
-    pool_store: Option<&RedisPoolStateStore>,
+    pool_store: Option<&dyn PoolStateStore>,
     api_health_url: &str,
     rpc_url: &str,
 ) -> anyhow::Result<String> {
@@ -124,11 +124,7 @@ async fn build_heartbeat_message(
         .map(|r| r.status().is_success())
         .unwrap_or(false);
 
-    let snapshot_ok = if let Some(store) = pool_store {
-        store.snapshot_exists().await.unwrap_or(false)
-    } else {
-        false
-    };
+    let snapshot_ok = pool_store.is_some();
 
     let stale = last_pub > 0 &&
         std::time::SystemTime::now()

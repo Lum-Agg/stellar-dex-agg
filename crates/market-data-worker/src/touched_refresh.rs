@@ -12,23 +12,27 @@ use {
         sushi::SushiAdapter, DexAdapter,
     },
     market_snapshot::{
-        pool_state_store::{should_publish_clmm_to_redis, CometPoolStateValue, RedisPoolStateStore, XykPoolStateValue},
+        pool_state_store::{
+            should_publish_clmm_to_redis, AquariusPoolStateValue, CometPoolStateValue, PoolStateStore,
+            XykPoolStateValue,
+        },
         ClmmPoolSnapshot, SourceSnapshot,
     },
     std::collections::{HashMap, HashSet},
     tracing::{debug, warn},
 };
 
-const BATCH_XYK_SOURCES: &[&str] = &["soroswap", "aquarius"];
+const BATCH_XYK_SOURCES: &[&str] = &["soroswap"];
+const AQUARIUS_SOURCE: &str = "aquarius";
 const CLMM_SOURCES: &[&str] = &["sushi", "aquarius_clmm"];
 const PHOENIX_SOURCE: &str = "phoenix";
 const COMET_SOURCE: &str = "comet";
 
 pub struct TouchedRefreshContext<'a> {
     pub rpc: &'a SorobanRpc,
-    pub pool_store: &'a RedisPoolStateStore,
+    pub pool_store: &'a dyn PoolStateStore,
     pub _soroswap: &'a SoroswapAdapter,
-    pub _aquarius: &'a AquariusAdapter,
+    pub aquarius: &'a AquariusAdapter,
     pub phoenix: &'a PhoenixAdapter,
     pub comet: &'a CometAdapter,
     pub sushi: &'a SushiAdapter,
@@ -62,6 +66,7 @@ pub async fn refresh_touched_pools(ctx: TouchedRefreshContext<'_>, touched: Hash
 
     let mut updated = 0usize;
     let mut xyk_writeback: Vec<XykPoolStateValue> = Vec::new();
+    let mut aquarius_writeback: Vec<AquariusPoolStateValue> = Vec::new();
     let mut comet_writeback: Vec<CometPoolStateValue> = Vec::new();
     let mut clmm_writeback: Vec<ClmmPoolSnapshot> = Vec::new();
 
@@ -70,6 +75,12 @@ pub async fn refresh_touched_pools(ctx: TouchedRefreshContext<'_>, touched: Hash
             if let Some((n, values)) = refresh_xyk_batch(ctx.rpc, ctx.sources, source, addresses).await? {
                 updated += n;
                 xyk_writeback.extend(values);
+            }
+        } else if source == AQUARIUS_SOURCE {
+            let n = ctx.aquarius.refresh_pool_addresses(addresses).await?;
+            if n > 0 {
+                updated += n;
+                aquarius_writeback.extend(collect_aquarius_writeback(ctx.aquarius, addresses).await);
             }
         } else if source == PHOENIX_SOURCE {
             let n = ctx.phoenix.refresh_touched_pools(addresses).await?;
@@ -108,6 +119,9 @@ pub async fn refresh_touched_pools(ctx: TouchedRefreshContext<'_>, touched: Hash
 
     if !xyk_writeback.is_empty() {
         ctx.pool_store.set_xyk_batch(&xyk_writeback).await?;
+    }
+    if !aquarius_writeback.is_empty() {
+        ctx.pool_store.set_aquarius_batch(&aquarius_writeback).await?;
     }
     if !comet_writeback.is_empty() {
         ctx.pool_store.set_comet_batch(&comet_writeback).await?;
@@ -155,6 +169,26 @@ async fn refresh_xyk_batch(
         updated += 1;
     }
     Ok(Some((updated, values)))
+}
+
+async fn collect_aquarius_writeback(
+    aquarius: &AquariusAdapter,
+    pool_addresses: &[String],
+) -> Vec<AquariusPoolStateValue> {
+    aquarius
+        .export_pool_quote_states_for(pool_addresses)
+        .await
+        .into_iter()
+        .map(|state| AquariusPoolStateValue {
+            pool_address: state.pool_address,
+            tokens: state.tokens,
+            reserves: state.reserves,
+            fee_bps: state.fee_bps,
+            is_stable: state.is_stable,
+            amp: state.amp,
+            updated_at_ms: 0,
+        })
+        .collect()
 }
 
 async fn merge_xyk_topology_from_adapter(sources: &mut [SourceSnapshot], source: &str, adapter: &dyn DexAdapter) {
