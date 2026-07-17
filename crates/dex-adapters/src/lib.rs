@@ -38,6 +38,7 @@ pub mod rpc;
 pub mod soroswap;
 pub mod stable_math;
 pub mod sushi;
+pub mod token_logo;
 pub mod token_metadata;
 pub mod token_registry;
 pub mod traits;
