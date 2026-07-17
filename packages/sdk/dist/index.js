@@ -33,6 +33,7 @@ export class LumAggClient {
             symbol: t.symbol,
             name: t.name,
             logo: t.logo,
+            logoKind: t.logo_kind === 'official' || t.logo_kind === 'fallback' ? t.logo_kind : undefined,
         }));
     }
     /** @deprecated alias */

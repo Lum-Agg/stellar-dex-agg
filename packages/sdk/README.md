@@ -1,11 +1,11 @@
-# @stellar-dex-aggregator/sdk
+# @lumagg/sdk
 
 TypeScript client for the [LumAgg](https://lumagg.xyz) REST API — quote, build unsigned XDR, tokens.
 
 ## Install
 
 ```bash
-npm install @stellar-dex-aggregator/sdk
+npm install @lumagg/sdk
 # or link locally during development:
 cd packages/sdk && npm run build
 ```
@@ -13,7 +13,7 @@ cd packages/sdk && npm run build
 ## Quick start (&lt; 30 min)
 
 ```typescript
-import { LumAggClient } from '@stellar-dex-aggregator/sdk';
+import { LumAggClient } from '@lumagg/sdk';
 
 const client = new LumAggClient({ apiUrl: 'https://api.lumagg.xyz' });
 

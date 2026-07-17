@@ -79,6 +79,8 @@ export interface TokenInfo {
     symbol: string;
     name: string;
     logo?: string;
+    /** `"official"` for SEP-42 icons, `"fallback"` for generated letter avatars. */
+    logoKind?: 'official' | 'fallback';
 }
 export declare class LumAggClient {
     private baseUrl;

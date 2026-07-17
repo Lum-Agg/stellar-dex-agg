@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Publish @stellar-dex-aggregator/sdk to npm (Tranche 2).
+# Publish @lumagg/sdk to npm (Tranche 2).
 #
 # Prereqs: npm login, version bump in packages/sdk/package.json
 #

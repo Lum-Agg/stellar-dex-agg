@@ -1,5 +1,5 @@
 {
-  "name": "@stellar-dex-aggregator/sdk",
+  "name": "@lumagg/sdk",
   "version": "0.1.0",
   "description": "TypeScript SDK for LumAgg Stellar DEX Aggregator API",
   "license": "Apache-2.0",

@@ -119,7 +119,7 @@ See [scf-venue-comparison.md](./scf-venue-comparison.md) for venue matrix vs Ste
 
 ## 7. npm SDK (Tranche 2)
 
-Published package: `packages/sdk` → `@stellar-dex-aggregator/sdk` (Aug 2026).
+Published package: `packages/sdk` → `@lumagg/sdk` (Aug 2026).
 
 ```bash
 npx tsx packages/sdk/examples/quote-build.ts
