@@ -15,7 +15,7 @@ use {
         rpc::SorobanRpc,
         soroswap::SoroswapAdapter,
         sushi::SushiAdapter,
-        token_metadata::{TokenMetadata, TokenMetadataStore},
+        token_metadata::{LogoKind, TokenMetadata, TokenMetadataStore},
         traits::AdapterTradingPair,
         DexAdapter,
     },
@@ -78,6 +78,11 @@ fn snapshot_token_metadata(snapshot: &MarketSnapshot) -> std::collections::HashM
                     symbol: meta.symbol.clone(),
                     name: meta.name.clone(),
                     logo: meta.logo.clone(),
+                    logo_kind: meta.logo_kind.as_deref().and_then(|k| match k {
+                        "official" => Some(LogoKind::Official),
+                        "fallback" => Some(LogoKind::Fallback),
+                        _ => None,
+                    }),
                 },
             )
         })

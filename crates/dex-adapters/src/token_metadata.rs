@@ -5,6 +5,7 @@ use {
     crate::{
         rpc::{scval_to_string, SorobanRpc},
         token_logo::TokenLogoCache,
+        token_logo_lists::TokenLogoListIndex,
     },
     serde::{Deserialize, Serialize},
     std::{
@@ -17,21 +18,6 @@ use {
 };
 
 const METADATA_FILE: &str = "data/token_metadata.json";
-
-fn logo_url_for_asset_id(asset_id: &str) -> Option<String> {
-    if asset_id == "native" {
-        return Some("https://stellar.expert/explorer/public/asset/native/icon".to_string());
-    }
-    if let Some((code, issuer)) = asset_id.split_once(':') {
-        if !code.is_empty() && !issuer.is_empty() {
-            return Some(format!(
-                "https://stellar.expert/explorer/public/asset/{}-{}-1/icon",
-                code, issuer
-            ));
-        }
-    }
-    None
-}
 
 fn load_metadata_file(path: &Path) -> HashMap<String, TokenMetadata> {
     match std::fs::read_to_string(path) {
@@ -46,6 +32,14 @@ fn load_metadata_file(path: &Path) -> HashMap<String, TokenMetadata> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LogoKind {
+    Official,
+    #[default]
+    Fallback,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenMetadata {
     pub contract: String,
@@ -53,6 +47,9 @@ pub struct TokenMetadata {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub logo: Option<String>,
+    /// Distinguishes downloaded SEP-42 icons from generated letter avatars.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logo_kind: Option<LogoKind>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -63,21 +60,23 @@ struct MetadataCache {
 pub struct TokenMetadataStore {
     cache: Arc<RwLock<HashMap<String, TokenMetadata>>>,
     logo_cache: Arc<TokenLogoCache>,
+    logo_lists: Arc<TokenLogoListIndex>,
     metadata_file: PathBuf,
 }
 
 impl TokenMetadataStore {
     pub fn new(_rpc: Arc<SorobanRpc>) -> Self {
-        Self::with_logo_cache(TokenLogoCache::from_env())
+        Self::with_logo_cache(TokenLogoCache::from_env(), TokenLogoListIndex::from_env())
     }
 
-    /// Construct with an explicit logo cache, loading the default metadata file.
-    pub fn with_logo_cache(logo_cache: TokenLogoCache) -> Self {
+    /// Construct with an explicit logo cache and SEP-42 list index.
+    pub fn with_logo_cache(logo_cache: TokenLogoCache, logo_lists: TokenLogoListIndex) -> Self {
         let metadata_file = PathBuf::from(METADATA_FILE);
         let cache = load_metadata_file(&metadata_file);
         Self {
             cache: Arc::new(RwLock::new(cache)),
             logo_cache: Arc::new(logo_cache),
+            logo_lists: Arc::new(logo_lists),
             metadata_file,
         }
     }
@@ -87,12 +86,14 @@ impl TokenMetadataStore {
     #[cfg(test)]
     fn with_logo_cache_and_file(
         logo_cache: TokenLogoCache,
+        logo_lists: TokenLogoListIndex,
         metadata_file: impl Into<PathBuf>,
         initial: HashMap<String, TokenMetadata>,
     ) -> Self {
         Self {
             cache: Arc::new(RwLock::new(initial)),
             logo_cache: Arc::new(logo_cache),
+            logo_lists: Arc::new(logo_lists),
             metadata_file: metadata_file.into(),
         }
     }
@@ -114,24 +115,41 @@ impl TokenMetadataStore {
 
     /// Ensure every cached token has a self-hosted logo URL on disk.
     ///
+    /// Prefers official icons from SEP-42 lists; falls back to generated SVG.
     /// Clones entries before any await so the RwLock is never held across I/O.
-    /// Returns the number of tokens that successfully received a self-hosted URL.
+    /// Returns the number of tokens that successfully received a self-hosted
+    /// URL.
     pub async fn ensure_self_hosted_logos(&self) -> usize {
+        let list_count = self.logo_lists.refresh().await;
+        info!(list_count, "Refreshed SEP-42 logo index");
+
         let entries: Vec<(String, TokenMetadata)> = {
             let cache = self.cache.read().await;
             cache.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
         };
 
         let mut success = 0usize;
-        let mut updates: Vec<(String, String)> = Vec::new();
+        let mut official = 0usize;
+        let mut updates: Vec<(String, String, LogoKind)> = Vec::new();
 
         for (id, meta) in entries {
-            let remote = meta.logo.as_deref();
+            let list_icon = self.logo_lists.icon_url(&meta.contract).await;
+            // Prefer SEP-42 list icon over any stale third-party URL in metadata.
+            let remote = list_icon
+                .as_deref()
+                .or(meta.logo.as_deref().filter(|u| !u.contains("/logos/")));
+
             match self.logo_cache.ensure_logo(&meta.contract, &meta.symbol, remote).await {
                 Ok(url) => {
                     success += 1;
-                    if meta.logo.as_deref() != Some(url.as_str()) {
-                        updates.push((id, url));
+                    let kind = if self.logo_cache.has_official_cache(&meta.contract) {
+                        official += 1;
+                        LogoKind::Official
+                    } else {
+                        LogoKind::Fallback
+                    };
+                    if meta.logo.as_deref() != Some(url.as_str()) || meta.logo_kind != Some(kind) {
+                        updates.push((id, url, kind));
                     }
                 }
                 Err(e) => {
@@ -143,15 +161,17 @@ impl TokenMetadataStore {
         if !updates.is_empty() {
             {
                 let mut cache = self.cache.write().await;
-                for (id, url) in updates {
+                for (id, url, kind) in updates {
                     if let Some(entry) = cache.get_mut(&id) {
                         entry.logo = Some(url);
+                        entry.logo_kind = Some(kind);
                     }
                 }
             }
             self.save().await;
         }
 
+        info!(success, official, "Self-hosted logo enrichment complete");
         success
     }
 
@@ -190,6 +210,7 @@ impl TokenMetadataStore {
                             symbol: short.to_string(),
                             name: "Unknown".to_string(),
                             logo: None,
+                            logo_kind: None,
                         },
                     );
                 }
@@ -201,9 +222,8 @@ impl TokenMetadataStore {
 
         info!("Resolved {}/{} token metadata", resolved, unknown.len());
 
-        // Persist newly resolved metadata (may still have third-party logo URLs).
+        // Persist newly resolved metadata, then migrate logos to self-hosted URLs.
         self.save().await;
-        // Migrate logos to self-hosted URLs once for this resolve pass.
         self.ensure_self_hosted_logos().await;
     }
 
@@ -232,11 +252,6 @@ impl TokenMetadataStore {
         }
 
         // For SAC tokens, name is "CODE:ISSUER" — use code as display name
-        let asset_id = if name.contains(':') || name == "native" {
-            name.clone()
-        } else {
-            contract.to_string()
-        };
         let display_name = if name.contains(':') {
             name.split(':').next().unwrap_or(&name).to_string()
         } else if name == "native" {
@@ -244,7 +259,9 @@ impl TokenMetadataStore {
         } else {
             name.clone()
         };
-        let logo = logo_url_for_asset_id(&asset_id);
+
+        // Official icons come from SEP-42 lists during ensure_self_hosted_logos.
+        let logo = self.logo_lists.icon_url(contract).await;
 
         debug!(
             "Resolved token {}: symbol={}, name={}",
@@ -258,6 +275,7 @@ impl TokenMetadataStore {
             symbol,
             name: display_name,
             logo,
+            logo_kind: None,
         })
     }
 
@@ -289,10 +307,14 @@ impl TokenMetadataStore {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::token_logo::TokenLogoCache;
-    use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use {
+        super::*,
+        crate::{token_logo::TokenLogoCache, token_logo_lists::TokenLogoListIndex},
+        std::{
+            path::PathBuf,
+            time::{SystemTime, UNIX_EPOCH},
+        },
+    };
 
     fn unique_temp_dir(label: &str) -> PathBuf {
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).expect("time").as_nanos();
@@ -312,7 +334,12 @@ mod tests {
         metadata_file: PathBuf,
         initial: HashMap<String, TokenMetadata>,
     ) -> TokenMetadataStore {
-        TokenMetadataStore::with_logo_cache_and_file(TokenLogoCache::new(logo_dir, base_url), metadata_file, initial)
+        TokenMetadataStore::with_logo_cache_and_file(
+            TokenLogoCache::new(logo_dir, base_url),
+            TokenLogoListIndex::new(vec![]),
+            metadata_file,
+            initial,
+        )
     }
 
     #[tokio::test]
@@ -328,6 +355,7 @@ mod tests {
                 symbol: "TOK".to_string(),
                 name: "Token".to_string(),
                 logo: None,
+                logo_kind: None,
             },
         );
 
@@ -350,6 +378,7 @@ mod tests {
                 symbol: "TOK".to_string(),
                 name: "Token".to_string(),
                 logo: None,
+                logo_kind: None,
             },
         );
         let store = store_with_initial(&logo_dir, "https://api.test/logos", meta_file.clone(), initial);
@@ -358,11 +387,13 @@ mod tests {
 
         let meta = store.get("token-1").await.expect("token present");
         assert!(meta.logo.as_deref().unwrap().starts_with("https://api.test/logos/"));
+        assert_eq!(meta.logo_kind, Some(LogoKind::Fallback));
         assert_eq!(std::fs::read_dir(&logo_dir).unwrap().count(), 1);
         assert_eq!(count, 1);
 
         let persisted = std::fs::read_to_string(&meta_file).expect("metadata persisted");
         assert!(persisted.contains("https://api.test/logos/"));
+        assert!(persisted.contains("fallback"));
     }
 
     #[tokio::test]
@@ -377,6 +408,7 @@ mod tests {
                 symbol: "EXT".to_string(),
                 name: "External".to_string(),
                 logo: Some("https://127.0.0.1:1/missing-logo.png".to_string()),
+                logo_kind: None,
             },
         );
         let store = store_with_initial(&logo_dir, "https://api.test/logos", meta_file, initial);
@@ -385,6 +417,7 @@ mod tests {
 
         let meta = store.get("token-2").await.expect("token present");
         assert!(meta.logo.as_deref().unwrap().starts_with("https://api.test/logos/"));
+        assert_eq!(meta.logo_kind, Some(LogoKind::Fallback));
         assert_eq!(std::fs::read_dir(&logo_dir).unwrap().count(), 1);
         assert_eq!(count, 1);
     }
@@ -401,6 +434,7 @@ mod tests {
                 symbol: "TOK".to_string(),
                 name: "Token".to_string(),
                 logo: None,
+                logo_kind: None,
             },
         );
         let store = store_with_initial(&logo_dir, "https://api.test/logos", meta_file, initial);
@@ -410,5 +444,42 @@ mod tests {
         let meta = store.get("token-1").await.expect("token present");
         assert!(meta.logo.as_deref().unwrap().starts_with("https://api.test/logos/"));
         assert_eq!(std::fs::read_dir(&logo_dir).unwrap().count(), 1);
+    }
+
+    #[tokio::test]
+    async fn prefers_sep42_list_icon_over_stale_metadata_url() {
+        let logo_dir = unique_temp_dir("sep42-logos");
+        let meta_file = unique_temp_dir("sep42-meta").join("token_metadata.json");
+        let mut initial = HashMap::new();
+        initial.insert(
+            "token-sep".to_string(),
+            TokenMetadata {
+                contract: "token-sep".to_string(),
+                symbol: "SEP".to_string(),
+                name: "Sep".to_string(),
+                logo: Some("https://stellar.expert/explorer/public/asset/native/icon".into()),
+                logo_kind: None,
+            },
+        );
+
+        let lists = TokenLogoListIndex::new(vec![]);
+        lists
+            .icons
+            .write()
+            .await
+            .insert("token-sep".into(), "https://127.0.0.1:1/official-missing.png".into());
+
+        let store = TokenMetadataStore::with_logo_cache_and_file(
+            TokenLogoCache::new(&logo_dir, "https://api.test/logos"),
+            lists,
+            meta_file,
+            initial,
+        );
+
+        let _ = store.ensure_self_hosted_logos().await;
+        let meta = store.get("token-sep").await.expect("present");
+        assert!(meta.logo.as_deref().unwrap().starts_with("https://api.test/logos/"));
+        // Download fails → fallback; important part is list URL was preferred.
+        assert_eq!(meta.logo_kind, Some(LogoKind::Fallback));
     }
 }

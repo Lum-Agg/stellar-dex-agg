@@ -9,7 +9,7 @@ use {
         rpc::SorobanRpc,
         soroswap::SoroswapAdapter,
         sushi::SushiAdapter,
-        token_metadata::{TokenMetadata, TokenMetadataStore},
+        token_metadata::{LogoKind, TokenMetadata, TokenMetadataStore},
         traits::AdapterTradingPair,
         DexAdapter,
     },
@@ -234,7 +234,8 @@ fn spawn_token_metadata_enrichment(
             return;
         }
         token_metadata.resolve_unknown(token_addresses.clone()).await;
-        // Idempotent backfill: migrate any third-party/snapshot logos to self-hosted URLs.
+        // Idempotent backfill: migrate any third-party/snapshot logos to self-hosted
+        // URLs.
         let _ = token_metadata.ensure_self_hosted_logos().await;
         let metadata = token_metadata.get_all().await;
         let enriched: Vec<TokenMetadataSnapshot> = token_addresses
@@ -243,6 +244,15 @@ fn spawn_token_metadata_enrichment(
             .map(token_metadata_snapshot)
             .collect();
         snapshot = snapshot.with_token_metadata(enriched);
+        // Bump version so API reloaders pick up metadata-only updates.
+        // Reusing the topology version would be ignored by
+        // should_reload_snapshot_version.
+        let generated_at_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(snapshot.generated_at_ms);
+        snapshot.generated_at_ms = generated_at_ms;
+        snapshot.version = format!("snapshot-{}", generated_at_ms);
         match snapshot_store.publish_snapshot(&snapshot).await {
             Ok(()) => info!(
                 version = %snapshot.version,
@@ -445,6 +455,10 @@ fn token_metadata_snapshot(meta: TokenMetadata) -> TokenMetadataSnapshot {
         symbol: meta.symbol,
         name: meta.name,
         logo: meta.logo,
+        logo_kind: meta.logo_kind.map(|k| match k {
+            LogoKind::Official => "official".to_string(),
+            LogoKind::Fallback => "fallback".to_string(),
+        }),
     }
 }
 
@@ -1107,6 +1121,7 @@ mod tests {
                         symbol: "TOKA".to_string(),
                         name: "Token A".to_string(),
                         logo: None,
+                        logo_kind: None,
                     },
                 ),
                 (
@@ -1116,6 +1131,7 @@ mod tests {
                         symbol: "TOKB".to_string(),
                         name: "Token B".to_string(),
                         logo: None,
+                        logo_kind: None,
                     },
                 ),
             ]))
@@ -1127,12 +1143,14 @@ mod tests {
                 symbol: "TOKA".to_string(),
                 name: "Token A".to_string(),
                 logo: None,
+                logo_kind: None,
             }),
             token_metadata_snapshot(TokenMetadata {
                 contract: "B".to_string(),
                 symbol: "TOKB".to_string(),
                 name: "Token B".to_string(),
                 logo: None,
+                logo_kind: None,
             }),
         ];
         let snapshot = snapshot_from_sources(

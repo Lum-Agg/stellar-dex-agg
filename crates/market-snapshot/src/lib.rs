@@ -72,6 +72,9 @@ pub struct TokenMetadataSnapshot {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub logo: Option<String>,
+    /// `"official"` | `"fallback"` when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logo_kind: Option<String>,
 }
 
 impl ClmmPoolRefSnapshot {
@@ -291,6 +294,7 @@ mod tests {
                 symbol: "TOKA".to_string(),
                 name: "Token A".to_string(),
                 logo: None,
+                logo_kind: None,
             }],
             clmm_pool_refs: vec![ClmmPoolRefSnapshot::from_pool(&sample_clmm_pool())],
         };
@@ -395,6 +399,7 @@ mod tests {
             symbol: "XLM".to_string(),
             name: "Stellar Lumens".to_string(),
             logo: Some("logo".to_string()),
+            logo_kind: Some("official".to_string()),
         }]);
 
         assert_eq!(snapshot.token_metadata.len(), 1);

@@ -12,7 +12,7 @@ use {
 const MAX_LOGO_BYTES: u64 = 1024 * 1024; // 1 MiB
 const DEFAULT_DIR: &str = "data/logos";
 const DEFAULT_BASE_URL: &str = "https://api.lumagg.xyz/logos";
-const CACHED_EXTENSIONS: &[&str] = &["png", "jpg", "webp", "svg"];
+const CACHED_EXTENSIONS: &[&str] = &["png", "jpg", "webp", "gif", "svg"];
 
 pub struct TokenLogoCache {
     directory: PathBuf,
@@ -39,28 +39,64 @@ impl TokenLogoCache {
         }
     }
 
-    /// Deterministic fallback SVG path for `token_id` (SHA-256 hash; never embeds token text).
+    /// Deterministic fallback SVG path for `token_id` (SHA-256 hash; never
+    /// embeds token text).
     pub fn fallback_path(&self, token_id: &str) -> PathBuf {
         self.path_for_ext(token_id, "svg")
     }
 
     pub async fn ensure_logo(&self, token_id: &str, symbol: &str, remote_url: Option<&str>) -> anyhow::Result<String> {
+        // Prefer downloading an official remote when provided. Raster caches
+        // are treated as already-official and skip re-download; SVG caches may
+        // be leftover fallbacks and are eligible for upgrade.
         if let Some(existing) = self.find_existing(token_id) {
-            return Ok(self.url_for_path(&existing)?);
+            let ext = existing.extension().and_then(|e| e.to_str()).unwrap_or("");
+            let is_raster = matches!(ext, "png" | "jpg" | "webp" | "gif");
+            if is_raster || remote_url.is_none() {
+                return Ok(self.url_for_path(&existing)?);
+            }
         }
 
         if let Some(url) = remote_url {
             if let Some((bytes, ext)) = self.try_download(url).await {
                 let path = self.path_for_ext(token_id, ext);
                 self.atomic_write(&path, &bytes)?;
+                // Drop stale SVG fallback if we just wrote a non-SVG official.
+                if ext != "svg" {
+                    let _ = std::fs::remove_file(self.path_for_ext(token_id, "svg"));
+                }
                 return Ok(self.url_for_path(&path)?);
             }
+        }
+
+        if let Some(existing) = self.find_existing(token_id) {
+            return Ok(self.url_for_path(&existing)?);
         }
 
         let svg = fallback_svg(symbol, token_id);
         let path = self.fallback_path(token_id);
         self.atomic_write(&path, svg.as_bytes())?;
         Ok(self.url_for_path(&path)?)
+    }
+
+    /// True when the cached file for `token_id` looks like a downloaded raster
+    /// (or non-fallback SVG). Used by metadata to label `logo_kind`.
+    pub fn has_official_cache(&self, token_id: &str) -> bool {
+        let Some(path) = self.find_existing(token_id) else {
+            return false;
+        };
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if matches!(ext, "png" | "jpg" | "webp" | "gif") {
+            return true;
+        }
+        if ext == "svg" {
+            if let Ok(bytes) = std::fs::read(&path) {
+                // Our generated fallback always includes this exact font-family marker.
+                let text = String::from_utf8_lossy(&bytes);
+                return !text.contains("font-family=\"sans-serif\" font-size=\"36\"");
+            }
+        }
+        false
     }
 
     fn token_hash_hex(token_id: &str) -> String {
@@ -107,12 +143,22 @@ impl TokenLogoCache {
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        let ext = extension_for_content_type(content_type)?;
+            .unwrap_or("")
+            .to_string();
 
         let bytes = response.bytes().await.ok()?;
-        if bytes.len() as u64 > MAX_LOGO_BYTES {
+        if bytes.is_empty() || bytes.len() as u64 > MAX_LOGO_BYTES {
             return None;
+        }
+
+        // Trust the actual bytes, not the Content-Type header: some hosts
+        // return HTML (e.g. an error/landing page) with an image content type.
+        let ext = detect_image_ext(&bytes, &content_type)?;
+
+        // Keep the original format; only SVG needs sanitizing before we self-host it.
+        if ext == "svg" {
+            let sanitized = sanitize_svg(&bytes)?;
+            return Some((sanitized.into_bytes(), ext));
         }
 
         Some((bytes.to_vec(), ext))
@@ -151,7 +197,8 @@ impl TokenLogoCache {
     }
 }
 
-/// Map an HTTP Content-Type to a safe raster extension, if supported.
+/// Map an HTTP Content-Type to a supported image extension, if known.
+/// Prefer [`detect_image_ext`] on the response body; this is only a hint.
 pub fn extension_for_content_type(content_type: &str) -> Option<&'static str> {
     let mime = content_type
         .split(';')
@@ -163,11 +210,307 @@ pub fn extension_for_content_type(content_type: &str) -> Option<&'static str> {
         "image/png" => Some("png"),
         "image/jpeg" => Some("jpg"),
         "image/webp" => Some("webp"),
+        "image/gif" => Some("gif"),
+        "image/svg+xml" => Some("svg"),
         _ => None,
     }
 }
 
-/// Deterministic SVG avatar with XML-escaped symbol text and hash-derived colors.
+/// Detect image type from magic bytes (preferred) or Content-Type hint.
+/// Rejects HTML/text so we never self-host error pages as logos.
+pub fn detect_image_ext(bytes: &[u8], content_type: &str) -> Option<&'static str> {
+    if looks_like_html(bytes) {
+        return None;
+    }
+
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n']) {
+        return Some("png");
+    }
+    if bytes.len() >= 3 && bytes[0] == 0xff && bytes[1] == 0xd8 && bytes[2] == 0xff {
+        return Some("jpg");
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some("webp");
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return Some("gif");
+    }
+    if looks_like_svg(bytes) {
+        return Some("svg");
+    }
+
+    // Last resort: Content-Type hint only when bytes look binary and not HTML.
+    extension_for_content_type(content_type).filter(|ext| *ext != "svg")
+}
+
+fn looks_like_html(bytes: &[u8]) -> bool {
+    let head = trim_leading_whitespace(bytes);
+    let lower: Vec<u8> = head.iter().take(64).map(u8::to_ascii_lowercase).collect();
+    lower.starts_with(b"<!doctype html") ||
+        lower.starts_with(b"<html") ||
+        lower.starts_with(b"<head") ||
+        lower.starts_with(b"<body")
+}
+
+fn looks_like_svg(bytes: &[u8]) -> bool {
+    let head = trim_leading_whitespace(bytes);
+    let lower: Vec<u8> = head.iter().take(256).map(u8::to_ascii_lowercase).collect();
+    // Accept <?xml ...><svg or bare <svg
+    if lower.starts_with(b"<svg") {
+        return true;
+    }
+    if lower.starts_with(b"<?xml") {
+        return contains_ascii_ci(&lower, b"<svg");
+    }
+    false
+}
+
+fn trim_leading_whitespace(bytes: &[u8]) -> &[u8] {
+    let mut i = 0;
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    &bytes[i..]
+}
+
+fn contains_ascii_ci(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return false;
+    }
+    haystack.windows(needle.len()).any(|w| w.eq_ignore_ascii_case(needle))
+}
+
+/// Sanitize a remote SVG so it is safe to self-host.
+///
+/// Keeps the SVG format (no raster conversion). Strips executable content:
+/// `<script>`, `<foreignObject>`, event handlers (`on*`), and `javascript:`
+/// URLs. Returns `None` if the result is empty or no longer looks like SVG.
+pub fn sanitize_svg(bytes: &[u8]) -> Option<String> {
+    let raw = std::str::from_utf8(bytes).ok()?;
+    let mut out = String::with_capacity(raw.len());
+    let lower = raw.to_ascii_lowercase();
+    let bytes_raw = raw.as_bytes();
+    let bytes_lower = lower.as_bytes();
+
+    let mut i = 0;
+    while i < bytes_raw.len() {
+        if bytes_lower[i] == b'<' {
+            // Drop entire <script>...</script> and <foreignObject>...</foreignObject>
+            // blocks.
+            if let Some(end) = skip_dangerous_element(bytes_lower, i) {
+                i = end;
+                continue;
+            }
+
+            // Copy the opening tag, but strip on* attributes and javascript: URLs.
+            if let Some((tag, next)) = take_tag(bytes_raw, bytes_lower, i) {
+                out.push_str(&scrub_tag_attributes(&tag));
+                i = next;
+                continue;
+            }
+        }
+
+        out.push(bytes_raw[i] as char);
+        i += 1;
+    }
+
+    let trimmed = out.trim();
+    if trimmed.is_empty() || !looks_like_svg(trimmed.as_bytes()) {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+fn skip_dangerous_element(lower: &[u8], start: usize) -> Option<usize> {
+    const DANGEROUS: &[&[u8]] = &[b"script", b"foreignobject"];
+    if lower.get(start) != Some(&b'<') {
+        return None;
+    }
+    let after_lt = start + 1;
+    let name_start = if lower.get(after_lt) == Some(&b'/') {
+        return None; // closing tags handled by the open-tag skip
+    } else {
+        after_lt
+    };
+
+    for name in DANGEROUS {
+        if lower[name_start..].starts_with(name) &&
+            lower
+                .get(name_start + name.len())
+                .map(|c| !c.is_ascii_alphanumeric() && *c != b':' && *c != b'-')
+                .unwrap_or(true)
+        {
+            // Find matching close tag </name>
+            let close = format!("</{}", std::str::from_utf8(name).unwrap());
+            let close_bytes = close.as_bytes();
+            let mut j = name_start + name.len();
+            while j + close_bytes.len() <= lower.len() {
+                if lower[j..].starts_with(close_bytes) &&
+                    lower
+                        .get(j + close_bytes.len())
+                        .map(|c| !c.is_ascii_alphanumeric())
+                        .unwrap_or(true)
+                {
+                    // advance past '>'
+                    if let Some(gt) = lower[j..].iter().position(|&c| c == b'>') {
+                        return Some(j + gt + 1);
+                    }
+                    return Some(lower.len());
+                }
+                j += 1;
+            }
+            // No close tag — drop the rest of the document.
+            return Some(lower.len());
+        }
+    }
+    None
+}
+
+fn take_tag(raw: &[u8], lower: &[u8], start: usize) -> Option<(String, usize)> {
+    if raw.get(start) != Some(&b'<') {
+        return None;
+    }
+    let mut i = start + 1;
+    let mut in_quote: Option<u8> = None;
+    while i < raw.len() {
+        let c = raw[i];
+        if let Some(q) = in_quote {
+            if c == q {
+                in_quote = None;
+            }
+        } else if c == b'"' || c == b'\'' {
+            in_quote = Some(c);
+        } else if c == b'>' {
+            // Prefer raw slice for output fidelity.
+            let tag = String::from_utf8_lossy(&raw[start..=i]).into_owned();
+            let _ = lower; // used by callers for case-insensitive decisions elsewhere
+            return Some((tag, i + 1));
+        }
+        i += 1;
+    }
+    None
+}
+
+fn scrub_tag_attributes(tag: &str) -> String {
+    // Fast path: no attributes that look dangerous.
+    let lower = tag.to_ascii_lowercase();
+    if !lower.contains("on") && !lower.contains("javascript:") {
+        return tag.to_string();
+    }
+
+    // Parse: <name attrs...> or <name attrs.../>
+    let bytes = tag.as_bytes();
+    if bytes.first() != Some(&b'<') {
+        return tag.to_string();
+    }
+
+    let mut out = String::new();
+    out.push('<');
+
+    let mut i = 1;
+    // Self-closing slash / name
+    if bytes.get(i) == Some(&b'/') {
+        out.push('/');
+        i += 1;
+    }
+
+    // Element name
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        if c.is_ascii_whitespace() || c == '>' || c == '/' {
+            break;
+        }
+        out.push(c);
+        i += 1;
+    }
+
+    // Attributes
+    while i < bytes.len() {
+        // Skip whitespace
+        while i < bytes.len() && (bytes[i] as char).is_ascii_whitespace() {
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+        if i >= bytes.len() {
+            break;
+        }
+        if bytes[i] == b'>' {
+            out.push('>');
+            break;
+        }
+        if bytes[i] == b'/' {
+            out.push('/');
+            i += 1;
+            continue;
+        }
+
+        // Attribute name
+        let name_start = i;
+        while i < bytes.len() &&
+            !(bytes[i] as char).is_ascii_whitespace() &&
+            bytes[i] != b'=' &&
+            bytes[i] != b'>' &&
+            bytes[i] != b'/'
+        {
+            i += 1;
+        }
+        let name = &tag[name_start..i];
+        let name_lower = name.to_ascii_lowercase();
+
+        // Optional =value
+        while i < bytes.len() && (bytes[i] as char).is_ascii_whitespace() {
+            i += 1;
+        }
+        let mut value = String::new();
+        if bytes.get(i) == Some(&b'=') {
+            i += 1;
+            while i < bytes.len() && (bytes[i] as char).is_ascii_whitespace() {
+                i += 1;
+            }
+            if let Some(&q) = bytes.get(i) {
+                if q == b'"' || q == b'\'' {
+                    i += 1;
+                    let v_start = i;
+                    while i < bytes.len() && bytes[i] != q {
+                        i += 1;
+                    }
+                    value = tag[v_start..i].to_string();
+                    if i < bytes.len() {
+                        i += 1; // closing quote
+                    }
+                } else {
+                    let v_start = i;
+                    while i < bytes.len() &&
+                        !(bytes[i] as char).is_ascii_whitespace() &&
+                        bytes[i] != b'>' &&
+                        bytes[i] != b'/'
+                    {
+                        i += 1;
+                    }
+                    value = tag[v_start..i].to_string();
+                }
+            }
+        }
+
+        let drop = name_lower.starts_with("on") || value.trim().to_ascii_lowercase().starts_with("javascript:");
+        if !drop {
+            out.push_str(name);
+            if !value.is_empty() || tag[name_start..i].contains('=') {
+                out.push_str("=\"");
+                out.push_str(&value.replace('"', "&quot;"));
+                out.push('"');
+            }
+        }
+    }
+
+    if !out.ends_with('>') {
+        out.push('>');
+    }
+    out
+}
+
+/// Deterministic SVG avatar with XML-escaped symbol text and hash-derived
+/// colors.
 pub fn fallback_svg(symbol: &str, token_id: &str) -> String {
     let escaped = escape_xml(symbol);
     let (bg, fg) = colors_from_token(token_id);
@@ -233,11 +576,63 @@ mod tests {
     }
 
     #[test]
-    fn only_supported_raster_content_types_are_accepted() {
+    fn content_type_hints_include_common_image_formats() {
         assert_eq!(extension_for_content_type("image/png"), Some("png"));
         assert_eq!(extension_for_content_type("image/jpeg"), Some("jpg"));
         assert_eq!(extension_for_content_type("image/webp"), Some("webp"));
-        assert_eq!(extension_for_content_type("image/svg+xml"), None);
+        assert_eq!(extension_for_content_type("image/gif"), Some("gif"));
+        assert_eq!(extension_for_content_type("image/svg+xml"), Some("svg"));
         assert_eq!(extension_for_content_type("text/html"), None);
+    }
+
+    #[test]
+    fn detect_image_ext_from_magic_bytes() {
+        let png = [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', 0, 0];
+        assert_eq!(detect_image_ext(&png, "text/html"), Some("png"));
+
+        let jpg = [0xff, 0xd8, 0xff, 0xe0, 0, 0];
+        assert_eq!(detect_image_ext(&jpg, ""), Some("jpg"));
+
+        let mut webp = b"RIFF....WEBP....".to_vec();
+        webp[4] = 0;
+        assert_eq!(detect_image_ext(&webp, ""), Some("webp"));
+
+        let gif = b"GIF89a............";
+        assert_eq!(detect_image_ext(gif, ""), Some("gif"));
+
+        let svg = b"<?xml version=\"1.0\"?><svg xmlns=\"http://www.w3.org/2000/svg\"></svg>";
+        assert_eq!(detect_image_ext(svg, "image/png"), Some("svg"));
+    }
+
+    #[test]
+    fn detect_image_ext_rejects_html() {
+        let html = b"<!DOCTYPE html><html><body>not an image</body></html>";
+        assert_eq!(detect_image_ext(html, "image/png"), None);
+
+        let html2 = b"<html><head></head></html>";
+        assert_eq!(detect_image_ext(html2, "image/svg+xml"), None);
+    }
+
+    #[test]
+    fn sanitize_svg_strips_script_and_handlers() {
+        let dirty = br#"<svg xmlns="http://www.w3.org/2000/svg" onclick="alert(1)">
+<script>alert(1)</script>
+<a href="javascript:alert(1)"><circle r="10"/></a>
+<foreignObject><body xmlns="http://www.w3.org/1999/xhtml">x</body></foreignObject>
+</svg>"#;
+        let clean = sanitize_svg(dirty).expect("sanitized");
+        let lower = clean.to_ascii_lowercase();
+        assert!(lower.contains("<svg"));
+        assert!(lower.contains("<circle"));
+        assert!(!lower.contains("<script"));
+        assert!(!lower.contains("onclick"));
+        assert!(!lower.contains("javascript:"));
+        assert!(!lower.contains("foreignobject"));
+    }
+
+    #[test]
+    fn sanitize_svg_rejects_non_svg() {
+        assert!(sanitize_svg(b"<html></html>").is_none());
+        assert!(sanitize_svg(b"").is_none());
     }
 }

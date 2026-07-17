@@ -110,6 +110,10 @@ LUMAGG_PARTNER_API_KEYS=key_one,key_two
 https://api.lumagg.xyz/logos/
 ```
 
+可选字段 `logo_kind`：
+- `"official"` — 来自 SEP-42 列表（Soroswap / LOBSTR / StellarExpert Top50），按原格式自托管（PNG/JPEG/WebP/GIF/SVG）
+- `"fallback"` — 无官方图标时本地生成的字母头像
+
 请不要依赖第三方图床展示 Token 图标。
 
 ## 5. 执行模式

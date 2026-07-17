@@ -804,10 +804,21 @@ pub struct TokenInfo {
     pub name: String,
     /// Self-hosted logo URL (`https://api.lumagg.xyz/logos/...`) when enriched; empty otherwise.
     pub logo: String,
+    /// `"official"` for SEP-42 downloaded icons, `"fallback"` for generated
+    /// letter avatars.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logo_kind: Option<String>,
 }
 
 fn resolve_token_logo(metadata_logo: Option<String>) -> String {
     metadata_logo.unwrap_or_default()
+}
+
+fn resolve_logo_kind(kind: Option<dex_adapters::token_metadata::LogoKind>) -> Option<String> {
+    kind.map(|k| match k {
+        dex_adapters::token_metadata::LogoKind::Official => "official".to_string(),
+        dex_adapters::token_metadata::LogoKind::Fallback => "fallback".to_string(),
+    })
 }
 
 pub async fn list_tokens(State(state): State<AppState>) -> impl IntoResponse {
@@ -828,6 +839,7 @@ pub async fn list_tokens(State(state): State<AppState>) -> impl IntoResponse {
                         symbol: meta.symbol.clone(),
                         name: meta.name.clone(),
                         logo: resolve_token_logo(meta.logo.clone()),
+                        logo_kind: resolve_logo_kind(meta.logo_kind),
                     };
                 }
             }
@@ -839,6 +851,7 @@ pub async fn list_tokens(State(state): State<AppState>) -> impl IntoResponse {
                     symbol: "XLM".to_string(),
                     name: "Stellar Lumens".to_string(),
                     logo: String::new(),
+                    logo_kind: None,
                 }
             } else if addr.contains(':') {
                 let code = addr.split(':').next().unwrap_or(&addr).to_string();
@@ -847,6 +860,7 @@ pub async fn list_tokens(State(state): State<AppState>) -> impl IntoResponse {
                     symbol: code.clone(),
                     name: code,
                     logo: String::new(),
+                    logo_kind: None,
                 }
             } else if let Some(meta) = metadata.get(&addr) {
                 // Use metadata even if "Unknown" (at least has the short symbol)
@@ -855,6 +869,7 @@ pub async fn list_tokens(State(state): State<AppState>) -> impl IntoResponse {
                     symbol: meta.symbol.clone(),
                     name: meta.name.clone(),
                     logo: resolve_token_logo(meta.logo.clone()),
+                    logo_kind: resolve_logo_kind(meta.logo_kind),
                 }
             } else {
                 let short = if addr.len() > 8 {
@@ -867,6 +882,7 @@ pub async fn list_tokens(State(state): State<AppState>) -> impl IntoResponse {
                     symbol: short,
                     name: "Unknown".to_string(),
                     logo: String::new(),
+                    logo_kind: None,
                 }
             }
         })
@@ -1415,9 +1431,9 @@ pub async fn build_tx(State(_state): State<AppState>, Json(body): Json<BuildTxRe
             // Simulate failed — do NOT return a broken raw XDR.
             // A Soroban tx without sorobanData cannot be signed by any wallet.
             // Categorize the error for a better UX message.
-            let user_msg = if e.contains("Output below minimum")
-                || e.contains("below minimum")
-                || (e.contains("UnreachableCodeReached") && e.contains("swap"))
+            let user_msg = if e.contains("Output below minimum") ||
+                e.contains("below minimum") ||
+                (e.contains("UnreachableCodeReached") && e.contains("swap"))
             {
                 "Swap failed: on-chain output was below your minimum (quote vs execution drift, \
                  common on split routes). Refresh the quote, increase slippage, or retry with a single-path route."
@@ -1426,8 +1442,8 @@ pub async fn build_tx(State(_state): State<AppState>, Json(body): Json<BuildTxRe
                 "Swap failed: one of the pools has insufficient liquidity. \
                  Please try a smaller amount."
                     .to_string()
-            } else if e.contains("resulting balance is not within the allowed range")
-                || (e.contains("transfer") && e.contains("Error(Contract, #10)"))
+            } else if e.contains("resulting balance is not within the allowed range") ||
+                (e.contains("transfer") && e.contains("Error(Contract, #10)"))
             {
                 "Insufficient balance: your wallet does not hold enough of the input token \
                  for this swap amount. Lower the amount and refresh the quote."
@@ -1436,11 +1452,11 @@ pub async fn build_tx(State(_state): State<AppState>, Json(body): Json<BuildTxRe
                 "Swap failed: Comet pool token approval was rejected by simulation. \
                  The on-chain aggregator may need an upgrade; try refreshing the quote or a route without Comet."
                     .to_string()
-            } else if e.contains("account not found")
-                || e.contains("No sequence")
-                || e.contains("Horizon")
-                || e.contains("rate limit")
-                || e.contains("Rate Limit")
+            } else if e.contains("account not found") ||
+                e.contains("No sequence") ||
+                e.contains("Horizon") ||
+                e.contains("rate limit") ||
+                e.contains("Rate Limit")
             {
                 // Sequence lookup failed before SimulateTransaction — don't label as sim
                 // failure.
