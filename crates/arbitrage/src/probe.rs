@@ -25,6 +25,9 @@ pub fn first_diverging_hop(hops: &[HopCompare], threshold_bps: i64) -> Option<us
         let Some(chain) = h.chain_out else {
             return Some(h.index);
         };
+        if h.local_out == 0 {
+            continue;
+        }
         if hop_gap_bps(h.amount_in, h.local_out, chain).abs() >= threshold_bps {
             return Some(h.index);
         }
@@ -78,7 +81,10 @@ pub struct HopCompareReport {
 
 impl From<&HopCompare> for HopCompareReport {
     fn from(h: &HopCompare) -> Self {
-        let gap_bps = h.chain_out.map(|c| hop_gap_bps(h.amount_in, h.local_out, c));
+        let gap_bps = match (h.local_out, h.chain_out) {
+            (local, Some(chain)) if local > 0 => Some(hop_gap_bps(h.amount_in, local, chain)),
+            _ => None,
+        };
         Self {
             index: h.index,
             source: h.source.clone(),
@@ -135,5 +141,67 @@ mod tests {
         let b = pick_bridges(&bridges, 5, 42);
         assert_eq!(a, b);
         assert_eq!(a.len(), 5);
+    }
+
+    #[test]
+    fn first_diverging_hop_skips_unknown_local_out_on_intermediate_hops() {
+        let hops = vec![
+            HopCompare {
+                index: 0,
+                source: "soroswap".into(),
+                pool: "P0".into(),
+                amount_in: 100_000_000,
+                local_out: 0,
+                chain_out: Some(50_000_000),
+            },
+            HopCompare {
+                index: 1,
+                source: "aquarius".into(),
+                pool: "P1".into(),
+                amount_in: 50_000_000,
+                local_out: 100_200_000,
+                chain_out: Some(99_900_000),
+            },
+        ];
+        let idx = first_diverging_hop(&hops, 5).expect("should find hop 1");
+        assert_eq!(idx, 1);
+    }
+
+    #[test]
+    fn first_diverging_hop_returns_chain_failure_not_unknown_local() {
+        let hops = vec![
+            HopCompare {
+                index: 0,
+                source: "soroswap".into(),
+                pool: "P0".into(),
+                amount_in: 100_000_000,
+                local_out: 0,
+                chain_out: Some(50_000_000),
+            },
+            HopCompare {
+                index: 1,
+                source: "aquarius".into(),
+                pool: "P1".into(),
+                amount_in: 50_000_000,
+                local_out: 0,
+                chain_out: None,
+            },
+        ];
+        let idx = first_diverging_hop(&hops, 5).expect("should find hop 1");
+        assert_eq!(idx, 1);
+    }
+
+    #[test]
+    fn hop_compare_report_omits_gap_when_local_out_unknown() {
+        let hop = HopCompare {
+            index: 0,
+            source: "soroswap".into(),
+            pool: "P0".into(),
+            amount_in: 100_000_000,
+            local_out: 0,
+            chain_out: Some(50_000_000),
+        };
+        let report = HopCompareReport::from(&hop);
+        assert_eq!(report.gap_bps, None);
     }
 }
