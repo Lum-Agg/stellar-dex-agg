@@ -17,6 +17,10 @@ path = "src/bin/diag_simulate.rs"
 name = "clean_caller_trustlines"
 path = "src/bin/clean_caller_trustlines.rs"
 
+[[bin]]
+name = "quote-sim-probe"
+path = "src/bin/quote_sim_probe.rs"
+
 [dependencies]
 market-snapshot = { path = "../market-snapshot" }
 router-engine = { path = "../router-engine" }
