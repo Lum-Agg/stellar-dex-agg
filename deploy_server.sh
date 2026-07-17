@@ -70,7 +70,7 @@ ssh -o StrictHostKeyChecking=no "$SERVER" \
   "MODE='${MODE}' REMOTE_SRC='${REMOTE_SRC}' REMOTE_APP_DIR='${REMOTE_APP_DIR}' REMOTE_API_BIN='${REMOTE_API_BIN}' REMOTE_WORKER_BIN='${REMOTE_WORKER_BIN}' API_PORTS_STR='${API_PORTS_STR}' bash -s" <<'REMOTE'
 set -euo pipefail
 
-mkdir -p "${REMOTE_APP_DIR}/target/release" "${REMOTE_APP_DIR}/deploy"
+mkdir -p "${REMOTE_APP_DIR}/target/release" "${REMOTE_APP_DIR}/deploy" "${REMOTE_APP_DIR}/data/logos"
 cp "${REMOTE_SRC}/deploy/lumagg-api@.service" /etc/systemd/system/lumagg-api@.service
 cp "${REMOTE_SRC}/deploy/lumagg-worker.service" /etc/systemd/system/lumagg-worker.service
 rm -f /etc/systemd/system/lumagg-api.service

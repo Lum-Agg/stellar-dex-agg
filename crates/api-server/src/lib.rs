@@ -15,11 +15,35 @@ use {
         Router,
     },
     config::AppConfig,
+    rate_limit::RateLimitState,
     state::AppState,
-    std::net::SocketAddr,
-    tower_http::cors::CorsLayer,
+    std::{net::SocketAddr, path::PathBuf},
+    tower_http::{cors::CorsLayer, services::ServeDir},
     tracing::info,
 };
+
+fn build_router(app_state: AppState, rate_limit: RateLimitState, logo_dir: PathBuf) -> Router {
+    let api = Router::new()
+        .route("/", get(handlers::api_root))
+        .route("/api/v1/quote", get(handlers::get_quote))
+        .route("/api/v1/build_tx", post(handlers::build_tx))
+        .route("/api/v1/tokens", get(handlers::list_tokens))
+        .route("/api/v1/balance", get(handlers::get_balance))
+        .route("/api/v1/balances", get(handlers::get_balances))
+        .route("/api/v1/health", get(handlers::health_check))
+        .route("/api/v1/stats", get(stats::get_stats))
+        .layer(middleware::from_fn_with_state(
+            rate_limit,
+            rate_limit::rate_limit_middleware,
+        ))
+        .with_state(app_state);
+
+    // Logos are static assets and must not consume API rate-limit quota.
+    Router::new()
+        .merge(api)
+        .nest_service("/logos", ServeDir::new(logo_dir))
+        .layer(CorsLayer::permissive())
+}
 
 pub async fn run_server() -> anyhow::Result<()> {
     let config = AppConfig::from_env();
@@ -34,23 +58,10 @@ pub async fn run_server() -> anyhow::Result<()> {
 
     let listen_addr: SocketAddr = config.listen_addr.parse()?;
     let app_state = AppState::new(config).await?;
-    let rate_limit = rate_limit::RateLimitState::from_env();
-
-    let app = Router::new()
-        .route("/", get(handlers::api_root))
-        .route("/api/v1/quote", get(handlers::get_quote))
-        .route("/api/v1/build_tx", post(handlers::build_tx))
-        .route("/api/v1/tokens", get(handlers::list_tokens))
-        .route("/api/v1/balance", get(handlers::get_balance))
-        .route("/api/v1/balances", get(handlers::get_balances))
-        .route("/api/v1/health", get(handlers::health_check))
-        .route("/api/v1/stats", get(stats::get_stats))
-        .layer(middleware::from_fn_with_state(
-            rate_limit.clone(),
-            rate_limit::rate_limit_middleware,
-        ))
-        .layer(CorsLayer::permissive())
-        .with_state(app_state);
+    let rate_limit = RateLimitState::from_env();
+    let logo_dir = PathBuf::from(std::env::var("TOKEN_LOGO_DIR").unwrap_or_else(|_| "data/logos".into()));
+    std::fs::create_dir_all(&logo_dir)?;
+    let app = build_router(app_state, rate_limit, logo_dir);
 
     info!("Stellar DEX Aggregator API listening on {}", listen_addr);
 
@@ -58,4 +69,45 @@ pub async fn run_server() -> anyhow::Result<()> {
     axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        axum::http::{header::CONTENT_TYPE, Request, StatusCode},
+        tower::ServiceExt,
+    };
+
+    #[tokio::test]
+    async fn serves_logo_files_from_configured_directory() {
+        let dir = std::env::temp_dir().join(format!(
+            "lumagg-logo-serve-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sample = dir.join("sample.svg");
+        std::fs::write(&sample, b"<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>").unwrap();
+
+        let app = axum::Router::new().nest_service("/logos", tower_http::services::ServeDir::new(&dir));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/logos/sample.svg")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let content_type = response.headers().get(CONTENT_TYPE).unwrap().to_str().unwrap();
+        assert!(content_type.starts_with("image/svg+xml"), "got {content_type}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

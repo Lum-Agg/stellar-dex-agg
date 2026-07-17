@@ -81,11 +81,20 @@ LUMAGG_PARTNER_API_KEYS=key_one,key_two
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/api/v1/health` | Liveness |
-| GET | `/api/v1/tokens` | Routable tokens + logo URLs |
+| GET | `/api/v1/tokens` | Routable tokens + **self-hosted** logo URLs |
+| GET | `/logos/{file}` | Static token logo files (`image/png|jpeg|webp|svg+xml`) |
 | GET | `/api/v1/quote` | Best route |
 | POST | `/api/v1/build_tx` | Unsigned XDR |
 | GET | `/api/v1/balance` | Single SAC balance |
 | GET | `/api/v1/balances` | Batch balances for common tokens |
+
+`/api/v1/tokens[].logo` is either empty during early enrichment, or an absolute self-hosted URL under:
+
+```text
+https://api.lumagg.xyz/logos/
+```
+
+Do not rely on third-party image hosts for token icons.
 
 ## 5. Execution modes
 

@@ -234,6 +234,8 @@ fn spawn_token_metadata_enrichment(
             return;
         }
         token_metadata.resolve_unknown(token_addresses.clone()).await;
+        // Idempotent backfill: migrate any third-party/snapshot logos to self-hosted URLs.
+        let _ = token_metadata.ensure_self_hosted_logos().await;
         let metadata = token_metadata.get_all().await;
         let enriched: Vec<TokenMetadataSnapshot> = token_addresses
             .into_iter()

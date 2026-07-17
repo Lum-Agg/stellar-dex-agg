@@ -97,11 +97,20 @@ LUMAGG_PARTNER_API_KEYS=key_one,key_two
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | GET | `/api/v1/health` | 存活检查 |
-| GET | `/api/v1/tokens` | 可路由 Token 及其 Logo URL |
+| GET | `/api/v1/tokens` | 可路由 Token + **自托管** Logo URL |
+| GET | `/logos/{file}` | 静态 Token Logo 文件（`image/png|jpeg|webp|svg+xml`） |
 | GET | `/api/v1/quote` | 获取最优路由 |
 | POST | `/api/v1/build_tx` | 构建未签名 XDR |
 | GET | `/api/v1/balance` | 查询单个 SAC 余额 |
 | GET | `/api/v1/balances` | 批量查询常用 Token 余额 |
+
+`/api/v1/tokens[].logo` 在 enrichment 完成前可能为空；完成后为自托管绝对 URL：
+
+```text
+https://api.lumagg.xyz/logos/
+```
+
+请不要依赖第三方图床展示 Token 图标。
 
 ## 5. 执行模式
 

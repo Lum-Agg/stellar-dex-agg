@@ -802,58 +802,12 @@ pub struct TokenInfo {
     pub id: String,
     pub symbol: String,
     pub name: String,
-    /// Stellar.expert asset icon URL when known; empty string otherwise.
+    /// Self-hosted logo URL (`https://api.lumagg.xyz/logos/...`) when enriched; empty otherwise.
     pub logo: String,
 }
 
-fn logo_url_for_asset_id(asset_id: &str) -> Option<String> {
-    if asset_id == "native" {
-        return Some("https://stellar.expert/explorer/public/asset/native/icon".to_string());
-    }
-    if let Some((code, issuer)) = asset_id.split_once(':') {
-        if !code.is_empty() && !issuer.is_empty() {
-            return Some(format!(
-                "https://stellar.expert/explorer/public/asset/{}-{}-1/icon",
-                code, issuer
-            ));
-        }
-    }
-    None
-}
-
-/// Mainnet SAC / classic mapping for tokens returned as contract ids (C...).
-const WELL_KNOWN_CONTRACT_LOGOS: &[(&str, &str)] = &[
-    (
-        "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
-        "https://stellar.expert/explorer/public/asset/native/icon",
-    ),
-    (
-        "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
-        "https://stellar.expert/explorer/public/asset/USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN-1/icon",
-    ),
-    (
-        "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
-        "https://stellar.expert/explorer/public/asset/EURC-GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2-1/icon",
-    ),
-    (
-        "CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV",
-        "https://stellar.expert/explorer/public/asset/AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA-1/icon",
-    ),
-];
-
-fn logo_for_contract(contract: &str) -> Option<String> {
-    WELL_KNOWN_CONTRACT_LOGOS
-        .iter()
-        .find(|(c, _)| *c == contract)
-        .map(|(_, url)| url.to_string())
-}
-
-fn resolve_token_logo(id: &str, name: &str, metadata_logo: Option<String>) -> String {
-    metadata_logo
-        .or_else(|| logo_url_for_asset_id(id))
-        .or_else(|| logo_url_for_asset_id(name))
-        .or_else(|| logo_for_contract(id))
-        .unwrap_or_default()
+fn resolve_token_logo(metadata_logo: Option<String>) -> String {
+    metadata_logo.unwrap_or_default()
 }
 
 pub async fn list_tokens(State(state): State<AppState>) -> impl IntoResponse {
@@ -869,12 +823,11 @@ pub async fn list_tokens(State(state): State<AppState>) -> impl IntoResponse {
             // Check metadata store first
             if let Some(meta) = metadata.get(&addr) {
                 if meta.name != "Unknown" {
-                    let logo = resolve_token_logo(&addr, &meta.name, meta.logo.clone());
                     return TokenInfo {
                         id: addr,
                         symbol: meta.symbol.clone(),
                         name: meta.name.clone(),
-                        logo,
+                        logo: resolve_token_logo(meta.logo.clone()),
                     };
                 }
             }
@@ -885,25 +838,23 @@ pub async fn list_tokens(State(state): State<AppState>) -> impl IntoResponse {
                     id: addr,
                     symbol: "XLM".to_string(),
                     name: "Stellar Lumens".to_string(),
-                    logo: resolve_token_logo("native", "native", None),
+                    logo: String::new(),
                 }
             } else if addr.contains(':') {
                 let code = addr.split(':').next().unwrap_or(&addr).to_string();
-                let logo = resolve_token_logo(&addr, &addr, None);
                 TokenInfo {
                     id: addr,
                     symbol: code.clone(),
                     name: code,
-                    logo,
+                    logo: String::new(),
                 }
             } else if let Some(meta) = metadata.get(&addr) {
                 // Use metadata even if "Unknown" (at least has the short symbol)
-                let logo = resolve_token_logo(&addr, &meta.name, meta.logo.clone());
                 TokenInfo {
                     id: addr,
                     symbol: meta.symbol.clone(),
                     name: meta.name.clone(),
-                    logo,
+                    logo: resolve_token_logo(meta.logo.clone()),
                 }
             } else {
                 let short = if addr.len() > 8 {
@@ -911,12 +862,11 @@ pub async fn list_tokens(State(state): State<AppState>) -> impl IntoResponse {
                 } else {
                     addr.clone()
                 };
-                let logo = resolve_token_logo(&addr, "", None);
                 TokenInfo {
                     id: addr,
                     symbol: short,
                     name: "Unknown".to_string(),
-                    logo,
+                    logo: String::new(),
                 }
             }
         })
@@ -1465,9 +1415,9 @@ pub async fn build_tx(State(_state): State<AppState>, Json(body): Json<BuildTxRe
             // Simulate failed — do NOT return a broken raw XDR.
             // A Soroban tx without sorobanData cannot be signed by any wallet.
             // Categorize the error for a better UX message.
-            let user_msg = if e.contains("Output below minimum") ||
-                e.contains("below minimum") ||
-                (e.contains("UnreachableCodeReached") && e.contains("swap"))
+            let user_msg = if e.contains("Output below minimum")
+                || e.contains("below minimum")
+                || (e.contains("UnreachableCodeReached") && e.contains("swap"))
             {
                 "Swap failed: on-chain output was below your minimum (quote vs execution drift, \
                  common on split routes). Refresh the quote, increase slippage, or retry with a single-path route."
@@ -1476,8 +1426,8 @@ pub async fn build_tx(State(_state): State<AppState>, Json(body): Json<BuildTxRe
                 "Swap failed: one of the pools has insufficient liquidity. \
                  Please try a smaller amount."
                     .to_string()
-            } else if e.contains("resulting balance is not within the allowed range") ||
-                (e.contains("transfer") && e.contains("Error(Contract, #10)"))
+            } else if e.contains("resulting balance is not within the allowed range")
+                || (e.contains("transfer") && e.contains("Error(Contract, #10)"))
             {
                 "Insufficient balance: your wallet does not hold enough of the input token \
                  for this swap amount. Lower the amount and refresh the quote."
@@ -1486,11 +1436,11 @@ pub async fn build_tx(State(_state): State<AppState>, Json(body): Json<BuildTxRe
                 "Swap failed: Comet pool token approval was rejected by simulation. \
                  The on-chain aggregator may need an upgrade; try refreshing the quote or a route without Comet."
                     .to_string()
-            } else if e.contains("account not found") ||
-                e.contains("No sequence") ||
-                e.contains("Horizon") ||
-                e.contains("rate limit") ||
-                e.contains("Rate Limit")
+            } else if e.contains("account not found")
+                || e.contains("No sequence")
+                || e.contains("Horizon")
+                || e.contains("rate limit")
+                || e.contains("Rate Limit")
             {
                 // Sequence lookup failed before SimulateTransaction — don't label as sim
                 // failure.
