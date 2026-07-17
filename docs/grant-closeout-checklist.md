@@ -7,7 +7,7 @@ Living checklist — tick as evidence lands in repo or production.
 - [x] D1 Benchmark matrix + refresh ([scf-benchmark-results.md](./scf-benchmark-results.md))
 - [x] D2 OpenAPI + [integrator-guide.md](./integrator-guide.md) + `prefer_soroban`
 - [ ] D2 ≥1 external integrator: `USER_G=G... ./scripts/integrator-smoke.sh` + feedback
-- [x] D3 Swap UI (logos, balance %, explorer)
+- [x] D3 Swap UI (logos, balance %, explorer) — self-hosted logos: 234/234 via `https://api.lumagg.xyz/logos/`
 - [x] D4 Indexer v0 + [sample-indexer-export.json](./sample-indexer-export.json)
 
 ## Tranche 2 · Aug 31, 2026
