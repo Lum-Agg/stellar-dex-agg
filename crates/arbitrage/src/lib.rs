@@ -11,6 +11,7 @@ pub mod keypair;
 pub mod optimize;
 pub mod pipeline;
 pub mod prepare;
+pub mod probe;
 pub mod profit;
 pub mod quote_client;
 pub mod runtime;
