@@ -2,9 +2,16 @@
 //! On startup, loads from file. In background, resolves unknown tokens via RPC.
 
 use {
-    crate::rpc::{scval_to_string, SorobanRpc},
+    crate::{
+        rpc::{scval_to_string, SorobanRpc},
+        token_logo::TokenLogoCache,
+    },
     serde::{Deserialize, Serialize},
-    std::{collections::HashMap, sync::Arc},
+    std::{
+        collections::HashMap,
+        path::{Path, PathBuf},
+        sync::Arc,
+    },
     tokio::sync::RwLock,
     tracing::{debug, info, warn},
 };
@@ -26,6 +33,19 @@ fn logo_url_for_asset_id(asset_id: &str) -> Option<String> {
     None
 }
 
+fn load_metadata_file(path: &Path) -> HashMap<String, TokenMetadata> {
+    match std::fs::read_to_string(path) {
+        Ok(data) => match serde_json::from_str::<MetadataCache>(&data) {
+            Ok(file_cache) => {
+                info!("Loaded {} token metadata entries from cache", file_cache.tokens.len());
+                file_cache.tokens
+            }
+            Err(_) => HashMap::new(),
+        },
+        Err(_) => HashMap::new(),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenMetadata {
     pub contract: String,
@@ -42,22 +62,38 @@ struct MetadataCache {
 
 pub struct TokenMetadataStore {
     cache: Arc<RwLock<HashMap<String, TokenMetadata>>>,
+    logo_cache: Arc<TokenLogoCache>,
+    metadata_file: PathBuf,
 }
 
 impl TokenMetadataStore {
     pub fn new(_rpc: Arc<SorobanRpc>) -> Self {
-        let mut cache = HashMap::new();
+        Self::with_logo_cache(TokenLogoCache::from_env())
+    }
 
-        // Load from file
-        if let Ok(data) = std::fs::read_to_string(METADATA_FILE) {
-            if let Ok(file_cache) = serde_json::from_str::<MetadataCache>(&data) {
-                cache = file_cache.tokens;
-                info!("Loaded {} token metadata entries from cache", cache.len());
-            }
-        }
-
+    /// Construct with an explicit logo cache, loading the default metadata file.
+    pub fn with_logo_cache(logo_cache: TokenLogoCache) -> Self {
+        let metadata_file = PathBuf::from(METADATA_FILE);
+        let cache = load_metadata_file(&metadata_file);
         Self {
             cache: Arc::new(RwLock::new(cache)),
+            logo_cache: Arc::new(logo_cache),
+            metadata_file,
+        }
+    }
+
+    /// Test helper: supply logo cache, metadata path, and initial entries
+    /// without reading or writing the repository metadata file.
+    #[cfg(test)]
+    fn with_logo_cache_and_file(
+        logo_cache: TokenLogoCache,
+        metadata_file: impl Into<PathBuf>,
+        initial: HashMap<String, TokenMetadata>,
+    ) -> Self {
+        Self {
+            cache: Arc::new(RwLock::new(initial)),
+            logo_cache: Arc::new(logo_cache),
+            metadata_file: metadata_file.into(),
         }
     }
 
@@ -76,6 +112,49 @@ impl TokenMetadataStore {
         *self.cache.write().await = tokens;
     }
 
+    /// Ensure every cached token has a self-hosted logo URL on disk.
+    ///
+    /// Clones entries before any await so the RwLock is never held across I/O.
+    /// Returns the number of tokens that successfully received a self-hosted URL.
+    pub async fn ensure_self_hosted_logos(&self) -> usize {
+        let entries: Vec<(String, TokenMetadata)> = {
+            let cache = self.cache.read().await;
+            cache.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        };
+
+        let mut success = 0usize;
+        let mut updates: Vec<(String, String)> = Vec::new();
+
+        for (id, meta) in entries {
+            let remote = meta.logo.as_deref();
+            match self.logo_cache.ensure_logo(&meta.contract, &meta.symbol, remote).await {
+                Ok(url) => {
+                    success += 1;
+                    if meta.logo.as_deref() != Some(url.as_str()) {
+                        updates.push((id, url));
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to ensure self-hosted logo for {}: {}", id, e);
+                }
+            }
+        }
+
+        if !updates.is_empty() {
+            {
+                let mut cache = self.cache.write().await;
+                for (id, url) in updates {
+                    if let Some(entry) = cache.get_mut(&id) {
+                        entry.logo = Some(url);
+                    }
+                }
+            }
+            self.save().await;
+        }
+
+        success
+    }
+
     /// Resolve unknown tokens in the background.
     /// Call this with a list of all known token addresses.
     pub async fn resolve_unknown(&self, token_addresses: Vec<String>) {
@@ -87,6 +166,8 @@ impl TokenMetadataStore {
         drop(cache);
 
         if unknown.is_empty() {
+            // Backfill self-hosted logos for already-cached entries.
+            self.ensure_self_hosted_logos().await;
             return;
         }
 
@@ -120,8 +201,10 @@ impl TokenMetadataStore {
 
         info!("Resolved {}/{} token metadata", resolved, unknown.len());
 
-        // Save to file
+        // Persist newly resolved metadata (may still have third-party logo URLs).
         self.save().await;
+        // Migrate logos to self-hosted URLs once for this resolve pass.
+        self.ensure_self_hosted_logos().await;
     }
 
     /// Fetch symbol and name from chain via simulate_call.
@@ -185,7 +268,15 @@ impl TokenMetadataStore {
 
         match serde_json::to_string_pretty(&file_cache) {
             Ok(json) => {
-                if let Err(e) = std::fs::write(METADATA_FILE, json) {
+                if let Some(parent) = self.metadata_file.parent() {
+                    if !parent.as_os_str().is_empty() {
+                        if let Err(e) = std::fs::create_dir_all(parent) {
+                            warn!("Failed to create token metadata directory: {}", e);
+                            return;
+                        }
+                    }
+                }
+                if let Err(e) = std::fs::write(&self.metadata_file, json) {
                     warn!("Failed to save token metadata: {}", e);
                 } else {
                     info!("Saved {} token metadata entries to cache", cache.len());
@@ -199,14 +290,36 @@ impl TokenMetadataStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::token_logo::TokenLogoCache;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_dir(label: &str) -> PathBuf {
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).expect("time").as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "dex-adapters-token-meta-{}-{}-{}",
+            label,
+            std::process::id(),
+            nanos
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    fn store_with_initial(
+        logo_dir: &std::path::Path,
+        base_url: &str,
+        metadata_file: PathBuf,
+        initial: HashMap<String, TokenMetadata>,
+    ) -> TokenMetadataStore {
+        TokenMetadataStore::with_logo_cache_and_file(TokenLogoCache::new(logo_dir, base_url), metadata_file, initial)
+    }
 
     #[tokio::test]
     async fn replace_all_overwrites_existing_cache() {
-        let rpc = Arc::new(SorobanRpc::new(
-            "https://soroban-rpc.mainnet.stellar.gateway.fm",
-            "Public Global Stellar Network ; September 2015",
-        ));
-        let store = TokenMetadataStore::new(rpc);
+        let logo_dir = unique_temp_dir("replace-logos");
+        let meta_file = unique_temp_dir("replace-meta").join("token_metadata.json");
+        let store = store_with_initial(&logo_dir, "https://api.test/logos", meta_file, HashMap::new());
         let mut replacement = HashMap::new();
         replacement.insert(
             "token-1".to_string(),
@@ -223,5 +336,79 @@ mod tests {
         let all = store.get_all().await;
         assert_eq!(all.len(), 1);
         assert_eq!(all["token-1"].symbol, "TOK");
+    }
+
+    #[tokio::test]
+    async fn enriches_missing_logo_with_self_hosted_fallback() {
+        let logo_dir = unique_temp_dir("enrich-logos");
+        let meta_file = unique_temp_dir("enrich-meta").join("token_metadata.json");
+        let mut initial = HashMap::new();
+        initial.insert(
+            "token-1".to_string(),
+            TokenMetadata {
+                contract: "token-1".to_string(),
+                symbol: "TOK".to_string(),
+                name: "Token".to_string(),
+                logo: None,
+            },
+        );
+        let store = store_with_initial(&logo_dir, "https://api.test/logos", meta_file.clone(), initial);
+
+        let count = store.ensure_self_hosted_logos().await;
+
+        let meta = store.get("token-1").await.expect("token present");
+        assert!(meta.logo.as_deref().unwrap().starts_with("https://api.test/logos/"));
+        assert_eq!(std::fs::read_dir(&logo_dir).unwrap().count(), 1);
+        assert_eq!(count, 1);
+
+        let persisted = std::fs::read_to_string(&meta_file).expect("metadata persisted");
+        assert!(persisted.contains("https://api.test/logos/"));
+    }
+
+    #[tokio::test]
+    async fn enriches_when_external_logo_download_fails() {
+        let logo_dir = unique_temp_dir("fail-logos");
+        let meta_file = unique_temp_dir("fail-meta").join("token_metadata.json");
+        let mut initial = HashMap::new();
+        initial.insert(
+            "token-2".to_string(),
+            TokenMetadata {
+                contract: "token-2".to_string(),
+                symbol: "EXT".to_string(),
+                name: "External".to_string(),
+                logo: Some("https://127.0.0.1:1/missing-logo.png".to_string()),
+            },
+        );
+        let store = store_with_initial(&logo_dir, "https://api.test/logos", meta_file, initial);
+
+        let count = store.ensure_self_hosted_logos().await;
+
+        let meta = store.get("token-2").await.expect("token present");
+        assert!(meta.logo.as_deref().unwrap().starts_with("https://api.test/logos/"));
+        assert_eq!(std::fs::read_dir(&logo_dir).unwrap().count(), 1);
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn resolve_unknown_backfills_logos_when_no_unknown_tokens() {
+        let logo_dir = unique_temp_dir("backfill-logos");
+        let meta_file = unique_temp_dir("backfill-meta").join("token_metadata.json");
+        let mut initial = HashMap::new();
+        initial.insert(
+            "token-1".to_string(),
+            TokenMetadata {
+                contract: "token-1".to_string(),
+                symbol: "TOK".to_string(),
+                name: "Token".to_string(),
+                logo: None,
+            },
+        );
+        let store = store_with_initial(&logo_dir, "https://api.test/logos", meta_file, initial);
+
+        store.resolve_unknown(vec!["token-1".to_string()]).await;
+
+        let meta = store.get("token-1").await.expect("token present");
+        assert!(meta.logo.as_deref().unwrap().starts_with("https://api.test/logos/"));
+        assert_eq!(std::fs::read_dir(&logo_dir).unwrap().count(), 1);
     }
 }
