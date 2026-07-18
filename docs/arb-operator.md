@@ -96,6 +96,20 @@ Example log grep:
 journalctl -u lumagg-arb --since today | grep 'arb tx SUCCESS'
 ```
 
+### Quote vs on-chain probe (offline)
+
+Does **not** run inside `lumagg-arb`. Samples quote-api routes and immediately
+compares each hop to on-chain `estimate_swap` / fresh Soroswap reserves (and
+optionally a full vault `simulateTransaction`).
+
+```bash
+./scripts/quote-sim-probe.sh --mode round-trip --samples 20 --seed 1 \
+  --amount-in 100000000 --jsonl --simulate
+```
+
+Use when `avg_quote_sim_gap_bps` / quiet-window alerts fire. Path-level
+`gap_bps` is authoritative; hop `chain_out` shows where the chain path shrinks.
+
 ## 5. Risk & limits
 
 - **Arb-only vault** — no public withdraw; callers cannot drain in a separate tx.
