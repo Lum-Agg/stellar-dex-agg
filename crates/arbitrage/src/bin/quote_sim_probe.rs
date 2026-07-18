@@ -7,8 +7,20 @@
 
 use {
     anyhow::{bail, Context, Result},
-    arbitrage::probe::{first_diverging_hop, hop_gap_bps, HopCompare, HopCompareReport, ProbeSampleReport},
+    arbitrage::{
+        bridge::quote_round_trip,
+        config::ArbConfig,
+        context::ArbContext,
+        invoke::build_execute_round_trip_op,
+        prepare::{fetch_account_sequence, fetch_latest_ledger, prepare_transaction_xdr, vault_allowance_expiration},
+        probe::{
+            first_diverging_hop, hop_gap_bps, pick_bridges, HopCompare, HopCompareReport, ProbeSampleReport,
+            RoundTripProbeReport,
+        },
+        scanner::compute_profit_bps,
+    },
     dex_adapters::{on_chain_quote, rpc::SorobanRpc},
+    router_engine::TokenId,
     serde_json::Value,
     std::env,
 };
@@ -27,6 +39,7 @@ struct Cli {
     threshold_bps: i64,
     jsonl: bool,
     simulate: bool,
+    bridges: Option<Vec<String>>,
 }
 
 impl Default for Cli {
@@ -41,6 +54,7 @@ impl Default for Cli {
             threshold_bps: 10,
             jsonl: false,
             simulate: false,
+            bridges: None,
         }
     }
 }
@@ -242,6 +256,140 @@ async fn compare_quote_leg(
     })
 }
 
+fn round_trip_error_report(
+    base: &str,
+    bridge: &str,
+    amount_in: u128,
+    error: impl Into<String>,
+) -> RoundTripProbeReport {
+    RoundTripProbeReport {
+        bridge: bridge.into(),
+        amount_in,
+        quoted_out: 0,
+        quoted_profit_bps: 0,
+        leg_out: error_report(base, bridge, amount_in, "round-trip quote unavailable"),
+        leg_back: error_report(bridge, base, 0, "round-trip quote unavailable"),
+        simulate_out: None,
+        simulate_gap_bps: None,
+        error: Some(error.into()),
+    }
+}
+
+async fn simulate_round_trip(
+    ctx: &ArbContext,
+    base: &TokenId,
+    bridge: &TokenId,
+    caller: &str,
+    amount_in: u128,
+    quote: &arbitrage::bridge::RoundTripQuote,
+) -> Result<u128> {
+    let vault = ctx
+        .config
+        .vault_contract
+        .as_deref()
+        .context("ARB_VAULT_CONTRACT is required for --simulate")?;
+    let aggregator = ctx
+        .config
+        .aggregator_contract
+        .as_deref()
+        .context("ARB_AGGREGATOR_CONTRACT is required for --simulate")?;
+    let min_out = i128::try_from(quote.minimum_out.max(quote.amount_in.saturating_add(1)))?;
+    let allowance_expiration = vault_allowance_expiration(fetch_latest_ledger(&ctx.config.rpc_url).await?);
+    let op = build_execute_round_trip_op(
+        vault,
+        aggregator,
+        caller,
+        &base.canonical(),
+        &bridge.canonical(),
+        i128::try_from(amount_in)?,
+        &quote.leg_out,
+        &quote.leg_back,
+        min_out,
+        allowance_expiration,
+    )?;
+    let sequence = u64::try_from(fetch_account_sequence(&ctx.config.rpc_url, caller).await?)?;
+    Ok(prepare_transaction_xdr(
+        &ctx.config.rpc_url,
+        caller,
+        sequence,
+        std::slice::from_ref(&op),
+        100_000,
+    )
+    .await?
+    .amount_out)
+}
+
+async fn run_round_trip_sample(
+    ctx: &ArbContext,
+    rpc: &SorobanRpc,
+    quote_api: &str,
+    base: &TokenId,
+    bridge: &str,
+    amount_in: u128,
+    threshold_bps: i64,
+    simulate: bool,
+) -> RoundTripProbeReport {
+    let bridge_id = TokenId::from_str_auto(bridge);
+    let base_name = base.canonical();
+    let bridge_name = bridge_id.canonical();
+    let quote = match quote_round_trip(ctx, base, &bridge_id, amount_in).await {
+        Ok(quote) => quote,
+        Err(error) => return round_trip_error_report(&base_name, &bridge_name, amount_in, error.to_string()),
+    };
+
+    // The quote may use split routes. These path-localization probes intentionally
+    // request max_splits=1, so their per-leg route can differ from the execution quote.
+    let leg_out =
+        match compare_quote_leg(quote_api, rpc, &base_name, &bridge_name, quote.amount_in, threshold_bps).await {
+            Ok(report) => report,
+            Err(error) => error_report(&base_name, &bridge_name, quote.amount_in, error.to_string()),
+        };
+    let leg_back = match compare_quote_leg(
+        quote_api,
+        rpc,
+        &bridge_name,
+        &base_name,
+        quote.leg_out.route.total_expected_out,
+        threshold_bps,
+    )
+    .await
+    {
+        Ok(report) => report,
+        Err(error) => error_report(
+            &bridge_name,
+            &base_name,
+            quote.leg_out.route.total_expected_out,
+            error.to_string(),
+        ),
+    };
+
+    let mut report = RoundTripProbeReport {
+        bridge: bridge_name,
+        amount_in: quote.amount_in,
+        quoted_out: quote.amount_out,
+        quoted_profit_bps: compute_profit_bps(quote.amount_in, quote.amount_out),
+        leg_out,
+        leg_back,
+        simulate_out: None,
+        simulate_gap_bps: None,
+        error: None,
+    };
+
+    if simulate {
+        let caller = env::var("ARB_PROBE_CALLER")
+            .unwrap_or_else(|_| "GCMDWFAHD6PYI5SI2N2M6XINZDITECUV4XN7LYQGOWKQSIMQPRNK2DLN".into());
+        match simulate_round_trip(ctx, base, &bridge_id, &caller, amount_in, &quote).await {
+            Ok(simulate_out) => {
+                report.simulate_gap_bps = Some(hop_gap_bps(quote.amount_in, quote.amount_out, simulate_out));
+                report.simulate_out = Some(simulate_out);
+            }
+            Err(error) => report.error = Some(format!("simulate failed: {error:#}")),
+        }
+    }
+
+    report
+}
+
 fn parse_args() -> Result<Cli> {
     let mut cli = Cli::default();
     let mut args = env::args().skip(1);
@@ -270,12 +418,27 @@ fn parse_args() -> Result<Cli> {
                     .parse()
                     .context("--threshold-bps must be an i64")?
             }
+            "--bridges" => {
+                let bridges = next_value(&mut args, "--bridges")?
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|bridge| !bridge.is_empty())
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>();
+                if bridges.is_empty() {
+                    bail!("--bridges must contain at least one token");
+                }
+                cli.bridges = Some(bridges);
+            }
             "--jsonl" => cli.jsonl = true,
             "--simulate" => cli.simulate = true,
             "--help" | "-h" => {
                 bail!(
                     "usage: quote-sim-probe --mode one-leg --token-in C... --token-out C... \
                      --amount-in 100000000 [--samples N] [--seed U64] [--threshold-bps 10] \
+                     [--jsonl] [--simulate]\n\
+                     quote-sim-probe --mode round-trip [--bridges C...,C...] \
+                     [--amount-in 100000000] [--samples N] [--seed U64] [--threshold-bps 10] \
                      [--jsonl] [--simulate]"
                 )
             }
@@ -324,13 +487,100 @@ fn print_human(report: &ProbeSampleReport) {
     }
 }
 
+fn print_round_trip_human(report: &RoundTripProbeReport) {
+    println!(
+        "round-trip bridge={} amount_in={} quoted_out={} quoted_profit_bps={} simulate_out={:?} simulate_gap_bps={:?}",
+        report.bridge,
+        report.amount_in,
+        report.quoted_out,
+        report.quoted_profit_bps,
+        report.simulate_out,
+        report.simulate_gap_bps,
+    );
+    if let Some(error) = &report.error {
+        println!("error: {error}");
+    }
+    println!("leg_out:");
+    print_human(&report.leg_out);
+    println!("leg_back:");
+    print_human(&report.leg_back);
+}
+
+fn round_trip_abs_gap_bps(report: &RoundTripProbeReport) -> Option<u64> {
+    if let Some(gap) = report.simulate_gap_bps {
+        return Some(gap.unsigned_abs());
+    }
+    match (report.leg_out.gap_bps, report.leg_back.gap_bps) {
+        (Some(out), Some(back)) => Some(out.unsigned_abs().max(back.unsigned_abs())),
+        _ => None,
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = parse_args()?;
-    if cli.mode == "round-trip" {
-        bail!("round-trip mode is not implemented yet");
+    if cli.threshold_bps < 0 {
+        bail!("--threshold-bps must be non-negative");
     }
-    if cli.mode != "one-leg" {
+    if cli.mode == "round-trip" {
+        // ArbConfig requires bridge tokens even though an explicit --bridges
+        // list should be enough for this standalone probe.
+        if let Some(bridges) = &cli.bridges {
+            env::set_var("ARB_BRIDGE_TOKENS", bridges.join(","));
+        }
+        let config = ArbConfig::from_env()?;
+        let ctx = ArbContext::connect(config).await?;
+        let base = ctx
+            .config
+            .base_tokens
+            .first()
+            .context("no base token configured")?
+            .clone();
+        let bridges = cli
+            .bridges
+            .clone()
+            .unwrap_or_else(|| ctx.config.bridge_tokens.iter().map(TokenId::canonical).collect());
+        if bridges.is_empty() {
+            bail!("no bridge tokens configured; set ARB_BRIDGE_TOKENS or pass --bridges");
+        }
+
+        let rpc = SorobanRpc::new(&ctx.config.rpc_url, STELLAR_MAINNET_PASSPHRASE);
+        let quote_api = ctx
+            .config
+            .quote_api_urls
+            .first()
+            .cloned()
+            .context("no quote API URL configured")?;
+        let mut abs_gaps = Vec::new();
+        for bridge in pick_bridges(&bridges, cli.samples, cli.seed) {
+            let report = run_round_trip_sample(
+                &ctx,
+                &rpc,
+                &quote_api,
+                &base,
+                &bridge,
+                cli.amount_in,
+                cli.threshold_bps,
+                cli.simulate,
+            )
+            .await;
+            if let Some(gap) = round_trip_abs_gap_bps(&report) {
+                abs_gaps.push(gap);
+            }
+            if cli.jsonl {
+                println!("{}", serde_json::to_string(&report)?);
+            } else {
+                print_round_trip_human(&report);
+            }
+        }
+        abs_gaps.sort_unstable();
+        if let Some(median) = abs_gaps.get(abs_gaps.len() / 2) {
+            if *median > cli.threshold_bps as u64 {
+                std::process::exit(1);
+            }
+        }
+        return Ok(());
+    } else if cli.mode != "one-leg" {
         bail!("--mode must be one-leg or round-trip");
     }
     let token_in = cli.token_in.context("--token-in is required for one-leg mode")?;

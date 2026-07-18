@@ -43,9 +43,7 @@ pub fn pick_bridges(bridges: &[String], count: usize, seed: u64) -> Vec<String> 
     let mut state = seed.max(1);
     let mut out = Vec::with_capacity(count);
     for _ in 0..count {
-        state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1);
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
         let idx = (state as usize) % bridges.len();
         out.push(bridges[idx].clone());
     }
@@ -63,6 +61,19 @@ pub struct ProbeSampleReport {
     pub gap_bps: Option<i64>,
     pub first_bad_hop: Option<usize>,
     pub hops: Vec<HopCompareReport>,
+    pub simulate_out: Option<u128>,
+    pub simulate_gap_bps: Option<i64>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RoundTripProbeReport {
+    pub bridge: String,
+    pub amount_in: u128,
+    pub quoted_out: u128,
+    pub quoted_profit_bps: i64,
+    pub leg_out: ProbeSampleReport,
+    pub leg_back: ProbeSampleReport,
     pub simulate_out: Option<u128>,
     pub simulate_gap_bps: Option<i64>,
     pub error: Option<String>,
@@ -203,5 +214,38 @@ mod tests {
         };
         let report = HopCompareReport::from(&hop);
         assert_eq!(report.gap_bps, None);
+    }
+
+    #[test]
+    fn round_trip_report_serializes_both_legs() {
+        let leg = ProbeSampleReport {
+            mode: "one-leg".into(),
+            token_in: "BASE".into(),
+            token_out: "BRIDGE".into(),
+            amount_in: 100,
+            local_out: 101,
+            chain_path_out: Some(100),
+            gap_bps: Some(100),
+            first_bad_hop: None,
+            hops: vec![],
+            simulate_out: None,
+            simulate_gap_bps: None,
+            error: None,
+        };
+        let report = RoundTripProbeReport {
+            bridge: "BRIDGE".into(),
+            amount_in: 100,
+            quoted_out: 102,
+            quoted_profit_bps: 200,
+            leg_out: leg.clone(),
+            leg_back: leg,
+            simulate_out: None,
+            simulate_gap_bps: None,
+            error: None,
+        };
+
+        let value = serde_json::to_value(report).expect("report serializes");
+        assert!(value.get("leg_out").is_some());
+        assert!(value.get("leg_back").is_some());
     }
 }
