@@ -90,6 +90,18 @@ pub struct HopCompareReport {
     pub gap_bps: Option<i64>,
 }
 
+/// Absolute gap (bps) for median exit-code checks: prefer simulate gap, else max
+/// of both leg path gaps when available.
+pub fn round_trip_abs_gap_bps(report: &RoundTripProbeReport) -> Option<u64> {
+    if let Some(gap) = report.simulate_gap_bps {
+        return Some(gap.unsigned_abs());
+    }
+    match (report.leg_out.gap_bps, report.leg_back.gap_bps) {
+        (Some(out), Some(back)) => Some(out.unsigned_abs().max(back.unsigned_abs())),
+        _ => None,
+    }
+}
+
 impl From<&HopCompare> for HopCompareReport {
     fn from(h: &HopCompare) -> Self {
         let gap_bps = match (h.local_out, h.chain_out) {
@@ -214,6 +226,59 @@ mod tests {
         };
         let report = HopCompareReport::from(&hop);
         assert_eq!(report.gap_bps, None);
+    }
+
+    fn sample_leg(gap_bps: Option<i64>) -> ProbeSampleReport {
+        ProbeSampleReport {
+            mode: "one-leg".into(),
+            token_in: "BASE".into(),
+            token_out: "BRIDGE".into(),
+            amount_in: 100,
+            local_out: 101,
+            chain_path_out: Some(100),
+            gap_bps,
+            first_bad_hop: None,
+            hops: vec![],
+            simulate_out: None,
+            simulate_gap_bps: None,
+            error: None,
+        }
+    }
+
+    fn round_trip_report(
+        leg_out_gap: Option<i64>,
+        leg_back_gap: Option<i64>,
+        simulate_gap_bps: Option<i64>,
+    ) -> RoundTripProbeReport {
+        RoundTripProbeReport {
+            bridge: "BRIDGE".into(),
+            amount_in: 100,
+            quoted_out: 102,
+            quoted_profit_bps: 200,
+            leg_out: sample_leg(leg_out_gap),
+            leg_back: sample_leg(leg_back_gap),
+            simulate_out: None,
+            simulate_gap_bps,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn round_trip_abs_gap_prefers_simulate_gap() {
+        let report = round_trip_report(Some(5), Some(20), Some(-15));
+        assert_eq!(round_trip_abs_gap_bps(&report), Some(15));
+    }
+
+    #[test]
+    fn round_trip_abs_gap_uses_max_leg_gap_without_simulate() {
+        let report = round_trip_report(Some(5), Some(20), None);
+        assert_eq!(round_trip_abs_gap_bps(&report), Some(20));
+    }
+
+    #[test]
+    fn round_trip_abs_gap_none_when_legs_incomplete() {
+        let report = round_trip_report(Some(5), None, None);
+        assert_eq!(round_trip_abs_gap_bps(&report), None);
     }
 
     #[test]

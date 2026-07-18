@@ -14,8 +14,8 @@ use {
         invoke::build_execute_round_trip_op,
         prepare::{fetch_account_sequence, fetch_latest_ledger, prepare_transaction_xdr, vault_allowance_expiration},
         probe::{
-            first_diverging_hop, hop_gap_bps, pick_bridges, HopCompare, HopCompareReport, ProbeSampleReport,
-            RoundTripProbeReport,
+            first_diverging_hop, hop_gap_bps, pick_bridges, round_trip_abs_gap_bps, HopCompare, HopCompareReport,
+            ProbeSampleReport, RoundTripProbeReport,
         },
         scanner::compute_profit_bps,
     },
@@ -506,16 +506,6 @@ fn print_round_trip_human(report: &RoundTripProbeReport) {
     print_human(&report.leg_back);
 }
 
-fn round_trip_abs_gap_bps(report: &RoundTripProbeReport) -> Option<u64> {
-    if let Some(gap) = report.simulate_gap_bps {
-        return Some(gap.unsigned_abs());
-    }
-    match (report.leg_out.gap_bps, report.leg_back.gap_bps) {
-        (Some(out), Some(back)) => Some(out.unsigned_abs().max(back.unsigned_abs())),
-        _ => None,
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = parse_args()?;
@@ -574,6 +564,13 @@ async fn main() -> Result<()> {
             }
         }
         abs_gaps.sort_unstable();
+        if cli.samples > 0 && abs_gaps.is_empty() {
+            eprintln!(
+                "quote-sim-probe: no measurable gaps across {} samples (all failed or incomplete); exiting 1",
+                cli.samples
+            );
+            std::process::exit(1);
+        }
         if let Some(median) = abs_gaps.get(abs_gaps.len() / 2) {
             if *median > cli.threshold_bps as u64 {
                 std::process::exit(1);
