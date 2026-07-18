@@ -24,7 +24,7 @@ use {
             self, bitmap, clmm_pool_to_snapshot, clmm_swap_allowed, loaded_tick_range, tick_outside_word_scan,
             ClmmCoverageInput, ClmmPoolState, TickDataStore, TickState, TICKS_PER_CHUNK, U256 as ClmmU256,
         },
-        rpc::{scval_to_address, scval_to_i128, scval_to_u128, SorobanRpc},
+        rpc::{parse_fee_bps_u32, scval_to_address, scval_to_i128, scval_to_u128, SorobanRpc},
         traits::*,
     },
     anyhow::{anyhow, Result},
@@ -153,16 +153,13 @@ impl SushiAdapter {
             .map_err(|e| anyhow!("liquidity failed: {}", e))?;
         let liquidity = scval_to_u128(&liq_val).map_err(|e| anyhow!("Cannot parse liquidity: {}", e))?;
 
-        // fee() -> u32
+        // fee() — Uniswap-style ppm as U32 on mainnet; accept other numeric shapes
         let fee_val = self
             .rpc
             .call_no_args(pool_address, "fee")
             .await
             .map_err(|e| anyhow!("fee failed: {}", e))?;
-        let fee_bps = match &fee_val {
-            xdr::ScVal::U32(v) => *v,
-            _ => 3000,
-        };
+        let fee_bps = parse_fee_bps_u32(&fee_val).unwrap_or(3000);
 
         // tick_spacing() -> i32
         let ts_val = self
@@ -394,10 +391,7 @@ impl SushiAdapter {
                         );
                         let token0 = t0.ok().and_then(|v| scval_to_address(&v).ok())?;
                         let token1 = t1.ok().and_then(|v| scval_to_address(&v).ok())?;
-                        let fee = match fee_res.ok()? {
-                            xdr::ScVal::U32(f) => f,
-                            _ => return None,
-                        };
+                        let fee = parse_fee_bps_u32(&fee_res.ok()?)?;
                         let liquidity = liq.ok().and_then(|v| scval_to_u128(&v).ok()).unwrap_or(0);
                         if liquidity > 0 {
                             Some(AdapterTradingPair {

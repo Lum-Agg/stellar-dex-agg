@@ -261,6 +261,19 @@ pub fn scval_to_u32(val: &xdr::ScVal) -> Result<u32> {
     }
 }
 
+/// Parse fee fields that may be U32/I32/U64/I64/I128 depending on contract.
+/// Used for Phoenix `total_fee_bps`, Aquarius `get_fee_fraction`, Sushi `fee`,
+/// etc.
+pub fn parse_fee_bps_u32(val: &xdr::ScVal) -> Option<u32> {
+    match val {
+        xdr::ScVal::U32(v) => Some(*v),
+        xdr::ScVal::I32(v) if *v >= 0 => Some(*v as u32),
+        xdr::ScVal::U64(v) if *v <= u32::MAX as u64 => Some(*v as u32),
+        xdr::ScVal::I64(v) if *v >= 0 && *v <= u32::MAX as i64 => Some(*v as u32),
+        _ => scval_to_i128(val).ok().and_then(|v| u32::try_from(v).ok()),
+    }
+}
+
 /// Extract u128 from ScVal
 pub fn scval_to_u128(val: &xdr::ScVal) -> Result<u128> {
     match val {
@@ -311,4 +324,20 @@ pub fn get_map_field<'a>(map: &'a xdr::ScMap, key: &str) -> Option<&'a xdr::ScVa
         }
         _ => None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_fee_bps_u32_accepts_common_shapes() {
+        assert_eq!(parse_fee_bps_u32(&xdr::ScVal::U32(100)), Some(100));
+        assert_eq!(parse_fee_bps_u32(&xdr::ScVal::I64(50)), Some(50));
+        assert_eq!(
+            parse_fee_bps_u32(&xdr::ScVal::I128(xdr::Int128Parts { hi: 0, lo: 3000 })),
+            Some(3000)
+        );
+        assert!(parse_fee_bps_u32(&xdr::ScVal::Symbol("nope".try_into().unwrap())).is_none());
+    }
 }

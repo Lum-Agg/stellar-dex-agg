@@ -25,7 +25,7 @@ use {
             self, bitmap, clmm_pool_to_snapshot, clmm_swap_allowed, loaded_tick_range, tick_outside_loaded_range,
             ClmmCoverageInput, ClmmPoolState, TickDataStore, TickState, TICKS_PER_CHUNK, U256 as ClmmU256,
         },
-        rpc::SorobanRpc,
+        rpc::{parse_fee_bps_u32, SorobanRpc},
         traits::*,
     },
     anyhow::{anyhow, Result},
@@ -251,12 +251,9 @@ impl AquariusClmmAdapter {
             _ => return Err(anyhow!("Cannot parse get_tokens result")),
         };
 
-        // get_fee_fraction() -> u32
+        // get_fee_fraction() — mainnet U32 bps; accept I64/I128 too
         let fee_val = self.rpc.call_no_args(pool_address, "get_fee_fraction").await?;
-        let fee_bps = match &fee_val {
-            xdr::ScVal::U32(v) => *v,
-            _ => 30, // default
-        };
+        let fee_bps = parse_fee_bps_u32(&fee_val).unwrap_or(30);
 
         // get_info() -> Map with tick_spacing
         let info_val = self.rpc.call_no_args(pool_address, "get_info").await?;

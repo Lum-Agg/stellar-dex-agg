@@ -12,23 +12,44 @@ pub struct HopCompare {
     pub chain_out: Option<u128>,
 }
 
-/// (local_out − chain_out) / amount_in in bps, using local as the reference
-/// notional for the hop input. Positive ⇒ local optimistic vs chain.
+/// Same-token round-trip gap: (local_profit_bps − chain_profit_bps).
+/// Positive ⇒ local optimistic vs chain. Use for XLM→…→XLM / simulate only.
 pub fn hop_gap_bps(amount_in: u128, local_out: u128, chain_out: u128) -> i64 {
     let local_bps = compute_profit_bps(amount_in, local_out);
     let chain_bps = compute_profit_bps(amount_in, chain_out);
     local_bps.saturating_sub(chain_bps)
 }
 
+/// Cross-token output gap: (local_out − chain_out) / local_out in bps.
+/// Positive ⇒ local optimistic vs chain. Prefer this for one-leg path compares.
+pub fn output_gap_bps(local_out: u128, chain_out: u128) -> i64 {
+    if local_out == 0 {
+        return 0;
+    }
+    let delta = local_out as i128 - chain_out as i128;
+    ((delta.saturating_mul(10_000)) / local_out as i128) as i64
+}
+
+/// Venues without `hop_amount_out_on_chain` support — missing chain_out is not
+/// a divergence signal.
+pub fn on_chain_hop_supported(source: &str) -> bool {
+    matches!(source, "aquarius" | "aquarius_clmm" | "soroswap")
+}
+
 pub fn first_diverging_hop(hops: &[HopCompare], threshold_bps: i64) -> Option<usize> {
     for h in hops {
         let Some(chain) = h.chain_out else {
+            if !on_chain_hop_supported(&h.source) {
+                continue;
+            }
             return Some(h.index);
         };
         if h.local_out == 0 {
             continue;
         }
-        if hop_gap_bps(h.amount_in, h.local_out, chain).abs() >= threshold_bps {
+        // Prefer output-relative gap when comparing a path-level local_out
+        // against a hop/chain amount (avoids bogus cross-token "profit" bps).
+        if output_gap_bps(h.local_out, chain).abs() >= threshold_bps {
             return Some(h.index);
         }
     }
@@ -90,8 +111,8 @@ pub struct HopCompareReport {
     pub gap_bps: Option<i64>,
 }
 
-/// Absolute gap (bps) for median exit-code checks: prefer simulate gap, else max
-/// of both leg path gaps when available.
+/// Absolute gap (bps) for median exit-code checks: prefer simulate gap, else
+/// max of both leg path gaps when available.
 pub fn round_trip_abs_gap_bps(report: &RoundTripProbeReport) -> Option<u64> {
     if let Some(gap) = report.simulate_gap_bps {
         return Some(gap.unsigned_abs());
@@ -105,7 +126,7 @@ pub fn round_trip_abs_gap_bps(report: &RoundTripProbeReport) -> Option<u64> {
 impl From<&HopCompare> for HopCompareReport {
     fn from(h: &HopCompare) -> Self {
         let gap_bps = match (h.local_out, h.chain_out) {
-            (local, Some(chain)) if local > 0 => Some(hop_gap_bps(h.amount_in, local, chain)),
+            (local, Some(chain)) if local > 0 => Some(output_gap_bps(local, chain)),
             _ => None,
         };
         Self {
@@ -123,6 +144,37 @@ impl From<&HopCompare> for HopCompareReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn first_diverging_hop_skips_unsupported_venue_without_chain() {
+        let hops = vec![
+            HopCompare {
+                index: 0,
+                source: "phoenix".into(),
+                pool: "P0".into(),
+                amount_in: 100_000_000,
+                local_out: 0,
+                chain_out: None,
+            },
+            HopCompare {
+                index: 1,
+                source: "aquarius".into(),
+                pool: "P1".into(),
+                amount_in: 50_000_000,
+                local_out: 100_200_000,
+                chain_out: Some(99_900_000),
+            },
+        ];
+        let idx = first_diverging_hop(&hops, 5).expect("should find hop 1");
+        assert_eq!(idx, 1);
+    }
+
+    #[test]
+    fn output_gap_bps_is_relative_to_local_out() {
+        // ~30 bps of local, not bogus cross-token "profit" bps.
+        let gap = output_gap_bps(100_200_000, 99_900_000);
+        assert!((29..=30).contains(&gap), "gap={gap}");
+    }
 
     #[test]
     fn gap_bps_matches_20bps_fixture() {

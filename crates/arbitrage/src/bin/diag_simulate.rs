@@ -3,8 +3,12 @@
 use {
     anyhow::{Context, Result},
     arbitrage::{
-        bridge::quote_round_trip, config::ArbConfig, context::ArbContext, invoke::build_execute_round_trip_op,
-        prepare::prepare_transaction_xdr, scanner::compute_profit_bps,
+        bridge::quote_round_trip,
+        config::ArbConfig,
+        context::ArbContext,
+        invoke::{build_execute_round_trip_op, min_amount_out_break_even},
+        prepare::{parse_base_received_from_sim_error, prepare_transaction_xdr},
+        scanner::compute_profit_bps,
     },
     router_engine::TokenId,
     std::env,
@@ -62,7 +66,9 @@ async fn main() -> Result<()> {
     let vault = ctx.config.vault_contract.as_deref().context("ARB_VAULT_CONTRACT")?;
     let agg = ctx.config.aggregator_contract.as_deref().context("ARB_AGGREGATOR")?;
     let caller = "GCMDWFAHD6PYI5SI2N2M6XINZDITECUV4XN7LYQGOWKQSIMQPRNK2DLN";
-    let min_out = i128::try_from(quote.minimum_out.max(quote.amount_in.saturating_add(1)))?;
+    // Same as arb-scanner: break-even floor so optimistic quote.minimum_out does
+    // not trap the sim when on-chain returns less.
+    let min_out = min_amount_out_break_even(amount_in);
     let latest = arbitrage::prepare::fetch_latest_ledger(&ctx.config.rpc_url).await?;
     let allowance_exp = arbitrage::prepare::vault_allowance_expiration(latest);
     let op = build_execute_round_trip_op(
@@ -86,10 +92,28 @@ async fn main() -> Result<()> {
             println!("amount_out={}", prepared.amount_out);
             println!("profit={}", prepared.amount_out.saturating_sub(amount_in));
             println!("profit_bps={}", compute_profit_bps(amount_in, prepared.amount_out));
+            println!(
+                "quote_sim_gap_bps={}",
+                compute_profit_bps(amount_in, quote.amount_out)
+                    .saturating_sub(compute_profit_bps(amount_in, prepared.amount_out))
+            );
         }
         Err(e) => {
-            println!("=== simulate FAILED ===");
-            println!("{e:#}");
+            let err_str = e.to_string();
+            if let Some(recovered) = parse_base_received_from_sim_error(&err_str, &base.canonical(), agg, caller) {
+                println!("=== simulate recovered from trap ===");
+                println!("amount_out={recovered}");
+                println!("profit={}", recovered.saturating_sub(amount_in));
+                println!("profit_bps={}", compute_profit_bps(amount_in, recovered));
+                println!(
+                    "quote_sim_gap_bps={}",
+                    compute_profit_bps(amount_in, quote.amount_out)
+                        .saturating_sub(compute_profit_bps(amount_in, recovered))
+                );
+            } else {
+                println!("=== simulate FAILED ===");
+                println!("{e:#}");
+            }
         }
     }
     Ok(())

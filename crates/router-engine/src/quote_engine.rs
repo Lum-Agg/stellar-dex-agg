@@ -611,11 +611,12 @@ impl QuoteEngine {
         }
 
         let pair = Self::find_pool_edge(cached_pools, pool_address, token_in, token_out)?;
-        let fee_bps = pair.fee_bps;
+        let hydrated = hydration.and_then(|h| h.xyk_pools.get(&QuoteHydration::xyk_pool_key(source, pool_address)));
+        // Prefer live Redis fee when present — topology snapshot can lag (e.g.
+        // Phoenix total_fee_bps misparsed as default 30 while on-chain is 50).
+        let fee_bps = hydrated.map(|h| h.fee_bps).unwrap_or(pair.fee_bps);
 
-        let (reserve_in, reserve_out) = if let Some(hydrated) =
-            hydration.and_then(|h| h.xyk_pools.get(&QuoteHydration::xyk_pool_key(source, pool_address)))
-        {
+        let (reserve_in, reserve_out) = if let Some(hydrated) = hydrated {
             reserves_for_edge(token_in, token_out, hydrated)?
         } else if token_in.canonical() == pair.token_a.canonical() {
             (pair.reserve_a?, pair.reserve_b?)

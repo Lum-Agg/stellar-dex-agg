@@ -10,7 +10,7 @@
 
 use {
     crate::{
-        rpc::{get_map_field, scval_to_address, scval_to_i128, SorobanRpc},
+        rpc::{get_map_field, parse_fee_bps_u32, scval_to_address, scval_to_i128, SorobanRpc},
         traits::*,
     },
     anyhow::Result,
@@ -95,10 +95,10 @@ impl PhoenixAdapter {
             .ok_or_else(|| anyhow::anyhow!("missing pool_address"))
             .and_then(scval_to_address)?;
 
-        // total_fee_bps
+        // total_fee_bps — factory emits U32; accept I128 too for resilience.
         let fee_bps = get_map_field(map, "total_fee_bps")
-            .and_then(|v| scval_to_i128(v).ok())
-            .unwrap_or(30) as u32;
+            .and_then(parse_fee_bps_u32)
+            .unwrap_or(30);
 
         // pool_response -> asset_a, asset_b
         let pool_response = match get_map_field(map, "pool_response") {
@@ -328,5 +328,42 @@ mod tests {
         assert_eq!(PhoenixAdapter::compute_output(0, 100_000, 100_000, 30), 0);
         assert_eq!(PhoenixAdapter::compute_output(100, 0, 100_000, 30), 0);
         assert_eq!(PhoenixAdapter::compute_output(100, 100_000, 0, 30), 0);
+    }
+
+    #[test]
+    fn parse_fee_bps_accepts_i64_mainnet_shape() {
+        // Factory query_all_pools_details returns I64(50) on mainnet.
+        let fee = parse_fee_bps_u32(&xdr::ScVal::I64(50)).expect("i64 fee");
+        assert_eq!(fee, 50);
+    }
+
+    #[test]
+    fn parse_fee_bps_accepts_u32() {
+        let fee = parse_fee_bps_u32(&xdr::ScVal::U32(50)).expect("u32 fee");
+        assert_eq!(fee, 50);
+    }
+
+    #[test]
+    fn parse_fee_bps_accepts_i128() {
+        let fee = parse_fee_bps_u32(&xdr::ScVal::I128(xdr::Int128Parts { hi: 0, lo: 50 })).expect("i128 fee");
+        assert_eq!(fee, 50);
+    }
+
+    #[test]
+    fn parse_fee_bps_rejects_wrong_type() {
+        assert!(parse_fee_bps_u32(&xdr::ScVal::Symbol("nope".try_into().unwrap())).is_none());
+    }
+
+    #[test]
+    fn fifty_bps_matches_mainnet_usdc_pool_math() {
+        // Redis reserves for CBENAB… XLM/USDC; on-chain return matched 50 bps.
+        let ain = 100_000_000u128;
+        let rin = 102_243_016_828u128;
+        let rout = 19_023_291_387u128;
+        let at_30 = PhoenixAdapter::compute_output(ain, rin, rout, 30);
+        let at_50 = PhoenixAdapter::compute_output(ain, rin, rout, 50);
+        assert_eq!(at_30, 18_532_013);
+        assert_eq!(at_50, 18_494_838);
+        assert!(at_30 > at_50);
     }
 }

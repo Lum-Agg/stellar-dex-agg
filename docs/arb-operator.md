@@ -146,6 +146,24 @@ Use when quotes look optimistic vs on-chain, or when prepares go quiet despite
 opportunities (those signals may appear in arb stats / Telegram). Path-level
 `gap_bps` is authoritative; hop `chain_out` shows where the chain path shrinks.
 
+**Scheduled (production):** systemd timer every **30 minutes** (not a resident
+process). Installed by `./deploy_arb.sh`:
+
+```bash
+systemctl status lumagg-quote-sim-probe.timer
+journalctl -u lumagg-quote-sim-probe -n 50 --no-pager
+# JSONL archive:
+tail -f /opt/stellar-dex-aggregator/logs/quote-sim-probe.jsonl
+```
+
+Defaults: 10 samples, `--simulate`, threshold 30 bps (exit 1 if median gap
+exceeds it). Override via `deploy/arb.env` (`PROBE_SAMPLES`,
+`PROBE_THRESHOLD_BPS`, `PROBE_SIMULATE=0`). For hourly instead of 30m, edit
+`deploy/lumagg-quote-sim-probe.timer` → `OnCalendar=hourly` and
+`systemctl daemon-reload && systemctl restart lumagg-quote-sim-probe.timer`.
+
+Manual oneshot: `systemctl start lumagg-quote-sim-probe.service`
+
 ## 5. Risk & limits
 
 - **Arb-only vault** — no public withdraw; callers cannot drain in a separate tx.

@@ -4,13 +4,14 @@
 //! Key characteristics:
 //! - Router contract: CBQDHNBFBZYE4MKPWBSJOPIYLW4SFSXAXUTSXJN76GNKYVYPCKWC6QUK
 //! - Supports constant product (xy=k) and Curve stable swap
-//! - Fee is per-pool (typically 10-30 bps), fetched via get_fee_fraction()
+//! - Fee is per-pool (bps via `get_fee_fraction()`, commonly 30 or 100),
+//!   fetched as U32 on mainnet
 //! - Stable pools use Curve invariant with amplification factor
 //! - Pool discovery via get_tokens_sets_count() + get_pools_for_tokens_range()
 
 use {
     crate::{
-        rpc::{scval_to_address, scval_to_u128, SorobanRpc},
+        rpc::{parse_fee_bps_u32, scval_to_address, scval_to_u128, SorobanRpc},
         traits::*,
     },
     anyhow::Result,
@@ -329,7 +330,7 @@ impl AquariusAdapter {
 
     async fn fetch_pool_fee_bps(&self, pool_address: &str) -> Option<u32> {
         match self.rpc.call_no_args(pool_address, "get_fee_fraction").await {
-            Ok(val) => scval_to_u128(&val).ok().map(|v| v as u32),
+            Ok(val) => parse_fee_bps_u32(&val),
             Err(_) => None,
         }
     }
@@ -748,5 +749,17 @@ mod tests {
         .amount_out;
 
         assert!(hop2 > 9_000_000 && hop2 < 11_000_000, "expected ~1 XLM out, got {hop2}");
+    }
+
+    #[test]
+    fn parse_aquarius_fee_bps_accepts_u32_and_i128() {
+        // Mainnet get_fee_fraction returns U32 (e.g. 100 for CCMHVBZG…).
+        assert_eq!(parse_fee_bps_u32(&xdr::ScVal::U32(100)), Some(100));
+        assert_eq!(parse_fee_bps_u32(&xdr::ScVal::U32(30)), Some(30));
+        assert_eq!(
+            parse_fee_bps_u32(&xdr::ScVal::I128(xdr::Int128Parts { hi: 0, lo: 100 })),
+            Some(100)
+        );
+        assert!(parse_fee_bps_u32(&xdr::ScVal::Symbol("nope".try_into().unwrap())).is_none());
     }
 }

@@ -45,9 +45,9 @@ rsync -az --delete \
   "$(dirname "$0")/" \
   "${SERVER}:${REMOTE_SRC}/"
 
-echo "=== Building arb-scanner on server ==="
+echo "=== Building arb-scanner + quote-sim-probe on server ==="
 ssh -o StrictHostKeyChecking=no "$SERVER" \
-  "source ~/.cargo/env && cd ${REMOTE_SRC} && cargo build --release -p arbitrage 2>&1 | tail -15"
+  "source ~/.cargo/env && cd ${REMOTE_SRC} && cargo build --release -p arbitrage --bin arb-scanner --bin quote-sim-probe --bin diag_simulate 2>&1 | tail -20"
 
 echo "=== Arb env (server-only) ==="
 ARB_ENV_FILE="$(dirname "$0")/scripts/arb.env.local"
@@ -60,17 +60,24 @@ else
   echo "      Service defaults to ARB_SUBMIT_TX=0 (simulate-only) from lumagg-arb.service"
 fi
 
-echo "=== Installing binary + systemd unit ==="
+echo "=== Installing binary + systemd unit + quote-sim-probe timer ==="
 ssh -o StrictHostKeyChecking=no "$SERVER" \
   "MODE='${MODE}' START='${START}' REMOTE_SRC='${REMOTE_SRC}' REMOTE_APP_DIR='${REMOTE_APP_DIR}' REMOTE_ARB_BIN='${REMOTE_ARB_BIN}' bash -s" <<'REMOTE'
 set -euo pipefail
-mkdir -p "${REMOTE_APP_DIR}/target/release" "${REMOTE_APP_DIR}/deploy"
+mkdir -p "${REMOTE_APP_DIR}/target/release" "${REMOTE_APP_DIR}/deploy" "${REMOTE_APP_DIR}/scripts" "${REMOTE_APP_DIR}/logs"
 deploy_arb() {
   systemctl stop lumagg-arb >/dev/null 2>&1 || true
   cp "${REMOTE_SRC}/target/release/arb-scanner" "${REMOTE_ARB_BIN}"
+  cp "${REMOTE_SRC}/target/release/quote-sim-probe" "${REMOTE_APP_DIR}/target/release/quote-sim-probe"
+  chmod +x "${REMOTE_APP_DIR}/target/release/quote-sim-probe"
+  cp "${REMOTE_SRC}/scripts/run-quote-sim-probe-scheduled.sh" "${REMOTE_APP_DIR}/scripts/run-quote-sim-probe-scheduled.sh"
+  chmod +x "${REMOTE_APP_DIR}/scripts/run-quote-sim-probe-scheduled.sh"
   cp "${REMOTE_SRC}/deploy/lumagg-arb.service" /etc/systemd/system/lumagg-arb.service
+  cp "${REMOTE_SRC}/deploy/lumagg-quote-sim-probe.service" /etc/systemd/system/lumagg-quote-sim-probe.service
+  cp "${REMOTE_SRC}/deploy/lumagg-quote-sim-probe.timer" /etc/systemd/system/lumagg-quote-sim-probe.timer
   systemctl daemon-reload
   systemctl enable lumagg-arb
+  systemctl enable --now lumagg-quote-sim-probe.timer
 
   if [[ "${MODE}" == "install" || "${START}" == "0" ]]; then
     echo "Skipping systemctl start (MODE=${MODE} START=${START})"
@@ -90,8 +97,12 @@ if [[ "$MODE" == "deploy" && "$START" == "1" ]]; then
   echo "=== Arb bot status ==="
   ssh -o StrictHostKeyChecking=no "$SERVER" \
     "systemctl status lumagg-arb --no-pager | head -14; echo; journalctl -u lumagg-arb -n 20 --no-pager"
+  echo "=== Quote-sim-probe timer ==="
+  ssh -o StrictHostKeyChecking=no "$SERVER" \
+    "systemctl status lumagg-quote-sim-probe.timer --no-pager | head -14; systemctl list-timers lumagg-quote-sim-probe.timer --no-pager"
 fi
 
 echo "=== Done ==="
 echo "Vault:  CCQQ3LRFCSGOYSSD6S4MGH6RWWYVDHYPJO6KYDJYC2IDZK4OGCK6P6KN"
 echo "Dry-run: ARB_SUBMIT_TX=0 in service/arb.env — set ARB_SUBMIT_TX=1 in deploy/arb.env then: systemctl restart lumagg-arb"
+echo "Probe timer: systemctl status lumagg-quote-sim-probe.timer  (every 30m; logs: journalctl -u lumagg-quote-sim-probe)"

@@ -1,9 +1,11 @@
-//! Independent quote-api vs on-chain hop probe (does not run inside arb-scanner).
+//! Independent quote-api vs on-chain hop probe (does not run inside
+//! arb-scanner).
 //!
 //! Usage:
 //!   ARB_QUOTE_API_URLS=http://127.0.0.1:3100 RPC_URL=http://127.0.0.1:8003 \
 //!     cargo run -p arbitrage --bin quote-sim-probe -- \
-//!     --mode one-leg --token-in CAS3...OWMA --token-out CCW67...MI75 --amount-in 100000000
+//!     --mode one-leg --token-in CAS3...OWMA --token-out CCW67...MI75
+//! --amount-in 100000000
 
 use {
     anyhow::{bail, Context, Result},
@@ -11,11 +13,14 @@ use {
         bridge::quote_round_trip,
         config::ArbConfig,
         context::ArbContext,
-        invoke::build_execute_round_trip_op,
-        prepare::{fetch_account_sequence, fetch_latest_ledger, prepare_transaction_xdr, vault_allowance_expiration},
+        invoke::{build_execute_round_trip_op, min_amount_out_break_even},
+        prepare::{
+            fetch_account_sequence, fetch_latest_ledger, parse_base_received_from_sim_error, prepare_transaction_xdr,
+            vault_allowance_expiration,
+        },
         probe::{
-            first_diverging_hop, hop_gap_bps, pick_bridges, round_trip_abs_gap_bps, HopCompare, HopCompareReport,
-            ProbeSampleReport, RoundTripProbeReport,
+            first_diverging_hop, hop_gap_bps, output_gap_bps, pick_bridges, round_trip_abs_gap_bps, HopCompare,
+            HopCompareReport, ProbeSampleReport, RoundTripProbeReport,
         },
         scanner::compute_profit_bps,
     },
@@ -170,11 +175,11 @@ async fn compare_quote_leg(
         .filter_map(|value| value.as_u64().and_then(|number| number.try_into().ok()))
         .collect();
 
-    if sources.is_empty()
-        || pools.len() != sources.len()
-        || tokens.len() != sources.len() + 1
-        || in_indices.len() != sources.len()
-        || out_indices.len() != sources.len()
+    if sources.is_empty() ||
+        pools.len() != sources.len() ||
+        tokens.len() != sources.len() + 1 ||
+        in_indices.len() != sources.len() ||
+        out_indices.len() != sources.len()
     {
         return Ok(error_report(
             token_in,
@@ -237,7 +242,9 @@ async fn compare_quote_leg(
         }
     }
 
-    let gap_bps = chain_path_out.map(|chain_out| hop_gap_bps(amount_in, local_out, chain_out));
+    // One-leg outs are different tokens — use output-relative gap, not RT profit
+    // bps.
+    let gap_bps = chain_path_out.map(|chain_out| output_gap_bps(local_out, chain_out));
     let first_bad_hop = first_diverging_hop(&hops, threshold_bps);
 
     Ok(ProbeSampleReport {
@@ -293,7 +300,9 @@ async fn simulate_round_trip(
         .aggregator_contract
         .as_deref()
         .context("ARB_AGGREGATOR_CONTRACT is required for --simulate")?;
-    let min_out = i128::try_from(quote.minimum_out.max(quote.amount_in.saturating_add(1)))?;
+    // Match arb-scanner: break-even min_out so sim returns the real on-chain
+    // amount instead of trapping when quote.minimum_out is optimistic.
+    let min_out = min_amount_out_break_even(amount_in);
     let allowance_expiration = vault_allowance_expiration(fetch_latest_ledger(&ctx.config.rpc_url).await?);
     let op = build_execute_round_trip_op(
         vault,
@@ -308,15 +317,25 @@ async fn simulate_round_trip(
         allowance_expiration,
     )?;
     let sequence = u64::try_from(fetch_account_sequence(&ctx.config.rpc_url, caller).await?)?;
-    Ok(prepare_transaction_xdr(
+    match prepare_transaction_xdr(
         &ctx.config.rpc_url,
         caller,
         sequence,
         std::slice::from_ref(&op),
         100_000,
     )
-    .await?
-    .amount_out)
+    .await
+    {
+        Ok(prepared) => Ok(prepared.amount_out),
+        Err(error) => {
+            let err_str = error.to_string();
+            if let Some(recovered) = parse_base_received_from_sim_error(&err_str, &base.canonical(), aggregator, caller)
+            {
+                return Ok(recovered);
+            }
+            Err(error)
+        }
+    }
 }
 
 async fn run_round_trip_sample(
@@ -338,7 +357,8 @@ async fn run_round_trip_sample(
     };
 
     // The quote may use split routes. These path-localization probes intentionally
-    // request max_splits=1, so their per-leg route can differ from the execution quote.
+    // request max_splits=1, so their per-leg route can differ from the execution
+    // quote.
     let leg_out =
         match compare_quote_leg(quote_api, rpc, &base_name, &bridge_name, quote.amount_in, threshold_bps).await {
             Ok(report) => report,

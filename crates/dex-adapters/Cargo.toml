@@ -51,3 +51,15 @@ required-features = []
 [[bin]]
 name = "list-sushi-pools"
 path = "src/bin/list_sushi_pools.rs"
+
+[[bin]]
+name = "phoenix-fee-dump"
+path = "src/bin/phoenix_fee_dump.rs"
+
+[[bin]]
+name = "aquarius-fee-dump"
+path = "src/bin/aquarius_fee_dump.rs"
+
+[[bin]]
+name = "fee-scval-audit"
+path = "src/bin/fee_scval_audit.rs"

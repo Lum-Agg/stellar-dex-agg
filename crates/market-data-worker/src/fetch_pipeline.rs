@@ -466,7 +466,7 @@ async fn collect_xyk_from_adapter_cache(
             &pair.pool_address,
             &topo.token_a,
             &topo.token_b,
-            topo.fee_bps,
+            pair.fee_bps,
             reserve_a,
             reserve_b,
         ));
