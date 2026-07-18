@@ -32,7 +32,8 @@ pub struct PreparedArbTx {
     pub quoted_amount_out: u128,
     /// On-chain simulated output (`base_total` from contract return).
     pub simulated_amount_out: u128,
-    /// Inclusion + resource fee from simulate (stroops).
+    /// Fee used for profit gates / accounting (stroops): simulated
+    /// `min_resource_fee` only (declared inclusion bid is ignored here).
     pub estimated_fee_stroops: u128,
     pub profit_bps: i64,
     pub unsigned_tx_xdr: String,
@@ -111,6 +112,8 @@ pub async fn prepare_opportunity_tx(
     } else {
         0
     };
+    // Declared inclusion bid (priority under surge). Not what we charge in the
+    // profit gate — actual inclusion is ~100 stroops and dominated by resource fee.
     let fee = 100_000u32;
     let mut unsigned_tx_xdr = String::new();
     let mut simulated = false;
@@ -143,7 +146,8 @@ pub async fn prepare_opportunity_tx(
                 unsigned_tx_xdr = prepared.unsigned_tx_xdr;
                 simulated = true;
                 simulated_amount_out = prepared.amount_out;
-                estimated_fee_stroops = prepared.estimated_fee_stroops;
+                // Profit gate: resource fee only (ignore ~100 stroop inclusion).
+                estimated_fee_stroops = prepared.resource_fee_stroops;
                 break;
             }
             Err(err) => {
@@ -254,7 +258,8 @@ pub async fn prepare_opportunity_tx(
 
     if simulated {
         let sim_profit = simulated_amount_out.saturating_sub(quote.amount_in);
-        // Net of Soroban resource fee — multi-hop/split routes often cost ~0.1 XLM.
+        // Gas covered by estimated_fee; ARB_MIN_PROFIT is a post-fee race/slippage
+        // buffer.
         let net_profit = sim_profit.saturating_sub(estimated_fee_stroops);
         if net_profit < ctx.config.min_profit {
             warn!(

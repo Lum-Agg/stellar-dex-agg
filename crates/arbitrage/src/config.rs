@@ -105,7 +105,7 @@ impl ArbConfig {
         let min_profit = std::env::var("ARB_MIN_PROFIT")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(120_000); // 0.012 XLM net after estimated fees
+            .unwrap_or(80_000); // 0.008 XLM net after estimated fees (race buffer)
 
         let slippage_bps = std::env::var("ARB_SLIPPAGE_BPS")
             .ok()

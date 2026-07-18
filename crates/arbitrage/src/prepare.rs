@@ -25,8 +25,10 @@ use {
 pub struct PreparedSimulation {
     pub unsigned_tx_xdr: String,
     pub amount_out: u128,
-    /// Inclusion fee + simulated Soroban resource fee (stroops).
+    /// Declared inclusion + `min_resource_fee` (stroops).
     pub estimated_fee_stroops: u128,
+    /// Simulated Soroban `min_resource_fee` only (stroops).
+    pub resource_fee_stroops: u128,
 }
 
 fn scval_i128_to_u128(val: &xdr::ScVal) -> Option<u128> {
@@ -286,6 +288,7 @@ pub async fn prepare_transaction_xdr(
         unsigned_tx_xdr,
         amount_out,
         estimated_fee_stroops,
+        resource_fee_stroops: resource_fee,
     })
 }
 
