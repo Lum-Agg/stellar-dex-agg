@@ -24,9 +24,10 @@ async fn main() -> Result<()> {
     runtime.log_startup();
 
     if let Some(alerter) = lumagg_alerts::TelegramAlerter::from_env().map(Arc::new) {
-        info!("Telegram profit reports enabled");
+        info!("Telegram profit reports + quiet-window alerts enabled");
         let _ = alerter.send("🚀 LumAgg arb-scanner started (burberry pipeline)").await;
-        telegram::spawn_hourly_profit_report(runtime.clone(), alerter);
+        telegram::spawn_hourly_profit_report(runtime.clone(), alerter.clone());
+        telegram::spawn_quiet_window_monitor(runtime.clone(), alerter);
     } else {
         info!("Telegram disabled (set TELEGRAM_ALERTS_ENABLED + token/chat in telegram.env)");
     }

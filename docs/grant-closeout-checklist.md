@@ -13,7 +13,7 @@ Living checklist — tick as evidence lands in repo or production.
 ## Tranche 2 · Aug 31, 2026
 
 - [x] D5 SDK code + examples (`packages/sdk`)
-- [ ] D5 `npm publish @lumagg/sdk`
+- [x] D5 `npm publish @lumagg/sdk` — https://www.npmjs.com/package/@lumagg/sdk (`0.1.0`)
 - [x] D6 Vault + arb mainnet ([arb-operator.md](./arb-operator.md))
 - [x] D6 Evidence: [arb-evidence-snapshot.md](./arb-evidence-snapshot.md) (26 SUCCESS since Jul 13)
 - [ ] D7 ≥2 integrator pilots ([integrator-pilots.md](./integrator-pilots.md))

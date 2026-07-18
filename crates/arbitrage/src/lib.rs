@@ -31,5 +31,5 @@ pub use {
     quote_client::{LegQuote, QuoteApiClient},
     runtime::{ArbRuntime, SharedRuntime},
     scanner::{evaluate_bridge_pair, scan_once, ArbOpportunity},
-    stats::{ArbStats, ArbStatsSnapshot},
+    stats::{ArbStats, ArbStatsSnapshot, QuietWindowAlert, QuietWindowTracker},
 };

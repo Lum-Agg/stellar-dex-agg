@@ -160,12 +160,18 @@ pub async fn prepare_opportunity_tx(
                 if !tried_probe_fallback && quote.amount_in > ctx.config.min_amount_in {
                     if let Some(base_out) = recovered_base_out {
                         let on_chain_profit = base_out.saturating_sub(quote.amount_in);
+                        let gap_bps = crate::stats::quote_sim_gap_bps(quote.amount_in, quote.amount_out, base_out);
+                        stats
+                            .discard_size_unprofitable
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        stats.record_quote_sim_gap(quote.amount_in, quote.amount_out, base_out);
                         warn!(
                             route = %quote.route_label(),
                             amount_in = quote.amount_in,
                             quoted_amount_out = quote.amount_out,
                             on_chain_base_out = base_out,
                             on_chain_profit,
+                            gap_bps,
                             "optimized size unprofitable on-chain — retry at probe size"
                         );
                         tried_probe_fallback = true;
@@ -177,6 +183,9 @@ pub async fn prepare_opportunity_tx(
                             Ok(_) => {
                                 stats
                                     .txs_sim_profit_rejected
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                stats
+                                    .discard_probe_unprofitable
                                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                 return Ok(None);
                             }
@@ -193,6 +202,14 @@ pub async fn prepare_opportunity_tx(
                 // profit, not structural path breakage.
                 if let Some(base_out) = recovered_base_out {
                     let on_chain_profit = base_out.saturating_sub(quote.amount_in);
+                    let gap_bps = crate::stats::quote_sim_gap_bps(quote.amount_in, quote.amount_out, base_out);
+                    stats
+                        .txs_sim_profit_rejected
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    stats
+                        .discard_below_quoted
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    stats.record_quote_sim_gap(quote.amount_in, quote.amount_out, base_out);
                     warn!(
                         route = %quote.route_label(),
                         caller = %caller_public_key,
@@ -200,12 +217,10 @@ pub async fn prepare_opportunity_tx(
                         quoted_amount_out = quote.amount_out,
                         on_chain_base_out = base_out,
                         on_chain_profit,
+                        gap_bps,
                         tried_probe_fallback,
                         "simulated route below quoted profit — discard"
                     );
-                    stats
-                        .txs_sim_profit_rejected
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     return Ok(None);
                 }
 
@@ -256,6 +271,9 @@ pub async fn prepare_opportunity_tx(
             );
             stats
                 .txs_sim_profit_rejected
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            stats
+                .discard_fee_gate
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return Ok(None);
         }

@@ -1,10 +1,12 @@
-//! Hourly Telegram profit / balance report for arb-scanner.
+//! Hourly Telegram profit / balance report + quiet-window alerts for
+//! arb-scanner.
 
 use {
     crate::{
         prepare::fetch_account_native_balance,
         profit::{format_xlm4, format_xlm4_u, ProfitWindow, RecentTx},
         runtime::ArbRuntime,
+        stats::QuietWindowTracker,
         vault::fetch_token_balance_stroops,
     },
     lumagg_alerts::TelegramAlerter,
@@ -41,11 +43,61 @@ pub fn spawn_hourly_profit_report(runtime: Arc<ArbRuntime>, alerter: Arc<Telegra
     });
 }
 
+/// Alert when opportunities keep arriving but nothing prepares (quote/sim gap).
+pub fn spawn_quiet_window_monitor(runtime: Arc<ArbRuntime>, alerter: Arc<TelegramAlerter>) {
+    let tick_secs = std::env::var("ARB_QUIET_ALERT_TICK_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(60u64)
+        .max(15);
+    let cooldown_secs = std::env::var("ARB_QUIET_ALERT_COOLDOWN_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1800u64)
+        .max(60);
+
+    tokio::spawn(async move {
+        let mut tracker = QuietWindowTracker::from_env();
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(tick_secs));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        interval.tick().await;
+
+        loop {
+            interval.tick().await;
+            let snap = runtime.stats.snapshot();
+            let Some(alert) = tracker.observe(snap) else {
+                continue;
+            };
+            info!(
+                consecutive_windows = alert.consecutive_windows,
+                opportunities_delta = alert.opportunities_delta,
+                avg_quote_sim_gap_bps = alert.avg_quote_sim_gap_bps,
+                "arb quiet window detected"
+            );
+            let text = alert.telegram_text();
+            if let Err(e) = alerter
+                .send_rate_limited("arb_quiet_window", &text, std::time::Duration::from_secs(cooldown_secs))
+                .await
+            {
+                warn!(error = %e, "arb quiet-window telegram alert failed");
+            }
+        }
+    });
+}
+
 async fn build_profit_report(runtime: &ArbRuntime) -> anyhow::Result<String> {
     let (hour, session, recent) = runtime.profit.snapshot_for_hourly_report();
     let vault_xlm = fetch_vault_xlm(runtime).await;
     let caller_lines = fetch_caller_balances(runtime).await;
-    Ok(format_report(vault_xlm, &caller_lines, &hour, &session, &recent))
+    let funnel = runtime.stats.snapshot();
+    Ok(format_report(
+        vault_xlm,
+        &caller_lines,
+        &hour,
+        &session,
+        &recent,
+        &funnel,
+    ))
 }
 
 async fn fetch_vault_xlm(runtime: &ArbRuntime) -> Option<u128> {
@@ -110,6 +162,7 @@ pub fn format_report(
     hour: &ProfitWindow,
     session: &ProfitWindow,
     recent: &[RecentTx],
+    funnel: &crate::stats::ArbStatsSnapshot,
 ) -> String {
     let vault_line = match vault_xlm {
         Some(v) => format!("🏦 Vault XLM: `{}` XLM", format_xlm4_u(v)),
@@ -131,6 +184,26 @@ pub fn format_report(
 
     let grand = vault_xlm.unwrap_or(0).saturating_add(caller_total);
 
+    let funnel_block = format!(
+        "🔎 Quote→sim funnel (session):\n\
+         · opportunities: {}\n\
+         · prepared: {} ({} bps)\n\
+         · sim_profit_rejected: {} ({} bps)\n\
+         · discards: size={} below_quoted={} fee={} probe={}\n\
+         · avg quote−sim gap: `{}` bps (n={})",
+        funnel.opportunities,
+        funnel.txs_prepared,
+        funnel.prepare_rate_bps(),
+        funnel.txs_sim_profit_rejected,
+        funnel.sim_reject_rate_bps(),
+        funnel.discard_size_unprofitable,
+        funnel.discard_below_quoted,
+        funnel.discard_fee_gate,
+        funnel.discard_probe_unprofitable,
+        funnel.avg_quote_sim_gap_bps,
+        funnel.quote_sim_gap_samples,
+    );
+
     format!(
         "📊 LumAgg Arb Monitor\n\
          \n\
@@ -141,6 +214,8 @@ pub fn format_report(
          {}\n\
          \n\
          {}\n\
+         \n\
+         {funnel_block}\n\
          \n\
          {caller_block}\n\
          ✅ Grand Total: `{}` XLM",
@@ -153,7 +228,31 @@ pub fn format_report(
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::profit::ProfitWindow};
+    use {
+        super::*,
+        crate::{profit::ProfitWindow, stats::ArbStatsSnapshot},
+    };
+
+    fn empty_funnel() -> ArbStatsSnapshot {
+        ArbStatsSnapshot {
+            routes_evaluated: 1000,
+            opportunities: 100,
+            txs_prepared: 1,
+            txs_sim_rejected: 0,
+            txs_sim_profit_rejected: 90,
+            discard_size_unprofitable: 50,
+            discard_below_quoted: 30,
+            discard_fee_gate: 10,
+            discard_probe_unprofitable: 0,
+            avg_quote_sim_gap_bps: 20,
+            quote_sim_gap_samples: 80,
+            txs_dry_run: 0,
+            txs_submitted: 1,
+            txs_succeeded: 1,
+            txs_failed: 0,
+            txs_dedup_skipped: 0,
+        }
+    }
 
     #[test]
     fn report_contains_sections() {
@@ -177,10 +276,14 @@ mod tests {
             &hour,
             &session,
             &recent,
+            &empty_funnel(),
         );
         assert!(msg.contains("LumAgg Arb Monitor"));
         assert!(msg.contains("Last hour"));
         assert!(msg.contains("57132675d489"));
         assert!(msg.contains("59.5035"));
+        assert!(msg.contains("Quote→sim funnel"));
+        assert!(msg.contains("avg quote−sim gap"));
+        assert!(msg.contains("below_quoted=30"));
     }
 }

@@ -86,14 +86,39 @@ systemctl status lumagg-arb
 | Signal | Where |
 |--------|-------|
 | SUCCESS / FAILED txs | `journalctl -u lumagg-arb` |
-| Hourly gross/fees/net | Telegram (`deploy/telegram.env`) |
+| Hourly gross/fees/net + funnel | Telegram (`deploy/telegram.env`) |
+| Quiet window (opps but 0 prepares) | Telegram alert `arb_quiet_window` |
 | On-chain volume | `analytics-indexer status` / `/api/v1/stats` |
 | Caller XLM | Horizon account balance (fee float only) |
+
+### Quote → sim funnel (long-term)
+
+Local quotes can look profitable while Soroban simulation loses ~20 bps. Prefer fixing the **quote path** (fresher pool state / venue math) over execution-side workarounds.
+
+Every 5 minutes `arb stats summary` logs:
+
+| Field | Meaning |
+|-------|---------|
+| `prepare_rate_bps` | `prepared / opportunities` |
+| `sim_reject_rate_bps` | `sim_profit_rejected / opportunities` |
+| `discard_size_unprofitable` | Optimized size failed break-even on-chain |
+| `discard_below_quoted` | Route ran on-chain but below quoted profit |
+| `discard_fee_gate` | Sim OK but net after fees < `ARB_MIN_PROFIT` |
+| `avg_quote_sim_gap_bps` | Mean (quoted_bps − on_chain_bps); positive = quote optimistic |
+
+Quiet-window Telegram alert (default: 5×60s ticks with ≥50 new opportunities and 0 prepares):
+
+| Env | Default | Purpose |
+|-----|---------|---------|
+| `ARB_QUIET_ALERT_TICK_SECS` | `60` | Tracker tick |
+| `ARB_QUIET_ALERT_WINDOWS` | `5` | Consecutive quiet ticks before alert |
+| `ARB_QUIET_ALERT_MIN_OPPS` | `50` | Min Δopportunities per tick |
+| `ARB_QUIET_ALERT_COOLDOWN_SECS` | `1800` | Telegram rate limit |
 
 Example log grep:
 
 ```bash
-journalctl -u lumagg-arb --since today | grep 'arb tx SUCCESS'
+journalctl -u lumagg-arb --since today | grep -E 'arb tx SUCCESS|arb stats summary|quiet window'
 ```
 
 ### Quote vs on-chain probe (offline)
