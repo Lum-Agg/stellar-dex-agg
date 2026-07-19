@@ -95,50 +95,125 @@ pub fn parse_escrow_order_event(event: &ContractEvent) -> Result<Option<ParsedOr
     }
 }
 
-pub fn apply_parsed_order_event(store: &IndexStore, event: &ParsedOrderEvent) -> Result<()> {
-    match event {
-        ParsedOrderEvent::Created {
-            order_id,
-            owner,
-            token_in,
-            token_out,
-            amount_in,
-            limit_out_per_in_e7,
-            expires_ledger,
-            ledger,
-            updated_at,
-        } => store.upsert_created(
-            *order_id as i64,
-            owner,
-            token_in,
-            token_out,
-            amount_in,
-            amount_in,
-            limit_out_per_in_e7,
-            *expires_ledger,
-            *ledger,
-            *ledger,
-            *updated_at,
-            *updated_at,
-        ),
-        ParsedOrderEvent::Filled {
-            order_id,
-            amount_in_remaining,
-            ledger,
-            updated_at,
-        } => store.apply_filled(*order_id as i64, amount_in_remaining, *ledger, *updated_at),
-        ParsedOrderEvent::Cancelled {
-            order_id,
-            ledger,
-            updated_at,
-        } => store.apply_closed(*order_id as i64, "cancelled", *ledger, *updated_at),
-        ParsedOrderEvent::Expired {
-            order_id,
-            ledger,
-            updated_at,
-        } => store.apply_closed(*order_id as i64, "expired", *ledger, *updated_at),
+    /// Returns `true` when the event was applied, `false` when skipped because the
+    /// order is missing or already terminal.
+    pub fn apply_parsed_order_event(store: &IndexStore, event: &ParsedOrderEvent) -> Result<bool> {
+        match event {
+            ParsedOrderEvent::Created {
+                order_id,
+                owner,
+                token_in,
+                token_out,
+                amount_in,
+                limit_out_per_in_e7,
+                expires_ledger,
+                ledger,
+                updated_at,
+            } => {
+                store.upsert_created(
+                    *order_id as i64,
+                    owner,
+                    token_in,
+                    token_out,
+                    amount_in,
+                    amount_in,
+                    limit_out_per_in_e7,
+                    *expires_ledger,
+                    *ledger,
+                    *ledger,
+                    *updated_at,
+                    *updated_at,
+                )?;
+                Ok(true)
+            }
+            ParsedOrderEvent::Filled {
+                order_id,
+                amount_in_remaining,
+                ledger,
+                updated_at,
+            } => store.apply_filled(
+                *order_id as i64,
+                amount_in_remaining,
+                *ledger,
+                *updated_at,
+            ),
+            ParsedOrderEvent::Cancelled {
+                order_id,
+                ledger,
+                updated_at,
+            } => store.apply_closed(*order_id as i64, "cancelled", *ledger, *updated_at),
+            ParsedOrderEvent::Expired {
+                order_id,
+                ledger,
+                updated_at,
+            } => store.apply_closed(*order_id as i64, "expired", *ledger, *updated_at),
+        }
     }
-}
+
+    pub fn order_event_id(event: &ParsedOrderEvent) -> u64 {
+        match event {
+            ParsedOrderEvent::Created { order_id, .. }
+            | ParsedOrderEvent::Filled { order_id, .. }
+            | ParsedOrderEvent::Cancelled { order_id, .. }
+            | ParsedOrderEvent::Expired { order_id, .. } => *order_id,
+        }
+    }
+
+    pub fn order_event_kind(event: &ParsedOrderEvent) -> &'static str {
+        match event {
+            ParsedOrderEvent::Created { .. } => "order_created",
+            ParsedOrderEvent::Filled { .. } => "order_filled",
+            ParsedOrderEvent::Cancelled { .. } => "order_cancelled",
+            ParsedOrderEvent::Expired { .. } => "order_expired",
+        }
+    }
+
+    /// Apply escrow events, warning and continuing on parse/apply skips.
+    pub fn ingest_escrow_order_events(
+        store: &IndexStore,
+        events: &[ContractEvent],
+    ) -> Result<u64> {
+        let mut applied = 0u64;
+        for event in events {
+            let parsed = match parse_escrow_order_event(event) {
+                Ok(Some(parsed)) => parsed,
+                Ok(None) => continue,
+                Err(error) => {
+                    tracing::warn!(
+                        event_id = %event.id,
+                        tx = %event.tx_hash,
+                        %error,
+                        "failed to parse escrow order event"
+                    );
+                    continue;
+                }
+            };
+
+            match apply_parsed_order_event(store, &parsed) {
+                Ok(true) => applied += 1,
+                Ok(false) => {
+                    tracing::warn!(
+                        order_id = order_event_id(&parsed),
+                        kind = order_event_kind(&parsed),
+                        event_id = %event.id,
+                        tx = %event.tx_hash,
+                        "skipped escrow order event: order not found or already terminal"
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        order_id = order_event_id(&parsed),
+                        kind = order_event_kind(&parsed),
+                        event_id = %event.id,
+                        tx = %event.tx_hash,
+                        %error,
+                        "failed to apply escrow order event"
+                    );
+                }
+            }
+        }
+        Ok(applied)
+    }
 
 fn amount_to_string(value: i128) -> String {
     if value == 0 {
@@ -395,6 +470,79 @@ mod tests {
     fn skips_unknown_event_kind() {
         let raw = event("order_unknown", 1, vec![contract_address(1)]);
         assert!(parse_escrow_order_event(&raw).unwrap().is_none());
+    }
+
+    #[test]
+    fn apply_parsed_order_event_returns_false_for_missing_order() {
+        let dir = tempdir().unwrap();
+        let store = IndexStore::open(dir.path().join("test.db")).unwrap();
+
+        let filled = event(
+            "order_filled",
+            99,
+            vec![
+                contract_address(1),
+                i128_value(100),
+                i128_value(200),
+                i128_value(50),
+            ],
+        );
+        let parsed = parse_escrow_order_event(&filled).unwrap().unwrap();
+        assert!(!apply_parsed_order_event(&store, &parsed).unwrap());
+    }
+
+    #[test]
+    fn ingest_escrow_order_events_skips_missing_and_malformed_without_error() {
+        let dir = tempdir().unwrap();
+        let store = IndexStore::open(dir.path().join("test.db")).unwrap();
+
+        let missing_fill = event(
+            "order_filled",
+            99,
+            vec![
+                contract_address(1),
+                i128_value(100),
+                i128_value(200),
+                i128_value(50),
+            ],
+        );
+        let mut malformed = event("order_created", 1, vec![contract_address(1)]);
+        malformed.value = None;
+
+        let created = event(
+            "order_created",
+            1,
+            vec![
+                contract_address(1),
+                contract_address(2),
+                contract_address(3),
+                i128_value(1000),
+                i128_value(2_500_000),
+                xdr::ScVal::U32(500),
+            ],
+        );
+        let filled = event(
+            "order_filled",
+            1,
+            vec![
+                contract_address(1),
+                i128_value(400),
+                i128_value(800),
+                i128_value(600),
+            ],
+        );
+
+        let applied = ingest_escrow_order_events(
+            &store,
+            &[missing_fill, malformed, created, filled],
+        )
+        .unwrap();
+        assert_eq!(applied, 2);
+
+        let owner = Contract([1; 32]).to_string().to_string();
+        let row = store.list_by_owner(&owner, None).unwrap().pop().unwrap();
+        assert_eq!(row.order_id, 1);
+        assert_eq!(row.amount_in_remaining, "600");
     }
 
     #[test]

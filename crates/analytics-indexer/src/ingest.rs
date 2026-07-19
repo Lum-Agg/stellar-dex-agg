@@ -4,7 +4,7 @@ use {
     crate::{
         config::{IndexerConfig, DEFAULT_LOOKBACK_LEDGERS},
         events::build_invocations_from_events,
-        order_events::{apply_parsed_order_event, parse_escrow_order_event},
+        order_events::ingest_escrow_order_events,
         parser::parse_envelope,
         store::{IndexStore, StoredInvocation},
     },
@@ -156,14 +156,7 @@ async fn ingest_range(
                 format!("getEvents escrow [{start_ledger}, {end_ledger}) for {escrow_contract}")
             })?;
 
-        let mut orders_applied = 0u64;
-        for event in &events {
-            let Some(parsed) = parse_escrow_order_event(event)? else {
-                continue;
-            };
-            apply_parsed_order_event(store, &parsed)?;
-            orders_applied += 1;
-        }
+        let orders_applied = ingest_escrow_order_events(store, &events)?;
         if orders_applied > 0 {
             info!(
                 orders_applied,

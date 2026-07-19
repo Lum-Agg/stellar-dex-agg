@@ -299,25 +299,15 @@ impl IndexStore {
         Ok(())
     }
 
-    fn limit_order_status(&self, order_id: i64) -> Result<Option<String>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT status FROM limit_orders WHERE order_id = ?1")?;
-        let mut rows = stmt.query(params![order_id])?;
-        if let Some(row) = rows.next()? {
-            Ok(Some(row.get(0)?))
-        } else {
-            Ok(None)
-        }
-    }
-
+    /// Returns `true` when the row was updated, `false` when the order is missing
+    /// or already in a terminal state.
     pub fn apply_filled(
         &self,
         order_id: i64,
         amount_in_remaining: &str,
         updated_ledger: u32,
         updated_at: i64,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let status = if amount_in_remaining == "0" {
             "filled"
         } else {
@@ -335,23 +325,18 @@ impl IndexStore {
                 order_id,
             ],
         )?;
-        if updated == 0 {
-            match self.limit_order_status(order_id)? {
-                None => anyhow::bail!("limit order {order_id} not found"),
-                Some(_) => Ok(()),
-            }
-        } else {
-            Ok(())
-        }
+        Ok(updated > 0)
     }
 
+    /// Returns `true` when the row was updated, `false` when the order is missing
+    /// or already in a terminal state.
     pub fn apply_closed(
         &self,
         order_id: i64,
         status: &str,
         updated_ledger: u32,
         updated_at: i64,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         anyhow::ensure!(
             status == "cancelled" || status == "expired",
             "invalid closed status: {status}"
@@ -362,14 +347,7 @@ impl IndexStore {
              WHERE order_id = ?4 AND status = 'open'",
             params![status, updated_ledger, updated_at, order_id],
         )?;
-        if updated == 0 {
-            match self.limit_order_status(order_id)? {
-                None => anyhow::bail!("limit order {order_id} not found"),
-                Some(_) => Ok(()),
-            }
-        } else {
-            Ok(())
-        }
+        Ok(updated > 0)
     }
 
     pub fn list_by_owner(
@@ -737,6 +715,22 @@ mod tests {
     }
 
     #[test]
+    fn apply_filled_returns_false_when_order_missing() {
+        let dir = tempdir().unwrap();
+        let store = IndexStore::open(dir.path().join("test.db")).unwrap();
+
+        assert!(!store.apply_filled(99, "100", 110, 2_000).unwrap());
+    }
+
+    #[test]
+    fn apply_closed_returns_false_when_order_missing() {
+        let dir = tempdir().unwrap();
+        let store = IndexStore::open(dir.path().join("test.db")).unwrap();
+
+        assert!(!store.apply_closed(99, "cancelled", 110, 2_000).unwrap());
+    }
+
+    #[test]
     fn late_apply_filled_after_cancel_is_noop() {
         let dir = tempdir().unwrap();
         let store = IndexStore::open(dir.path().join("test.db")).unwrap();
@@ -744,7 +738,7 @@ mod tests {
         seed_open_order(&store, 1, OWNER, "1000", 1_000);
         store.apply_closed(1, "cancelled", 110, 2_000).unwrap();
 
-        store.apply_filled(1, "400", 120, 2_100).unwrap();
+        assert!(!store.apply_filled(1, "400", 120, 2_100).unwrap());
 
         let row = store.list_by_owner(OWNER, Some("all")).unwrap().pop().unwrap();
         assert_eq!(row.status, "cancelled");
