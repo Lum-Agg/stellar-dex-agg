@@ -70,8 +70,20 @@ The authorization spike executes a 1:1 mock Aquarius route and verifies that
 the aggregator can pull input from escrow and return output to it. Therefore,
 the aggregator does not need a special `swap_from` entrypoint or other change.
 
+## Testnet deploy
+
+**Testnet only** (scripts refuse mainnet):
+
+```bash
+ADMIN=admin ADMIN_G=G... ./scripts/deploy-limit-testnet.sh
+# or: ./contracts/order-escrow/deploy-testnet.sh  # requires AGGREGATOR=C...
+```
+
+Smoke checklist: [docs/limit-orders-testnet.md](../../docs/limit-orders-testnet.md).
+
 ## DCA and off-chain services
 
 DCA is out of scope for this contract slice. It will reuse escrow custody with
-schedule fields and chunked fills in a later phase. This crate also contains no
-keeper, API, indexer, or UI: those services are separate follow-on work.
+schedule fields and chunked fills in a later phase. Off-chain pieces:
+limit-keeper, analytics-indexer (`ESCROW_CONTRACT`), and API `build_create` /
+`build_cancel` — see the testnet doc above. UI is a later phase.

@@ -11,8 +11,11 @@ packages/frontend/out/
 justfile
 data
 contracts/vault/.mainnet-vault-id
+contracts/aggregator/.testnet-aggregator-id
+contracts/order-escrow/.testnet-escrow-id
 scripts/telegram.env.local
 scripts/arb.env.local
+scripts/.env.limit-testnet.local
 .worktrees/
 .superpowers/
 PROJECT_STATUS.md

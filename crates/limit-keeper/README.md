@@ -24,6 +24,9 @@ Scope: limit orders only (no DCA, no retail order API/UI).
 
 \* `KEEPER_SECRET` is optional when `KEEPER_DRY_RUN=1` (dry-run never signs).
 
+Deploy escrow + aggregator on **testnet**: [docs/limit-orders-testnet.md](../../docs/limit-orders-testnet.md)
+(`scripts/deploy-limit-testnet.sh`). Do not use those scripts on mainnet.
+
 ## Dry-run example
 
 Validate discovery, quoting, and fillability without spending fees or submitting
