@@ -84,6 +84,24 @@ export interface StatsParams {
   format?: 'json' | 'csv';
 }
 
+export interface SwapRecord {
+  txHash: string;
+  ledger: number;
+  createdAt: number;
+  status: string;
+  functionName: string;
+  tokenIn?: string;
+  tokenOut?: string;
+  amountIn: string;
+  amountOut?: string;
+  isSplit: boolean;
+}
+
+export interface ListSwapsParams {
+  user: string;
+  limit?: number;
+}
+
 export interface TokenInfo {
   id: string;
   symbol: string;
@@ -219,6 +237,28 @@ export class LumAggClient {
       subRoutes: quote.subRoutes,
     });
     return { quote, tx };
+  }
+
+  async listSwaps(params: ListSwapsParams): Promise<SwapRecord[]> {
+    const search = new URLSearchParams({ user: params.user });
+    if (params.limit !== undefined) search.set('limit', String(params.limit));
+    const resp = await fetch(`${this.baseUrl}/api/v1/swaps?${search}`, {
+      headers: this.headers(),
+    });
+    const json = await resp.json();
+    if (!json.success) throw new Error(json.error || 'listSwaps failed');
+    return (json.data?.swaps || []).map((r: Record<string, unknown>) => ({
+      txHash: String(r.tx_hash ?? ''),
+      ledger: Number(r.ledger ?? 0),
+      createdAt: Number(r.created_at ?? 0),
+      status: String(r.status ?? ''),
+      functionName: String(r.function_name ?? ''),
+      tokenIn: r.token_in != null ? String(r.token_in) : undefined,
+      tokenOut: r.token_out != null ? String(r.token_out) : undefined,
+      amountIn: String(r.amount_in ?? '0'),
+      amountOut: r.amount_out != null ? String(r.amount_out) : undefined,
+      isSplit: Boolean(r.is_split),
+    }));
   }
 
   /** Public on-chain stats from analytics-indexer (Tranche 3). */
