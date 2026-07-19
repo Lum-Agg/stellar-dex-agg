@@ -161,6 +161,17 @@ impl OrderEscrowContract {
             &DataKey::NextOrderId,
             &order_id.checked_add(1).expect("order id overflow"),
         );
+        env.events().publish(
+            (Symbol::new(&env, "order_created"), order_id),
+            (
+                order.owner.clone(),
+                order.token_in.clone(),
+                order.token_out.clone(),
+                amount_in,
+                limit_out_per_in_e7,
+                expires_ledger,
+            ),
+        );
         order_id
     }
 
@@ -171,10 +182,15 @@ impl OrderEscrowContract {
         assert!(order.status == OrderStatus::Open, "Order is not open");
 
         let escrow = env.current_contract_address();
-        token::Client::new(&env, &order.token_in).transfer(&escrow, &order.owner, &order.amount_in_remaining);
+        let refunded_amount = order.amount_in_remaining;
+        token::Client::new(&env, &order.token_in).transfer(&escrow, &order.owner, &refunded_amount);
         order.amount_in_remaining = 0;
         order.status = OrderStatus::Cancelled;
         env.storage().persistent().set(&key, &order);
+        env.events().publish(
+            (Symbol::new(&env, "order_cancelled"), order_id),
+            (order.owner.clone(), refunded_amount),
+        );
     }
 
     pub fn reclaim_expired(env: Env, order_id: u64) {
@@ -187,14 +203,19 @@ impl OrderEscrowContract {
         );
 
         let escrow = env.current_contract_address();
+        let refunded_amount = order.amount_in_remaining;
         token::Client::new(&env, &order.token_in).transfer(
             &escrow,
             &order.owner,
-            &order.amount_in_remaining,
+            &refunded_amount,
         );
         order.amount_in_remaining = 0;
         order.status = OrderStatus::Expired;
         env.storage().persistent().set(&key, &order);
+        env.events().publish(
+            (Symbol::new(&env, "order_expired"), order_id),
+            (order.owner.clone(), refunded_amount),
+        );
     }
 
     pub fn fill(env: Env, order_id: u64, amount_in: i128, sub_routes: Vec<SubRoute>, min_amount_out: i128) -> i128 {
@@ -298,8 +319,8 @@ mod tests {
         lumagg_contract_types::{DexType, SubRoute, SwapStep},
         soroban_sdk::{
             contract, contractimpl,
-            testutils::{Address as _, EnvTestConfig, Ledger, LedgerInfo},
-            token, vec, Address, Env, Vec,
+            testutils::{Address as _, EnvTestConfig, Events as _, Ledger, LedgerInfo},
+            token, vec, Address, Env, Symbol, TryFromVal, Vec,
         },
     };
 
@@ -490,6 +511,74 @@ mod tests {
                 .get::<_, LimitOrder>(&DataKey::Order(order_id))
                 .unwrap()
         })
+    }
+
+    fn has_lifecycle_event(env: &Env, escrow_id: &Address, topic_name: &str, order_id: u64) -> bool {
+        let expected_topic = Symbol::new(env, topic_name);
+        env.events().all().iter().any(|(contract, topics, _data)| {
+            if contract != *escrow_id || topics.len() < 2 {
+                return false;
+            }
+            Symbol::try_from_val(env, &topics.get(0).unwrap()) == Ok(expected_topic.clone())
+                && u64::try_from_val(env, &topics.get(1).unwrap()) == Ok(order_id)
+        })
+    }
+
+    #[test]
+    fn create_limit_emits_order_created_event() {
+        let env = test_env();
+        env.mock_all_auths();
+        let owner = gen_addr(&env);
+        let (escrow_id, escrow) = setup_escrow(&env);
+        let (token_in, token_in_sac) = create_token(&env);
+        let (token_out, _) = create_token(&env);
+        token_in_sac.mint(&owner, &5_000_000);
+
+        let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000_000, &20_000_000, &100);
+
+        assert!(has_lifecycle_event(&env, &escrow_id, "order_created", order_id));
+    }
+
+    #[test]
+    fn cancel_emits_order_cancelled_event() {
+        let env = test_env();
+        env.mock_all_auths();
+        let owner = gen_addr(&env);
+        let (escrow_id, escrow) = setup_escrow(&env);
+        let (token_in, token_in_sac) = create_token(&env);
+        let (token_out, _) = create_token(&env);
+        token_in_sac.mint(&owner, &5_000_000);
+        let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000_000, &20_000_000, &100);
+
+        escrow.cancel(&order_id);
+
+        assert!(has_lifecycle_event(&env, &escrow_id, "order_cancelled", order_id));
+    }
+
+    #[test]
+    fn reclaim_expired_emits_order_expired_event() {
+        let env = test_env();
+        env.mock_all_auths();
+        let owner = gen_addr(&env);
+        let (escrow_id, escrow) = setup_escrow(&env);
+        let (token_in, token_in_sac) = create_token(&env);
+        let (token_out, _) = create_token(&env);
+        token_in_sac.mint(&owner, &5_000_000);
+        let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000_000, &20_000_000, &100);
+        env.ledger().set(LedgerInfo {
+            timestamp: 0,
+            protocol_version: 22,
+            sequence_number: 101,
+            network_id: [0; 32],
+            base_reserve: 10_000_000,
+            min_temp_entry_ttl: 16,
+            min_persistent_entry_ttl: 4_096,
+            max_entry_ttl: 6_312_000,
+        });
+
+        escrow.reclaim_expired(&order_id);
+
+        assert!(has_lifecycle_event(&env, &escrow_id, "order_expired", order_id));
     }
 
     #[test]
