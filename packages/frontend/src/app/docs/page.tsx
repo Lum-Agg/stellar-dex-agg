@@ -122,6 +122,17 @@ export default function DocsPage() {
 
         <Endpoint
           method="GET"
+          path="/api/v1/swaps"
+          description="Recent aggregator swaps for a wallet (indexer DB)."
+          params={[
+            { name: 'user', type: 'string', required: true, desc: 'G... address' },
+            { name: 'limit', type: 'number', required: false, desc: '1–50, default 20' },
+          ]}
+          tryIt={<SwapsTryIt />}
+        />
+
+        <Endpoint
+          method="GET"
           path="/api/v1/quote"
           description="Best route and expected output."
           params={[
@@ -258,6 +269,54 @@ function PingTryIt({ path }: { path: string }) {
       <button type="button" className="docs-btn" onClick={run} disabled={loading}>
         {loading ? '…' : 'Send'}
       </button>
+      {result && <pre className="docs-out">{result}</pre>}
+    </>
+  );
+}
+
+function SwapsTryIt() {
+  const [user, setUser] = useState(DEMO_USER);
+  const [limit, setLimit] = useState('');
+  const [result, setResult] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const run = async () => {
+    setLoading(true);
+    setResult(null);
+    const q = new URLSearchParams({ user: user.trim() });
+    if (limit.trim()) q.set('limit', limit.trim());
+    try {
+      const resp = await fetch(`${API_URL}/api/v1/swaps?${q}`);
+      setResult(JSON.stringify(await resp.json(), null, 2));
+    } catch (e: unknown) {
+      setResult(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    setLoading(false);
+  };
+
+  return (
+    <>
+      <div className="docs-form-row">
+        <Field label="User (G…)">
+          <input
+            className="docs-input"
+            value={user}
+            onChange={(e) => setUser(e.target.value)}
+            spellCheck={false}
+          />
+        </Field>
+        <Field label="Limit">
+          <input
+            className="docs-input docs-input--narrow"
+            value={limit}
+            onChange={(e) => setLimit(e.target.value)}
+            placeholder="20"
+          />
+        </Field>
+        <button type="button" className="docs-btn" onClick={run} disabled={loading}>
+          {loading ? '…' : 'Send'}
+        </button>
+      </div>
       {result && <pre className="docs-out">{result}</pre>}
     </>
   );
