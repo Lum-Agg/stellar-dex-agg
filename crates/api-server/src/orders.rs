@@ -334,6 +334,18 @@ fn order_error(status: StatusCode, error: String) -> Response {
         .into_response()
 }
 
+fn order_build_failure(error: String) -> Response {
+    (
+        StatusCode::OK,
+        Json(BuildTxResponse {
+            success: false,
+            data: None,
+            error: Some(error),
+        }),
+    )
+        .into_response()
+}
+
 pub async fn build_create(
     State(_state): State<AppState>,
     request: Result<Json<BuildCreateRequest>, JsonRejection>,
@@ -364,7 +376,7 @@ pub async fn build_create(
             }),
         )
             .into_response(),
-        Err(error) => order_error(StatusCode::BAD_GATEWAY, format!("prepare order transaction: {error}")),
+        Err(error) => order_build_failure(format!("Order build failed: {error}")),
     }
 }
 
@@ -398,7 +410,7 @@ pub async fn build_cancel(
             }),
         )
             .into_response(),
-        Err(error) => order_error(StatusCode::BAD_GATEWAY, format!("prepare order transaction: {error}")),
+        Err(error) => order_build_failure(format!("Order build failed: {error}")),
     }
 }
 
@@ -406,7 +418,13 @@ pub async fn build_cancel(
 mod tests {
     use super::*;
     use analytics_indexer::store::IndexStore;
-    use axum::{http::StatusCode, response::IntoResponse};
+    use axum::{
+        extract::State,
+        http::StatusCode,
+        response::IntoResponse,
+        Json,
+    };
+    use crate::{config::AppConfig, state::AppState};
     use serde_json::Value;
     use tempfile::tempdir;
 
@@ -534,6 +552,36 @@ mod tests {
         }
     }
 
+    async fn dummy_app_state() -> AppState {
+        AppState::new(AppConfig::default()).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn build_create_invalid_user_is_400() {
+        let mut request = valid_create_request();
+        request.user = "not-an-address".into();
+        let resp = build_create(State(dummy_app_state().await), Ok(Json(request)))
+            .await
+            .into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let json = body_json(resp).await;
+        assert_eq!(json["success"], false);
+    }
+
+    #[tokio::test]
+    async fn build_create_missing_escrow_contract_is_503() {
+        std::env::remove_var("ESCROW_CONTRACT");
+        let resp = build_create(
+            State(dummy_app_state().await),
+            Ok(Json(valid_create_request())),
+        )
+        .await
+        .into_response();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let json = body_json(resp).await;
+        assert_eq!(json["success"], false);
+    }
+
     #[test]
     fn create_validation_rejects_invalid_user_and_non_positive_amount() {
         let mut request = valid_create_request();
@@ -565,15 +613,21 @@ mod tests {
         )
         .unwrap();
 
-        let function_name = |operation: xdr::Operation| match operation.body {
+        let invoke_contract = |operation: xdr::Operation| match operation.body {
             xdr::OperationBody::InvokeHostFunction(invoke) => match invoke.host_function {
-                xdr::HostFunction::InvokeContract(args) => args.function_name.to_string(),
+                xdr::HostFunction::InvokeContract(args) => args,
                 _ => panic!("expected contract invocation"),
             },
             _ => panic!("expected invoke host function"),
         };
 
-        assert_eq!(function_name(create), "create_limit");
-        assert_eq!(function_name(cancel), "cancel");
+        let create_args = invoke_contract(create);
+        assert_eq!(create_args.function_name.to_string(), "create_limit");
+        assert_eq!(create_args.args.len(), 6);
+
+        let cancel_args = invoke_contract(cancel);
+        assert_eq!(cancel_args.function_name.to_string(), "cancel");
+        assert_eq!(cancel_args.args.len(), 1);
+        assert!(matches!(cancel_args.args.first(), Some(xdr::ScVal::U64(0))));
     }
 }
