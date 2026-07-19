@@ -16,6 +16,21 @@ pub struct StoredInvocation {
     pub parsed: ParsedInvocation,
 }
 
+#[derive(Debug, Clone)]
+pub struct UserSwapRow {
+    pub tx_hash: String,
+    pub ledger: u32,
+    pub created_at: i64,
+    pub status: String,
+    pub function_name: String,
+    pub user_address: String,
+    pub token_in: Option<String>,
+    pub token_out: Option<String>,
+    pub amount_in: String,
+    pub amount_out: Option<String>,
+    pub is_split: bool,
+}
+
 pub struct IndexStore {
     conn: Connection,
 }
@@ -65,6 +80,8 @@ impl IndexStore {
 
             CREATE INDEX IF NOT EXISTS idx_swap_invocations_ledger ON swap_invocations(ledger);
             CREATE INDEX IF NOT EXISTS idx_swap_invocations_created ON swap_invocations(created_at);
+            CREATE INDEX IF NOT EXISTS idx_swap_invocations_user_created
+              ON swap_invocations(user_address, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_swap_legs_dex ON swap_legs(dex_source);
             ",
         )?;
@@ -158,7 +175,101 @@ impl IndexStore {
         Ok(ts)
     }
 
+    pub fn list_swaps_by_user(&self, user: &str, limit: u32) -> Result<Vec<UserSwapRow>> {
+        let limit = limit.clamp(1, 50);
+        let mut stmt = self.conn.prepare(
+            "SELECT tx_hash, ledger, created_at, status, function_name, user_address,
+                    token_in, token_out, amount_in, amount_out, is_split
+             FROM swap_invocations
+             WHERE user_address = ?1
+             ORDER BY created_at DESC, tx_hash DESC
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![user, limit], |row| {
+            Ok(UserSwapRow {
+                tx_hash: row.get(0)?,
+                ledger: row.get::<_, i64>(1)? as u32,
+                created_at: row.get(2)?,
+                status: row.get(3)?,
+                function_name: row.get(4)?,
+                user_address: row.get(5)?,
+                token_in: row.get(6)?,
+                token_out: row.get(7)?,
+                amount_in: row.get(8)?,
+                amount_out: row.get(9)?,
+                is_split: row.get::<_, i32>(10)? != 0,
+            })
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
     pub(crate) fn conn(&self) -> &Connection {
         &self.conn
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::{ParsedInvocation, ParsedLeg};
+    use tempfile::tempdir;
+
+    fn sample(
+        tx_hash: &str,
+        user: &str,
+        created_at: i64,
+        amount_in: i128,
+    ) -> StoredInvocation {
+        StoredInvocation {
+            tx_hash: tx_hash.into(),
+            ledger: 1,
+            created_at,
+            status: "SUCCESS".into(),
+            parsed: ParsedInvocation {
+                function_name: "swap".into(),
+                user_address: user.into(),
+                token_in: Some("TOKEN_IN".into()),
+                token_out: Some("TOKEN_OUT".into()),
+                amount_in,
+                amount_out: Some(amount_in + 1),
+                is_split: false,
+                legs: vec![ParsedLeg {
+                    leg_index: 0,
+                    dex_source: "soroswap".into(),
+                    pool_address: "POOL".into(),
+                    token_in: Some("TOKEN_IN".into()),
+                    token_out: Some("TOKEN_OUT".into()),
+                    amount_in: Some(amount_in),
+                }],
+            },
+        }
+    }
+
+    #[test]
+    fn list_swaps_by_user_filters_orders_and_limits() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.db");
+        let store = IndexStore::open(&path).unwrap();
+        let u1 = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+        let u2 = "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+        store.insert_invocation(&sample("tx_old", u1, 100, 10)).unwrap();
+        store.insert_invocation(&sample("tx_new", u1, 200, 20)).unwrap();
+        store.insert_invocation(&sample("tx_other", u2, 300, 30)).unwrap();
+
+        let rows = store.list_swaps_by_user(u1, 10).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].tx_hash, "tx_new");
+        assert_eq!(rows[1].tx_hash, "tx_old");
+
+        let limited = store.list_swaps_by_user(u1, 1).unwrap();
+        assert_eq!(limited.len(), 1);
+        assert_eq!(limited[0].tx_hash, "tx_new");
+
+        let empty = store.list_swaps_by_user("GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCK3LI", 10).unwrap();
+        assert!(empty.is_empty());
     }
 }
