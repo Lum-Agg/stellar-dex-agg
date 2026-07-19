@@ -386,7 +386,7 @@ export function SwapCard() {
             </span>
             <button
               type="button"
-              onClick={() => void loadQuote()}
+              onClick={() => void loadQuote({ silent: true })}
               disabled={loading}
               className="shrink-0 text-zinc-400 hover:text-zinc-100 disabled:text-zinc-600 transition-colors"
             >

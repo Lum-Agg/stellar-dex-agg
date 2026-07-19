@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatBalanceDisplay } from '@/lib/balance';
 import { displayTokenSymbol, NATIVE_CONTRACT } from '@/lib/tokenDisplay';
 import { fetchUserSwaps, SWAP_SUCCESS_EVENT, type UserSwap } from '@/lib/swaps';
@@ -28,30 +28,59 @@ export function SwapHistory() {
   const [swaps, setSwaps] = useState<UserSwap[]>([]);
   const [loading, setLoading] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
+  const [refetchError, setRefetchError] = useState(false);
+  const fetchGenRef = useRef(0);
+  const hasSwapsRef = useRef(false);
 
   const tokenById = useMemo(() => new Map(tokens.map((token) => [token.id, token])), [tokens]);
 
-  const loadSwaps = useCallback(async () => {
+  useEffect(() => {
+    hasSwapsRef.current = swaps.length > 0;
+  }, [swaps]);
+
+  const loadSwaps = useCallback(async (opts?: { refetch?: boolean }) => {
     if (!address) return;
 
+    const gen = ++fetchGenRef.current;
     setLoading(true);
-    setUnavailable(false);
+    if (!opts?.refetch) {
+      setUnavailable(false);
+      setRefetchError(false);
+    }
+
     try {
-      setSwaps(await fetchUserSwaps(address));
+      const data = await fetchUserSwaps(address);
+      if (gen !== fetchGenRef.current) return;
+      setSwaps(data);
+      setUnavailable(false);
+      setRefetchError(false);
     } catch {
-      setUnavailable(true);
+      if (gen !== fetchGenRef.current) return;
+      if (hasSwapsRef.current) {
+        setRefetchError(true);
+      } else {
+        setUnavailable(true);
+      }
     } finally {
-      setLoading(false);
+      if (gen === fetchGenRef.current) {
+        setLoading(false);
+      }
     }
   }, [address]);
 
   useEffect(() => {
+    fetchGenRef.current += 1;
     if (!address) {
       setSwaps([]);
       setUnavailable(false);
+      setRefetchError(false);
       setLoading(false);
       return;
     }
+
+    setSwaps([]);
+    setUnavailable(false);
+    setRefetchError(false);
     void loadSwaps();
   }, [address, loadSwaps]);
 
@@ -60,7 +89,7 @@ export function SwapHistory() {
 
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const refetchAfterIndexing = () => {
-      timeout = setTimeout(() => void loadSwaps(), 2_000);
+      timeout = setTimeout(() => void loadSwaps({ refetch: true }), 2_000);
     };
 
     window.addEventListener(SWAP_SUCCESS_EVENT, refetchAfterIndexing);
@@ -119,7 +148,13 @@ export function SwapHistory() {
       ) : swaps.length === 0 && !loading ? (
         <p className="px-4 py-3 text-[12px] text-zinc-500">No swaps yet</p>
       ) : (
-        <div className="divide-y divide-white/[0.06]">
+        <>
+          {refetchError && (
+            <p className="px-4 py-1.5 text-[11px] text-amber-400/80 border-b border-white/[0.06]">
+              Couldn&apos;t refresh history
+            </p>
+          )}
+          <div className="divide-y divide-white/[0.06]">
           {swaps.map((swap) => (
             <a
               key={`${swap.tx_hash}-${swap.ledger}`}
@@ -145,7 +180,8 @@ export function SwapHistory() {
               </div>
             </a>
           ))}
-        </div>
+          </div>
+        </>
       )}
     </section>
   );
