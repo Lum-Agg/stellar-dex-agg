@@ -2,12 +2,11 @@ use {
     crate::{
         book::OpenOrder,
         limit::required_min_out,
-        quote::{Quote, QuoteStep, QuoteSubRoute},
+        quote::{steps_from_api_sub_route, Quote, QuoteStep, QuoteSubRoute},
     },
     anyhow::{anyhow, Context, Result},
     soroban_client::{
         keypair::{Keypair, KeypairBehavior},
-        network::{NetworkPassphrase, Networks},
         soroban_rpc::{SendTransactionStatus, TransactionStatus},
         transaction::{assemble_transaction, AccountBehavior, Transaction, TransactionBehavior},
         transaction_builder::{TransactionBuilder, TransactionBuilderBehavior, TIMEOUT_INFINITE},
@@ -36,6 +35,7 @@ pub fn fill_min_amount_out(order: &OpenOrder, amount_in: i128, quote: &Quote) ->
 /// when dry-run is set, making the no-submit invariant explicit in the loop.
 pub async fn execute_fill(
     rpc_url: &str,
+    network_passphrase: &str,
     secret: &str,
     escrow_contract: &str,
     order: &OpenOrder,
@@ -55,9 +55,10 @@ pub async fn execute_fill(
     let keypair = Keypair::from_secret(secret).map_err(|e| anyhow!("invalid KEEPER_SECRET: {e:?}"))?;
     let public_key = keypair.public_key();
     let sequence = fetch_account_sequence(rpc_url, &public_key).await?;
-    let unsigned_xdr = simulate_and_assemble(rpc_url, &public_key, sequence as u64 + 1, operation).await?;
+    let unsigned_xdr =
+        simulate_and_assemble(rpc_url, network_passphrase, &public_key, sequence as u64 + 1, operation).await?;
 
-    let mut tx = transaction_from_prepared_xdr(&unsigned_xdr)?;
+    let mut tx = transaction_from_prepared_xdr(&unsigned_xdr, network_passphrase)?;
     tx.sign(&[keypair]);
     let server = rpc_server(rpc_url)?;
     let submitted = server
@@ -111,10 +112,11 @@ fn build_fill_operation(
 
 fn quote_sub_route_scval(route: &QuoteSubRoute) -> Result<xdr::ScVal> {
     let amount_in = route.amount_in.parse::<i128>().context("parse sub-route amount_in")?;
-    if amount_in <= 0 || route.steps.is_empty() {
+    let route_steps = steps_from_api_sub_route(route)?;
+    if amount_in <= 0 || route_steps.is_empty() {
         return Err(anyhow!("sub-route must have a positive input and at least one step"));
     }
-    let steps = route.steps.iter().map(quote_step_scval).collect::<Result<Vec<_>>>()?;
+    let steps = route_steps.iter().map(quote_step_scval).collect::<Result<Vec<_>>>()?;
     map_scval(vec![
         ("amount_in", i128_scval(amount_in)),
         (
@@ -239,6 +241,7 @@ async fn fetch_account_sequence(rpc_url: &str, public_key: &str) -> Result<i64> 
 
 async fn simulate_and_assemble(
     rpc_url: &str,
+    network_passphrase: &str,
     public_key: &str,
     sequence: u64,
     operation: xdr::Operation,
@@ -250,7 +253,7 @@ async fn simulate_and_assemble(
         use soroban_client::xdr::{Limits as ClientLimits, ReadXdr};
         soroban_client::xdr::Operation::from_xdr(bytes, ClientLimits::none()).context("decode fill operation")?
     };
-    let mut builder = TransactionBuilder::new(&mut account, Networks::public(), None);
+    let mut builder = TransactionBuilder::new(&mut account, network_passphrase, None);
     builder.fee(BASE_FEE);
     builder.add_operation(operation);
     let tx = builder
@@ -278,9 +281,9 @@ async fn simulate_and_assemble(
     }
 }
 
-fn transaction_from_prepared_xdr(unsigned_xdr: &str) -> Result<Transaction> {
+fn transaction_from_prepared_xdr(unsigned_xdr: &str, network_passphrase: &str) -> Result<Transaction> {
     use stellar_baselib::xdr::{Limits as BaseLimits, ReadXdr, TransactionEnvelope, TransactionExt};
-    let mut tx = Transaction::from_xdr_envelope(unsigned_xdr, Networks::public());
+    let mut tx = Transaction::from_xdr_envelope(unsigned_xdr, network_passphrase);
     let envelope = TransactionEnvelope::from_xdr_base64(unsigned_xdr, BaseLimits::none())
         .context("parse assembled transaction")?;
     if let TransactionEnvelope::Tx(v1) = envelope {

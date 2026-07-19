@@ -1,6 +1,9 @@
 //! Environment configuration for the limit keeper.
 
-use anyhow::{anyhow, Result};
+use {
+    anyhow::{anyhow, Result},
+    soroban_client::network::{NetworkPassphrase, Networks},
+};
 
 #[derive(Debug, Clone)]
 pub struct KeeperConfig {
@@ -29,7 +32,7 @@ impl KeeperConfig {
             } else {
                 required("KEEPER_SECRET")?
             },
-            network: required("KEEPER_NETWORK")?,
+            network: network_passphrase(&required("KEEPER_NETWORK")?)?.to_string(),
             escrow_contract: required("ESCROW_CONTRACT")?,
             aggregator_contract: required("AGGREGATOR_CONTRACT")?,
             quote_api_url: required("QUOTE_API_URL")?,
@@ -58,4 +61,25 @@ where
 
 fn enabled(name: &str) -> bool {
     matches!(std::env::var(name).as_deref(), Ok("1") | Ok("true") | Ok("TRUE"))
+}
+
+fn network_passphrase(network: &str) -> Result<&'static str> {
+    match network {
+        "public" => Ok(Networks::public()),
+        "testnet" => Ok(Networks::testnet()),
+        other => Err(anyhow!("unsupported KEEPER_NETWORK {other:?}; use public or testnet")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::network_passphrase;
+
+    #[test]
+    fn resolves_testnet_network_name_to_its_passphrase() {
+        assert_eq!(
+            network_passphrase("testnet").unwrap(),
+            "Test SDF Network ; September 2015"
+        );
+    }
 }

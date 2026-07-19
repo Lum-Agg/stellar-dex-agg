@@ -122,6 +122,7 @@ async fn main() -> Result<()> {
             }
             match execute_fill(
                 &config.rpc_url,
+                &config.network,
                 &config.secret,
                 &config.escrow_contract,
                 &order,
