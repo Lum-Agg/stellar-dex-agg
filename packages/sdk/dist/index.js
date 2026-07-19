@@ -98,12 +98,7 @@ export class LumAggClient {
         const json = await resp.json();
         if (!json.success)
             throw new Error(json.error || 'build_tx failed');
-        return {
-            unsignedTxXdr: json.data.unsigned_tx_xdr,
-            fee: json.data.fee,
-            execution: json.data.execution,
-            numOperations: json.data.num_operations,
-        };
+        return mapBuildTxResult(json.data);
     }
     /** Quote then build_tx in one call. */
     async quoteAndBuild(quoteParams) {
@@ -117,6 +112,66 @@ export class LumAggClient {
             subRoutes: quote.subRoutes,
         });
         return { quote, tx };
+    }
+    async listOrders(params) {
+        const search = new URLSearchParams({ user: params.user });
+        if (params.status !== undefined)
+            search.set('status', params.status);
+        const resp = await fetch(`${this.baseUrl}/api/v1/orders?${search}`, {
+            headers: this.headers(),
+        });
+        const json = await resp.json();
+        if (!json.success)
+            throw new Error(json.error || 'listOrders failed');
+        return (json.data?.orders || []).map((r) => ({
+            orderId: Number(r.order_id ?? 0),
+            owner: String(r.owner ?? ''),
+            tokenIn: String(r.token_in ?? ''),
+            tokenOut: String(r.token_out ?? ''),
+            amountInInitial: r.amount_in_initial != null ? String(r.amount_in_initial) : undefined,
+            amountInRemaining: String(r.amount_in_remaining ?? '0'),
+            limitOutPerInE7: String(r.limit_out_per_in_e7 ?? '0'),
+            expiresLedger: Number(r.expires_ledger ?? 0),
+            status: String(r.status ?? ''),
+            createdLedger: r.created_ledger != null ? Number(r.created_ledger) : undefined,
+            updatedLedger: Number(r.updated_ledger ?? 0),
+            createdAt: r.created_at != null ? Number(r.created_at) : undefined,
+            updatedAt: Number(r.updated_at ?? 0),
+        }));
+    }
+    async buildCreateOrder(params) {
+        const body = {
+            user: params.user,
+            token_in: params.tokenIn,
+            token_out: params.tokenOut,
+            amount_in: params.amountIn,
+            limit_out_per_in_e7: params.limitOutPerInE7,
+            expires_ledger: params.expiresLedger,
+        };
+        const resp = await fetch(`${this.baseUrl}/api/v1/orders/build_create`, {
+            method: 'POST',
+            headers: this.headers(true),
+            body: JSON.stringify(body),
+        });
+        const json = await resp.json();
+        if (!json.success)
+            throw new Error(json.error || 'buildCreateOrder failed');
+        return mapBuildOrderTxResult(json.data);
+    }
+    async buildCancelOrder(params) {
+        const body = {
+            user: params.user,
+            order_id: params.orderId,
+        };
+        const resp = await fetch(`${this.baseUrl}/api/v1/orders/build_cancel`, {
+            method: 'POST',
+            headers: this.headers(true),
+            body: JSON.stringify(body),
+        });
+        const json = await resp.json();
+        if (!json.success)
+            throw new Error(json.error || 'buildCancelOrder failed');
+        return mapBuildOrderTxResult(json.data);
     }
     async listSwaps(params) {
         const search = new URLSearchParams({ user: params.user });
@@ -196,6 +251,22 @@ export class LumAggClient {
             daily: (d.daily || []).map(mapDailyStats),
         };
     }
+}
+function mapBuildTxResult(raw) {
+    return {
+        unsignedTxXdr: String(raw.unsigned_tx_xdr ?? ''),
+        fee: String(raw.fee ?? ''),
+        execution: String(raw.execution ?? ''),
+        numOperations: Number(raw.num_operations ?? 0),
+        contract: raw.contract != null ? String(raw.contract) : undefined,
+    };
+}
+function mapBuildOrderTxResult(raw) {
+    const base = mapBuildTxResult(raw);
+    return {
+        ...base,
+        contract: String(raw.contract ?? base.contract ?? ''),
+    };
 }
 function mapDailyStats(raw) {
     return {

@@ -49,6 +49,42 @@ export interface BuildTxResult {
     fee: string;
     execution: string;
     numOperations: number;
+    contract?: string;
+}
+/** Unsigned escrow invoke XDR (create/cancel limit orders). */
+export type BuildOrderTxResult = BuildTxResult & {
+    contract: string;
+};
+export interface OrderRecord {
+    orderId: number;
+    owner: string;
+    tokenIn: string;
+    tokenOut: string;
+    amountInInitial?: string;
+    amountInRemaining: string;
+    limitOutPerInE7: string;
+    expiresLedger: number;
+    status: string;
+    createdLedger?: number;
+    updatedLedger: number;
+    createdAt?: number;
+    updatedAt: number;
+}
+export interface ListOrdersParams {
+    user: string;
+    status?: 'open' | 'all';
+}
+export interface BuildCreateOrderParams {
+    user: string;
+    tokenIn: string;
+    tokenOut: string;
+    amountIn: string;
+    limitOutPerInE7: string;
+    expiresLedger: number;
+}
+export interface BuildCancelOrderParams {
+    user: string;
+    orderId: number;
 }
 export interface DailyStats {
     day: string;
@@ -128,6 +164,9 @@ export declare class LumAggClient {
         quote: QuoteResult;
         tx: BuildTxResult;
     }>;
+    listOrders(params: ListOrdersParams): Promise<OrderRecord[]>;
+    buildCreateOrder(params: BuildCreateOrderParams): Promise<BuildOrderTxResult>;
+    buildCancelOrder(params: BuildCancelOrderParams): Promise<BuildOrderTxResult>;
     listSwaps(params: ListSwapsParams): Promise<SwapRecord[]>;
     getPrices(ids: string[]): Promise<PriceQuote[]>;
     getPriceHistory(id: string, range?: '24h' | '7d'): Promise<PricePoint[]>;
