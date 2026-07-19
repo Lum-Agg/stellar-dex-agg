@@ -46,6 +46,9 @@ export default function RootLayout({
                   <a href="/" className="hover:text-zinc-100 transition-colors">
                     Swap
                   </a>
+                  <a href="/portfolio" className="hover:text-zinc-100 transition-colors">
+                    Portfolio
+                  </a>
                   <a href="/docs" className="hover:text-zinc-100 transition-colors">
                     API Docs
                   </a>
