@@ -4,6 +4,7 @@ use {
     crate::{
         config::{IndexerConfig, DEFAULT_LOOKBACK_LEDGERS},
         events::build_invocations_from_events,
+        order_events::{apply_parsed_order_event, parse_escrow_order_event},
         parser::parse_envelope,
         store::{IndexStore, StoredInvocation},
     },
@@ -23,6 +24,7 @@ pub async fn run(config: IndexerConfig) -> Result<()> {
     let mut cursor = resolve_start_ledger(&store, &config, &rpc).await?;
     info!(
         aggregator = %config.aggregator_contract,
+        escrow = config.escrow_contract.as_deref().unwrap_or("disabled"),
         mode = %config.index_mode,
         cursor,
         db = %config.db_path,
@@ -141,6 +143,38 @@ async fn ingest_range(
             ingested += 1;
         }
     }
+
+    if let Some(escrow_contract) = &config.escrow_contract {
+        let filters = vec![EventFilterSpec {
+            contract_ids: Some(vec![escrow_contract.clone()]),
+            topics: None,
+        }];
+        let events = rpc
+            .get_contract_events(start_ledger, Some(end_ledger), &filters, config.page_limit)
+            .await
+            .with_context(|| {
+                format!("getEvents escrow [{start_ledger}, {end_ledger}) for {escrow_contract}")
+            })?;
+
+        let mut orders_applied = 0u64;
+        for event in &events {
+            let Some(parsed) = parse_escrow_order_event(event)? else {
+                continue;
+            };
+            apply_parsed_order_event(store, &parsed)?;
+            orders_applied += 1;
+        }
+        if orders_applied > 0 {
+            info!(
+                orders_applied,
+                start_ledger,
+                end_ledger,
+                escrow = %escrow_contract,
+                "indexed order events"
+            );
+        }
+    }
+
     Ok(ingested)
 }
 

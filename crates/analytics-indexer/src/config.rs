@@ -28,6 +28,8 @@ pub struct IndexerConfig {
     pub rpc_url: String,
     pub network_passphrase: String,
     pub aggregator_contract: String,
+    /// When set, ingest order-escrow lifecycle events into `limit_orders`.
+    pub escrow_contract: Option<String>,
     pub index_mode: IndexMode,
     /// When true and mode includes events, also ingest legacy envelope invokes
     /// (pre-upgrade txs).
@@ -63,6 +65,10 @@ impl IndexerConfig {
                 .unwrap_or_else(|_| "Public Global Stellar Network ; September 2015".into()),
             aggregator_contract: std::env::var("AGGREGATOR_CONTRACT")
                 .unwrap_or_else(|_| DEFAULT_AGGREGATOR_CONTRACT.into()),
+            escrow_contract: std::env::var("ESCROW_CONTRACT")
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
             index_mode,
             envelope_fallback,
             db_path: std::env::var("INDEXER_DB_PATH").unwrap_or_else(|_| "./data/analytics-indexer.db".into()),

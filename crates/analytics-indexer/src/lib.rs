@@ -4,6 +4,7 @@ pub mod config;
 pub mod events;
 pub mod export;
 pub mod ingest;
+pub mod order_events;
 pub mod parser;
 pub mod store;
 
