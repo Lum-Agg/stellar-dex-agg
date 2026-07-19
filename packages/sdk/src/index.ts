@@ -102,6 +102,18 @@ export interface ListSwapsParams {
   limit?: number;
 }
 
+export interface PriceQuote {
+  id: string;
+  priceUsdc: number;
+  ts: number;
+  via: string;
+}
+
+export interface PricePoint {
+  ts: number;
+  priceUsdc: number;
+}
+
 export interface TokenInfo {
   id: string;
   symbol: string;
@@ -258,6 +270,34 @@ export class LumAggClient {
       amountIn: String(r.amount_in ?? '0'),
       amountOut: r.amount_out != null ? String(r.amount_out) : undefined,
       isSplit: Boolean(r.is_split),
+    }));
+  }
+
+  async getPrices(ids: string[]): Promise<PriceQuote[]> {
+    const search = new URLSearchParams({ ids: ids.join(',') });
+    const resp = await fetch(`${this.baseUrl}/api/v1/prices?${search}`, {
+      headers: this.headers(),
+    });
+    const json = await resp.json();
+    if (!json.success) throw new Error(json.error || 'getPrices failed');
+    return (json.data?.prices || []).map((r: Record<string, unknown>) => ({
+      id: String(r.id ?? ''),
+      priceUsdc: Number(r.price_usdc ?? 0),
+      ts: Number(r.ts ?? 0),
+      via: String(r.via ?? ''),
+    }));
+  }
+
+  async getPriceHistory(id: string, range: '24h' | '7d' = '24h'): Promise<PricePoint[]> {
+    const search = new URLSearchParams({ id, range });
+    const resp = await fetch(`${this.baseUrl}/api/v1/prices/history?${search}`, {
+      headers: this.headers(),
+    });
+    const json = await resp.json();
+    if (!json.success) throw new Error(json.error || 'getPriceHistory failed');
+    return (json.data?.points || []).map((r: Record<string, unknown>) => ({
+      ts: Number(r.ts ?? 0),
+      priceUsdc: Number(r.price_usdc ?? 0),
     }));
   }
 
