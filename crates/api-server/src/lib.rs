@@ -10,6 +10,7 @@ pub mod snapshot_loader;
 pub mod soroban_prepare;
 pub mod state;
 pub mod stats;
+pub mod orders;
 pub mod swaps;
 pub mod xlm_price;
 
@@ -38,6 +39,7 @@ fn build_router(app_state: AppState, rate_limit: RateLimitState, logo_dir: PathB
         .route("/api/v1/health", get(handlers::health_check))
         .route("/api/v1/stats", get(stats::get_stats))
         .route("/api/v1/swaps", get(swaps::get_swaps))
+        .route("/api/v1/orders", get(orders::get_orders))
         .route("/api/v1/prices", get(prices::get_prices))
         .route("/api/v1/prices/history", get(prices::get_price_history))
         .layer(middleware::from_fn_with_state(

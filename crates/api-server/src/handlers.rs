@@ -33,6 +33,7 @@ pub async fn api_root() -> impl IntoResponse {
             "balances": "/api/v1/balances",
             "stats": "/api/v1/stats",
             "swaps": "/api/v1/swaps",
+            "orders": "/api/v1/orders",
             "prices": "/api/v1/prices",
             "price_history": "/api/v1/prices/history"
         },
