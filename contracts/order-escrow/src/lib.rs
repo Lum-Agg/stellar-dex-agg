@@ -177,6 +177,26 @@ impl OrderEscrowContract {
         env.storage().persistent().set(&key, &order);
     }
 
+    pub fn reclaim_expired(env: Env, order_id: u64) {
+        let key = DataKey::Order(order_id);
+        let mut order: LimitOrder = env.storage().persistent().get(&key).expect("Order not found");
+        assert!(order.status == OrderStatus::Open, "Order is not open");
+        assert!(
+            env.ledger().sequence() > order.expires_ledger,
+            "Order has not expired"
+        );
+
+        let escrow = env.current_contract_address();
+        token::Client::new(&env, &order.token_in).transfer(
+            &escrow,
+            &order.owner,
+            &order.amount_in_remaining,
+        );
+        order.amount_in_remaining = 0;
+        order.status = OrderStatus::Expired;
+        env.storage().persistent().set(&key, &order);
+    }
+
     pub fn fill(env: Env, order_id: u64, amount_in: i128, sub_routes: Vec<SubRoute>, min_amount_out: i128) -> i128 {
         let key = DataKey::Order(order_id);
         let mut order: LimitOrder = env.storage().persistent().get(&key).expect("Order not found");
@@ -504,6 +524,81 @@ mod tests {
 
         assert_eq!(token::Client::new(&env, &token_in).balance(&owner), 5_000_000);
         assert_eq!(token::Client::new(&env, &token_in).balance(&escrow_id), 0);
+    }
+
+    #[test]
+    fn reclaim_expired_refunds_open_residual() {
+        let env = test_env();
+        env.mock_all_auths();
+        let owner = gen_addr(&env);
+        let (escrow_id, escrow) = setup_escrow(&env);
+        let (token_in, token_in_sac) = create_token(&env);
+        let (token_out, _) = create_token(&env);
+        token_in_sac.mint(&owner, &5_000_000);
+        let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000_000, &20_000_000, &100);
+        env.ledger().set(LedgerInfo {
+            timestamp: 0,
+            protocol_version: 22,
+            sequence_number: 101,
+            network_id: [0; 32],
+            base_reserve: 10_000_000,
+            min_temp_entry_ttl: 16,
+            min_persistent_entry_ttl: 4_096,
+            max_entry_ttl: 6_312_000,
+        });
+
+        escrow.reclaim_expired(&order_id);
+
+        assert_eq!(token::Client::new(&env, &token_in).balance(&owner), 5_000_000);
+        assert_eq!(token::Client::new(&env, &token_in).balance(&escrow_id), 0);
+        let order = order(&env, &escrow_id, order_id);
+        assert_eq!(order.amount_in_remaining, 0);
+        assert!(order.status == OrderStatus::Expired);
+    }
+
+    #[test]
+    fn reclaim_expired_rejects_second_reclaim() {
+        let env = test_env();
+        env.mock_all_auths();
+        let owner = gen_addr(&env);
+        let (_, escrow) = setup_escrow(&env);
+        let (token_in, token_in_sac) = create_token(&env);
+        let (token_out, _) = create_token(&env);
+        token_in_sac.mint(&owner, &5_000_000);
+        let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000_000, &20_000_000, &100);
+        env.ledger().set(LedgerInfo {
+            timestamp: 0,
+            protocol_version: 22,
+            sequence_number: 101,
+            network_id: [0; 32],
+            base_reserve: 10_000_000,
+            min_temp_entry_ttl: 16,
+            min_persistent_entry_ttl: 4_096,
+            max_entry_ttl: 6_312_000,
+        });
+
+        escrow.reclaim_expired(&order_id);
+
+        let result = escrow.try_reclaim_expired(&order_id);
+        assert!(matches!(result, Ok(Err(_)) | Err(_)), "{result:?}");
+    }
+
+    #[test]
+    fn reclaim_expired_rejects_before_expiry() {
+        let env = test_env();
+        env.mock_all_auths();
+        let owner = gen_addr(&env);
+        let (escrow_id, escrow) = setup_escrow(&env);
+        let (token_in, token_in_sac) = create_token(&env);
+        let (token_out, _) = create_token(&env);
+        token_in_sac.mint(&owner, &5_000_000);
+        let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000_000, &20_000_000, &100);
+
+        let result = escrow.try_reclaim_expired(&order_id);
+
+        assert!(matches!(result, Ok(Err(_)) | Err(_)), "{result:?}");
+        assert_eq!(token::Client::new(&env, &token_in).balance(&escrow_id), 5_000_000);
+        assert!(order(&env, &escrow_id, order_id).status == OrderStatus::Open);
     }
 
     #[test]
