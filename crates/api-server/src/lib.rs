@@ -1,5 +1,6 @@
 pub mod config;
 pub mod handlers;
+pub mod price_store;
 pub mod pool_hydrate;
 pub mod rate_limit;
 pub mod snapshot_loader;
