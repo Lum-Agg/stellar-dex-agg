@@ -64,6 +64,51 @@ fn required_min_out(amount_in: i128, limit_out_per_in_e7: i128) -> i128 {
         / RATE_SCALE_E7
 }
 
+fn authorize_swap_as_current_contract(
+    env: &Env,
+    aggregator: &Address,
+    escrow: &Address,
+    token_in: &Address,
+    token_out: &Address,
+    sub_routes: &Vec<SubRoute>,
+    min_amount_out: i128,
+    amount_in: i128,
+) {
+    env.authorize_as_current_contract(soroban_sdk::vec![
+        env,
+        InvokerContractAuthEntry::Contract(SubContractInvocation {
+            context: ContractContext {
+                contract: aggregator.clone(),
+                fn_name: Symbol::new(env, "swap"),
+                args: soroban_sdk::vec![
+                    env,
+                    escrow.clone().into_val(env),
+                    token_in.clone().into_val(env),
+                    token_out.clone().into_val(env),
+                    sub_routes.clone().into_val(env),
+                    min_amount_out.into_val(env),
+                ],
+            },
+            sub_invocations: soroban_sdk::vec![
+                env,
+                InvokerContractAuthEntry::Contract(SubContractInvocation {
+                    context: ContractContext {
+                        contract: token_in.clone(),
+                        fn_name: Symbol::new(env, "transfer"),
+                        args: soroban_sdk::vec![
+                            env,
+                            escrow.clone().into_val(env),
+                            aggregator.clone().into_val(env),
+                            amount_in.into_val(env),
+                        ],
+                    },
+                    sub_invocations: soroban_sdk::vec![env],
+                }),
+            ],
+        }),
+    ]);
+}
+
 #[contractimpl]
 impl OrderEscrowContract {
     pub fn initialize(env: Env, admin: Address, aggregator: Address) {
@@ -132,6 +177,63 @@ impl OrderEscrowContract {
         env.storage().persistent().set(&key, &order);
     }
 
+    pub fn fill(env: Env, order_id: u64, amount_in: i128, sub_routes: Vec<SubRoute>, min_amount_out: i128) -> i128 {
+        let key = DataKey::Order(order_id);
+        let mut order: LimitOrder = env.storage().persistent().get(&key).expect("Order not found");
+        assert!(order.status == OrderStatus::Open, "Order is not open");
+        assert!(env.ledger().sequence() < order.expires_ledger, "Order is expired");
+        assert!(amount_in > 0, "amount_in must be positive");
+        assert!(amount_in <= order.amount_in_remaining, "amount_in exceeds remaining");
+
+        let mut routed_amount = 0i128;
+        for route in sub_routes.iter() {
+            routed_amount = routed_amount
+                .checked_add(route.amount_in)
+                .expect("sub-route amount overflow");
+        }
+        assert!(routed_amount == amount_in, "sub-route amounts must equal amount_in");
+        assert!(
+            min_amount_out >= required_min_out(amount_in, order.limit_out_per_in_e7),
+            "min_amount_out below limit"
+        );
+
+        let aggregator: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Aggregator)
+            .expect("Not initialized");
+        let escrow = env.current_contract_address();
+        authorize_swap_as_current_contract(
+            &env,
+            &aggregator,
+            &escrow,
+            &order.token_in,
+            &order.token_out,
+            &sub_routes,
+            min_amount_out,
+            amount_in,
+        );
+        let amount_out = AggregatorContractClient::new(&env, &aggregator).swap(
+            &escrow,
+            &order.token_in,
+            &order.token_out,
+            &sub_routes,
+            &min_amount_out,
+        );
+        token::Client::new(&env, &order.token_out).transfer(&escrow, &order.owner, &amount_out);
+
+        order.amount_in_remaining -= amount_in;
+        if order.amount_in_remaining == 0 {
+            order.status = OrderStatus::Filled;
+        }
+        env.storage().persistent().set(&key, &order);
+        env.events().publish(
+            (Symbol::new(&env, "order_filled"), order_id),
+            (order.owner, amount_in, amount_out, order.amount_in_remaining),
+        );
+        amount_out
+    }
+
     /// Temporary auth probe for Task 1. Limit-order ABI follows in Task 2.
     pub fn spike_swap_as_self(
         env: Env,
@@ -147,39 +249,16 @@ impl OrderEscrowContract {
             amount_in += route.amount_in;
         }
 
-        env.authorize_as_current_contract(soroban_sdk::vec![
+        authorize_swap_as_current_contract(
             &env,
-            InvokerContractAuthEntry::Contract(SubContractInvocation {
-                context: ContractContext {
-                    contract: aggregator.clone(),
-                    fn_name: Symbol::new(&env, "swap"),
-                    args: soroban_sdk::vec![
-                        &env,
-                        escrow.clone().into_val(&env),
-                        token_in.clone().into_val(&env),
-                        token_out.clone().into_val(&env),
-                        sub_routes.clone().into_val(&env),
-                        min_amount_out.into_val(&env),
-                    ],
-                },
-                sub_invocations: soroban_sdk::vec![
-                    &env,
-                    InvokerContractAuthEntry::Contract(SubContractInvocation {
-                        context: ContractContext {
-                            contract: token_in.clone(),
-                            fn_name: Symbol::new(&env, "transfer"),
-                            args: soroban_sdk::vec![
-                                &env,
-                                escrow.clone().into_val(&env),
-                                aggregator.clone().into_val(&env),
-                                amount_in.into_val(&env),
-                            ],
-                        },
-                        sub_invocations: soroban_sdk::vec![&env],
-                    }),
-                ],
-            }),
-        ]);
+            &aggregator,
+            &escrow,
+            &token_in,
+            &token_out,
+            &sub_routes,
+            min_amount_out,
+            amount_in,
+        );
 
         AggregatorContractClient::new(&env, &aggregator).swap(
             &escrow,
@@ -194,12 +273,13 @@ impl OrderEscrowContract {
 #[cfg(test)]
 mod tests {
     use {
-        super::{required_min_out, OrderEscrowContract, OrderEscrowContractClient},
+        super::{required_min_out, DataKey, LimitOrder, OrderEscrowContract, OrderEscrowContractClient, OrderStatus},
         aggregator_contract::AggregatorContract,
         lumagg_contract_types::{DexType, SubRoute, SwapStep},
         soroban_sdk::{
-            testutils::{Address as _, EnvTestConfig},
-            token, vec, Address, Env,
+            contract, contractimpl,
+            testutils::{Address as _, EnvTestConfig, Ledger, LedgerInfo},
+            token, vec, Address, Env, Vec,
         },
     };
 
@@ -250,6 +330,23 @@ mod tests {
                 token::Client::new(&env, token_out).transfer(&pool, &user, &(amount_in as i128));
                 amount_in
             }
+        }
+    }
+
+    #[contract]
+    struct Filler;
+
+    #[contractimpl]
+    impl Filler {
+        pub fn fill(
+            env: Env,
+            escrow: Address,
+            order_id: u64,
+            amount_in: i128,
+            sub_routes: Vec<SubRoute>,
+            min_amount_out: i128,
+        ) -> i128 {
+            OrderEscrowContractClient::new(&env, &escrow).fill(&order_id, &amount_in, &sub_routes, &min_amount_out)
         }
     }
 
@@ -317,6 +414,64 @@ mod tests {
         (escrow_id, escrow)
     }
 
+    fn setup_fill<'a>(
+        env: &'a Env,
+    ) -> (
+        Address,
+        OrderEscrowContractClient<'a>,
+        Address,
+        Address,
+        token::StellarAssetClient<'a>,
+        Address,
+    ) {
+        let owner = gen_addr(env);
+        let aggregator_id = env.register_contract(None, AggregatorContract);
+        aggregator_contract::AggregatorContractClient::new(env, &aggregator_id).initialize(&gen_addr(env));
+
+        let escrow_id = env.register_contract(None, OrderEscrowContract);
+        let escrow = OrderEscrowContractClient::new(env, &escrow_id);
+        escrow.initialize(&gen_addr(env), &aggregator_id);
+
+        let (token_in, token_in_sac) = create_token(env);
+        let (token_out, token_out_sac) = create_token(env);
+        token_in_sac.mint(&owner, &10_000);
+
+        let pool_id = env.register_contract(None, aq_mock::AqPool);
+        aq_mock::AqPoolClient::new(env, &pool_id).init(&token_in, &token_out);
+        token_out_sac.mint(&pool_id, &10_000);
+
+        (owner, escrow, token_in, token_out, token_in_sac, pool_id)
+    }
+
+    fn route(env: &Env, pool_id: &Address, token_in: &Address, token_out: &Address, amount_in: i128) -> Vec<SubRoute> {
+        vec![
+            env,
+            SubRoute {
+                amount_in,
+                steps: vec![
+                    env,
+                    SwapStep {
+                        dex_id: pool_id.clone(),
+                        dex_type: DexType::Aquarius,
+                        token_in: token_in.clone(),
+                        token_out: token_out.clone(),
+                        in_idx: 0,
+                        out_idx: 1,
+                    },
+                ],
+            },
+        ]
+    }
+
+    fn order(env: &Env, escrow: &Address, order_id: u64) -> LimitOrder {
+        env.as_contract(escrow, || {
+            env.storage()
+                .persistent()
+                .get::<_, LimitOrder>(&DataKey::Order(order_id))
+                .unwrap()
+        })
+    }
+
     #[test]
     fn create_limit_pulls_token_in() {
         let env = test_env();
@@ -368,5 +523,115 @@ mod tests {
         let result = escrow.try_cancel(&order_id);
         assert!(matches!(result, Ok(Err(_)) | Err(_)), "{result:?}");
         assert_eq!(token::Client::new(&env, &token_in).balance(&escrow_id), 5_000_000);
+    }
+
+    #[test]
+    fn fill_executes_when_limit_met() {
+        let env = test_env();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (owner, escrow, token_in, token_out, _, pool_id) = setup_fill(&env);
+        let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000, &10_000_000, &100);
+
+        let out = escrow.fill(
+            &order_id,
+            &5_000,
+            &route(&env, &pool_id, &token_in, &token_out, 5_000),
+            &5_000,
+        );
+
+        assert_eq!(out, 5_000);
+        assert_eq!(token::Client::new(&env, &token_out).balance(&owner), 5_000);
+        let order = order(&env, &escrow.address, order_id);
+        assert_eq!(order.amount_in_remaining, 0);
+        assert!(order.status == OrderStatus::Filled);
+    }
+
+    #[test]
+    fn fill_rejects_when_min_out_below_limit() {
+        let env = test_env();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (owner, escrow, token_in, token_out, _, pool_id) = setup_fill(&env);
+        let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000, &10_000_000, &100);
+
+        let result = escrow.try_fill(
+            &order_id,
+            &5_000,
+            &route(&env, &pool_id, &token_in, &token_out, 5_000),
+            &4_999,
+        );
+
+        assert!(matches!(result, Ok(Err(_)) | Err(_)), "{result:?}");
+        assert_eq!(token::Client::new(&env, &token_in).balance(&escrow.address), 5_000);
+    }
+
+    #[test]
+    fn fill_rejects_expired() {
+        let env = test_env();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (owner, escrow, token_in, token_out, _, pool_id) = setup_fill(&env);
+        let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000, &10_000_000, &100);
+        env.ledger().set(LedgerInfo {
+            timestamp: 0,
+            protocol_version: 22,
+            sequence_number: 100,
+            network_id: [0; 32],
+            base_reserve: 10_000_000,
+            min_temp_entry_ttl: 16,
+            min_persistent_entry_ttl: 4_096,
+            max_entry_ttl: 6_312_000,
+        });
+
+        let result = escrow.try_fill(
+            &order_id,
+            &5_000,
+            &route(&env, &pool_id, &token_in, &token_out, 5_000),
+            &5_000,
+        );
+
+        assert!(matches!(result, Ok(Err(_)) | Err(_)), "{result:?}");
+    }
+
+    #[test]
+    fn partial_fill_reduces_remaining() {
+        let env = test_env();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (owner, escrow, token_in, token_out, _, pool_id) = setup_fill(&env);
+        let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000, &10_000_000, &100);
+
+        assert_eq!(
+            escrow.fill(
+                &order_id,
+                &2_000,
+                &route(&env, &pool_id, &token_in, &token_out, 2_000),
+                &2_000
+            ),
+            2_000
+        );
+
+        let order = order(&env, &escrow.address, order_id);
+        assert_eq!(order.amount_in_remaining, 3_000);
+        assert!(order.status == OrderStatus::Open);
+    }
+
+    #[test]
+    fn anyone_can_fill() {
+        let env = test_env();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (owner, escrow, token_in, token_out, _, pool_id) = setup_fill(&env);
+        let filler = env.register_contract(None, Filler);
+        assert_ne!(filler, owner);
+        let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000, &10_000_000, &100);
+
+        assert_eq!(
+            FillerClient::new(&env, &filler).fill(
+                &escrow.address,
+                &order_id,
+                &5_000,
+                &route(&env, &pool_id, &token_in, &token_out, 5_000),
+                &5_000
+            ),
+            5_000
+        );
+        assert_eq!(token::Client::new(&env, &token_out).balance(&owner), 5_000);
     }
 }
