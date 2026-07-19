@@ -17,6 +17,23 @@ pub struct StoredInvocation {
 }
 
 #[derive(Debug, Clone)]
+pub struct LimitOrderRow {
+    pub order_id: i64,
+    pub owner: String,
+    pub token_in: String,
+    pub token_out: String,
+    pub amount_in_initial: Option<String>,
+    pub amount_in_remaining: String,
+    pub limit_out_per_in_e7: String,
+    pub expires_ledger: u32,
+    pub status: String,
+    pub created_ledger: Option<u32>,
+    pub updated_ledger: u32,
+    pub created_at: Option<i64>,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone)]
 pub struct UserSwapRow {
     pub tx_hash: String,
     pub ledger: u32,
@@ -33,6 +50,24 @@ pub struct UserSwapRow {
 
 pub struct IndexStore {
     conn: Connection,
+}
+
+fn map_limit_order_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LimitOrderRow> {
+    Ok(LimitOrderRow {
+        order_id: row.get(0)?,
+        owner: row.get(1)?,
+        token_in: row.get(2)?,
+        token_out: row.get(3)?,
+        amount_in_initial: row.get(4)?,
+        amount_in_remaining: row.get(5)?,
+        limit_out_per_in_e7: row.get(6)?,
+        expires_ledger: row.get::<_, i64>(7)? as u32,
+        status: row.get(8)?,
+        created_ledger: row.get::<_, Option<i64>>(9)?.map(|v| v as u32),
+        updated_ledger: row.get::<_, i64>(10)? as u32,
+        created_at: row.get(11)?,
+        updated_at: row.get(12)?,
+    })
 }
 
 impl IndexStore {
@@ -83,6 +118,24 @@ impl IndexStore {
             CREATE INDEX IF NOT EXISTS idx_swap_invocations_user_created
               ON swap_invocations(user_address, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_swap_legs_dex ON swap_legs(dex_source);
+
+            CREATE TABLE IF NOT EXISTS limit_orders (
+              order_id INTEGER PRIMARY KEY,
+              owner TEXT NOT NULL,
+              token_in TEXT NOT NULL,
+              token_out TEXT NOT NULL,
+              amount_in_initial TEXT,
+              amount_in_remaining TEXT NOT NULL,
+              limit_out_per_in_e7 TEXT NOT NULL,
+              expires_ledger INTEGER NOT NULL,
+              status TEXT NOT NULL,
+              created_ledger INTEGER,
+              updated_ledger INTEGER NOT NULL,
+              created_at INTEGER,
+              updated_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_limit_orders_owner ON limit_orders(owner, status);
             ",
         )?;
         Ok(())
@@ -207,6 +260,143 @@ impl IndexStore {
         Ok(out)
     }
 
+    pub fn upsert_created(
+        &self,
+        order_id: i64,
+        owner: &str,
+        token_in: &str,
+        token_out: &str,
+        amount_in_initial: &str,
+        amount_in_remaining: &str,
+        limit_out_per_in_e7: &str,
+        expires_ledger: u32,
+        created_ledger: u32,
+        updated_ledger: u32,
+        created_at: i64,
+        updated_at: i64,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO limit_orders (
+                order_id, owner, token_in, token_out, amount_in_initial, amount_in_remaining,
+                limit_out_per_in_e7, expires_ledger, status, created_ledger, updated_ledger,
+                created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'open', ?9, ?10, ?11, ?12)
+             ON CONFLICT(order_id) DO UPDATE SET
+                owner = excluded.owner,
+                token_in = excluded.token_in,
+                token_out = excluded.token_out,
+                amount_in_initial = excluded.amount_in_initial,
+                amount_in_remaining = excluded.amount_in_remaining,
+                limit_out_per_in_e7 = excluded.limit_out_per_in_e7,
+                expires_ledger = excluded.expires_ledger,
+                status = 'open',
+                created_ledger = excluded.created_ledger,
+                updated_ledger = excluded.updated_ledger,
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at",
+            params![
+                order_id,
+                owner,
+                token_in,
+                token_out,
+                amount_in_initial,
+                amount_in_remaining,
+                limit_out_per_in_e7,
+                expires_ledger,
+                created_ledger,
+                updated_ledger,
+                created_at,
+                updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn apply_filled(
+        &self,
+        order_id: i64,
+        amount_in_remaining: &str,
+        updated_ledger: u32,
+        updated_at: i64,
+    ) -> Result<()> {
+        let status = if amount_in_remaining == "0" {
+            "filled"
+        } else {
+            "open"
+        };
+        let updated = self.conn.execute(
+            "UPDATE limit_orders
+             SET amount_in_remaining = ?1, status = ?2, updated_ledger = ?3, updated_at = ?4
+             WHERE order_id = ?5",
+            params![
+                amount_in_remaining,
+                status,
+                updated_ledger,
+                updated_at,
+                order_id,
+            ],
+        )?;
+        if updated == 0 {
+            anyhow::bail!("limit order {order_id} not found");
+        }
+        Ok(())
+    }
+
+    pub fn apply_closed(
+        &self,
+        order_id: i64,
+        status: &str,
+        updated_ledger: u32,
+        updated_at: i64,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            status == "cancelled" || status == "expired",
+            "invalid closed status: {status}"
+        );
+        let updated = self.conn.execute(
+            "UPDATE limit_orders
+             SET status = ?1, amount_in_remaining = '0', updated_ledger = ?2, updated_at = ?3
+             WHERE order_id = ?4",
+            params![status, updated_ledger, updated_at, order_id],
+        )?;
+        if updated == 0 {
+            anyhow::bail!("limit order {order_id} not found");
+        }
+        Ok(())
+    }
+
+    pub fn list_by_owner(
+        &self,
+        owner: &str,
+        status_filter: Option<&str>,
+    ) -> Result<Vec<LimitOrderRow>> {
+        let sql = match status_filter {
+            Some("all") => {
+                "SELECT order_id, owner, token_in, token_out, amount_in_initial,
+                        amount_in_remaining, limit_out_per_in_e7, expires_ledger, status,
+                        created_ledger, updated_ledger, created_at, updated_at
+                 FROM limit_orders
+                 WHERE owner = ?1
+                 ORDER BY updated_at DESC, order_id DESC"
+            }
+            _ => {
+                "SELECT order_id, owner, token_in, token_out, amount_in_initial,
+                        amount_in_remaining, limit_out_per_in_e7, expires_ledger, status,
+                        created_ledger, updated_ledger, created_at, updated_at
+                 FROM limit_orders
+                 WHERE owner = ?1 AND status = 'open'
+                 ORDER BY updated_at DESC, order_id DESC"
+            }
+        };
+        let mut stmt = self.conn.prepare(sql)?;
+        let rows = stmt.query_map(params![owner], map_limit_order_row)?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
     pub(crate) fn conn(&self) -> &Connection {
         &self.conn
     }
@@ -271,5 +461,208 @@ mod tests {
 
         let empty = store.list_swaps_by_user("GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCK3LI", 10).unwrap();
         assert!(empty.is_empty());
+    }
+
+    const OWNER: &str = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+    const OTHER: &str = "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+
+    fn seed_open_order(store: &IndexStore, order_id: i64, owner: &str, amount: &str, at: i64) {
+        store
+            .upsert_created(
+                order_id,
+                owner,
+                "TOKEN_IN",
+                "TOKEN_OUT",
+                amount,
+                amount,
+                "10000000",
+                500,
+                100,
+                100,
+                at,
+                at,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn upsert_created_inserts_open_order() {
+        let dir = tempdir().unwrap();
+        let store = IndexStore::open(dir.path().join("test.db")).unwrap();
+
+        store
+            .upsert_created(
+                1,
+                OWNER,
+                "USDC",
+                "XLM",
+                "1000",
+                "1000",
+                "2500000",
+                999,
+                10,
+                10,
+                1_000,
+                1_000,
+            )
+            .unwrap();
+
+        let rows = store.list_by_owner(OWNER, Some("all")).unwrap();
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row.order_id, 1);
+        assert_eq!(row.owner, OWNER);
+        assert_eq!(row.token_in, "USDC");
+        assert_eq!(row.token_out, "XLM");
+        assert_eq!(row.amount_in_initial.as_deref(), Some("1000"));
+        assert_eq!(row.amount_in_remaining, "1000");
+        assert_eq!(row.limit_out_per_in_e7, "2500000");
+        assert_eq!(row.expires_ledger, 999);
+        assert_eq!(row.status, "open");
+        assert_eq!(row.created_ledger, Some(10));
+        assert_eq!(row.updated_ledger, 10);
+        assert_eq!(row.created_at, Some(1_000));
+        assert_eq!(row.updated_at, 1_000);
+    }
+
+    #[test]
+    fn apply_filled_updates_remaining_and_status() {
+        let dir = tempdir().unwrap();
+        let store = IndexStore::open(dir.path().join("test.db")).unwrap();
+        seed_open_order(&store, 1, OWNER, "1000", 1_000);
+
+        store.apply_filled(1, "400", 101, 1_100).unwrap();
+
+        let row = store.list_by_owner(OWNER, Some("all")).unwrap().pop().unwrap();
+        assert_eq!(row.amount_in_remaining, "400");
+        assert_eq!(row.status, "open");
+        assert_eq!(row.updated_ledger, 101);
+        assert_eq!(row.updated_at, 1_100);
+
+        store.apply_filled(1, "0", 102, 1_200).unwrap();
+        let row = store.list_by_owner(OWNER, Some("all")).unwrap().pop().unwrap();
+        assert_eq!(row.amount_in_remaining, "0");
+        assert_eq!(row.status, "filled");
+    }
+
+    #[test]
+    fn apply_closed_sets_status_and_zeroes_remaining() {
+        let dir = tempdir().unwrap();
+        let store = IndexStore::open(dir.path().join("test.db")).unwrap();
+        seed_open_order(&store, 1, OWNER, "500", 1_000);
+
+        store.apply_closed(1, "cancelled", 110, 2_000).unwrap();
+        let row = store.list_by_owner(OWNER, Some("all")).unwrap().pop().unwrap();
+        assert_eq!(row.status, "cancelled");
+        assert_eq!(row.amount_in_remaining, "0");
+        assert_eq!(row.updated_ledger, 110);
+
+        seed_open_order(&store, 2, OWNER, "500", 1_001);
+        store.apply_closed(2, "expired", 111, 2_001).unwrap();
+        let row = store
+            .list_by_owner(OWNER, Some("all"))
+            .unwrap()
+            .into_iter()
+            .find(|r| r.order_id == 2)
+            .unwrap();
+        assert_eq!(row.status, "expired");
+        assert_eq!(row.amount_in_remaining, "0");
+    }
+
+    #[test]
+    fn apply_closed_rejects_invalid_status() {
+        let dir = tempdir().unwrap();
+        let store = IndexStore::open(dir.path().join("test.db")).unwrap();
+        seed_open_order(&store, 1, OWNER, "500", 1_000);
+
+        let err = store.apply_closed(1, "filled", 110, 2_000).unwrap_err();
+        assert!(err.to_string().contains("invalid closed status"));
+    }
+
+    #[test]
+    fn list_by_owner_filters_owner_and_status() {
+        let dir = tempdir().unwrap();
+        let store = IndexStore::open(dir.path().join("test.db")).unwrap();
+        seed_open_order(&store, 1, OWNER, "100", 1_000);
+        seed_open_order(&store, 2, OWNER, "200", 900);
+        seed_open_order(&store, 3, OTHER, "300", 800);
+        store.apply_filled(2, "0", 120, 1_500).unwrap();
+
+        let open = store.list_by_owner(OWNER, None).unwrap();
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].order_id, 1);
+
+        let open_explicit = store.list_by_owner(OWNER, Some("open")).unwrap();
+        assert_eq!(open_explicit.len(), 1);
+
+        let all = store.list_by_owner(OWNER, Some("all")).unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].order_id, 2);
+        assert_eq!(all[1].order_id, 1);
+
+        let other_open = store.list_by_owner(OTHER, None).unwrap();
+        assert_eq!(other_open.len(), 1);
+        assert_eq!(other_open[0].order_id, 3);
+    }
+
+    #[test]
+    fn limit_order_lifecycle_sequence() {
+        let dir = tempdir().unwrap();
+        let store = IndexStore::open(dir.path().join("test.db")).unwrap();
+
+        store
+            .upsert_created(
+                42,
+                OWNER,
+                "USDC",
+                "XLM",
+                "1000",
+                "1000",
+                "2500000",
+                999,
+                50,
+                50,
+                100,
+                100,
+            )
+            .unwrap();
+        assert_eq!(store.list_by_owner(OWNER, None).unwrap().len(), 1);
+
+        store.apply_filled(42, "600", 60, 200).unwrap();
+        let partial = store.list_by_owner(OWNER, None).unwrap().pop().unwrap();
+        assert_eq!(partial.status, "open");
+        assert_eq!(partial.amount_in_remaining, "600");
+
+        store.apply_filled(42, "0", 70, 300).unwrap();
+        assert!(store.list_by_owner(OWNER, None).unwrap().is_empty());
+        let filled = store.list_by_owner(OWNER, Some("all")).unwrap().pop().unwrap();
+        assert_eq!(filled.status, "filled");
+
+        store
+            .upsert_created(
+                43,
+                OWNER,
+                "USDC",
+                "XLM",
+                "500",
+                "500",
+                "2500000",
+                999,
+                80,
+                80,
+                400,
+                400,
+            )
+            .unwrap();
+        store.apply_closed(43, "cancelled", 90, 500).unwrap();
+        assert!(store.list_by_owner(OWNER, None).unwrap().is_empty());
+        let cancelled = store
+            .list_by_owner(OWNER, Some("all"))
+            .unwrap()
+            .into_iter()
+            .find(|r| r.order_id == 43)
+            .unwrap();
+        assert_eq!(cancelled.status, "cancelled");
+        assert_eq!(cancelled.amount_in_remaining, "0");
     }
 }
