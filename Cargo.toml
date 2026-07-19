@@ -11,7 +11,8 @@ members = [
     "crates/sdk",
     "contracts/shared-types",
     "contracts/aggregator",
-    "contracts/vault"
+    "contracts/vault",
+    "contracts/order-escrow"
 ]
 resolver = "2"
 

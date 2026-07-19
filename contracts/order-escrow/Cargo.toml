@@ -1,0 +1,18 @@
+[package]
+name = "order-escrow-contract"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/Lum-Agg/stellar-dex-agg"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+soroban-sdk = "22.0.0"
+lumagg-contract-types = { path = "../shared-types" }
+
+[dev-dependencies]
+soroban-sdk = { version = "22.0.0", features = ["testutils"] }
+aggregator-contract = { path = "../aggregator", default-features = false }
+lumagg-contract-types = { path = "../shared-types" }
