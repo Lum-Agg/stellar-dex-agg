@@ -25,9 +25,15 @@ if [[ -z "$USER_G" ]]; then
   exit 1
 fi
 
-PREFER_ARG=()
+# Keep quote args non-empty: empty "${arr[@]}" + set -u fails on macOS bash 3.2.
+QUOTE_ARGS=(
+  --data-urlencode "token_in=$XLM"
+  --data-urlencode "token_out=$USDC"
+  --data-urlencode "amount_in=$AMOUNT_IN"
+  --data-urlencode "slippage=0.5"
+)
 if [[ "${PREFER_SOROBAN:-}" == "1" ]]; then
-  PREFER_ARG=(--data-urlencode "prefer_soroban=1")
+  QUOTE_ARGS+=(--data-urlencode "prefer_soroban=1")
 fi
 
 TMP=$(mktemp -d)
@@ -43,12 +49,7 @@ curl -sf "$API/api/v1/health" | python3 -m json.tool
 echo
 
 echo "=== 2. Quote ==="
-curl -sfG "$API/api/v1/quote" \
-  --data-urlencode "token_in=$XLM" \
-  --data-urlencode "token_out=$USDC" \
-  --data-urlencode "amount_in=$AMOUNT_IN" \
-  --data-urlencode "slippage=0.5" \
-  "${PREFER_ARG[@]}" > "$TMP/quote.json"
+curl -sfG "$API/api/v1/quote" "${QUOTE_ARGS[@]}" > "$TMP/quote.json"
 python3 -m json.tool "$TMP/quote.json" | head -40
 echo "…"
 echo
