@@ -99,7 +99,7 @@ Single source of truth for personal history: all `swap_invocations` rows for `us
 
 **Store changes (`analytics-indexer`)**
 
-- Add `list_swaps_by_user(user, limit, cursor?)` querying `swap_invocations` ordered by `created_at DESC, tx_hash DESC`
+- Add `list_swaps_by_user(user, limit)` querying `swap_invocations` ordered by `created_at DESC, tx_hash DESC`
 - Add index: `CREATE INDEX IF NOT EXISTS idx_swap_invocations_user_created ON swap_invocations(user_address, created_at DESC)`
 
 **Wiring**
