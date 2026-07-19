@@ -4,6 +4,7 @@ pub mod pool_hydrate;
 pub mod price_mark;
 pub mod price_sampler;
 pub mod price_store;
+pub mod prices;
 pub mod rate_limit;
 pub mod snapshot_loader;
 pub mod soroban_prepare;
@@ -37,6 +38,8 @@ fn build_router(app_state: AppState, rate_limit: RateLimitState, logo_dir: PathB
         .route("/api/v1/health", get(handlers::health_check))
         .route("/api/v1/stats", get(stats::get_stats))
         .route("/api/v1/swaps", get(swaps::get_swaps))
+        .route("/api/v1/prices", get(prices::get_prices))
+        .route("/api/v1/prices/history", get(prices::get_price_history))
         .layer(middleware::from_fn_with_state(
             rate_limit,
             rate_limit::rate_limit_middleware,

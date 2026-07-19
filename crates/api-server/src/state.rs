@@ -2,6 +2,8 @@ use {
     crate::{
         config::{AppConfig, LumaggMode},
         pool_hydrate::{self, PoolHydrateConfig},
+        price_sampler::spawn_price_sampler,
+        price_store::PriceStore,
         snapshot_loader::{build_engine_from_snapshot, path_finder_config_from_app},
     },
     anyhow::Result,
@@ -42,6 +44,7 @@ pub struct AppState {
     pub rpc: Arc<SorobanRpc>,
     pub pool_state_store: Option<Arc<dyn PoolStateStore>>,
     pub telegram: Option<Arc<lumagg_alerts::TelegramAlerter>>,
+    pub price_store: Option<Arc<PriceStore>>,
 }
 
 pub(crate) fn sanitize_cached_pairs(
@@ -165,6 +168,13 @@ fn configured_snapshot_event_listener(
     }
 }
 
+fn configured_price_store() -> Result<Option<Arc<PriceStore>>> {
+    let Some(path) = std::env::var("PRICE_DB_PATH").ok().filter(|path| !path.is_empty()) else {
+        return Ok(None);
+    };
+    Ok(Some(Arc::new(PriceStore::open(path)?)))
+}
+
 /// Bridge [`MemorySnapshotStore`] version watch → same event channel as Redis
 /// pub/sub.
 fn subscribe_memory_snapshot_versions(
@@ -222,6 +232,7 @@ async fn new_embedded(config: AppConfig) -> Result<AppState> {
     }
 
     let telegram = lumagg_alerts::TelegramAlerter::from_env_api_primary().map(Arc::new);
+    let price_store = configured_price_store()?;
     let state = AppState {
         engine: Arc::new(RwLock::new(engine)),
         config,
@@ -229,8 +240,10 @@ async fn new_embedded(config: AppConfig) -> Result<AppState> {
         rpc,
         pool_state_store,
         telegram,
+        price_store,
     };
     state.spawn_snapshot_reloader(snapshot_store, snapshot_events, initial_version);
+    state.spawn_price_sampler_if_configured();
     Ok(state)
 }
 
@@ -383,6 +396,14 @@ fn should_alert_quote_redis_miss(miss: usize, soroswap_refs: usize) -> bool {
 }
 
 impl AppState {
+    fn spawn_price_sampler_if_configured(&self) {
+        if let Some(store) = &self.price_store {
+            if std::env::var("PRICE_SAMPLER").as_deref() != Ok("0") {
+                spawn_price_sampler(self.clone(), store.clone());
+            }
+        }
+    }
+
     pub async fn current_engine(&self) -> Arc<QuoteEngine> {
         self.engine.read().await.clone()
     }
@@ -573,6 +594,7 @@ impl AppState {
             }
             let pool_state_store = configured_pool_state_store(&config)?;
             let telegram = lumagg_alerts::TelegramAlerter::from_env_api_primary().map(Arc::new);
+            let price_store = configured_price_store()?;
             if telegram.is_some() {
                 info!("Telegram alerts enabled on API (quote Redis miss)");
             }
@@ -583,8 +605,10 @@ impl AppState {
                 rpc,
                 pool_state_store,
                 telegram,
+                price_store,
             };
             state.spawn_snapshot_reloader(snapshot_store, snapshot_events, initial_version);
+            state.spawn_price_sampler_if_configured();
             return Ok(state);
         }
 
@@ -678,14 +702,18 @@ impl AppState {
 
         let pool_state_store = configured_pool_state_store(&config)?;
         let telegram = lumagg_alerts::TelegramAlerter::from_env_api_primary().map(Arc::new);
-        Ok(Self {
+        let price_store = configured_price_store()?;
+        let state = Self {
             engine: Arc::new(RwLock::new(engine)),
             config,
             token_metadata,
             rpc,
             pool_state_store,
             telegram,
-        })
+            price_store,
+        };
+        state.spawn_price_sampler_if_configured();
+        Ok(state)
     }
 }
 
