@@ -6,6 +6,7 @@ pub mod snapshot_loader;
 pub mod soroban_prepare;
 pub mod state;
 pub mod stats;
+pub mod swaps;
 pub mod xlm_price;
 
 use {
@@ -32,6 +33,7 @@ fn build_router(app_state: AppState, rate_limit: RateLimitState, logo_dir: PathB
         .route("/api/v1/balances", get(handlers::get_balances))
         .route("/api/v1/health", get(handlers::health_check))
         .route("/api/v1/stats", get(stats::get_stats))
+        .route("/api/v1/swaps", get(swaps::get_swaps))
         .layer(middleware::from_fn_with_state(
             rate_limit,
             rate_limit::rate_limit_middleware,
