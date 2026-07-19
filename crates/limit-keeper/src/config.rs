@@ -19,9 +19,7 @@ pub struct KeeperConfig {
 
 impl KeeperConfig {
     pub fn from_env() -> Result<Self> {
-        // Accept the documented spelling and the Phase 3b task's legacy
-        // misspelling; either one must prevent live submission.
-        let dry_run = enabled("KEEPER_DRY_RUN") || enabled("KEPER_DRY_RUN");
+        let dry_run = enabled("KEEPER_DRY_RUN");
         Ok(Self {
             rpc_url: required("KEEPER_RPC_URL")?,
             // A dry-run never signs or submits, so it must be runnable
