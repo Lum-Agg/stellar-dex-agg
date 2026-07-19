@@ -21,20 +21,59 @@ pub trait AggregatorContract {
 }
 
 #[contracttype]
-enum DataKey {
+#[derive(Clone)]
+pub enum DataKey {
     Admin,
+    Aggregator,
+    NextOrderId,
+    Order(u64),
+}
+
+#[contracttype]
+#[derive(Clone, PartialEq, Eq)]
+pub enum OrderStatus {
+    Open,
+    Filled,
+    Cancelled,
+    Expired,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub struct LimitOrder {
+    pub owner: Address,
+    pub token_in: Address,
+    pub token_out: Address,
+    pub amount_in_remaining: i128,
+    pub limit_out_per_in_e7: i128,
+    pub expires_ledger: u32,
+    pub status: OrderStatus,
 }
 
 #[contract]
 pub struct OrderEscrowContract;
 
+const RATE_SCALE_E7: i128 = 10_000_000;
+
+fn required_min_out(amount_in: i128, limit_out_per_in_e7: i128) -> i128 {
+    assert!(amount_in >= 0, "amount_in must not be negative");
+    assert!(limit_out_per_in_e7 > 0, "limit must be positive");
+    amount_in
+        .checked_mul(limit_out_per_in_e7)
+        .expect("amount and limit multiplication overflow")
+        / RATE_SCALE_E7
+}
+
 #[contractimpl]
 impl OrderEscrowContract {
-    pub fn initialize(env: Env, admin: Address) {
+    pub fn initialize(env: Env, admin: Address, aggregator: Address) {
         if env.storage().instance().has(&DataKey::Admin) {
             panic!("Already initialized");
         }
+        admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage().instance().set(&DataKey::Aggregator, &aggregator);
+        env.storage().instance().set(&DataKey::NextOrderId, &0u64);
     }
 
     /// Temporary auth probe for Task 1. Limit-order ABI follows in Task 2.
@@ -99,7 +138,7 @@ impl OrderEscrowContract {
 #[cfg(test)]
 mod tests {
     use {
-        super::{OrderEscrowContract, OrderEscrowContractClient},
+        super::{required_min_out, OrderEscrowContract, OrderEscrowContractClient},
         aggregator_contract::AggregatorContract,
         lumagg_contract_types::{DexType, SubRoute, SwapStep},
         soroban_sdk::{testutils::{Address as _, EnvTestConfig}, token, vec, Address, Env},
@@ -162,7 +201,7 @@ mod tests {
 
         let escrow_id = env.register_contract(None, OrderEscrowContract);
         let escrow = OrderEscrowContractClient::new(&env, &escrow_id);
-        escrow.initialize(&gen_addr(&env));
+        escrow.initialize(&gen_addr(&env), &aggregator_id);
         let (token_in, token_in_sac) = create_token(&env);
         let (token_out, token_out_sac) = create_token(&env);
         token_in_sac.mint(&escrow_id, &5_000);
@@ -193,5 +232,16 @@ mod tests {
         assert_eq!(out, 5_000);
         assert_eq!(token::Client::new(&env, &token_in).balance(&escrow_id), 0);
         assert_eq!(token::Client::new(&env, &token_out).balance(&escrow_id), 5_000);
+    }
+
+    #[test]
+    fn min_out_scales_with_fill_size() {
+        // A limit of 2e7 means two output stroops per input stroop.
+        assert_eq!(required_min_out(5_000_000, 20_000_000), 10_000_000);
+    }
+
+    #[test]
+    fn min_out_zero_and_overflow_guards() {
+        assert_eq!(required_min_out(0, 20_000_000), 0);
     }
 }
