@@ -9,6 +9,7 @@ use {
         Json,
     },
     serde::{Deserialize, Serialize},
+    stellar_strkey::ed25519::PublicKey,
 };
 
 #[derive(Debug, Deserialize)]
@@ -52,10 +53,6 @@ fn indexer_db_path() -> Option<String> {
         .or_else(|| std::env::var("LUMAGG_INDEXER_DB_PATH").ok().filter(|s| !s.is_empty()))
 }
 
-fn looks_like_g_address(s: &str) -> bool {
-    s.len() == 56 && s.starts_with('G') && s.chars().all(|c| c.is_ascii_alphanumeric())
-}
-
 pub async fn get_swaps(Query(params): Query<SwapsQuery>) -> Response {
     let Some(user) = params.user.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
         return (
@@ -68,7 +65,7 @@ pub async fn get_swaps(Query(params): Query<SwapsQuery>) -> Response {
         )
             .into_response();
     };
-    if !looks_like_g_address(user) {
+    if PublicKey::from_string(user).is_err() {
         return (
             StatusCode::BAD_REQUEST,
             Json(SwapsResponse {
@@ -96,7 +93,7 @@ pub async fn get_swaps(Query(params): Query<SwapsQuery>) -> Response {
         Ok(s) => s,
         Err(e) => {
             return (
-                StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::SERVICE_UNAVAILABLE,
                 Json(SwapsResponse {
                     success: false,
                     data: None,
@@ -213,6 +210,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn invalid_checksum_g_address_is_400() {
+        let resp = get_swaps(Query(SwapsQuery {
+            user: Some("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into()),
+            limit: None,
+        }))
+        .await
+        .into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
     async fn no_db_env_is_503() {
         std::env::remove_var("INDEXER_DB_PATH");
         std::env::remove_var("LUMAGG_INDEXER_DB_PATH");
@@ -222,6 +230,21 @@ mod tests {
         }))
         .await
         .into_response();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn unavailable_db_is_503() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("missing").join("idx.db");
+        std::env::set_var("INDEXER_DB_PATH", path.to_str().unwrap());
+        let resp = get_swaps(Query(SwapsQuery {
+            user: Some(TEST_USER.into()),
+            limit: None,
+        }))
+        .await
+        .into_response();
+        std::env::remove_var("INDEXER_DB_PATH");
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 

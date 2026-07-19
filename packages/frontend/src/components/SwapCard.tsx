@@ -23,7 +23,10 @@ export function SwapCard() {
   const { address: walletAddress, signTx, connect, connecting } = useWallet();
   const { getBalance, ensureBalance, loading: balancesLoading, ready: balancesReady, refresh: refreshBalances } = useAccountBalances();
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const quoteFingerprintRef = useRef('');
   const tokenList = useTokenList();
+  const quoteFingerprint = `${tokenIn.id}:${tokenOut.id}:${amountIn}:${slippage}`;
+  quoteFingerprintRef.current = quoteFingerprint;
   const resolveTokenSymbol = useMemo(() => {
     const byId = new Map(tokenList.map((t) => [t.id, t.symbol]));
     return (contractId: string) => {
@@ -36,6 +39,7 @@ export function SwapCard() {
 
   const loadQuote = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = opts?.silent ?? false;
+    const requestFingerprint = `${tokenIn.id}:${tokenOut.id}:${amountIn}:${slippage}`;
 
     if (!amountIn || parseFloat(amountIn) <= 0) {
       setQuote(null);
@@ -51,6 +55,8 @@ export function SwapCard() {
       const amountStroops = Math.floor(parseFloat(amountIn) * 10 ** tokenIn.decimals).toString();
       const result = await getQuote(tokenIn.id, tokenOut.id, amountStroops, slippage);
 
+      if (requestFingerprint !== quoteFingerprintRef.current) return;
+
       if (result.success && result.data) {
         setQuote(result.data);
         setError(null);
@@ -59,12 +65,12 @@ export function SwapCard() {
         setError(result.error || 'No route found');
       }
     } catch {
-      if (!silent) {
+      if (!silent && requestFingerprint === quoteFingerprintRef.current) {
         setQuote(null);
         setError('Failed to fetch quote');
       }
     } finally {
-      if (!silent) {
+      if (!silent && requestFingerprint === quoteFingerprintRef.current) {
         setLoading(false);
       }
     }
