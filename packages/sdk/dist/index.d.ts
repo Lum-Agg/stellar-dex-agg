@@ -74,6 +74,32 @@ export interface StatsParams {
     /** When `csv`, returns raw CSV string instead of parsed JSON. */
     format?: 'json' | 'csv';
 }
+export interface SwapRecord {
+    txHash: string;
+    ledger: number;
+    createdAt: number;
+    status: string;
+    functionName: string;
+    tokenIn?: string;
+    tokenOut?: string;
+    amountIn: string;
+    amountOut?: string;
+    isSplit: boolean;
+}
+export interface ListSwapsParams {
+    user: string;
+    limit?: number;
+}
+export interface PriceQuote {
+    id: string;
+    priceUsdc: number;
+    ts: number;
+    via: string;
+}
+export interface PricePoint {
+    ts: number;
+    priceUsdc: number;
+}
 export interface TokenInfo {
     id: string;
     symbol: string;
@@ -102,6 +128,9 @@ export declare class LumAggClient {
         quote: QuoteResult;
         tx: BuildTxResult;
     }>;
+    listSwaps(params: ListSwapsParams): Promise<SwapRecord[]>;
+    getPrices(ids: string[]): Promise<PriceQuote[]>;
+    getPriceHistory(id: string, range?: '24h' | '7d'): Promise<PricePoint[]>;
     /** Public on-chain stats from analytics-indexer (Tranche 3). */
     getStats(params?: StatsParams): Promise<StatsResult | string>;
 }

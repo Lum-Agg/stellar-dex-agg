@@ -118,6 +118,57 @@ export class LumAggClient {
         });
         return { quote, tx };
     }
+    async listSwaps(params) {
+        const search = new URLSearchParams({ user: params.user });
+        if (params.limit !== undefined)
+            search.set('limit', String(params.limit));
+        const resp = await fetch(`${this.baseUrl}/api/v1/swaps?${search}`, {
+            headers: this.headers(),
+        });
+        const json = await resp.json();
+        if (!json.success)
+            throw new Error(json.error || 'listSwaps failed');
+        return (json.data?.swaps || []).map((r) => ({
+            txHash: String(r.tx_hash ?? ''),
+            ledger: Number(r.ledger ?? 0),
+            createdAt: Number(r.created_at ?? 0),
+            status: String(r.status ?? ''),
+            functionName: String(r.function_name ?? ''),
+            tokenIn: r.token_in != null ? String(r.token_in) : undefined,
+            tokenOut: r.token_out != null ? String(r.token_out) : undefined,
+            amountIn: String(r.amount_in ?? '0'),
+            amountOut: r.amount_out != null ? String(r.amount_out) : undefined,
+            isSplit: Boolean(r.is_split),
+        }));
+    }
+    async getPrices(ids) {
+        const search = new URLSearchParams({ ids: ids.join(',') });
+        const resp = await fetch(`${this.baseUrl}/api/v1/prices?${search}`, {
+            headers: this.headers(),
+        });
+        const json = await resp.json();
+        if (!json.success)
+            throw new Error(json.error || 'getPrices failed');
+        return (json.data?.prices || []).map((r) => ({
+            id: String(r.id ?? ''),
+            priceUsdc: Number(r.price_usdc ?? 0),
+            ts: Number(r.ts ?? 0),
+            via: String(r.via ?? ''),
+        }));
+    }
+    async getPriceHistory(id, range = '24h') {
+        const search = new URLSearchParams({ id, range });
+        const resp = await fetch(`${this.baseUrl}/api/v1/prices/history?${search}`, {
+            headers: this.headers(),
+        });
+        const json = await resp.json();
+        if (!json.success)
+            throw new Error(json.error || 'getPriceHistory failed');
+        return (json.data?.points || []).map((r) => ({
+            ts: Number(r.ts ?? 0),
+            priceUsdc: Number(r.price_usdc ?? 0),
+        }));
+    }
     /** Public on-chain stats from analytics-indexer (Tranche 3). */
     async getStats(params = {}) {
         const search = new URLSearchParams();
