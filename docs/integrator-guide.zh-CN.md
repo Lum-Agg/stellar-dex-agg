@@ -155,6 +155,16 @@ curl -s https://api.lumagg.xyz/api/v1/stats | jq .
 
 示例导出：[sample-indexer-export.json](./sample-indexer-export.json) · 数据管线：[analytics-indexer.md](./analytics-indexer.md)。
 
+### 钱包 Swap 历史
+
+查询某个 Stellar 账户最近的 LumAgg 聚合器调用记录（与 `/stats` 使用同一 indexer 数据库）：
+
+```bash
+curl -s "https://api.lumagg.xyz/api/v1/swaps?user=G...&limit=20" | jq .
+```
+
+响应中的 `data.swaps[]` 包含 `tx_hash`、Token 数量、`status` 和 `is_split` 等字段。无历史记录时仍返回 `200`，`swaps` 为空数组。服务端需配置 `INDEXER_DB_PATH`，否则返回 `503`。
+
 ## 9. 原子套利 Operator
 
 自行部署 vault 和套利机器人，请参阅 [arb-operator.md](./arb-operator.md)。

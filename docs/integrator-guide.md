@@ -138,6 +138,16 @@ curl -s https://api.lumagg.xyz/api/v1/stats | jq .
 
 Sample export: [sample-indexer-export.json](./sample-indexer-export.json) · pipeline: [analytics-indexer.md](./analytics-indexer.md).
 
+### Wallet swap history
+
+Recent aggregator invocations for a connected wallet (same indexer DB as `/stats`):
+
+```bash
+curl -s "https://api.lumagg.xyz/api/v1/swaps?user=G...&limit=20" | jq .
+```
+
+Returns `data.swaps[]` with `tx_hash`, token amounts, `status`, and `is_split`. Empty history is `200` with `"swaps": []`. Requires `INDEXER_DB_PATH` on the server (otherwise `503`).
+
 ## 9. Atomic arb operators
 
 Self-deploy vault + bot: [arb-operator.md](./arb-operator.md).

@@ -156,6 +156,41 @@ paths:
                 type: string
         '503':
           description: INDEXER_DB_PATH not configured
+  /api/v1/swaps:
+    get:
+      tags: [health]
+      summary: Wallet swap history (indexer DB)
+      description: |
+        Recent LumAgg aggregator invocations for a Stellar account. Requires `INDEXER_DB_PATH`
+        on the API server (same SQLite as `/stats`). Ordered by `created_at` descending.
+      parameters:
+        - name: user
+          in: query
+          required: true
+          schema:
+            type: string
+            example: "GABCDEFGHIJKLMNOPQRSTUVWXYZ234567ABCDEFGHIJKLMNOPQRSTUVW"
+          description: Stellar account public key (`G…`, 56 chars)
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+          description: Max rows to return (default 20)
+      responses:
+        '200':
+          description: Swap history for the wallet (may be empty)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SwapsResponse'
+        '400':
+          description: Missing or invalid `user`
+        '503':
+          description: INDEXER_DB_PATH not configured
 components:
   parameters:
     token_in:
@@ -349,6 +384,49 @@ components:
                     type: integer
         error:
           type: string
+    SwapsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            swaps:
+              type: array
+              items:
+                $ref: '#/components/schemas/SwapItem'
+        error:
+          type: string
+    SwapItem:
+      type: object
+      properties:
+        tx_hash:
+          type: string
+        ledger:
+          type: integer
+        created_at:
+          type: integer
+          description: Unix timestamp (seconds)
+        status:
+          type: string
+          example: SUCCESS
+        function_name:
+          type: string
+          example: swap
+        token_in:
+          type: string
+          nullable: true
+        token_out:
+          type: string
+          nullable: true
+        amount_in:
+          type: string
+        amount_out:
+          type: string
+          nullable: true
+        is_split:
+          type: boolean
   securitySchemes:
     ApiKeyAuth:
       type: apiKey
