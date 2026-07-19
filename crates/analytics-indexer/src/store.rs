@@ -276,24 +276,11 @@ impl IndexStore {
         updated_at: i64,
     ) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO limit_orders (
+            "INSERT OR IGNORE INTO limit_orders (
                 order_id, owner, token_in, token_out, amount_in_initial, amount_in_remaining,
                 limit_out_per_in_e7, expires_ledger, status, created_ledger, updated_ledger,
                 created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'open', ?9, ?10, ?11, ?12)
-             ON CONFLICT(order_id) DO UPDATE SET
-                owner = excluded.owner,
-                token_in = excluded.token_in,
-                token_out = excluded.token_out,
-                amount_in_initial = excluded.amount_in_initial,
-                amount_in_remaining = excluded.amount_in_remaining,
-                limit_out_per_in_e7 = excluded.limit_out_per_in_e7,
-                expires_ledger = excluded.expires_ledger,
-                status = 'open',
-                created_ledger = excluded.created_ledger,
-                updated_ledger = excluded.updated_ledger,
-                created_at = excluded.created_at,
-                updated_at = excluded.updated_at",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'open', ?9, ?10, ?11, ?12)",
             params![
                 order_id,
                 owner,
@@ -312,6 +299,18 @@ impl IndexStore {
         Ok(())
     }
 
+    fn limit_order_status(&self, order_id: i64) -> Result<Option<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT status FROM limit_orders WHERE order_id = ?1")?;
+        let mut rows = stmt.query(params![order_id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(row.get(0)?))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn apply_filled(
         &self,
         order_id: i64,
@@ -327,7 +326,7 @@ impl IndexStore {
         let updated = self.conn.execute(
             "UPDATE limit_orders
              SET amount_in_remaining = ?1, status = ?2, updated_ledger = ?3, updated_at = ?4
-             WHERE order_id = ?5",
+             WHERE order_id = ?5 AND status = 'open'",
             params![
                 amount_in_remaining,
                 status,
@@ -337,9 +336,13 @@ impl IndexStore {
             ],
         )?;
         if updated == 0 {
-            anyhow::bail!("limit order {order_id} not found");
+            match self.limit_order_status(order_id)? {
+                None => anyhow::bail!("limit order {order_id} not found"),
+                Some(_) => Ok(()),
+            }
+        } else {
+            Ok(())
         }
-        Ok(())
     }
 
     pub fn apply_closed(
@@ -356,13 +359,17 @@ impl IndexStore {
         let updated = self.conn.execute(
             "UPDATE limit_orders
              SET status = ?1, amount_in_remaining = '0', updated_ledger = ?2, updated_at = ?3
-             WHERE order_id = ?4",
+             WHERE order_id = ?4 AND status = 'open'",
             params![status, updated_ledger, updated_at, order_id],
         )?;
         if updated == 0 {
-            anyhow::bail!("limit order {order_id} not found");
+            match self.limit_order_status(order_id)? {
+                None => anyhow::bail!("limit order {order_id} not found"),
+                Some(_) => Ok(()),
+            }
+        } else {
+            Ok(())
         }
-        Ok(())
     }
 
     pub fn list_by_owner(
@@ -664,5 +671,85 @@ mod tests {
             .unwrap();
         assert_eq!(cancelled.status, "cancelled");
         assert_eq!(cancelled.amount_in_remaining, "0");
+    }
+
+    #[test]
+    fn replay_upsert_created_preserves_terminal_status() {
+        let dir = tempdir().unwrap();
+        let store = IndexStore::open(dir.path().join("test.db")).unwrap();
+
+        seed_open_order(&store, 1, OWNER, "1000", 1_000);
+        store.apply_filled(1, "0", 110, 2_000).unwrap();
+
+        store
+            .upsert_created(
+                1,
+                OWNER,
+                "USDC",
+                "XLM",
+                "9999",
+                "9999",
+                "1111111",
+                1,
+                999,
+                999,
+                9_999,
+                9_999,
+            )
+            .unwrap();
+
+        let row = store.list_by_owner(OWNER, Some("all")).unwrap().pop().unwrap();
+        assert_eq!(row.status, "filled");
+        assert_eq!(row.amount_in_remaining, "0");
+        assert_eq!(row.amount_in_initial.as_deref(), Some("1000"));
+        assert_eq!(row.updated_ledger, 110);
+
+        seed_open_order(&store, 2, OWNER, "500", 1_100);
+        store.apply_closed(2, "cancelled", 120, 2_100).unwrap();
+
+        store
+            .upsert_created(
+                2,
+                OWNER,
+                "USDC",
+                "XLM",
+                "8888",
+                "8888",
+                "2222222",
+                2,
+                888,
+                888,
+                8_888,
+                8_888,
+            )
+            .unwrap();
+
+        let row = store
+            .list_by_owner(OWNER, Some("all"))
+            .unwrap()
+            .into_iter()
+            .find(|r| r.order_id == 2)
+            .unwrap();
+        assert_eq!(row.status, "cancelled");
+        assert_eq!(row.amount_in_remaining, "0");
+        assert_eq!(row.amount_in_initial.as_deref(), Some("500"));
+        assert_eq!(row.updated_ledger, 120);
+    }
+
+    #[test]
+    fn late_apply_filled_after_cancel_is_noop() {
+        let dir = tempdir().unwrap();
+        let store = IndexStore::open(dir.path().join("test.db")).unwrap();
+
+        seed_open_order(&store, 1, OWNER, "1000", 1_000);
+        store.apply_closed(1, "cancelled", 110, 2_000).unwrap();
+
+        store.apply_filled(1, "400", 120, 2_100).unwrap();
+
+        let row = store.list_by_owner(OWNER, Some("all")).unwrap().pop().unwrap();
+        assert_eq!(row.status, "cancelled");
+        assert_eq!(row.amount_in_remaining, "0");
+        assert_eq!(row.updated_ledger, 110);
+        assert_eq!(row.updated_at, 2_000);
     }
 }
