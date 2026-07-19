@@ -71,12 +71,26 @@ Single source of truth for personal history: all `swap_invocations` rows for `us
 {
   "success": true,
   "data": {
-    "swaps": [ … ]
+    "swaps": [
+      {
+        "tx_hash": "…",
+        "ledger": 0,
+        "created_at": 0,
+        "status": "SUCCESS",
+        "function_name": "swap",
+        "token_in": "…",
+        "token_out": "…",
+        "amount_in": "…",
+        "amount_out": "…",
+        "is_split": false
+      }
+    ]
   }
 }
 ```
 
 `next_cursor` is reserved for later; MVP responses omit it or always send `null`.
+
 **Errors**
 
 - Missing/invalid `user` → 400
