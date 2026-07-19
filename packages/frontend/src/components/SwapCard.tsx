@@ -8,6 +8,7 @@ import { useWallet } from '@/lib/wallet-context';
 import { RouteDisplay } from './RouteDisplay';
 import { TokenSelector, type Token, TOKENS, useTokenList } from './TokenSelector';
 import { displayTokenSymbol, NATIVE_CONTRACT } from '@/lib/tokenDisplay';
+import { SWAP_SUCCESS_EVENT } from '@/lib/swaps';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
 
@@ -33,6 +34,42 @@ export function SwapCard() {
     };
   }, [tokenList]);
 
+  const loadQuote = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent ?? false;
+
+    if (!amountIn || parseFloat(amountIn) <= 0) {
+      setQuote(null);
+      return;
+    }
+
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
+
+    try {
+      const amountStroops = Math.floor(parseFloat(amountIn) * 10 ** tokenIn.decimals).toString();
+      const result = await getQuote(tokenIn.id, tokenOut.id, amountStroops, slippage);
+
+      if (result.success && result.data) {
+        setQuote(result.data);
+        setError(null);
+      } else if (!silent) {
+        setQuote(null);
+        setError(result.error || 'No route found');
+      }
+    } catch {
+      if (!silent) {
+        setQuote(null);
+        setError('Failed to fetch quote');
+      }
+    } finally {
+      if (!silent) {
+        setLoading(false);
+      }
+    }
+  }, [amountIn, tokenIn, tokenOut, slippage]);
+
   // Auto-fetch quote when amount changes (debounced)
   useEffect(() => {
     if (!amountIn || parseFloat(amountIn) <= 0) {
@@ -42,33 +79,24 @@ export function SwapCard() {
 
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
-    debounceRef.current = setTimeout(async () => {
-      setLoading(true);
-      setError(null);
-
-      try {
-        const amountStroops = Math.floor(parseFloat(amountIn) * 10 ** tokenIn.decimals).toString();
-        const result = await getQuote(tokenIn.id, tokenOut.id, amountStroops, slippage);
-
-        if (result.success && result.data) {
-          setQuote(result.data);
-          setError(null);
-        } else {
-          setQuote(null);
-          setError(result.error || 'No route found');
-        }
-      } catch {
-        setQuote(null);
-        setError('Failed to fetch quote');
-      } finally {
-        setLoading(false);
-      }
+    debounceRef.current = setTimeout(() => {
+      void loadQuote();
     }, 500);
 
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [amountIn, tokenIn, tokenOut, slippage]);
+  }, [amountIn, loadQuote]);
+
+  useEffect(() => {
+    if (!amountIn || parseFloat(amountIn) <= 0) return;
+
+    const interval = setInterval(() => {
+      void loadQuote({ silent: true });
+    }, 12_000);
+
+    return () => clearInterval(interval);
+  }, [amountIn, loadQuote]);
 
   const swapDirection = () => {
     setTokenIn(tokenOut);
@@ -195,6 +223,7 @@ export function SwapCard() {
 
       if (submitData.successful || submitData.hash) {
         setTxResult({ success: true, hash: submitData.hash });
+        window.dispatchEvent(new Event(SWAP_SUCCESS_EVENT));
         setAmountIn('');
         setQuote(null);
         void refreshBalances();
@@ -347,12 +376,22 @@ export function SwapCard() {
 
         {/* Rate display: human out per 1 unit token in (not stroops passed to formatOutput) */}
         {quote && amountIn && parseFloat(amountIn) > 0 && (
-          <div className="mt-3 px-0.5 text-[12px] text-zinc-500">
-            1 {tokenIn.symbol} ≈{' '}
-            {(parseInt(quote.expected_output, 10) / 10 ** tokenOut.decimals / parseFloat(amountIn)).toLocaleString(undefined, {
-              maximumFractionDigits: 8,
-            })}{' '}
-            {tokenOut.symbol}
+          <div className="mt-3 px-0.5 flex items-center justify-between gap-3 text-[12px] text-zinc-500">
+            <span>
+              1 {tokenIn.symbol} ≈{' '}
+              {(parseInt(quote.expected_output, 10) / 10 ** tokenOut.decimals / parseFloat(amountIn)).toLocaleString(undefined, {
+                maximumFractionDigits: 8,
+              })}{' '}
+              {tokenOut.symbol}
+            </span>
+            <button
+              type="button"
+              onClick={() => void loadQuote()}
+              disabled={loading}
+              className="shrink-0 text-zinc-400 hover:text-zinc-100 disabled:text-zinc-600 transition-colors"
+            >
+              Refresh
+            </button>
           </div>
         )}
 
