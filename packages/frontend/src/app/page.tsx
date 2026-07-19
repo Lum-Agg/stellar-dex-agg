@@ -5,6 +5,7 @@ import { CompareSection } from '@/components/CompareSection';
 import { FaqSection } from '@/components/FaqSection';
 import { DisclaimerBanner } from '@/components/DisclaimerBanner';
 import { SwapHistory } from '@/components/SwapHistory';
+import { HoldingsSummary } from '@/components/HoldingsSummary';
 
 const VENUES = [
   { name: 'Aquarius', tag: 'AMM · Stable · CLMM' },
@@ -36,6 +37,9 @@ export default function Home() {
         </p>
         <div className="mt-6 w-full">
           <SwapHistory />
+        </div>
+        <div className="mt-3 w-full">
+          <HoldingsSummary />
         </div>
       </section>
 
