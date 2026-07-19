@@ -133,6 +133,27 @@ export default function DocsPage() {
 
         <Endpoint
           method="GET"
+          path="/api/v1/prices"
+          description="Latest USDC mark per token (sampled ticks or on-demand quote)."
+          params={[
+            { name: 'ids', type: 'string', required: true, desc: 'Comma-separated contract ids (max 50)' },
+          ]}
+          tryIt={<PricesTryIt />}
+        />
+
+        <Endpoint
+          method="GET"
+          path="/api/v1/prices/history"
+          description="Sampled USDC price ticks for sparklines."
+          params={[
+            { name: 'id', type: 'string', required: true, desc: 'Token contract id' },
+            { name: 'range', type: '24h | 7d', required: true, desc: 'History window' },
+          ]}
+          tryIt={<PriceHistoryTryIt />}
+        />
+
+        <Endpoint
+          method="GET"
           path="/api/v1/quote"
           description="Best route and expected output."
           params={[
@@ -312,6 +333,89 @@ function SwapsTryIt() {
             onChange={(e) => setLimit(e.target.value)}
             placeholder="20"
           />
+        </Field>
+        <button type="button" className="docs-btn" onClick={run} disabled={loading}>
+          {loading ? '…' : 'Send'}
+        </button>
+      </div>
+      {result && <pre className="docs-out">{result}</pre>}
+    </>
+  );
+}
+
+function PricesTryIt() {
+  const [ids, setIds] = useState(`${TOKENS.XLM},${TOKENS.USDC}`);
+  const [result, setResult] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const run = async () => {
+    setLoading(true);
+    setResult(null);
+    const q = new URLSearchParams({ ids: ids.trim() });
+    try {
+      const resp = await fetch(`${API_URL}/api/v1/prices?${q}`);
+      setResult(JSON.stringify(await resp.json(), null, 2));
+    } catch (e: unknown) {
+      setResult(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    setLoading(false);
+  };
+
+  return (
+    <>
+      <div className="docs-form-row">
+        <Field label="Ids (comma-separated)">
+          <input
+            className="docs-input"
+            value={ids}
+            onChange={(e) => setIds(e.target.value)}
+            spellCheck={false}
+          />
+        </Field>
+        <button type="button" className="docs-btn" onClick={run} disabled={loading}>
+          {loading ? '…' : 'Send'}
+        </button>
+      </div>
+      {result && <pre className="docs-out">{result}</pre>}
+    </>
+  );
+}
+
+function PriceHistoryTryIt() {
+  const [id, setId] = useState(TOKENS.XLM);
+  const [range, setRange] = useState<'24h' | '7d'>('24h');
+  const [result, setResult] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const run = async () => {
+    setLoading(true);
+    setResult(null);
+    const q = new URLSearchParams({ id: id.trim(), range });
+    try {
+      const resp = await fetch(`${API_URL}/api/v1/prices/history?${q}`);
+      setResult(JSON.stringify(await resp.json(), null, 2));
+    } catch (e: unknown) {
+      setResult(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    setLoading(false);
+  };
+
+  return (
+    <>
+      <div className="docs-form-row">
+        <Field label="Token id">
+          <input
+            className="docs-input"
+            value={id}
+            onChange={(e) => setId(e.target.value)}
+            spellCheck={false}
+          />
+        </Field>
+        <Field label="Range">
+          <select className="docs-input docs-input--narrow" value={range} onChange={(e) => setRange(e.target.value as '24h' | '7d')}>
+            <option value="24h">24h</option>
+            <option value="7d">7d</option>
+          </select>
         </Field>
         <button type="button" className="docs-btn" onClick={run} disabled={loading}>
           {loading ? '…' : 'Send'}
