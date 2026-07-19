@@ -955,7 +955,7 @@ async fn fetch_sac_balance_stroops(rpc: &dex_adapters::rpc::SorobanRpc, token: &
     }
 }
 
-fn collect_common_balance_token_ids() -> Vec<String> {
+pub(crate) fn collect_common_balance_token_ids() -> Vec<String> {
     dex_adapters::COMMON_BALANCE_TOKEN_IDS
         .iter()
         .map(|id| (*id).to_string())

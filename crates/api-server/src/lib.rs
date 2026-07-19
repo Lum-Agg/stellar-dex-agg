@@ -1,7 +1,9 @@
 pub mod config;
 pub mod handlers;
-pub mod price_store;
 pub mod pool_hydrate;
+pub mod price_mark;
+pub mod price_sampler;
+pub mod price_store;
 pub mod rate_limit;
 pub mod snapshot_loader;
 pub mod soroban_prepare;
