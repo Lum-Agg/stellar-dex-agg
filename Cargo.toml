@@ -8,6 +8,7 @@ members = [
     "crates/arbitrage",
     "crates/analytics-indexer",
     "crates/lumagg-alerts",
+    "crates/limit-keeper",
     "crates/sdk",
     "contracts/shared-types",
     "contracts/aggregator",

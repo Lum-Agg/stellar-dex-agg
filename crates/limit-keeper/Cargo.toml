@@ -1,0 +1,24 @@
+[package]
+name = "limit-keeper"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Event-driven keeper for LumAgg limit orders"
+
+[[bin]]
+name = "limit-keeper"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+reqwest.workspace = true
+stellar-xdr.workspace = true
+stellar-strkey.workspace = true
+soroban-client.workspace = true
+stellar-baselib.workspace = true
+dex-adapters = { path = "../dex-adapters" }
+router-engine = { path = "../router-engine" }
