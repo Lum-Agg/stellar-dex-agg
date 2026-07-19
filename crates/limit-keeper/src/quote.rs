@@ -16,6 +16,23 @@ pub struct QuoteApiClient {
 pub struct Quote {
     pub expected_output: i128,
     pub minimum_output: i128,
+    pub sub_routes: Vec<QuoteSubRoute>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct QuoteSubRoute {
+    pub amount_in: String,
+    pub steps: Vec<QuoteStep>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct QuoteStep {
+    pub dex_type: String,
+    pub pool_address: String,
+    pub token_in: String,
+    pub token_out: String,
+    pub in_idx: u32,
+    pub out_idx: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -29,6 +46,7 @@ struct QuoteApiResponse {
 struct QuoteApiData {
     expected_output: String,
     minimum_output: String,
+    sub_routes: Vec<QuoteSubRoute>,
 }
 
 impl QuoteApiClient {
@@ -70,20 +88,19 @@ impl QuoteApiClient {
             .data
             .ok_or_else(|| anyhow!("quote API returned success without data"))?;
         Ok(Quote {
-            expected_output: data
-                .expected_output
-                .parse()
-                .context("parse quote expected_output")?,
-            minimum_output: data
-                .minimum_output
-                .parse()
-                .context("parse quote minimum_output")?,
+            expected_output: data.expected_output.parse().context("parse quote expected_output")?,
+            minimum_output: data.minimum_output.parse().context("parse quote minimum_output")?,
+            sub_routes: data.sub_routes,
         })
     }
 }
 
 pub fn is_fillable(order: &OpenOrder, expected_out: i128) -> bool {
-    expected_out >= required_min_out(order.amount_in_remaining, order.limit_out_per_in_e7)
+    is_fillable_for(order, order.amount_in_remaining, expected_out)
+}
+
+pub fn is_fillable_for(order: &OpenOrder, amount_in: i128, expected_out: i128) -> bool {
+    expected_out >= required_min_out(amount_in, order.limit_out_per_in_e7)
 }
 
 #[cfg(test)]

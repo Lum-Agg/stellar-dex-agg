@@ -19,16 +19,25 @@ pub struct KeeperConfig {
 
 impl KeeperConfig {
     pub fn from_env() -> Result<Self> {
+        // Accept the documented spelling and the Phase 3b task's legacy
+        // misspelling; either one must prevent live submission.
+        let dry_run = enabled("KEEPER_DRY_RUN") || enabled("KEPER_DRY_RUN");
         Ok(Self {
             rpc_url: required("KEEPER_RPC_URL")?,
-            secret: required("KEEPER_SECRET")?,
+            // A dry-run never signs or submits, so it must be runnable
+            // without placing an operational signing key in the environment.
+            secret: if dry_run {
+                std::env::var("KEEPER_SECRET").unwrap_or_default()
+            } else {
+                required("KEEPER_SECRET")?
+            },
             network: required("KEEPER_NETWORK")?,
             escrow_contract: required("ESCROW_CONTRACT")?,
             aggregator_contract: required("AGGREGATOR_CONTRACT")?,
             quote_api_url: required("QUOTE_API_URL")?,
             poll_secs: optional_parse("KEEPER_POLL_SECS")?.unwrap_or(10),
             cursor_path: std::env::var("KEEPER_CURSOR_PATH").unwrap_or_else(|_| "keeper.cursor".into()),
-            dry_run: enabled("KEEPER_DRY_RUN"),
+            dry_run,
             max_fill: optional_parse("KEEPER_MAX_FILL")?,
             reclaim: enabled("KEEPER_RECLAIM"),
         })
