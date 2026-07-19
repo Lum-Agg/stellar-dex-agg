@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { displayTokenSymbol } from '@/lib/tokenDisplay';
+import { displayTokenSymbol, NATIVE_CONTRACT } from '@/lib/tokenDisplay';
 import { useAccountBalances } from '@/lib/account-balances-context';
 import { formatBalanceDisplay } from '@/lib/balance';
 
@@ -132,12 +132,31 @@ export function TokenSelector({
   const tokens = useTokenList();
   const { getBalance, ready: balancesReady } = useAccountBalances();
 
-  const filtered = tokens.filter(t =>
-    t.id !== exclude &&
-    (t.symbol.toLowerCase().includes(search.toLowerCase()) ||
-     t.name.toLowerCase().includes(search.toLowerCase()) ||
-     t.id.toLowerCase().includes(search.toLowerCase()))
-  );
+  const q = search.trim();
+  const qLower = q.toLowerCase();
+
+  const filtered = tokens.filter(t => {
+    if (t.id === exclude) return false;
+    const matchesBasic =
+      t.symbol.toLowerCase().includes(qLower) ||
+      t.name.toLowerCase().includes(qLower) ||
+      t.id.toLowerCase().includes(qLower);
+    const matchesNative =
+      qLower === 'native' &&
+      (t.symbol.toLowerCase() === 'xlm' || t.id === NATIVE_CONTRACT);
+    return matchesBasic || matchesNative;
+  });
+
+  const exactIdMatch =
+    filtered.length === 1 &&
+    q.length > 0 &&
+    qLower === filtered[0].id.toLowerCase();
+
+  const selectExactMatch = () => {
+    onSelect(filtered[0]);
+    setOpen(false);
+    setSearch('');
+  };
 
   return (
     <div className="relative">
@@ -170,11 +189,29 @@ export function TokenSelector({
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search name or paste address"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && exactIdMatch) {
+                    e.preventDefault();
+                    selectExactMatch();
+                  }
+                }}
+                placeholder="Search name, C…, or CODE:ISSUER"
                 className="w-full bg-[#09090b] border border-white/[0.08] rounded-lg px-4 py-3 text-[13px] outline-none focus:border-blue-500/40 placeholder-zinc-600 text-zinc-100"
                 autoFocus
               />
             </div>
+
+            {exactIdMatch && (
+              <div className="px-5 pb-2">
+                <button
+                  type="button"
+                  onClick={selectExactMatch}
+                  className="w-full flex items-center justify-center gap-2 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 rounded-lg px-4 py-2.5 text-sm font-medium text-blue-400 transition-colors"
+                >
+                  Select {filtered[0].symbol}
+                </button>
+              </div>
+            )}
 
             {/* Token list */}
             <div className="max-h-[400px] overflow-y-auto px-2 pb-4">
@@ -210,22 +247,11 @@ export function TokenSelector({
                   {filtered.length - 50} more tokens — type to search
                 </div>
               )}
-              {filtered.length === 0 && (
+              {filtered.length === 0 && q.length > 0 && (
                 <div className="px-4 py-6 text-center">
-                  {search.startsWith('C') && search.length > 40 ? (
-                    <button
-                      onClick={() => {
-                        onSelect({ id: search, symbol: search.slice(0, 6), name: 'Custom Token', decimals: 7, color: '#6B7280' });
-                        setOpen(false);
-                        setSearch('');
-                      }}
-                      className="text-blue-400 hover:text-blue-300 text-sm"
-                    >
-                      Use {search.slice(0, 12)}... as custom token
-                    </button>
-                  ) : (
-                    <span className="text-slate-500 text-sm">No tokens found</span>
-                  )}
+                  <span className="text-slate-500 text-sm">
+                    {q.length >= 4 ? 'Token not in list' : 'No tokens found'}
+                  </span>
                 </div>
               )}
             </div>
