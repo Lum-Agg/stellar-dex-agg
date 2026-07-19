@@ -4,6 +4,7 @@ import { SwapCard } from '@/components/SwapCard';
 import { CompareSection } from '@/components/CompareSection';
 import { FaqSection } from '@/components/FaqSection';
 import { DisclaimerBanner } from '@/components/DisclaimerBanner';
+import { SwapHistory } from '@/components/SwapHistory';
 
 const VENUES = [
   { name: 'Aquarius', tag: 'AMM · Stable · CLMM' },
@@ -33,6 +34,9 @@ export default function Home() {
         <p className="mt-4 text-center text-[12px] text-zinc-500 max-w-sm leading-relaxed">
           Best-effort routing across 6 Stellar DEXs · Quotes in under a second
         </p>
+        <div className="mt-6 w-full">
+          <SwapHistory />
+        </div>
       </section>
 
       <section className="space-y-6 pt-4 border-t border-white/[0.06]">
