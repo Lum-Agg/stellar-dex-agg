@@ -87,6 +87,8 @@ LUMAGG_PARTNER_API_KEYS=key_one,key_two
 | POST | `/api/v1/build_tx` | Unsigned XDR |
 | GET | `/api/v1/balance` | Single SAC balance |
 | GET | `/api/v1/balances` | Batch balances for common tokens |
+| GET | `/api/v1/prices` | Latest USDC marks (batch) |
+| GET | `/api/v1/prices/history` | Sampled price ticks for charts |
 
 `/api/v1/tokens[].logo` is either empty during early enrichment, or an absolute self-hosted URL under:
 
@@ -147,6 +149,38 @@ curl -s "https://api.lumagg.xyz/api/v1/swaps?user=G...&limit=20" | jq .
 ```
 
 Returns `data.swaps[]` with `tx_hash`, token amounts, `status`, and `is_split`. Empty history is `200` with `"swaps": []`. Requires `INDEXER_DB_PATH` on the server (otherwise `503`).
+
+### Token prices & chart history
+
+Quote-engine USDC marks for portfolio valuation and simple sparklines:
+
+```bash
+XLM=CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA
+USDC=CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75
+
+# Latest marks (batch, max 50 ids)
+curl -sG "https://api.lumagg.xyz/api/v1/prices" \
+  --data-urlencode "ids=$XLM,$USDC" | jq .
+
+# Sampled history for a sparkline (default range=24h)
+curl -sG "https://api.lumagg.xyz/api/v1/prices/history" \
+  --data-urlencode "id=$XLM" \
+  --data-urlencode "range=7d" | jq .
+```
+
+`GET /prices` returns `data.prices[]` with `id`, `price_usdc`, `ts`, and `via` (`usdc` or `xlm`). Missing ticks trigger a one-shot on-demand quote. Unpriceable tokens are omitted.
+
+`GET /prices/history` returns `data.points[]` with `ts` and `price_usdc`. Empty history is `200` with `"points": []`. Range must be `24h` or `7d`.
+
+**Sampler env (api-server operator):**
+
+| Variable | Purpose |
+|----------|---------|
+| `PRICE_DB_PATH` | SQLite path for sampled ticks (required for history + background sampler) |
+| `PRICE_SAMPLER` | Set to `0` to disable background sampling (default: enabled when `PRICE_DB_PATH` is set) |
+| `PRICE_SAMPLE_SECS` | Sample interval in seconds (default `600`) |
+| `PRICE_SAMPLE_TOKEN_LIMIT` | Max extra registry tokens to sample beyond priority list (default `30`) |
+| `PRICE_RETENTION_DAYS` | Optional positive integer to prune ticks older than N days (default: keep forever) |
 
 ## 9. Atomic arb operators
 

@@ -103,6 +103,8 @@ LUMAGG_PARTNER_API_KEYS=key_one,key_two
 | POST | `/api/v1/build_tx` | 构建未签名 XDR |
 | GET | `/api/v1/balance` | 查询单个 SAC 余额 |
 | GET | `/api/v1/balances` | 批量查询常用 Token 余额 |
+| GET | `/api/v1/prices` | 批量查询最新 USDC 标价 |
+| GET | `/api/v1/prices/history` | 查询采样价格历史（图表） |
 
 `/api/v1/tokens[].logo` 在 enrichment 完成前可能为空；完成后为自托管绝对 URL：
 
@@ -164,6 +166,38 @@ curl -s "https://api.lumagg.xyz/api/v1/swaps?user=G...&limit=20" | jq .
 ```
 
 响应中的 `data.swaps[]` 包含 `tx_hash`、Token 数量、`status` 和 `is_split` 等字段。无历史记录时仍返回 `200`，`swaps` 为空数组。服务端需配置 `INDEXER_DB_PATH`，否则返回 `503`。
+
+### Token 价格与图表历史
+
+用于 Portfolio 估值和简易 sparkline 的 USDC 标价（来自报价引擎）：
+
+```bash
+XLM=CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA
+USDC=CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75
+
+# 批量最新标价（最多 50 个 id）
+curl -sG "https://api.lumagg.xyz/api/v1/prices" \
+  --data-urlencode "ids=$XLM,$USDC" | jq .
+
+# 采样历史（默认 range=24h）
+curl -sG "https://api.lumagg.xyz/api/v1/prices/history" \
+  --data-urlencode "id=$XLM" \
+  --data-urlencode "range=7d" | jq .
+```
+
+`GET /prices` 返回 `data.prices[]`，字段包括 `id`、`price_usdc`、`ts`、`via`（`usdc` 或 `xlm`）。无历史 tick 时会按需报价一次。无法定价的 Token 不会出现在结果中。
+
+`GET /prices/history` 返回 `data.points[]`（`ts`、`price_usdc`）。无数据时仍返回 `200`，`points` 为空数组。`range` 仅支持 `24h` 或 `7d`。
+
+**采样器环境变量（api-server 运维）：**
+
+| 变量 | 说明 |
+|------|------|
+| `PRICE_DB_PATH` | 采样 tick 的 SQLite 路径（history 与后台采样器均依赖此项） |
+| `PRICE_SAMPLER` | 设为 `0` 关闭后台采样（默认：配置 `PRICE_DB_PATH` 后启用） |
+| `PRICE_SAMPLE_SECS` | 采样间隔（秒），默认 `600` |
+| `PRICE_SAMPLE_TOKEN_LIMIT` | 除优先列表外，从 registry 采样的 Token 数量上限，默认 `30` |
+| `PRICE_RETENTION_DAYS` | 可选正整数，删除早于 N 天的 tick（默认永久保留） |
 
 ## 9. 原子套利 Operator
 

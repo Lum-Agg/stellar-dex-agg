@@ -19,6 +19,7 @@ servers:
 tags:
   - name: routing
   - name: tokens
+  - name: prices
   - name: health
 paths:
   /api/v1/health:
@@ -191,6 +192,63 @@ paths:
           description: Missing or invalid `user`
         '503':
           description: INDEXER_DB_PATH not configured
+  /api/v1/prices:
+    get:
+      tags: [prices]
+      summary: Latest USDC marks (batch)
+      description: |
+        Returns the latest sampled or on-demand USDC price per token id. When no tick exists
+        in the price store, the server quotes once via the routing engine and may persist a tick.
+        Unpriceable ids are omitted from the response.
+      parameters:
+        - name: ids
+          in: query
+          required: true
+          schema:
+            type: string
+            example: "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA,CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
+          description: Comma-separated token contract ids (max 50)
+      responses:
+        '200':
+          description: Latest prices (may be partial)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PricesResponse'
+        '400':
+          description: Missing or invalid `ids`
+  /api/v1/prices/history:
+    get:
+      tags: [prices]
+      summary: Sampled USDC price history
+      description: |
+        Returns quote-sampled USDC ticks for sparkline charts. Requires `PRICE_DB_PATH` on the
+        server for non-empty history; otherwise returns `200` with `points: []`.
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: string
+            example: "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
+          description: Token contract id
+        - name: range
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [24h, 7d]
+            default: 24h
+          description: History window (default `24h`)
+      responses:
+        '200':
+          description: Price ticks in the requested range (may be empty)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceHistoryResponse'
+        '400':
+          description: Missing or invalid `id` / `range`
 components:
   parameters:
     token_in:
@@ -427,6 +485,65 @@ components:
           nullable: true
         is_split:
           type: boolean
+    PricesResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            prices:
+              type: array
+              items:
+                $ref: '#/components/schemas/PriceItem'
+        error:
+          type: string
+    PriceItem:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Token contract id
+        price_usdc:
+          type: number
+          format: double
+          description: USDC mark (1 unit of token)
+        ts:
+          type: integer
+          description: Unix timestamp (seconds) when the mark was recorded
+        via:
+          type: string
+          enum: [usdc, xlm]
+          description: Route used for the mark (`usdc` direct or via XLM)
+    PriceHistoryResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            id:
+              type: string
+            range:
+              type: string
+              enum: [24h, 7d]
+            points:
+              type: array
+              items:
+                $ref: '#/components/schemas/PricePoint'
+        error:
+          type: string
+    PricePoint:
+      type: object
+      properties:
+        ts:
+          type: integer
+          description: Unix timestamp (seconds)
+        price_usdc:
+          type: number
+          format: double
   securitySchemes:
     ApiKeyAuth:
       type: apiKey
