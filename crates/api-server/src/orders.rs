@@ -1,15 +1,21 @@
-//! Wallet-scoped limit orders from analytics-indexer SQLite.
+//! Wallet-scoped limit orders from analytics-indexer SQLite and escrow transaction builders.
 
 use {
+    crate::{
+        handlers::{fetch_sequence_number, BuildTxData, BuildTxResponse},
+        soroban_prepare::prepare_transaction_xdr,
+        state::AppState,
+    },
     analytics_indexer::store::IndexStore,
     axum::{
-        extract::Query,
+        extract::{rejection::JsonRejection, Query, State},
         http::StatusCode,
         response::{IntoResponse, Response},
         Json,
     },
     serde::{Deserialize, Serialize},
-    stellar_strkey::ed25519::PublicKey,
+    stellar_strkey::{ed25519::PublicKey, Contract},
+    stellar_xdr::curr as xdr,
 };
 
 #[derive(Debug, Deserialize)]
@@ -47,6 +53,22 @@ pub struct OrderItem {
     pub updated_ledger: u32,
     pub created_at: Option<i64>,
     pub updated_at: i64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BuildCreateRequest {
+    pub user: String,
+    pub token_in: String,
+    pub token_out: String,
+    pub amount_in: String,
+    pub limit_out_per_in_e7: String,
+    pub expires_ledger: u32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BuildCancelRequest {
+    pub user: String,
+    pub order_id: u64,
 }
 
 fn indexer_db_path() -> Option<String> {
@@ -165,14 +187,226 @@ pub async fn get_orders(Query(params): Query<OrdersQuery>) -> Response {
     }
 }
 
+fn require_escrow_contract(value: Option<String>) -> Result<String, String> {
+    let contract = value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "ESCROW_CONTRACT is not configured".to_string())?;
+    Contract::from_string(&contract)
+        .map_err(|_| "ESCROW_CONTRACT must be a Stellar C... contract address".to_string())?;
+    Ok(contract)
+}
+
+fn parse_user(user: &str) -> Result<PublicKey, String> {
+    PublicKey::from_string(user.trim()).map_err(|_| "user must be a Stellar G... address".to_string())
+}
+
+fn parse_contract(value: &str, field: &str) -> Result<[u8; 32], String> {
+    Contract::from_string(value.trim())
+        .map(|contract| contract.0)
+        .map_err(|_| format!("{field} must be a Stellar C... contract address"))
+}
+
+fn parse_positive_i128(value: &str, field: &str) -> Result<i128, String> {
+    let value: i128 = value
+        .trim()
+        .parse()
+        .map_err(|_| format!("{field} must be a positive integer"))?;
+    if value <= 0 {
+        return Err(format!("{field} must be greater than zero"));
+    }
+    Ok(value)
+}
+
+fn validate_create_request(request: &BuildCreateRequest) -> Result<(), String> {
+    parse_user(&request.user)?;
+    parse_contract(&request.token_in, "token_in")?;
+    parse_contract(&request.token_out, "token_out")?;
+    if request.token_in.trim() == request.token_out.trim() {
+        return Err("token_in and token_out must differ".to_string());
+    }
+    parse_positive_i128(&request.amount_in, "amount_in")?;
+    parse_positive_i128(&request.limit_out_per_in_e7, "limit_out_per_in_e7")?;
+    if request.expires_ledger == 0 {
+        return Err("expires_ledger must be greater than zero".to_string());
+    }
+    Ok(())
+}
+
+fn validate_cancel_request(request: &BuildCancelRequest) -> Result<(), String> {
+    parse_user(&request.user).map(|_| ())
+}
+
+fn account_scval(user_key: &PublicKey) -> xdr::ScVal {
+    xdr::ScVal::Address(xdr::ScAddress::Account(xdr::AccountId(
+        xdr::PublicKey::PublicKeyTypeEd25519(xdr::Uint256(user_key.0)),
+    )))
+}
+
+fn contract_scval(contract: [u8; 32]) -> xdr::ScVal {
+    xdr::ScVal::Address(xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(contract))))
+}
+
+fn i128_scval(value: i128) -> xdr::ScVal {
+    xdr::ScVal::I128(xdr::Int128Parts {
+        hi: (value >> 64) as i64,
+        lo: value as u64,
+    })
+}
+
+fn contract_operation(contract: &str, function: &str, args: Vec<xdr::ScVal>) -> Result<xdr::Operation, String> {
+    let contract = parse_contract(contract, "ESCROW_CONTRACT")?;
+    Ok(xdr::Operation {
+        source_account: None,
+        body: xdr::OperationBody::InvokeHostFunction(xdr::InvokeHostFunctionOp {
+            host_function: xdr::HostFunction::InvokeContract(xdr::InvokeContractArgs {
+                contract_address: xdr::ScAddress::Contract(xdr::ContractId(xdr::Hash(contract))),
+                function_name: xdr::ScSymbol(
+                    function
+                        .try_into()
+                        .map_err(|_| "invalid contract function name".to_string())?,
+                ),
+                args: args.try_into().map_err(|_| "too many contract arguments".to_string())?,
+            }),
+            auth: xdr::VecM::default(),
+        }),
+    })
+}
+
+fn build_create_operation(contract: &str, request: &BuildCreateRequest) -> Result<xdr::Operation, String> {
+    validate_create_request(request)?;
+    let user = parse_user(&request.user)?;
+    let token_in = parse_contract(&request.token_in, "token_in")?;
+    let token_out = parse_contract(&request.token_out, "token_out")?;
+    let amount_in = parse_positive_i128(&request.amount_in, "amount_in")?;
+    let limit = parse_positive_i128(&request.limit_out_per_in_e7, "limit_out_per_in_e7")?;
+
+    contract_operation(
+        contract,
+        "create_limit",
+        vec![
+            account_scval(&user),
+            contract_scval(token_in),
+            contract_scval(token_out),
+            i128_scval(amount_in),
+            i128_scval(limit),
+            xdr::ScVal::U32(request.expires_ledger),
+        ],
+    )
+}
+
+fn build_cancel_operation(contract: &str, request: &BuildCancelRequest) -> Result<xdr::Operation, String> {
+    validate_cancel_request(request)?;
+    contract_operation(contract, "cancel", vec![xdr::ScVal::U64(request.order_id)])
+}
+
+async fn prepare_order_transaction(
+    user: &str,
+    contract: String,
+    operation: xdr::Operation,
+) -> Result<BuildTxData, String> {
+    const SOROBAN_FEE: u32 = 100_000;
+
+    let sequence = fetch_sequence_number(user).await?;
+    let rpc_url =
+        std::env::var("RPC_URL").unwrap_or_else(|_| "https://soroban-rpc.mainnet.stellar.gateway.fm".to_string());
+    let unsigned_tx_xdr =
+        prepare_transaction_xdr(&rpc_url, user.trim(), sequence as u64, &[operation], SOROBAN_FEE).await?;
+
+    Ok(BuildTxData {
+        unsigned_tx_xdr,
+        num_operations: 1,
+        fee: SOROBAN_FEE.to_string(),
+        contract,
+        execution: "soroban".to_string(),
+    })
+}
+
+fn order_error(status: StatusCode, error: String) -> Response {
+    (
+        status,
+        Json(BuildTxResponse {
+            success: false,
+            data: None,
+            error: Some(error),
+        }),
+    )
+        .into_response()
+}
+
+pub async fn build_create(
+    State(_state): State<AppState>,
+    request: Result<Json<BuildCreateRequest>, JsonRejection>,
+) -> Response {
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(error) => return order_error(StatusCode::BAD_REQUEST, format!("invalid request body: {error}")),
+    };
+    if let Err(error) = validate_create_request(&request) {
+        return order_error(StatusCode::BAD_REQUEST, error);
+    }
+    let contract = match require_escrow_contract(std::env::var("ESCROW_CONTRACT").ok()) {
+        Ok(contract) => contract,
+        Err(error) => return order_error(StatusCode::SERVICE_UNAVAILABLE, error),
+    };
+    let operation = match build_create_operation(&contract, &request) {
+        Ok(operation) => operation,
+        Err(error) => return order_error(StatusCode::BAD_REQUEST, error),
+    };
+
+    match prepare_order_transaction(&request.user, contract, operation).await {
+        Ok(data) => (
+            StatusCode::OK,
+            Json(BuildTxResponse {
+                success: true,
+                data: Some(data),
+                error: None,
+            }),
+        )
+            .into_response(),
+        Err(error) => order_error(StatusCode::BAD_GATEWAY, format!("prepare order transaction: {error}")),
+    }
+}
+
+pub async fn build_cancel(
+    State(_state): State<AppState>,
+    request: Result<Json<BuildCancelRequest>, JsonRejection>,
+) -> Response {
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(error) => return order_error(StatusCode::BAD_REQUEST, format!("invalid request body: {error}")),
+    };
+    if let Err(error) = validate_cancel_request(&request) {
+        return order_error(StatusCode::BAD_REQUEST, error);
+    }
+    let contract = match require_escrow_contract(std::env::var("ESCROW_CONTRACT").ok()) {
+        Ok(contract) => contract,
+        Err(error) => return order_error(StatusCode::SERVICE_UNAVAILABLE, error),
+    };
+    let operation = match build_cancel_operation(&contract, &request) {
+        Ok(operation) => operation,
+        Err(error) => return order_error(StatusCode::BAD_REQUEST, error),
+    };
+
+    match prepare_order_transaction(&request.user, contract, operation).await {
+        Ok(data) => (
+            StatusCode::OK,
+            Json(BuildTxResponse {
+                success: true,
+                data: Some(data),
+                error: None,
+            }),
+        )
+            .into_response(),
+        Err(error) => order_error(StatusCode::BAD_GATEWAY, format!("prepare order transaction: {error}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use analytics_indexer::store::IndexStore;
-    use axum::{
-        http::StatusCode,
-        response::IntoResponse,
-    };
+    use axum::{http::StatusCode, response::IntoResponse};
     use serde_json::Value;
     use tempfile::tempdir;
 
@@ -199,9 +433,7 @@ mod tests {
     }
 
     async fn body_json(resp: axum::response::Response) -> Value {
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         serde_json::from_slice(&bytes).unwrap()
     }
 
@@ -285,5 +517,63 @@ mod tests {
         assert_eq!(json["data"]["orders"][0]["order_id"], 1);
         assert_eq!(json["data"]["orders"][0]["token_in"], "TIN");
         std::env::remove_var("INDEXER_DB_PATH");
+    }
+
+    const TEST_TOKEN_IN: &str = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";
+    const TEST_TOKEN_OUT: &str = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75";
+    const TEST_ESCROW: &str = "CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K";
+
+    fn valid_create_request() -> BuildCreateRequest {
+        BuildCreateRequest {
+            user: TEST_USER.into(),
+            token_in: TEST_TOKEN_IN.into(),
+            token_out: TEST_TOKEN_OUT.into(),
+            amount_in: "10000000".into(),
+            limit_out_per_in_e7: "20000000".into(),
+            expires_ledger: 12_345_678,
+        }
+    }
+
+    #[test]
+    fn create_validation_rejects_invalid_user_and_non_positive_amount() {
+        let mut request = valid_create_request();
+        request.user = "not-an-address".into();
+        assert!(validate_create_request(&request).is_err());
+
+        let mut request = valid_create_request();
+        request.amount_in = "0".into();
+        assert!(validate_create_request(&request).is_err());
+    }
+
+    #[test]
+    fn missing_escrow_contract_is_an_error() {
+        assert!(require_escrow_contract(None).is_err());
+        assert!(require_escrow_contract(Some("".into())).is_err());
+    }
+
+    #[test]
+    fn create_and_cancel_operations_target_escrow_abi() {
+        use stellar_xdr::curr as xdr;
+
+        let create = build_create_operation(TEST_ESCROW, &valid_create_request()).unwrap();
+        let cancel = build_cancel_operation(
+            TEST_ESCROW,
+            &BuildCancelRequest {
+                user: TEST_USER.into(),
+                order_id: 0,
+            },
+        )
+        .unwrap();
+
+        let function_name = |operation: xdr::Operation| match operation.body {
+            xdr::OperationBody::InvokeHostFunction(invoke) => match invoke.host_function {
+                xdr::HostFunction::InvokeContract(args) => args.function_name.to_string(),
+                _ => panic!("expected contract invocation"),
+            },
+            _ => panic!("expected invoke host function"),
+        };
+
+        assert_eq!(function_name(create), "create_limit");
+        assert_eq!(function_name(cancel), "cancel");
     }
 }

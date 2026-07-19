@@ -34,6 +34,8 @@ pub async fn api_root() -> impl IntoResponse {
             "stats": "/api/v1/stats",
             "swaps": "/api/v1/swaps",
             "orders": "/api/v1/orders",
+            "build_create_order": "/api/v1/orders/build_create",
+            "build_cancel_order": "/api/v1/orders/build_cancel",
             "prices": "/api/v1/prices",
             "price_history": "/api/v1/prices/history"
         },
@@ -1483,7 +1485,7 @@ pub async fn build_tx(State(_state): State<AppState>, Json(body): Json<BuildTxRe
 /// Fetch account sequence via Soroban RPC (preferred) with Horizon fallback.
 /// Public Horizon is often rate-limited (429); RPC is what we already use for
 /// simulate.
-async fn fetch_sequence_number(public_key: &str) -> Result<i64, String> {
+pub(crate) async fn fetch_sequence_number(public_key: &str) -> Result<i64, String> {
     let rpc_url =
         std::env::var("RPC_URL").unwrap_or_else(|_| "https://soroban-rpc.mainnet.stellar.gateway.fm".to_string());
 

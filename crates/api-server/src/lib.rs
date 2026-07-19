@@ -40,6 +40,8 @@ fn build_router(app_state: AppState, rate_limit: RateLimitState, logo_dir: PathB
         .route("/api/v1/stats", get(stats::get_stats))
         .route("/api/v1/swaps", get(swaps::get_swaps))
         .route("/api/v1/orders", get(orders::get_orders))
+        .route("/api/v1/orders/build_create", post(orders::build_create))
+        .route("/api/v1/orders/build_cancel", post(orders::build_cancel))
         .route("/api/v1/prices", get(prices::get_prices))
         .route("/api/v1/prices/history", get(prices::get_price_history))
         .layer(middleware::from_fn_with_state(
