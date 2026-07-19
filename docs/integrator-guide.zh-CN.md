@@ -105,6 +105,9 @@ LUMAGG_PARTNER_API_KEYS=key_one,key_two
 | GET | `/api/v1/balances` | 批量查询常用 Token 余额 |
 | GET | `/api/v1/prices` | 批量查询最新 USDC 标价 |
 | GET | `/api/v1/prices/history` | 查询采样价格历史（图表） |
+| GET | `/api/v1/orders` | 钱包限价单（indexer DB） |
+| POST | `/api/v1/orders/build_create` | `create_limit` 未签名 XDR |
+| POST | `/api/v1/orders/build_cancel` | `cancel` 未签名 XDR |
 
 `/api/v1/tokens[].logo` 在 enrichment 完成前可能为空；完成后为自托管绝对 URL：
 
@@ -166,6 +169,38 @@ curl -s "https://api.lumagg.xyz/api/v1/swaps?user=G...&limit=20" | jq .
 ```
 
 响应中的 `data.swaps[]` 包含 `tx_hash`、Token 数量、`status` 和 `is_split` 等字段。无历史记录时仍返回 `200`，`swaps` 为空数组。服务端需配置 `INDEXER_DB_PATH`，否则返回 `503`。
+
+### 限价单
+
+查询 open 限价单，并构建 create/cancel 未签名 XDR（order-escrow 合约）：
+
+```bash
+curl -s "https://api.lumagg.xyz/api/v1/orders?user=G...&status=open" | jq .
+
+curl -sX POST "https://api.lumagg.xyz/api/v1/orders/build_create" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "user": "G...",
+    "token_in": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+    "token_out": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+    "amount_in": "10000000",
+    "limit_out_per_in_e7": "20000000",
+    "expires_ledger": 12345678
+  }' | jq .
+
+curl -sX POST "https://api.lumagg.xyz/api/v1/orders/build_cancel" \
+  -H 'Content-Type: application/json' \
+  -d '{"user": "G...", "order_id": 1}' | jq .
+```
+
+`GET /orders` 与 `/swaps` 共用 indexer SQLite（`INDEXER_DB_PATH`）。build 接口需配置 `ESCROW_CONTRACT`。响应字段与 `build_tx` 一致：`unsigned_tx_xdr`、`fee`、`execution`、`num_operations`、`contract`。SDK 方法：`listOrders`、`buildCreateOrder`、`buildCancelOrder`。
+
+**限价单环境变量（api-server 运维）：**
+
+| 变量 | 说明 |
+|------|------|
+| `INDEXER_DB_PATH` | 含 `limit_orders` 表的 SQLite（列表接口必需） |
+| `ESCROW_CONTRACT` | 已部署的 order-escrow 合约 id（build 接口必需） |
 
 ### Token 价格与图表历史
 

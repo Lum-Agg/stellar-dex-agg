@@ -20,6 +20,7 @@ tags:
   - name: routing
   - name: tokens
   - name: prices
+  - name: orders
   - name: health
 paths:
   /api/v1/health:
@@ -192,6 +193,93 @@ paths:
           description: Missing or invalid `user`
         '503':
           description: INDEXER_DB_PATH not configured
+  /api/v1/orders:
+    get:
+      tags: [orders]
+      summary: Wallet limit orders (indexer DB)
+      description: |
+        Open and historical limit orders for a Stellar account from escrow lifecycle events.
+        Requires `INDEXER_DB_PATH` on the API server (same SQLite as `/stats` and `/swaps`).
+        Default `status=open` returns only open orders; `status=all` includes filled, cancelled, and expired.
+      parameters:
+        - name: user
+          in: query
+          required: true
+          schema:
+            type: string
+            example: "GABCDEFGHIJKLMNOPQRSTUVWXYZ234567ABCDEFGHIJKLMNOPQRSTUVW"
+          description: Stellar account public key (`G…`, 56 chars)
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [open, all]
+            default: open
+          description: Filter by order status (default `open`)
+      responses:
+        '200':
+          description: Limit orders for the wallet (may be empty)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrdersResponse'
+        '400':
+          description: Missing or invalid `user` / `status`
+        '503':
+          description: INDEXER_DB_PATH not configured
+  /api/v1/orders/build_create:
+    post:
+      tags: [orders]
+      summary: Build unsigned create-limit transaction
+      description: |
+        Simulates and prepares wallet-ready XDR invoking `order-escrow.create_limit`.
+        Requires `ESCROW_CONTRACT` on the API server. Wallet signs and submits via Soroban RPC.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BuildCreateOrderRequest'
+      responses:
+        '200':
+          description: Unsigned transaction (or `success: false` with build error in body)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderBuildTxResponse'
+        '400':
+          description: Invalid body
+        '503':
+          description: ESCROW_CONTRACT not configured
+        '429':
+          description: Rate limit exceeded
+  /api/v1/orders/build_cancel:
+    post:
+      tags: [orders]
+      summary: Build unsigned cancel-order transaction
+      description: |
+        Simulates and prepares wallet-ready XDR invoking `order-escrow.cancel`.
+        Requires `ESCROW_CONTRACT` on the API server.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BuildCancelOrderRequest'
+      responses:
+        '200':
+          description: Unsigned transaction (or `success: false` with build error in body)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderBuildTxResponse'
+        '400':
+          description: Invalid body
+        '503':
+          description: ESCROW_CONTRACT not configured
+        '429':
+          description: Rate limit exceeded
   /api/v1/prices:
     get:
       tags: [prices]
@@ -485,6 +573,126 @@ components:
           nullable: true
         is_split:
           type: boolean
+    OrdersResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            orders:
+              type: array
+              items:
+                $ref: '#/components/schemas/OrderItem'
+        error:
+          type: string
+    OrderItem:
+      type: object
+      properties:
+        order_id:
+          type: integer
+          format: int64
+        owner:
+          type: string
+        token_in:
+          type: string
+        token_out:
+          type: string
+        amount_in_initial:
+          type: string
+          nullable: true
+        amount_in_remaining:
+          type: string
+        limit_out_per_in_e7:
+          type: string
+          description: Minimum output per 1e7 units of input (escrow limit price)
+        expires_ledger:
+          type: integer
+          format: int32
+        status:
+          type: string
+          example: open
+        created_ledger:
+          type: integer
+          format: int32
+          nullable: true
+        updated_ledger:
+          type: integer
+          format: int32
+        created_at:
+          type: integer
+          nullable: true
+          description: Unix timestamp (seconds)
+        updated_at:
+          type: integer
+          description: Unix timestamp (seconds)
+    BuildCreateOrderRequest:
+      type: object
+      required:
+        - user
+        - token_in
+        - token_out
+        - amount_in
+        - limit_out_per_in_e7
+        - expires_ledger
+      properties:
+        user:
+          type: string
+          description: Stellar G-address (order owner / signer)
+        token_in:
+          type: string
+          description: Input token contract id (C…)
+        token_out:
+          type: string
+          description: Output token contract id (C…)
+        amount_in:
+          type: string
+          description: Input amount in stroops
+        limit_out_per_in_e7:
+          type: string
+          description: Minimum output per 1e7 units of input
+        expires_ledger:
+          type: integer
+          format: int32
+          description: Ledger sequence after which the order may be reclaimed
+    BuildCancelOrderRequest:
+      type: object
+      required:
+        - user
+        - order_id
+      properties:
+        user:
+          type: string
+          description: Stellar G-address (order owner / signer)
+        order_id:
+          type: integer
+          format: int64
+          description: Escrow order id to cancel
+    OrderBuildTxResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            unsigned_tx_xdr:
+              type: string
+              description: Unsigned transaction envelope XDR (base64)
+            fee:
+              type: string
+              description: Estimated fee in stroops
+            execution:
+              type: string
+              enum: [soroban]
+            num_operations:
+              type: integer
+            contract:
+              type: string
+              description: Deployed order-escrow contract id (C…)
+        error:
+          type: string
     PricesResponse:
       type: object
       properties:

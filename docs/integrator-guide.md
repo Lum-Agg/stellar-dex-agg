@@ -89,6 +89,9 @@ LUMAGG_PARTNER_API_KEYS=key_one,key_two
 | GET | `/api/v1/balances` | Batch balances for common tokens |
 | GET | `/api/v1/prices` | Latest USDC marks (batch) |
 | GET | `/api/v1/prices/history` | Sampled price ticks for charts |
+| GET | `/api/v1/orders` | Limit orders for a wallet (indexer DB) |
+| POST | `/api/v1/orders/build_create` | Unsigned XDR for `create_limit` |
+| POST | `/api/v1/orders/build_cancel` | Unsigned XDR for `cancel` |
 
 `/api/v1/tokens[].logo` is either empty during early enrichment, or an absolute self-hosted URL under:
 
@@ -149,6 +152,38 @@ curl -s "https://api.lumagg.xyz/api/v1/swaps?user=G...&limit=20" | jq .
 ```
 
 Returns `data.swaps[]` with `tx_hash`, token amounts, `status`, and `is_split`. Empty history is `200` with `"swaps": []`. Requires `INDEXER_DB_PATH` on the server (otherwise `503`).
+
+### Limit orders
+
+List open limit orders and build unsigned create/cancel XDR for the order-escrow contract:
+
+```bash
+curl -s "https://api.lumagg.xyz/api/v1/orders?user=G...&status=open" | jq .
+
+curl -sX POST "https://api.lumagg.xyz/api/v1/orders/build_create" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "user": "G...",
+    "token_in": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+    "token_out": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+    "amount_in": "10000000",
+    "limit_out_per_in_e7": "20000000",
+    "expires_ledger": 12345678
+  }' | jq .
+
+curl -sX POST "https://api.lumagg.xyz/api/v1/orders/build_cancel" \
+  -H 'Content-Type: application/json' \
+  -d '{"user": "G...", "order_id": 1}' | jq .
+```
+
+`GET /orders` reads from the same indexer SQLite as `/swaps` (`INDEXER_DB_PATH`). Build endpoints require `ESCROW_CONTRACT` on the server. Response shape matches `build_tx`: `unsigned_tx_xdr`, `fee`, `execution`, `num_operations`, `contract`. SDK: `listOrders`, `buildCreateOrder`, `buildCancelOrder`.
+
+**Orders env (api-server operator):**
+
+| Variable | Purpose |
+|----------|---------|
+| `INDEXER_DB_PATH` | SQLite with `limit_orders` table (required for list) |
+| `ESCROW_CONTRACT` | Deployed order-escrow contract id (required for build endpoints) |
 
 ### Token prices & chart history
 
