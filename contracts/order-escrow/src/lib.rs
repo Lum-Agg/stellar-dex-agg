@@ -4,7 +4,7 @@ use {
     lumagg_contract_types::SubRoute,
     soroban_sdk::{
         auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
-        contract, contractclient, contractimpl, contracttype, Address, Env, IntoVal, Symbol, Vec,
+        contract, contractclient, contractimpl, contracttype, token, Address, Env, IntoVal, Symbol, Vec,
     },
 };
 
@@ -76,6 +76,62 @@ impl OrderEscrowContract {
         env.storage().instance().set(&DataKey::NextOrderId, &0u64);
     }
 
+    pub fn create_limit(
+        env: Env,
+        owner: Address,
+        token_in: Address,
+        token_out: Address,
+        amount_in: i128,
+        limit_out_per_in_e7: i128,
+        expires_ledger: u32,
+    ) -> u64 {
+        owner.require_auth();
+        assert!(amount_in > 0, "amount_in must be positive");
+        assert!(limit_out_per_in_e7 > 0, "limit must be positive");
+        assert!(token_in != token_out, "tokens must differ");
+        assert!(
+            expires_ledger > env.ledger().sequence(),
+            "expiration must be in the future"
+        );
+
+        let order_id: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::NextOrderId)
+            .expect("Not initialized");
+        let escrow = env.current_contract_address();
+        token::Client::new(&env, &token_in).transfer(&owner, &escrow, &amount_in);
+
+        let order = LimitOrder {
+            owner,
+            token_in,
+            token_out,
+            amount_in_remaining: amount_in,
+            limit_out_per_in_e7,
+            expires_ledger,
+            status: OrderStatus::Open,
+        };
+        env.storage().persistent().set(&DataKey::Order(order_id), &order);
+        env.storage().instance().set(
+            &DataKey::NextOrderId,
+            &order_id.checked_add(1).expect("order id overflow"),
+        );
+        order_id
+    }
+
+    pub fn cancel(env: Env, order_id: u64) {
+        let key = DataKey::Order(order_id);
+        let mut order: LimitOrder = env.storage().persistent().get(&key).expect("Order not found");
+        order.owner.require_auth();
+        assert!(order.status == OrderStatus::Open, "Order is not open");
+
+        let escrow = env.current_contract_address();
+        token::Client::new(&env, &order.token_in).transfer(&escrow, &order.owner, &order.amount_in_remaining);
+        order.amount_in_remaining = 0;
+        order.status = OrderStatus::Cancelled;
+        env.storage().persistent().set(&key, &order);
+    }
+
     /// Temporary auth probe for Task 1. Limit-order ABI follows in Task 2.
     pub fn spike_swap_as_self(
         env: Env,
@@ -141,7 +197,10 @@ mod tests {
         super::{required_min_out, OrderEscrowContract, OrderEscrowContractClient},
         aggregator_contract::AggregatorContract,
         lumagg_contract_types::{DexType, SubRoute, SwapStep},
-        soroban_sdk::{testutils::{Address as _, EnvTestConfig}, token, vec, Address, Env},
+        soroban_sdk::{
+            testutils::{Address as _, EnvTestConfig},
+            token, vec, Address, Env,
+        },
     };
 
     fn gen_addr(env: &Env) -> Address {
@@ -153,6 +212,12 @@ mod tests {
         let address = env.register_stellar_asset_contract_v2(admin).address();
         let sac = token::StellarAssetClient::new(env, &address);
         (address, sac)
+    }
+
+    fn test_env() -> Env {
+        Env::new_with_config(EnvTestConfig {
+            capture_snapshot_at_drop: false,
+        })
     }
 
     mod aq_mock {
@@ -243,5 +308,65 @@ mod tests {
     #[test]
     fn min_out_zero_and_overflow_guards() {
         assert_eq!(required_min_out(0, 20_000_000), 0);
+    }
+
+    fn setup_escrow<'a>(env: &'a Env) -> (Address, OrderEscrowContractClient<'a>) {
+        let escrow_id = env.register_contract(None, OrderEscrowContract);
+        let escrow = OrderEscrowContractClient::new(env, &escrow_id);
+        escrow.initialize(&gen_addr(env), &gen_addr(env));
+        (escrow_id, escrow)
+    }
+
+    #[test]
+    fn create_limit_pulls_token_in() {
+        let env = test_env();
+        env.mock_all_auths();
+        let owner = gen_addr(&env);
+        let (escrow_id, escrow) = setup_escrow(&env);
+        let (token_in, token_in_sac) = create_token(&env);
+        let (token_out, _) = create_token(&env);
+        token_in_sac.mint(&owner, &5_000_000);
+
+        let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000_000, &20_000_000, &100);
+
+        assert_eq!(order_id, 0);
+        assert_eq!(token::Client::new(&env, &token_in).balance(&owner), 0);
+        assert_eq!(token::Client::new(&env, &token_in).balance(&escrow_id), 5_000_000);
+    }
+
+    #[test]
+    fn owner_can_cancel_and_refund() {
+        let env = test_env();
+        env.mock_all_auths();
+        let owner = gen_addr(&env);
+        let (escrow_id, escrow) = setup_escrow(&env);
+        let (token_in, token_in_sac) = create_token(&env);
+        let (token_out, _) = create_token(&env);
+        token_in_sac.mint(&owner, &5_000_000);
+        let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000_000, &20_000_000, &100);
+
+        escrow.cancel(&order_id);
+
+        assert_eq!(token::Client::new(&env, &token_in).balance(&owner), 5_000_000);
+        assert_eq!(token::Client::new(&env, &token_in).balance(&escrow_id), 0);
+    }
+
+    #[test]
+    fn non_owner_cannot_cancel() {
+        let env = test_env();
+        env.mock_all_auths();
+        let owner = gen_addr(&env);
+        let (escrow_id, escrow) = setup_escrow(&env);
+        let (token_in, token_in_sac) = create_token(&env);
+        let (token_out, _) = create_token(&env);
+        token_in_sac.mint(&owner, &5_000_000);
+        let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000_000, &20_000_000, &100);
+
+        // A caller who cannot supply the owner's authorization must not be able
+        // to cancel the order.
+        env.set_auths(&[]);
+        let result = escrow.try_cancel(&order_id);
+        assert!(matches!(result, Ok(Err(_)) | Err(_)), "{result:?}");
+        assert_eq!(token::Client::new(&env, &token_in).balance(&escrow_id), 5_000_000);
     }
 }
