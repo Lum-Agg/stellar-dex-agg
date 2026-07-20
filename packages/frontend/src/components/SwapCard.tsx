@@ -11,12 +11,25 @@ import { displayTokenSymbol, NATIVE_CONTRACT } from '@/lib/tokenDisplay';
 import { SWAP_SUCCESS_EVENT } from '@/lib/swaps';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
+const SLIPPAGE_PRESETS = [0.1, 0.5, 1.0] as const;
+const SLIPPAGE_MIN = 0.01;
+const SLIPPAGE_MAX = 50;
+
+function parseSlippageInput(raw: string): number | null {
+  if (!raw || raw === '.') return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  if (n < SLIPPAGE_MIN || n > SLIPPAGE_MAX) return null;
+  return n;
+}
 
 export function SwapCard() {
   const [tokenIn, setTokenIn] = useState<Token>(TOKENS[0]);
   const [tokenOut, setTokenOut] = useState<Token>(TOKENS[1]);
   const [amountIn, setAmountIn] = useState('');
   const [slippage, setSlippage] = useState(1.0);
+  const [customSlippage, setCustomSlippage] = useState('');
+  const [slippageCustomMode, setSlippageCustomMode] = useState(false);
   const [quote, setQuote] = useState<QuoteData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -278,19 +291,72 @@ export function SwapCard() {
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-[17px] sm:text-[18px] font-semibold tracking-tight text-[var(--text-primary)]">Swap</h2>
           <div className="flex items-center gap-0.5 rounded-full border border-[var(--border)] bg-[var(--bg-0)]/50 p-0.5">
-            {[0.1, 0.5, 1.0].map(s => (
-              <button
-                key={s}
-                onClick={() => setSlippage(s)}
-                className={`px-3 py-1.5 rounded-full text-[13px] transition-colors ${
-                  slippage === s
-                    ? 'bg-[var(--surface-raised)] text-[var(--text-primary)]'
-                    : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
-                }`}
-              >
-                {s}%
-              </button>
-            ))}
+            {SLIPPAGE_PRESETS.map((s) => {
+              const active = !slippageCustomMode && slippage === s;
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => {
+                    setSlippage(s);
+                    setSlippageCustomMode(false);
+                    setCustomSlippage('');
+                  }}
+                  className={`px-3 py-1.5 rounded-full text-[13px] transition-colors ${
+                    active
+                      ? 'bg-[var(--surface-raised)] text-[var(--text-primary)]'
+                      : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
+                  }`}
+                >
+                  {s}%
+                </button>
+              );
+            })}
+            <label
+              className={`flex items-center gap-0.5 rounded-full px-2 py-1 transition-colors ${
+                slippageCustomMode
+                  ? 'bg-[var(--surface-raised)] text-[var(--text-primary)]'
+                  : 'text-[var(--text-muted)]'
+              }`}
+            >
+              <input
+                type="text"
+                inputMode="decimal"
+                aria-label="Custom slippage percent"
+                placeholder="Custom"
+                value={slippageCustomMode ? customSlippage : ''}
+                onFocus={() => {
+                  setSlippageCustomMode(true);
+                  setCustomSlippage(customSlippage || String(slippage));
+                }}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (!/^\d*\.?\d*$/.test(val)) return;
+                  setSlippageCustomMode(true);
+                  setCustomSlippage(val);
+                  const parsed = parseSlippageInput(val);
+                  if (parsed !== null) setSlippage(parsed);
+                }}
+                onBlur={() => {
+                  const parsed = parseSlippageInput(customSlippage);
+                  if (parsed === null) {
+                    // Keep last valid slippage; snap UI back to a preset if it matches.
+                    const preset = SLIPPAGE_PRESETS.find((s) => s === slippage);
+                    if (preset !== undefined) {
+                      setSlippageCustomMode(false);
+                      setCustomSlippage('');
+                    } else {
+                      setCustomSlippage(String(slippage));
+                    }
+                    return;
+                  }
+                  setSlippage(parsed);
+                  setCustomSlippage(String(parsed));
+                }}
+                className="w-12 bg-transparent text-[13px] text-right outline-none placeholder-[var(--text-muted)]/70 tabular-nums"
+              />
+              <span className="text-[13px] shrink-0">%</span>
+            </label>
           </div>
         </div>
 
