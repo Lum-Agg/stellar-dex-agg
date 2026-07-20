@@ -1,10 +1,9 @@
 'use client';
 
-import { useCallback, useState } from 'react';
-import type { PriceHistoryPoint } from '@/lib/prices';
 import { TokenIcon, type Token } from '@/components/TokenSelector';
 import { formatBalanceDisplay } from '@/lib/balance';
 import { Sparkline } from '@/components/Sparkline';
+import type { PriceHistoryPoint } from '@/lib/prices';
 
 export interface ValuedHolding {
   id: string;

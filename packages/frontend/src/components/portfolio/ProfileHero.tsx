@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useState, type CSSProperties } from 'react';
 
 function shortAddress(address: string): string {
   return `${address.slice(0, 4)}…${address.slice(-4)}`;
