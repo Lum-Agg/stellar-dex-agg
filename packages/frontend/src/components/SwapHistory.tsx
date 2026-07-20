@@ -1,9 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo } from 'react';
 import { formatBalanceDisplay } from '@/lib/balance';
 import { displayTokenSymbol, NATIVE_CONTRACT } from '@/lib/tokenDisplay';
-import { fetchUserSwaps, SWAP_SUCCESS_EVENT, type UserSwap } from '@/lib/swaps';
+import { useSwapHistory } from '@/lib/useSwapHistory';
 import { useWallet } from '@/lib/wallet-context';
 import { useTokenList } from './TokenSelector';
 
@@ -22,82 +22,16 @@ function shortContractId(contractId: string): string {
   return `${contractId.slice(0, 4)}…${contractId.slice(-4)}`;
 }
 
-export function SwapHistory() {
+type SwapHistoryProps = {
+  variant?: 'compact' | 'profile';
+};
+
+export function SwapHistory({ variant = 'compact' }: SwapHistoryProps) {
   const { address, connect, connecting } = useWallet();
   const tokens = useTokenList();
-  const [swaps, setSwaps] = useState<UserSwap[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [unavailable, setUnavailable] = useState(false);
-  const [refetchError, setRefetchError] = useState(false);
-  const fetchGenRef = useRef(0);
-  const hasSwapsRef = useRef(false);
+  const { swaps, loading, unavailable, refetchError } = useSwapHistory();
 
   const tokenById = useMemo(() => new Map(tokens.map((token) => [token.id, token])), [tokens]);
-
-  useEffect(() => {
-    hasSwapsRef.current = swaps.length > 0;
-  }, [swaps]);
-
-  const loadSwaps = useCallback(async (opts?: { refetch?: boolean }) => {
-    if (!address) return;
-
-    const gen = ++fetchGenRef.current;
-    setLoading(true);
-    if (!opts?.refetch) {
-      setUnavailable(false);
-      setRefetchError(false);
-    }
-
-    try {
-      const data = await fetchUserSwaps(address);
-      if (gen !== fetchGenRef.current) return;
-      setSwaps(data);
-      setUnavailable(false);
-      setRefetchError(false);
-    } catch {
-      if (gen !== fetchGenRef.current) return;
-      if (hasSwapsRef.current) {
-        setRefetchError(true);
-      } else {
-        setUnavailable(true);
-      }
-    } finally {
-      if (gen === fetchGenRef.current) {
-        setLoading(false);
-      }
-    }
-  }, [address]);
-
-  useEffect(() => {
-    fetchGenRef.current += 1;
-    if (!address) {
-      setSwaps([]);
-      setUnavailable(false);
-      setRefetchError(false);
-      setLoading(false);
-      return;
-    }
-
-    setSwaps([]);
-    setUnavailable(false);
-    setRefetchError(false);
-    void loadSwaps();
-  }, [address, loadSwaps]);
-
-  useEffect(() => {
-    if (!address) return;
-
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    const refetchAfterIndexing = () => {
-      timeout = setTimeout(() => void loadSwaps({ refetch: true }), 2_000);
-    };
-
-    window.addEventListener(SWAP_SUCCESS_EVENT, refetchAfterIndexing);
-    return () => {
-      window.removeEventListener(SWAP_SUCCESS_EVENT, refetchAfterIndexing);
-      if (timeout) clearTimeout(timeout);
-    };
-  }, [address, loadSwaps]);
 
   const tokenLabel = (contractId: string | null) => {
     if (!contractId) return 'Unknown';
@@ -118,68 +52,157 @@ export function SwapHistory() {
   };
 
   if (!address) {
+    if (variant === 'profile') return null;
     return (
-      <section className="surface-panel px-4 py-3">
-        <h2 className="text-[15px] font-semibold text-zinc-100">Swap history</h2>
-        <div className="mt-2 flex items-center justify-between gap-3">
-          <p className="text-[12px] text-zinc-500">Connect wallet to see your swaps</p>
+      <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)]/60 px-4 py-3.5">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-[15px] font-medium text-[var(--text-secondary)]">Activity</h2>
+            <p className="mt-0.5 text-[13px] text-[var(--text-muted)]">Connect to see recent swaps</p>
+          </div>
           <button
             type="button"
             onClick={connect}
             disabled={connecting}
-            className="btn-primary shrink-0 px-3 py-1.5 text-[12px]"
+            className="shrink-0 rounded-lg border border-[var(--border)] px-3.5 py-2 text-[13px] text-[var(--text-secondary)] hover:border-[var(--accent)]/40 hover:text-[var(--accent)] disabled:opacity-50 transition-colors"
           >
-            {connecting ? 'Connecting...' : 'Connect'}
+            {connecting ? 'Connecting…' : 'Connect'}
           </button>
         </div>
       </section>
     );
   }
 
+  if (variant === 'profile') {
+    return (
+      <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)]/60">
+        {loading && swaps.length === 0 ? (
+          <div className="grid gap-2 p-4">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <div key={index} className="h-12 animate-pulse rounded-xl bg-[var(--bg-0)]/60" />
+            ))}
+          </div>
+        ) : unavailable ? (
+          <p className="px-4 py-6 text-[14px] text-[var(--text-muted)]">History unavailable</p>
+        ) : swaps.length === 0 ? (
+          <p className="px-4 py-6 text-[14px] text-[var(--text-muted)]">No swaps yet</p>
+        ) : (
+          <>
+            {refetchError && (
+              <p className="px-4 py-2 text-[12px] text-amber-400/80 border-b border-[var(--border)]">
+                Couldn&apos;t refresh history
+              </p>
+            )}
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[640px] text-left text-[14px]">
+                <thead className="border-b border-[var(--border)] bg-[var(--bg-0)]/40 text-[12px] uppercase tracking-wide text-[var(--text-muted)]">
+                  <tr>
+                    <th className="px-4 py-3 font-medium sm:px-5">Time</th>
+                    <th className="px-3 py-3 font-medium">Status</th>
+                    <th className="px-3 py-3 font-medium">Swap</th>
+                    <th className="px-4 py-3 text-right font-medium sm:px-5">Tx</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border)]">
+                  {swaps.map((swap) => (
+                    <tr key={`${swap.tx_hash}-${swap.ledger}`} className="hover:bg-white/[0.02] transition-colors">
+                      <td className="px-4 py-3 text-[var(--text-muted)] sm:px-5">{relativeTime(swap.created_at)}</td>
+                      <td className="px-3 py-3">
+                        <span
+                          className={
+                            swap.status === 'SUCCESS'
+                              ? 'text-[var(--accent)]'
+                              : 'text-[var(--text-muted)]'
+                          }
+                        >
+                          {swap.status}
+                        </span>
+                      </td>
+                      <td className="px-3 py-3 tabular-nums font-[family-name:var(--font-mono)]">
+                        <span className="text-[var(--text-secondary)]">
+                          {amountLabel(swap.amount_in, swap.token_in)} {tokenLabel(swap.token_in)}
+                        </span>
+                        <span className="mx-1.5 text-[var(--text-muted)]">→</span>
+                        <span className="text-[var(--text-primary)]">
+                          {amountLabel(swap.amount_out, swap.token_out)} {tokenLabel(swap.token_out)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right sm:px-5">
+                        <a
+                          href={`https://stellar.expert/explorer/public/tx/${swap.tx_hash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[13px] text-[var(--text-secondary)] hover:text-[var(--accent)] transition-colors"
+                        >
+                          View
+                        </a>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {loading && (
+              <p className="border-t border-[var(--border)] px-4 py-2 text-[12px] text-[var(--text-muted)]">
+                Refreshing…
+              </p>
+            )}
+          </>
+        )}
+      </section>
+    );
+  }
+
   return (
-    <section className="surface-panel overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06]">
-        <h2 className="text-[15px] font-semibold text-zinc-100">Swap history</h2>
-        {loading && <span className="text-[11px] text-zinc-500">Loading…</span>}
+    <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)]/60 overflow-hidden max-h-64 overflow-y-auto">
+      <div className="sticky top-0 flex items-center justify-between px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface)]/95 backdrop-blur-sm">
+        <h2 className="text-[15px] font-medium text-[var(--text-secondary)]">Activity</h2>
+        {loading && <span className="text-[13px] text-[var(--text-muted)]">Loading…</span>}
       </div>
 
       {unavailable ? (
-        <p className="px-4 py-3 text-[12px] text-zinc-500">History unavailable</p>
+        <p className="px-4 py-3 text-[13px] text-[var(--text-muted)]">History unavailable</p>
       ) : swaps.length === 0 && !loading ? (
-        <p className="px-4 py-3 text-[12px] text-zinc-500">No swaps yet</p>
+        <p className="px-4 py-3 text-[13px] text-[var(--text-muted)]">No swaps yet</p>
       ) : (
         <>
           {refetchError && (
-            <p className="px-4 py-1.5 text-[11px] text-amber-400/80 border-b border-white/[0.06]">
+            <p className="px-4 py-1.5 text-[12px] text-amber-400/80 border-b border-[var(--border)]">
               Couldn&apos;t refresh history
             </p>
           )}
-          <div className="divide-y divide-white/[0.06]">
-          {swaps.map((swap) => (
-            <a
-              key={`${swap.tx_hash}-${swap.ledger}`}
-              href={`https://stellar.expert/explorer/public/tx/${swap.tx_hash}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block px-4 py-3 hover:bg-white/[0.03] transition-colors"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-[12px] text-zinc-500">{relativeTime(swap.created_at)}</span>
-                <span className={swap.status === 'SUCCESS' ? 'text-[11px] text-emerald-400' : 'text-[11px] text-zinc-500'}>
-                  {swap.status}
-                </span>
-              </div>
-              <div className="mt-1 flex items-center gap-1.5 text-[13px] tabular-nums">
-                <span className="text-zinc-200">
-                  {amountLabel(swap.amount_in, swap.token_in)} {tokenLabel(swap.token_in)}
-                </span>
-                <span className="text-zinc-600">→</span>
-                <span className="text-zinc-100">
-                  {amountLabel(swap.amount_out, swap.token_out)} {tokenLabel(swap.token_out)}
-                </span>
-              </div>
-            </a>
-          ))}
+          <div className="divide-y divide-[var(--border)]">
+            {swaps.map((swap) => (
+              <a
+                key={`${swap.tx_hash}-${swap.ledger}`}
+                href={`https://stellar.expert/explorer/public/tx/${swap.tx_hash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block px-4 py-2.5 hover:bg-white/[0.02] transition-colors"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[12px] text-[var(--text-muted)]">{relativeTime(swap.created_at)}</span>
+                  <span
+                    className={
+                      swap.status === 'SUCCESS'
+                        ? 'text-[12px] text-[var(--accent)]'
+                        : 'text-[12px] text-[var(--text-muted)]'
+                    }
+                  >
+                    {swap.status}
+                  </span>
+                </div>
+                <div className="mt-0.5 flex items-center gap-1.5 text-[14px] tabular-nums font-[family-name:var(--font-mono)]">
+                  <span className="text-[var(--text-secondary)]">
+                    {amountLabel(swap.amount_in, swap.token_in)} {tokenLabel(swap.token_in)}
+                  </span>
+                  <span className="text-[var(--text-muted)]">→</span>
+                  <span className="text-[var(--text-primary)]">
+                    {amountLabel(swap.amount_out, swap.token_out)} {tokenLabel(swap.token_out)}
+                  </span>
+                </div>
+              </a>
+            ))}
           </div>
         </>
       )}

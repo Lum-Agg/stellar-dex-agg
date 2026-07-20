@@ -46,10 +46,10 @@ export function WalletButton({
     return (
       <button
         onClick={() => setPublicKey(null)}
-        className="w-full py-3.5 bg-[#1a1b23] border border-white/10 hover:border-white/20 rounded-xl font-mono text-sm text-gray-300 transition-colors flex items-center justify-center gap-2"
+        className="w-full py-3.5 bg-[var(--surface-raised)] border border-[var(--border)] hover:border-[var(--border-strong)] rounded-xl font-[family-name:var(--font-mono)] text-sm text-[var(--text-secondary)] transition-colors flex items-center justify-center gap-2"
       >
-        <span className="w-2 h-2 rounded-full bg-green-400" />
-        {publicKey.slice(0, 6)}...{publicKey.slice(-4)}
+        <span className="w-2 h-2 rounded-full bg-[var(--accent)]" />
+        {publicKey.slice(0, 6)}…{publicKey.slice(-4)}
       </button>
     );
   }
@@ -59,9 +59,9 @@ export function WalletButton({
       <button
         onClick={connect}
         disabled={connecting}
-        className="w-full py-3.5 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 disabled:opacity-50 rounded-xl font-medium transition-all"
+        className="btn-primary w-full py-3.5 disabled:opacity-50"
       >
-        {connecting ? 'Connecting...' : 'Connect Wallet'}
+        {connecting ? 'Connecting…' : 'Connect Wallet'}
       </button>
       {error && (
         <p className="text-red-400/80 text-xs mt-2 text-center">{error}</p>

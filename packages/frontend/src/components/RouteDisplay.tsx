@@ -40,7 +40,7 @@ function routeDexHops(route: SubRoute): string[] {
 function PathArrow() {
   return (
     <svg
-      className="w-3 h-3 text-zinc-600 shrink-0"
+      className="w-3 h-3 text-[var(--text-muted)] shrink-0"
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"
@@ -79,18 +79,18 @@ function RouteAmountPath({
   const mids = symbols.slice(1, -1);
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
-      <span className="font-mono text-zinc-400">{formatAmount(amountIn, tokenInDecimals)}</span>
-      <span className="text-zinc-300 font-medium">{symbols[0]}</span>
+    <div className="flex flex-wrap items-center gap-1.5 text-[13px] text-[var(--text-muted)]">
+      <span className="font-[family-name:var(--font-mono)] text-[var(--text-secondary)]">{formatAmount(amountIn, tokenInDecimals)}</span>
+      <span className="text-[var(--text-secondary)] font-medium">{symbols[0]}</span>
       {mids.map((sym, idx) => (
         <span key={`${sym}-${idx}`} className="inline-flex items-center gap-1.5">
           <PathArrow />
-          <span className="text-zinc-400 font-medium">{sym}</span>
+          <span className="text-[var(--text-muted)] font-medium">{sym}</span>
         </span>
       ))}
       <PathArrow />
-      <span className="font-mono text-zinc-400">{formatAmount(amountOut, tokenOutDecimals)}</span>
-      <span className="text-zinc-300 font-medium">{symbols[symbols.length - 1]}</span>
+      <span className="font-[family-name:var(--font-mono)] text-[var(--text-secondary)]">{formatAmount(amountOut, tokenOutDecimals)}</span>
+      <span className="text-[var(--text-secondary)] font-medium">{symbols[symbols.length - 1]}</span>
     </div>
   );
 }
@@ -126,17 +126,17 @@ export function RouteDisplay({
     '???';
 
   return (
-    <div className="surface-panel p-4 space-y-3">
+    <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)]/80 p-4 space-y-3">
       <div className="flex items-center justify-between">
-        <span className="text-[12px] font-medium text-zinc-300">Execution route</span>
+        <span className="text-[14px] font-medium text-[var(--text-secondary)]">Route</span>
         {quote.compute_time_ms !== undefined && (
-          <span className="text-[11px] text-zinc-600">Quote in {quote.compute_time_ms}ms</span>
+          <span className="text-[13px] text-[var(--text-muted)]">Quoted in {quote.compute_time_ms}ms</span>
         )}
       </div>
 
       {quote.is_split && (
-        <div className="flex items-center gap-1.5 text-[11px] text-zinc-400">
-          <svg className="w-3 h-3 shrink-0 text-zinc-500" fill="currentColor" viewBox="0 0 20 20">
+        <div className="flex items-center gap-1.5 text-[13px] text-[var(--text-muted)]">
+          <svg className="w-3 h-3 shrink-0 text-[var(--accent)]/70" fill="currentColor" viewBox="0 0 20 20">
             <path
               fillRule="evenodd"
               d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z"
@@ -144,8 +144,7 @@ export function RouteDisplay({
             />
           </svg>
           <span>
-            Split across {displayRoutes.length} path{displayRoutes.length === 1 ? '' : 's'} for better
-            execution
+            Split across {displayRoutes.length} path{displayRoutes.length === 1 ? '' : 's'}
             {hiddenLegCount > 0
               ? ` (${hiddenLegCount} dust leg${hiddenLegCount === 1 ? '' : 's'} hidden)`
               : ''}
@@ -159,25 +158,25 @@ export function RouteDisplay({
           const hops = routeDexHops(route);
 
           return (
-            <div key={i} className="rounded-lg border border-white/[0.06] bg-zinc-900/40 p-3">
+            <div key={i} className="rounded-xl border border-[var(--border)] bg-[var(--bg-0)]/50 p-3">
               <div className="flex items-center justify-between gap-2 mb-1.5">
                 <div className="flex flex-wrap items-center gap-1 min-w-0">
                   {hops.map((dex, j) => {
                     const { label } = dexStyle(dex);
                     return (
                       <span key={`${dex}-${j}`} className="inline-flex items-center gap-1">
-                        {j > 0 && <span className="text-zinc-600 text-[10px]">→</span>}
-                        <span className="text-[12px] font-medium text-zinc-300">{label}</span>
+                        {j > 0 && <span className="text-[var(--text-muted)] text-[12px]">→</span>}
+                        <span className="text-[13px] font-medium text-[var(--text-secondary)]">{label}</span>
                       </span>
                     );
                   })}
                 </div>
                 <div className="text-right shrink-0">
-                  <span className="text-[12px] text-zinc-400 font-mono block">
+                  <span className="text-[13px] text-[var(--text-muted)] font-[family-name:var(--font-mono)] block">
                     {formatLegPercent(route.percentage)}
                   </span>
                   {rate != null && inSym && outSym && (
-                    <span className="text-[11px] text-zinc-500 font-mono">
+                    <span className="text-[12px] text-[var(--text-muted)] font-[family-name:var(--font-mono)]">
                       {formatExchangeRate(rate)} {outSym}/{inSym}
                     </span>
                   )}
@@ -197,16 +196,16 @@ export function RouteDisplay({
         })}
       </div>
 
-      <div className="border-t border-white/[0.06] pt-3 space-y-1.5">
-        <div className="flex justify-between text-[12px]">
-          <span className="text-zinc-500">Price impact</span>
-          <span className={quote.price_impact > 1 ? 'text-amber-400' : 'text-zinc-300'}>
+      <div className="border-t border-[var(--border)] pt-3 space-y-1.5">
+        <div className="flex justify-between text-[13px] sm:text-[14px]">
+          <span className="text-[var(--text-muted)]">Price impact</span>
+          <span className={quote.price_impact > 1 ? 'text-amber-400' : 'text-[var(--text-secondary)]'}>
             {quote.price_impact > 0 ? `~${quote.price_impact.toFixed(2)}%` : '< 0.01%'}
           </span>
         </div>
-        <div className="flex justify-between text-[12px]">
-          <span className="text-zinc-500">Minimum received</span>
-          <span className="text-zinc-300 font-mono">
+        <div className="flex justify-between text-[13px] sm:text-[14px]">
+          <span className="text-[var(--text-muted)]">Minimum received</span>
+          <span className="text-[var(--text-secondary)] font-[family-name:var(--font-mono)]">
             {formatAmount(quote.minimum_output, tokenOutDecimals)} {tokenOutSymbol}
           </span>
         </div>

@@ -53,7 +53,7 @@ impl Default for SplitConfig {
             min_split_fraction_bps: 5,       // 0.05% minimum share of total output
             min_split_amount_in_bps: 10,     // 0.10% minimum share of total input
             max_leg_rate_deviation_bps: 500, // 5% vs full-size quote for that path
-            min_split_improvement_bps: 15,   // 0.15% — ignore thin split "wins"
+            min_split_improvement_bps: 5,    // 0.05% — ignore thinner-than-threshold "wins"
             max_splits: 5,
             tolerance: 0.0001, // 0.01% precision
             max_iterations: 18,

@@ -273,22 +273,19 @@ export function SwapCard() {
               : 'Review & swap';
 
   return (
-    <div className="w-full max-w-[420px] space-y-3">
-      <div className="surface-panel p-5">
+    <div className="w-full max-w-none space-y-3">
+      <div className="surface-panel p-5 sm:p-6">
         <div className="flex items-center justify-between mb-5">
-          <div>
-            <h2 className="text-[15px] font-semibold text-zinc-100">Swap</h2>
-            <p className="text-[12px] text-zinc-500 mt-0.5">Quotes include routing + slippage protection</p>
-          </div>
-          <div className="flex items-center gap-1">
+          <h2 className="text-[17px] sm:text-[18px] font-semibold tracking-tight text-[var(--text-primary)]">Swap</h2>
+          <div className="flex items-center gap-0.5 rounded-full border border-[var(--border)] bg-[var(--bg-0)]/50 p-0.5">
             {[0.1, 0.5, 1.0].map(s => (
               <button
                 key={s}
                 onClick={() => setSlippage(s)}
-                className={`px-2 py-1 rounded-md text-[12px] transition-colors ${
+                className={`px-3 py-1.5 rounded-full text-[13px] transition-colors ${
                   slippage === s
-                    ? 'bg-zinc-800 text-zinc-100 border border-white/[0.1]'
-                    : 'text-zinc-500 hover:text-zinc-300'
+                    ? 'bg-[var(--surface-raised)] text-[var(--text-primary)]'
+                    : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
                 }`}
               >
                 {s}%
@@ -297,17 +294,17 @@ export function SwapCard() {
           </div>
         </div>
 
-        <div className="surface-panel-raised p-4">
-          <div className="flex justify-between items-center text-[12px] text-zinc-500 mb-2 gap-2">
-            <span>You pay</span>
+        <div className="surface-panel-raised p-4 sm:p-5">
+          <div className="flex justify-between items-center text-[13px] sm:text-[14px] text-[var(--text-muted)] mb-2.5 gap-2">
+            <span>Sell</span>
             {walletAddress && (
-              <span className="text-zinc-400 truncate">
+              <span className="text-[var(--text-secondary)] truncate tabular-nums font-[family-name:var(--font-mono)] text-[13px]">
                 {balancesLoading && !balancesReady ? (
                   'Balance…'
                 ) : balanceStroops !== null ? (
-                  <>Balance: {formatBalanceDisplay(balanceStroops, tokenIn.decimals)} {tokenIn.symbol}</>
+                  <>{formatBalanceDisplay(balanceStroops, tokenIn.decimals)} {tokenIn.symbol}</>
                 ) : (
-                  'Balance unavailable'
+                  '—'
                 )}
               </span>
             )}
@@ -321,8 +318,8 @@ export function SwapCard() {
                 const val = e.target.value;
                 if (/^\d*\.?\d*$/.test(val)) setAmountIn(val);
               }}
-              placeholder="0"
-              className="flex-1 bg-transparent text-2xl font-medium tracking-tight outline-none placeholder-zinc-600 min-w-0 text-zinc-50"
+              placeholder="0.0"
+              className="flex-1 bg-transparent text-[32px] sm:text-[36px] font-medium tracking-tight outline-none placeholder-[var(--text-muted)]/50 min-w-0 text-[var(--text-primary)] font-[family-name:var(--font-mono)]"
             />
             <TokenSelector
               selected={tokenIn}
@@ -337,7 +334,7 @@ export function SwapCard() {
                   key={pct}
                   type="button"
                   onClick={() => applyBalancePercent(pct)}
-                  className="px-2 py-1 rounded-md text-[11px] text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/80 border border-transparent hover:border-white/[0.08] transition-colors"
+                  className="px-2.5 py-1 rounded-lg text-[13px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-0)] border border-transparent hover:border-[var(--border)] transition-colors"
                 >
                   {pct === 100 ? 'Max' : `${pct}%`}
                 </button>
@@ -349,27 +346,27 @@ export function SwapCard() {
         <div className="flex justify-center -my-2.5 relative z-10">
           <button
             onClick={swapDirection}
-            className="w-8 h-8 rounded-lg bg-[#141419] border border-white/[0.1] flex items-center justify-center hover:bg-zinc-800 hover:border-white/[0.15] transition-colors group"
+            className="w-10 h-10 rounded-xl bg-[var(--bg-0)] border border-[var(--border)] flex items-center justify-center hover:border-[var(--border-strong)] hover:bg-[var(--surface-raised)] transition-colors group"
           >
-            <svg className="w-3.5 h-3.5 text-zinc-500 group-hover:text-zinc-300 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-4 h-4 text-[var(--text-muted)] group-hover:text-[var(--accent)] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
             </svg>
           </button>
         </div>
 
-        <div className="surface-panel-raised p-4">
-          <div className="flex justify-between text-[12px] text-zinc-500 mb-2">
-            <span>You receive</span>
+        <div className="surface-panel-raised p-4 sm:p-5">
+          <div className="flex justify-between text-[13px] sm:text-[14px] text-[var(--text-muted)] mb-2.5">
+            <span>Buy</span>
             {loading && (
-              <span className="text-zinc-400">Finding best route...</span>
+              <span className="text-[var(--accent)]/80">Finding route…</span>
             )}
           </div>
           <div className="flex items-center gap-3">
-            <div className="flex-1 text-2xl font-medium tracking-tight min-w-0">
+            <div className="flex-1 text-[32px] sm:text-[36px] font-medium tracking-tight min-w-0 font-[family-name:var(--font-mono)]">
               {quote ? (
-                <span className="text-zinc-50">{formatOutput(quote.expected_output)}</span>
+                <span className="text-[var(--text-primary)]">{formatOutput(quote.expected_output)}</span>
               ) : (
-                <span className="text-zinc-600">0</span>
+                <span className="text-[var(--text-muted)]/60">0.0</span>
               )}
             </div>
             <TokenSelector
@@ -380,10 +377,9 @@ export function SwapCard() {
           </div>
         </div>
 
-        {/* Rate display: human out per 1 unit token in (not stroops passed to formatOutput) */}
         {quote && amountIn && parseFloat(amountIn) > 0 && (
-          <div className="mt-3 px-0.5 flex items-center justify-between gap-3 text-[12px] text-zinc-500">
-            <span>
+          <div className="mt-3.5 px-0.5 flex items-center justify-between gap-3 text-[13px] sm:text-[14px] text-[var(--text-muted)]">
+            <span className="tabular-nums">
               1 {tokenIn.symbol} ≈{' '}
               {(parseInt(quote.expected_output, 10) / 10 ** tokenOut.decimals / parseFloat(amountIn)).toLocaleString(undefined, {
                 maximumFractionDigits: 8,
@@ -394,16 +390,15 @@ export function SwapCard() {
               type="button"
               onClick={() => void loadQuote({ silent: true })}
               disabled={loading}
-              className="shrink-0 text-zinc-400 hover:text-zinc-100 disabled:text-zinc-600 transition-colors"
+              className="shrink-0 text-[var(--text-secondary)] hover:text-[var(--accent)] disabled:opacity-40 transition-colors"
             >
               Refresh
             </button>
           </div>
         )}
 
-        {/* Error */}
         {error && !loading && (
-          <div className="mt-3 text-[12px] text-red-300 border border-red-500/20 bg-red-500/[0.06] rounded-lg px-3 py-2 text-center">
+          <div className="mt-3 text-[13px] text-red-300/90 border border-red-500/15 bg-red-500/[0.05] rounded-xl px-3 py-2.5 text-center">
             {error === 'Failed to fetch quote'
               ? 'Unable to load quote. Please retry in a moment.'
               : error}
@@ -415,14 +410,14 @@ export function SwapCard() {
             type="button"
             onClick={handlePrimaryAction}
             disabled={primaryDisabled}
-            className="btn-primary w-full py-3 text-[15px]"
+            className="btn-primary w-full py-4 text-[16px] sm:text-[17px]"
           >
             {primaryLabel}
           </button>
         </div>
 
         {txResult && (
-          <div className={`mt-3 p-3 rounded-lg text-[12px] border ${txResult.success ? 'bg-emerald-500/[0.06] border-emerald-500/20 text-emerald-300' : 'bg-red-500/[0.06] border-red-500/20 text-red-300'}`}>
+          <div className={`mt-3 p-3 rounded-xl text-[13px] border ${txResult.success ? 'bg-emerald-500/[0.06] border-emerald-500/20 text-emerald-300' : 'bg-red-500/[0.05] border-red-500/15 text-red-300'}`}>
             {txResult.success ? (
               <div>
                 Swap submitted successfully.{' '}

@@ -24,22 +24,22 @@ export function HeaderWallet() {
       <div className="relative z-50" ref={menuRef}>
         <button
           onClick={() => setShowMenu(!showMenu)}
-          className="flex items-center gap-2 bg-zinc-900 border border-white/[0.08] hover:border-white/[0.14] rounded-md px-3 py-1.5 transition-colors"
+          className="flex items-center gap-2 rounded-full bg-[var(--surface-raised)] px-4 py-2 transition-colors hover:bg-[var(--surface)]"
         >
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-          <span className="text-[13px] font-mono text-zinc-300">
-            {address.slice(0, 4)}...{address.slice(-4)}
+          <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)]" />
+          <span className="text-[14px] font-[family-name:var(--font-mono)] text-[var(--text-primary)]">
+            {address.slice(0, 4)}…{address.slice(-4)}
           </span>
         </button>
 
         {showMenu && (
-          <div className="absolute right-0 top-full mt-2 z-[60] bg-[#141419] border border-white/[0.1] rounded-lg shadow-xl overflow-hidden min-w-[220px]">
-            <div className="px-4 py-3 text-[11px] text-zinc-500 font-mono break-all border-b border-white/[0.06]">
+          <div className="absolute right-0 top-full mt-2 z-[60] bg-[var(--surface)] border border-[var(--border)] rounded-xl overflow-hidden min-w-[220px]">
+            <div className="px-4 py-3 text-[11px] text-[var(--text-muted)] font-[family-name:var(--font-mono)] break-all border-b border-[var(--border)]">
               {address}
             </div>
             <button
               onClick={() => { disconnect(); setShowMenu(false); }}
-              className="w-full px-4 py-2.5 text-left text-[13px] text-red-400 hover:bg-red-500/[0.06] transition-colors"
+              className="w-full px-4 py-2.5 text-left text-[13px] text-red-400/90 hover:bg-red-500/[0.06] transition-colors"
             >
               Disconnect
             </button>
@@ -53,9 +53,9 @@ export function HeaderWallet() {
     <button
       onClick={connect}
       disabled={connecting}
-      className="btn-primary px-4 py-1.5 text-[13px] disabled:opacity-50"
+      className="rounded-full bg-[var(--accent)] px-5 py-2.5 text-[15px] font-semibold text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)] disabled:opacity-50 transition-colors"
     >
-      {connecting ? 'Connecting...' : 'Connect'}
+      {connecting ? 'Connecting…' : 'Connect Wallet'}
     </button>
   );
 }

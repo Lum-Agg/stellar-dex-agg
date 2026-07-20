@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { formatBalanceDisplay } from '@/lib/balance';
 import { fetchPrices, type Price } from '@/lib/prices';
@@ -128,12 +129,12 @@ export function HoldingsSummary() {
         </div>
       )}
 
-      <a
+      <Link
         href="/portfolio"
         className="block border-t border-white/[0.06] px-4 py-2.5 text-[12px] font-medium text-emerald-400 hover:bg-white/[0.03] transition-colors"
       >
         View portfolio →
-      </a>
+      </Link>
     </section>
   );
 }

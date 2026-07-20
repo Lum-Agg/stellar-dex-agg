@@ -1,8 +1,15 @@
 'use client';
 
-import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  useEffect,
+  type ReactNode,
+} from 'react';
 import { StellarWalletsKit } from '@creit.tech/stellar-wallets-kit';
-import { Networks } from '@creit.tech/stellar-wallets-kit/types';
+import { KitEventType, Networks } from '@creit.tech/stellar-wallets-kit/types';
 import { FreighterModule } from '@creit.tech/stellar-wallets-kit/modules/freighter';
 import { xBullModule } from '@creit.tech/stellar-wallets-kit/modules/xbull';
 import { LobstrModule } from '@creit.tech/stellar-wallets-kit/modules/lobstr';
@@ -44,9 +51,43 @@ function ensureKit() {
   kitInitialized = true;
 }
 
+async function readStoredAddress(): Promise<string | null> {
+  try {
+    ensureKit();
+    const { address } = await StellarWalletsKit.getAddress();
+    return address || null;
+  } catch {
+    return null;
+  }
+}
+
 export function WalletProvider({ children }: { children: ReactNode }) {
   const [address, setAddress] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
+
+  // Restore kit session after full page loads (kit already persists address in localStorage).
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      const stored = await readStoredAddress();
+      if (!cancelled && stored) setAddress(stored);
+    })();
+
+    ensureKit();
+    const offState = StellarWalletsKit.on(KitEventType.STATE_UPDATED, (event) => {
+      setAddress(event.payload.address ?? null);
+    });
+    const offDisconnect = StellarWalletsKit.on(KitEventType.DISCONNECT, () => {
+      setAddress(null);
+    });
+
+    return () => {
+      cancelled = true;
+      offState();
+      offDisconnect();
+    };
+  }, []);
 
   const connect = useCallback(async () => {
     setConnecting(true);
@@ -56,7 +97,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       if (addr) {
         setAddress(addr);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Wallet connect error:', err);
     } finally {
       setConnecting(false);

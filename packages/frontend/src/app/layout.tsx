@@ -1,17 +1,26 @@
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
+import Link from 'next/link';
+import { DM_Sans, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import { Providers } from './providers';
 import { HeaderWallet } from '@/components/HeaderWallet';
+import { HeaderNav } from '@/components/HeaderNav';
 import { GITHUB_REPO_URL } from '@/lib/site';
 
-const inter = Inter({
+const dmSans = DM_Sans({
   subsets: ['latin'],
   display: 'swap',
+  variable: '--font-sans',
+});
+
+const jetbrains = JetBrains_Mono({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-mono',
 });
 
 export const metadata: Metadata = {
-  title: 'LumAgg - Stellar DEX Aggregator',
+  title: 'LumAgg — Stellar DEX Aggregator',
   description: 'Best swap rates across Stellar DEXes. Split orders for optimal execution.',
   icons: {
     icon: '/favicon.ico',
@@ -26,79 +35,72 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
-      <body className={`${inter.className} min-h-screen antialiased text-zinc-100`}>
+      <body
+        className={`${dmSans.variable} ${jetbrains.variable} min-h-screen antialiased text-[var(--text-primary)] font-[family-name:var(--font-sans)]`}
+      >
         <Providers>
-          <header className="sticky top-0 z-40 shrink-0 border-b border-white/[0.06] bg-[#09090b]/80 backdrop-blur-md">
-            <div className="max-w-5xl mx-auto px-5 sm:px-6 h-14 flex items-center justify-between">
-              <a href="/" className="flex items-center gap-2.5 group">
-                <div
-                  className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-sm font-bold text-white shadow-md shadow-blue-500/20"
-                  aria-hidden
-                >
-                  L
-                </div>
-                <span className="text-[15px] font-semibold tracking-tight text-zinc-100">
-                  Lum<span className="text-blue-400">Agg</span>
-                </span>
-              </a>
-              <div className="flex items-center gap-3 sm:gap-5">
-                <nav className="hidden sm:flex items-center gap-5 text-[13px] text-zinc-400">
-                  <a href="/" className="hover:text-zinc-100 transition-colors">
-                    Swap
-                  </a>
-                  <a href="/portfolio" className="hover:text-zinc-100 transition-colors">
-                    Portfolio
-                  </a>
-                  <a href="/docs" className="hover:text-zinc-100 transition-colors">
-                    API Docs
-                  </a>
-                  <a href="/stats" className="hover:text-zinc-100 transition-colors">
-                    Stats
-                  </a>
-                  <a
-                    href={GITHUB_REPO_URL}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 hover:text-zinc-100 transition-colors"
+          <div className="min-h-screen flex flex-col">
+          <header className="sticky top-0 z-40 shrink-0 w-full bg-[var(--bg-0)]">
+            <div className="w-full px-6 sm:px-8 lg:px-14 h-[5rem] flex items-center justify-between gap-6">
+              <div className="flex items-center gap-6 md:gap-9 min-w-0">
+                <Link href="/" className="flex items-center gap-2.5 group shrink-0">
+                  <div
+                    className="w-8 h-8 rounded-lg bg-[var(--accent)] text-[var(--accent-contrast)] flex items-center justify-center text-sm font-bold tracking-tight"
+                    aria-hidden
                   >
-                    <GitHubIcon className="w-3.5 h-3.5" />
-                    GitHub
-                  </a>
-                </nav>
+                    L
+                  </div>
+                  <span className="text-[18px] sm:text-[19px] font-semibold tracking-tight text-[var(--text-primary)]">
+                    LumAgg
+                  </span>
+                </Link>
+                <HeaderNav />
+              </div>
+              <div className="flex items-center gap-3 shrink-0">
                 <a
                   href={GITHUB_REPO_URL}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="sm:hidden inline-flex items-center justify-center w-8 h-8 rounded-md border border-white/[0.08] text-zinc-400 hover:text-zinc-100 transition-colors"
+                  className="hidden sm:inline-flex items-center gap-1.5 text-[15px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+                >
+                  <GitHubIcon className="w-4 h-4" />
+                  GitHub
+                </a>
+                <a
+                  href={GITHUB_REPO_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="sm:hidden inline-flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
                   aria-label="GitHub repository"
                 >
-                  <GitHubIcon className="w-3.5 h-3.5" />
+                  <GitHubIcon className="w-5 h-5" />
                 </a>
                 <HeaderWallet />
               </div>
             </div>
           </header>
 
-          <main className="relative max-w-5xl w-full mx-auto px-5 sm:px-6 py-10 md:py-12 min-w-0">
+          <main className="relative w-full px-6 sm:px-8 lg:px-14 pt-5 md:pt-8 pb-6 min-w-0 flex-1">
             {children}
           </main>
 
-          <footer className="relative border-t border-white/[0.06] mt-16">
-            <div className="max-w-5xl mx-auto px-5 sm:px-6 py-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-[13px] text-zinc-500">
-              <span className="max-w-lg leading-relaxed">
-                Mainnet routing across Aquarius, Phoenix, Soroswap, Sushi V3, Comet and Stellar Classic DEX.
+          <footer className="relative mt-auto w-full">
+            <div className="w-full px-6 sm:px-8 lg:px-14 py-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-[14px] sm:text-[15px] text-[var(--text-secondary)]">
+              <span className="max-w-xl leading-relaxed">
+                Aggregated routing across Stellar DEXs · Best-effort quotes
               </span>
               <a
                 href={GITHUB_REPO_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-zinc-400 hover:text-zinc-200 transition-colors shrink-0"
+                className="inline-flex items-center gap-1.5 text-[14px] sm:text-[15px] hover:text-[var(--text-primary)] transition-colors shrink-0"
               >
-                <GitHubIcon className="w-3.5 h-3.5" />
+                <GitHubIcon className="w-4 h-4" />
                 Open source
               </a>
             </div>
           </footer>
+          </div>
         </Providers>
       </body>
     </html>
