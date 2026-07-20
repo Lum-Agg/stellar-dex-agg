@@ -53,7 +53,8 @@ interface StatsPayload {
 }
 
 const DEX_COLORS: Record<string, string> = {
-  aquarius: '#3b82f6',
+  aquarius: '#3dd6c6',
+  aquarius_clmm: '#2fc4b4',
   phoenix: '#f59e0b',
   soroswap: '#22d3ee',
   sushi: '#34d399',
@@ -62,7 +63,7 @@ const DEX_COLORS: Record<string, string> = {
 
 function dexColor(name: string, index: number): string {
   if (DEX_COLORS[name]) return DEX_COLORS[name];
-  const fallback = ['#60a5fa', '#2dd4bf', '#fbbf24', '#f472b6', '#94a3b8'];
+  const fallback = ['#3dd6c6', '#2dd4bf', '#fbbf24', '#f472b6', '#94a3b8'];
   return fallback[index % fallback.length];
 }
 
@@ -163,10 +164,10 @@ export default function StatsPage() {
     <div className="max-w-5xl mx-auto space-y-8">
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-zinc-50">
+          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-[var(--text-primary)]">
             LumAgg-routed volume
           </h1>
-          <p className="text-[13px] text-zinc-500 mt-2 leading-relaxed max-w-xl">
+          <p className="text-[13px] text-[var(--text-primary)]0 mt-2 leading-relaxed max-w-xl">
             Aggregator contract invocations only — volume LumAgg routed onto Stellar Soroban DEXes,
             not market-wide pool volume. Routed volume = entry amount × serial hops (e.g. a→b→c
             with 100 in → 200 of that input token). Parallel splits share a hop index and are not
@@ -176,7 +177,7 @@ export default function StatsPage() {
         {data && (
           <a
             href={`${API_URL}/api/v1/stats?format=csv`}
-            className="self-start sm:self-auto text-[12px] px-3 py-1.5 rounded-lg border border-white/[0.08] bg-zinc-900/50 text-zinc-400 hover:text-zinc-200 hover:border-white/[0.14] transition-colors"
+            className="self-start sm:self-auto text-[12px] px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]/80 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] transition-colors"
           >
             Export CSV
           </a>
@@ -188,7 +189,7 @@ export default function StatsPage() {
           {Array.from({ length: 4 }).map((_, i) => (
             <div
               key={i}
-              className="h-[88px] rounded-xl border border-white/[0.06] bg-zinc-900/40 animate-pulse"
+              className="h-[88px] rounded-xl border border-[var(--border)] bg-[var(--surface)]/60 animate-pulse"
             />
           ))}
         </div>
@@ -196,9 +197,9 @@ export default function StatsPage() {
 
       {error && (
         <div className="text-sm text-amber-300/90 border border-amber-500/20 bg-amber-500/5 rounded-xl px-4 py-3">
-          Stats unavailable: {error}. Configure <code className="text-zinc-300">INDEXER_DB_PATH</code>{' '}
+          Stats unavailable: {error}. Configure <code className="text-[var(--text-secondary)]">INDEXER_DB_PATH</code>{' '}
           on the API server or use{' '}
-          <code className="text-zinc-300">analytics-indexer export-daily</code>.
+          <code className="text-[var(--text-secondary)]">analytics-indexer export-daily</code>.
         </div>
       )}
 
@@ -236,17 +237,17 @@ export default function StatsPage() {
             />
           </div>
 
-          <section className="rounded-xl border border-white/[0.08] bg-zinc-900/35 overflow-hidden">
+          <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/60 overflow-hidden">
             <div className="px-4 sm:px-5 pt-4 pb-2 flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-2">
               <div>
-                <h2 className="text-[15px] font-medium text-zinc-100">Daily volume</h2>
-                <p className="text-[12px] text-zinc-500 mt-0.5">
+                <h2 className="text-[15px] font-medium text-[var(--text-primary)]">Daily volume</h2>
+                <p className="text-[12px] text-[var(--text-primary)]0 mt-0.5">
                   Routed = entry × hops · Notional = entry amount · cyan = transactions
                 </p>
               </div>
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-zinc-500">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--text-primary)]0">
                 <span className="inline-flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-sm bg-blue-500/80" />
+                  <span className="w-2.5 h-2.5 rounded-sm bg-[var(--accent)]/80" />
                   Routed (USD)
                 </span>
                 <span className="inline-flex items-center gap-1.5">
@@ -254,7 +255,7 @@ export default function StatsPage() {
                   Notional (USD)
                 </span>
                 <span className="inline-flex items-center gap-1.5">
-                  <span className="w-2.5 h-0.5 bg-cyan-300/90" />
+                  <span className="w-2.5 h-0.5 bg-teal-300/90" />
                   Transactions
                 </span>
               </div>
@@ -279,7 +280,7 @@ export default function StatsPage() {
               entries={Object.entries(derived.fnTotals).sort((a, b) => b[1] - a[1])}
               colorFn={(name, i) =>
                 name.includes('round_trip')
-                  ? '#3b82f6'
+                  ? '#3dd6c6'
                   : name.includes('split')
                     ? '#22d3ee'
                     : dexColor(name, i)
@@ -287,7 +288,7 @@ export default function StatsPage() {
             />
           </div>
 
-          <div className="flex flex-wrap gap-x-5 gap-y-2 rounded-xl border border-white/[0.06] bg-zinc-950/40 px-4 py-3 text-[12px] text-zinc-500">
+          <div className="flex flex-wrap gap-x-5 gap-y-2 rounded-xl border border-[var(--border)] bg-[var(--bg-0)]/40 px-4 py-3 text-[12px] text-[var(--text-primary)]0">
             <OpsItem label="Cursor ledger" value={data.cursor_ledger?.toLocaleString() ?? '—'} />
             <OpsItem label="Days indexed" value={String(data.daily.length)} />
             <OpsItem
@@ -299,7 +300,7 @@ export default function StatsPage() {
               value={
                 <a
                   href={`${API_URL}/api/v1/stats`}
-                  className="text-zinc-400 hover:text-zinc-200 underline underline-offset-2"
+                  className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] underline underline-offset-2"
                   target="_blank"
                   rel="noreferrer"
                 >
@@ -309,17 +310,17 @@ export default function StatsPage() {
             />
           </div>
 
-          <details className="group rounded-xl border border-white/[0.08] bg-zinc-900/30 open:bg-zinc-900/40">
-            <summary className="cursor-pointer list-none px-4 sm:px-5 py-3.5 flex items-center justify-between text-[14px] text-zinc-300 hover:text-zinc-100 [&::-webkit-details-marker]:hidden">
+          <details className="group rounded-xl border border-[var(--border)] bg-[var(--surface)]/50 open:bg-[var(--surface)]/60">
+            <summary className="cursor-pointer list-none px-4 sm:px-5 py-3.5 flex items-center justify-between text-[14px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] [&::-webkit-details-marker]:hidden">
               <span className="font-medium">Daily rollup</span>
-              <span className="text-[12px] text-zinc-500">
+              <span className="text-[12px] text-[var(--text-primary)]0">
                 <span className="group-open:hidden">Show table</span>
                 <span className="hidden group-open:inline">Hide</span>
               </span>
             </summary>
-            <div className="overflow-x-auto border-t border-white/[0.06]">
+            <div className="overflow-x-auto border-t border-[var(--border)]">
               <table className="w-full text-[12px] text-left">
-                <thead className="bg-zinc-900/60 text-zinc-500">
+                <thead className="bg-[var(--bg-0)]/50 text-[var(--text-primary)]0">
                   <tr>
                     <th className="px-3 py-2 font-medium">Day</th>
                     <th className="px-3 py-2 font-medium">Transactions</th>
@@ -330,12 +331,12 @@ export default function StatsPage() {
                     <th className="px-3 py-2 font-medium">Split</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/[0.06]">
+                <tbody className="divide-y divide-[var(--border)]">
                   {[...derived.days].reverse().map((d) => {
                     const notionalUsd = dayNotionalUsd(d);
                     const routedUsd = dayRoutedUsd(d);
                     return (
-                      <tr key={d.day} className="text-zinc-300">
+                      <tr key={d.day} className="text-[var(--text-secondary)]">
                         <td className="px-3 py-2 whitespace-nowrap">{d.day}</td>
                         <td className="px-3 py-2">{d.tx_count}</td>
                         <td className="px-3 py-2">{d.unique_users}</td>
@@ -377,18 +378,18 @@ function KpiCard({
 }) {
   return (
     <div
-      className="rounded-xl border border-white/[0.08] bg-zinc-900/40 px-4 py-3.5 opacity-0 animate-[statsFadeIn_0.45s_ease_forwards]"
+      className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/60 px-4 py-3.5 opacity-0 animate-[statsFadeIn_0.45s_ease_forwards]"
       style={{ animationDelay: `${delay}ms` }}
     >
-      <div className="text-[11px] uppercase tracking-wide text-zinc-500">{label}</div>
+      <div className="text-[11px] uppercase tracking-wide text-[var(--text-primary)]0">{label}</div>
       <div
         className={`text-xl sm:text-2xl font-semibold mt-1.5 tracking-tight tabular-nums ${
-          accent ? 'text-blue-400' : 'text-zinc-50'
+          accent ? 'text-[var(--accent)]' : 'text-[var(--text-primary)]'
         }`}
       >
         {value}
       </div>
-      <div className="text-[11px] text-zinc-600 mt-1 truncate">{hint}</div>
+      <div className="text-[11px] text-[var(--text-muted)] mt-1 truncate">{hint}</div>
     </div>
   );
 }
@@ -396,8 +397,8 @@ function KpiCard({
 function OpsItem({ label, value }: { label: string; value: ReactNode }) {
   return (
     <span className="inline-flex items-baseline gap-1.5">
-      <span className="text-zinc-600">{label}</span>
-      <span className="text-zinc-400 tabular-nums">{value}</span>
+      <span className="text-[var(--text-muted)]">{label}</span>
+      <span className="text-[var(--text-secondary)] tabular-nums">{value}</span>
     </span>
   );
 }
@@ -416,11 +417,11 @@ function SharePanel({
   const total = entries.reduce((s, [, n]) => s + n, 0) || 1;
 
   return (
-    <section className="rounded-xl border border-white/[0.08] bg-zinc-900/35 px-4 sm:px-5 py-4">
-      <h2 className="text-[15px] font-medium text-zinc-100">{title}</h2>
-      <p className="text-[12px] text-zinc-500 mt-0.5 mb-4">{subtitle}</p>
+    <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/60 px-4 sm:px-5 py-4">
+      <h2 className="text-[15px] font-medium text-[var(--text-primary)]">{title}</h2>
+      <p className="text-[12px] text-[var(--text-primary)]0 mt-0.5 mb-4">{subtitle}</p>
       {entries.length === 0 ? (
-        <p className="text-[13px] text-zinc-600">No data yet</p>
+        <p className="text-[13px] text-[var(--text-muted)]">No data yet</p>
       ) : (
         <ul className="space-y-3">
           {entries.map(([name, count], i) => {
@@ -429,12 +430,12 @@ function SharePanel({
             return (
               <li key={name}>
                 <div className="flex items-center justify-between gap-2 text-[12px] mb-1.5">
-                  <span className="text-zinc-300 font-medium truncate">{name}</span>
-                  <span className="text-zinc-500 tabular-nums shrink-0">
+                  <span className="text-[var(--text-secondary)] font-medium truncate">{name}</span>
+                  <span className="text-[var(--text-primary)]0 tabular-nums shrink-0">
                     {count.toLocaleString()} · {pct.toFixed(pct >= 10 ? 0 : 1)}%
                   </span>
                 </div>
-                <div className="h-2 rounded-full bg-zinc-800/90 overflow-hidden">
+                <div className="h-2 rounded-full bg-[var(--surface-raised)] overflow-hidden">
                   <div
                     className="h-full rounded-full transition-[width] duration-700 ease-out"
                     style={{
@@ -524,8 +525,8 @@ function VolumeTrendChart({
             >
               <defs>
                 <linearGradient id={`routedGrad-${i}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#60a5fa" stopOpacity="0.95" />
-                  <stop offset="100%" stopColor="#2563eb" stopOpacity="0.55" />
+                  <stop offset="0%" stopColor="#3dd6c6" stopOpacity="0.95" />
+                  <stop offset="100%" stopColor="#2fc4b4" stopOpacity="0.55" />
                 </linearGradient>
                 <linearGradient id={`notionalGrad-${i}`} x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#d4d4d8" stopOpacity="0.85" />
@@ -562,7 +563,7 @@ function VolumeTrendChart({
                 x={cx}
                 y={labelTop - 20}
                 textAnchor="middle"
-                fill="#93c5fd"
+                fill="#7dd3c8"
                 fontSize="10"
                 className="tabular-nums"
               >
@@ -572,20 +573,20 @@ function VolumeTrendChart({
                 x={cx}
                 y={labelTop - 8}
                 textAnchor="middle"
-                fill="#a1a1aa"
+                fill="#9ca3af"
                 fontSize="10"
                 className="tabular-nums"
               >
                 {notional > 0 ? formatUsd(notional) : '—'}
               </text>
-              <text x={cx} y={h - 20} textAnchor="middle" fill="#71717a" fontSize="10">
+              <text x={cx} y={h - 20} textAnchor="middle" fill="#6b7280" fontSize="10">
                 {shortDay(d.day)}
               </text>
               <text
                 x={cx}
                 y={h - 6}
                 textAnchor="middle"
-                fill="#67e8f9"
+                fill="#99f6e4"
                 fontSize="11"
                 fontWeight={600}
                 className="tabular-nums"
@@ -599,7 +600,7 @@ function VolumeTrendChart({
         {days.length > 1 && (
           <polyline
             fill="none"
-            stroke="#67e8f9"
+            stroke="#5eead4"
             strokeWidth={2}
             strokeLinejoin="round"
             strokeLinecap="round"
@@ -616,8 +617,8 @@ function VolumeTrendChart({
               cx={x}
               cy={y}
               r={3.5}
-              fill="#a5f3fc"
-              stroke="#0e7490"
+              fill="#99f6e4"
+              stroke="#0f766e"
               strokeWidth={1}
             >
               <title>

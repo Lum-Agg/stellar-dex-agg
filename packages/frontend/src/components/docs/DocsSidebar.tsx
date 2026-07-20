@@ -9,7 +9,11 @@ const NAV = [
     section: 'Documentation',
     items: [
       { href: '/docs', label: 'Overview', match: (p: string) => p === '/docs' },
-      { href: '/docs/api', label: 'API reference', match: (p: string) => p.startsWith('/docs/api') },
+      {
+        href: '/docs/api',
+        label: 'API reference',
+        match: (p: string) => p.startsWith('/docs/api'),
+      },
     ],
   },
   {

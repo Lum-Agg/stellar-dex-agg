@@ -33,8 +33,12 @@ export function HoldingsTable({ holdings }: { holdings: ValuedHolding[] }) {
   if (holdings.length === 0) {
     return (
       <div className="surface-panel px-5 py-10 text-center">
-        <h2 className="text-[15px] font-medium text-[var(--text-primary)]">No token balances yet</h2>
-        <p className="mt-1 text-[13px] text-[var(--text-muted)]">Your non-zero Stellar token balances will appear here.</p>
+        <h2 className="text-[15px] font-medium text-[var(--text-primary)]">
+          No token balances yet
+        </h2>
+        <p className="mt-1 text-[13px] text-[var(--text-muted)]">
+          Your non-zero Stellar token balances will appear here.
+        </p>
       </div>
     );
   }

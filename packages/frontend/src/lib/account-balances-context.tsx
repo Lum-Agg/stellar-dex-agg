@@ -9,11 +9,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import {
-  fetchAccountBalances,
-  fetchTokenBalanceStroops,
-  type BalanceMap,
-} from '@/lib/balance';
+import { fetchAccountBalances, fetchTokenBalanceStroops, type BalanceMap } from '@/lib/balance';
 import { useWallet } from '@/lib/wallet-context';
 
 export interface AccountBalancesState {
@@ -93,7 +89,7 @@ export function AccountBalancesProvider({ children }: { children: ReactNode }) {
       if (balances[tokenId] !== undefined) return balances[tokenId];
       return null;
     },
-    [balances, ready]
+    [balances, ready],
   );
 
   const ensureBalance = useCallback(
@@ -118,7 +114,7 @@ export function AccountBalancesProvider({ children }: { children: ReactNode }) {
       lazyInflight.current.set(tokenId, task);
       return task;
     },
-    [address, balances]
+    [address, balances],
   );
 
   return (

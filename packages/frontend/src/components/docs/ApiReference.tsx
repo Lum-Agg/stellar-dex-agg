@@ -5,8 +5,7 @@ import { BuildTxCodeSample } from '@/components/BuildTxCodeSample';
 import { GITHUB_REPO_URL } from '@/lib/site';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
-const AGGREGATOR =
-  'CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K';
+const AGGREGATOR = 'CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K';
 
 const TOKENS: Record<string, string> = {
   XLM: 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA',
@@ -65,8 +64,7 @@ export function ApiReference() {
       <header className="docs-intro">
         <h1 className="docs-title">API Documentation</h1>
         <p className="docs-lead">
-          Liquidity aggregator across Soroswap, Aquarius, Phoenix, Sushi V3, Comet and Classic
-          DEX.
+          Liquidity aggregator across Soroswap, Aquarius, Phoenix, Sushi V3, Comet and Classic DEX.
         </p>
         <p className="docs-meta">
           <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer">
@@ -136,7 +134,12 @@ export function ApiReference() {
           path="/api/v1/prices"
           description="Latest USDC mark per token (sampled ticks or on-demand quote)."
           params={[
-            { name: 'ids', type: 'string', required: true, desc: 'Comma-separated contract ids (max 50)' },
+            {
+              name: 'ids',
+              type: 'string',
+              required: true,
+              desc: 'Comma-separated contract ids (max 50)',
+            },
           ]}
           tryIt={<PricesTryIt />}
         />
@@ -158,10 +161,20 @@ export function ApiReference() {
           description="Best route and expected output."
           params={[
             { name: 'token_in', type: 'string', required: true, desc: 'Input token (contract id)' },
-            { name: 'token_out', type: 'string', required: true, desc: 'Output token (contract id)' },
+            {
+              name: 'token_out',
+              type: 'string',
+              required: true,
+              desc: 'Output token (contract id)',
+            },
             { name: 'amount_in', type: 'string', required: true, desc: 'Stroops, 7 decimals' },
             { name: 'slippage', type: 'number', required: false, desc: 'Percent, e.g. 0.5' },
-            { name: 'prefer_soroban', type: '0 | 1', required: false, desc: '1 = Soroban AMMs only (exclude Classic SDEX)' },
+            {
+              name: 'prefer_soroban',
+              type: '0 | 1',
+              required: false,
+              desc: '1 = Soroban AMMs only (exclude Classic SDEX)',
+            },
           ]}
           tryIt={<QuoteTryIt />}
         />
@@ -412,7 +425,11 @@ function PriceHistoryTryIt() {
           />
         </Field>
         <Field label="Range">
-          <select className="docs-input docs-input--narrow" value={range} onChange={(e) => setRange(e.target.value as '24h' | '7d')}>
+          <select
+            className="docs-input docs-input--narrow"
+            value={range}
+            onChange={(e) => setRange(e.target.value as '24h' | '7d')}
+          >
             <option value="24h">24h</option>
             <option value="7d">7d</option>
           </select>
@@ -457,7 +474,11 @@ function QuoteTryIt() {
     <>
       <div className="docs-form-row">
         <Field label="From">
-          <select className="docs-input" value={tokenIn} onChange={(e) => setTokenIn(e.target.value)}>
+          <select
+            className="docs-input"
+            value={tokenIn}
+            onChange={(e) => setTokenIn(e.target.value)}
+          >
             {Object.keys(TOKENS).map((t) => (
               <option key={t} value={t}>
                 {t}
@@ -466,7 +487,11 @@ function QuoteTryIt() {
           </select>
         </Field>
         <Field label="To">
-          <select className="docs-input" value={tokenOut} onChange={(e) => setTokenOut(e.target.value)}>
+          <select
+            className="docs-input"
+            value={tokenOut}
+            onChange={(e) => setTokenOut(e.target.value)}
+          >
             {Object.keys(TOKENS).map((t) => (
               <option key={t} value={t}>
                 {t}
@@ -475,10 +500,18 @@ function QuoteTryIt() {
           </select>
         </Field>
         <Field label="Amount">
-          <input className="docs-input docs-input--narrow" value={amount} onChange={(e) => setAmount(e.target.value)} />
+          <input
+            className="docs-input docs-input--narrow"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+          />
         </Field>
         <Field label="Slippage %">
-          <input className="docs-input docs-input--narrow" value={slippage} onChange={(e) => setSlippage(e.target.value)} />
+          <input
+            className="docs-input docs-input--narrow"
+            value={slippage}
+            onChange={(e) => setSlippage(e.target.value)}
+          />
         </Field>
         <button type="button" className="docs-btn" onClick={run} disabled={loading}>
           {loading ? '…' : 'Send'}
@@ -552,7 +585,11 @@ function BuildTxTryIt() {
           />
         </Field>
         <Field label="From">
-          <select className="docs-input" value={tokenIn} onChange={(e) => setTokenIn(e.target.value)}>
+          <select
+            className="docs-input"
+            value={tokenIn}
+            onChange={(e) => setTokenIn(e.target.value)}
+          >
             {Object.keys(TOKENS).map((t) => (
               <option key={t} value={t}>
                 {t}
@@ -561,7 +598,11 @@ function BuildTxTryIt() {
           </select>
         </Field>
         <Field label="To">
-          <select className="docs-input" value={tokenOut} onChange={(e) => setTokenOut(e.target.value)}>
+          <select
+            className="docs-input"
+            value={tokenOut}
+            onChange={(e) => setTokenOut(e.target.value)}
+          >
             {Object.keys(TOKENS).map((t) => (
               <option key={t} value={t}>
                 {t}
@@ -570,10 +611,18 @@ function BuildTxTryIt() {
           </select>
         </Field>
         <Field label="Amount">
-          <input className="docs-input docs-input--narrow" value={amount} onChange={(e) => setAmount(e.target.value)} />
+          <input
+            className="docs-input docs-input--narrow"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+          />
         </Field>
         <Field label="Slippage %">
-          <input className="docs-input docs-input--narrow" value={slippage} onChange={(e) => setSlippage(e.target.value)} />
+          <input
+            className="docs-input docs-input--narrow"
+            value={slippage}
+            onChange={(e) => setSlippage(e.target.value)}
+          />
         </Field>
         <button type="button" className="docs-btn" onClick={run} disabled={loading}>
           {loading ? '…' : 'Quote → build_tx'}

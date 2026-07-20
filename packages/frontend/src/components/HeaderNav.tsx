@@ -5,7 +5,11 @@ import { usePathname } from 'next/navigation';
 
 const LINKS = [
   { href: '/', label: 'Swap', match: (path: string) => path === '/' },
-  { href: '/portfolio', label: 'Portfolio', match: (path: string) => path.startsWith('/portfolio') },
+  {
+    href: '/portfolio',
+    label: 'Portfolio',
+    match: (path: string) => path.startsWith('/portfolio'),
+  },
   { href: '/docs', label: 'Docs', match: (path: string) => path.startsWith('/docs') },
   { href: '/stats', label: 'Stats', match: (path: string) => path.startsWith('/stats') },
 ] as const;
@@ -22,9 +26,7 @@ export function HeaderNav() {
             key={link.href}
             href={link.href}
             className={`transition-colors ${
-              active
-                ? 'text-[var(--text-primary)]'
-                : 'hover:text-[var(--text-primary)]'
+              active ? 'text-[var(--text-primary)]' : 'hover:text-[var(--text-primary)]'
             }`}
             aria-current={active ? 'page' : undefined}
           >

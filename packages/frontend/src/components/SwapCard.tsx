@@ -34,7 +34,13 @@ export function SwapCard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { address: walletAddress, signTx, connect, connecting } = useWallet();
-  const { getBalance, ensureBalance, loading: balancesLoading, ready: balancesReady, refresh: refreshBalances } = useAccountBalances();
+  const {
+    getBalance,
+    ensureBalance,
+    loading: balancesLoading,
+    ready: balancesReady,
+    refresh: refreshBalances,
+  } = useAccountBalances();
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
   const quoteFingerprintRef = useRef('');
   const tokenList = useTokenList();
@@ -50,44 +56,47 @@ export function SwapCard() {
     };
   }, [tokenList]);
 
-  const loadQuote = useCallback(async (opts?: { silent?: boolean }) => {
-    const silent = opts?.silent ?? false;
-    const requestFingerprint = `${tokenIn.id}:${tokenOut.id}:${amountIn}:${slippage}`;
+  const loadQuote = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      const silent = opts?.silent ?? false;
+      const requestFingerprint = `${tokenIn.id}:${tokenOut.id}:${amountIn}:${slippage}`;
 
-    if (!amountIn || parseFloat(amountIn) <= 0) {
-      setQuote(null);
-      return;
-    }
+      if (!amountIn || parseFloat(amountIn) <= 0) {
+        setQuote(null);
+        return;
+      }
 
-    if (!silent) {
-      setLoading(true);
-      setError(null);
-    }
-
-    try {
-      const amountStroops = Math.floor(parseFloat(amountIn) * 10 ** tokenIn.decimals).toString();
-      const result = await getQuote(tokenIn.id, tokenOut.id, amountStroops, slippage);
-
-      if (requestFingerprint !== quoteFingerprintRef.current) return;
-
-      if (result.success && result.data) {
-        setQuote(result.data);
+      if (!silent) {
+        setLoading(true);
         setError(null);
-      } else if (!silent) {
-        setQuote(null);
-        setError(result.error || 'No route found');
       }
-    } catch {
-      if (!silent && requestFingerprint === quoteFingerprintRef.current) {
-        setQuote(null);
-        setError('Failed to fetch quote');
+
+      try {
+        const amountStroops = Math.floor(parseFloat(amountIn) * 10 ** tokenIn.decimals).toString();
+        const result = await getQuote(tokenIn.id, tokenOut.id, amountStroops, slippage);
+
+        if (requestFingerprint !== quoteFingerprintRef.current) return;
+
+        if (result.success && result.data) {
+          setQuote(result.data);
+          setError(null);
+        } else if (!silent) {
+          setQuote(null);
+          setError(result.error || 'No route found');
+        }
+      } catch {
+        if (!silent && requestFingerprint === quoteFingerprintRef.current) {
+          setQuote(null);
+          setError('Failed to fetch quote');
+        }
+      } finally {
+        if (!silent && requestFingerprint === quoteFingerprintRef.current) {
+          setLoading(false);
+        }
       }
-    } finally {
-      if (!silent && requestFingerprint === quoteFingerprintRef.current) {
-        setLoading(false);
-      }
-    }
-  }, [amountIn, tokenIn, tokenOut, slippage]);
+    },
+    [amountIn, tokenIn, tokenOut, slippage],
+  );
 
   // Auto-fetch quote when amount changes (debounced)
   useEffect(() => {
@@ -132,7 +141,11 @@ export function SwapCard() {
   };
 
   const [swapping, setSwapping] = useState(false);
-  const [txResult, setTxResult] = useState<{ success: boolean; hash?: string; error?: string } | null>(null);
+  const [txResult, setTxResult] = useState<{
+    success: boolean;
+    hash?: string;
+    error?: string;
+  } | null>(null);
 
   const balanceStroops = walletAddress ? getBalance(tokenIn.id) : null;
 
@@ -148,7 +161,7 @@ export function SwapCard() {
       setQuote(null);
       setTxResult(null);
     },
-    [balanceStroops, tokenIn.decimals, tokenIn.id]
+    [balanceStroops, tokenIn.decimals, tokenIn.id],
   );
 
   const handleSwap = useCallback(async () => {
@@ -161,14 +174,9 @@ export function SwapCard() {
     setTxResult(null);
 
     try {
-      const totalAmountIn = Math.floor(
-        parseFloat(amountIn) * 10 ** tokenIn.decimals
-      ).toString();
+      const totalAmountIn = Math.floor(parseFloat(amountIn) * 10 ** tokenIn.decimals).toString();
 
-      const subSum = quote.sub_routes.reduce(
-        (s, r) => s + BigInt(r.amount_in || '0'),
-        BigInt(0)
-      );
+      const subSum = quote.sub_routes.reduce((s, r) => s + BigInt(r.amount_in || '0'), BigInt(0));
       if (subSum.toString() !== totalAmountIn) {
         setTxResult({
           success: false,
@@ -247,7 +255,10 @@ export function SwapCard() {
         setQuote(null);
         void refreshBalances();
       } else {
-        const errMsg = submitData.extras?.result_codes?.operations?.[0] || submitData.title || 'Transaction failed';
+        const errMsg =
+          submitData.extras?.result_codes?.operations?.[0] ||
+          submitData.title ||
+          'Transaction failed';
         setTxResult({ success: false, error: errMsg });
       }
     } catch (err: any) {
@@ -255,7 +266,17 @@ export function SwapCard() {
     } finally {
       setSwapping(false);
     }
-  }, [walletAddress, quote, tokenIn, tokenOut, amountIn, signTx, refreshBalances, getBalance, ensureBalance]);
+  }, [
+    walletAddress,
+    quote,
+    tokenIn,
+    tokenOut,
+    amountIn,
+    signTx,
+    refreshBalances,
+    getBalance,
+    ensureBalance,
+  ]);
 
   const handlePrimaryAction = useCallback(() => {
     if (!walletAddress) {
@@ -265,11 +286,8 @@ export function SwapCard() {
     handleSwap();
   }, [walletAddress, connect, handleSwap]);
 
-
   const primaryDisabled =
-    connecting ||
-    swapping ||
-    (walletAddress !== null && (loading || !quote || !amountIn));
+    connecting || swapping || (walletAddress !== null && (loading || !quote || !amountIn));
 
   const primaryLabel = connecting
     ? 'Connecting...'
@@ -289,7 +307,9 @@ export function SwapCard() {
     <div className="w-full max-w-none space-y-3">
       <div className="surface-panel p-5 sm:p-6">
         <div className="flex items-center justify-between mb-5">
-          <h2 className="text-[17px] sm:text-[18px] font-semibold tracking-tight text-[var(--text-primary)]">Swap</h2>
+          <h2 className="text-[17px] sm:text-[18px] font-semibold tracking-tight text-[var(--text-primary)]">
+            Swap
+          </h2>
           <div className="flex items-center gap-0.5 rounded-full border border-[var(--border)] bg-[var(--bg-0)]/50 p-0.5">
             {SLIPPAGE_PRESETS.map((s) => {
               const active = !slippageCustomMode && slippage === s;
@@ -368,7 +388,9 @@ export function SwapCard() {
                 {balancesLoading && !balancesReady ? (
                   'Balance…'
                 ) : balanceStroops !== null ? (
-                  <>{formatBalanceDisplay(balanceStroops, tokenIn.decimals)} {tokenIn.symbol}</>
+                  <>
+                    {formatBalanceDisplay(balanceStroops, tokenIn.decimals)} {tokenIn.symbol}
+                  </>
                 ) : (
                   '—'
                 )}
@@ -389,24 +411,31 @@ export function SwapCard() {
             />
             <TokenSelector
               selected={tokenIn}
-              onSelect={(t) => { setTokenIn(t); setQuote(null); setAmountIn(''); }}
+              onSelect={(t) => {
+                setTokenIn(t);
+                setQuote(null);
+                setAmountIn('');
+              }}
               exclude={tokenOut.id}
             />
           </div>
-          {walletAddress && balancesReady && balanceStroops !== null && balanceStroops > BigInt(0) && (
-            <div className="flex items-center gap-1.5 mt-3">
-              {[25, 50, 75, 100].map((pct) => (
-                <button
-                  key={pct}
-                  type="button"
-                  onClick={() => applyBalancePercent(pct)}
-                  className="px-2.5 py-1 rounded-lg text-[13px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-0)] border border-transparent hover:border-[var(--border)] transition-colors"
-                >
-                  {pct === 100 ? 'Max' : `${pct}%`}
-                </button>
-              ))}
-            </div>
-          )}
+          {walletAddress &&
+            balancesReady &&
+            balanceStroops !== null &&
+            balanceStroops > BigInt(0) && (
+              <div className="flex items-center gap-1.5 mt-3">
+                {[25, 50, 75, 100].map((pct) => (
+                  <button
+                    key={pct}
+                    type="button"
+                    onClick={() => applyBalancePercent(pct)}
+                    className="px-2.5 py-1 rounded-lg text-[13px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-0)] border border-transparent hover:border-[var(--border)] transition-colors"
+                  >
+                    {pct === 100 ? 'Max' : `${pct}%`}
+                  </button>
+                ))}
+              </div>
+            )}
         </div>
 
         <div className="flex justify-center -my-2.5 relative z-10">
@@ -414,8 +443,18 @@ export function SwapCard() {
             onClick={swapDirection}
             className="w-10 h-10 rounded-xl bg-[var(--bg-0)] border border-[var(--border)] flex items-center justify-center hover:border-[var(--border-strong)] hover:bg-[var(--surface-raised)] transition-colors group"
           >
-            <svg className="w-4 h-4 text-[var(--text-muted)] group-hover:text-[var(--accent)] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+            <svg
+              className="w-4 h-4 text-[var(--text-muted)] group-hover:text-[var(--accent)] transition-colors"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"
+              />
             </svg>
           </button>
         </div>
@@ -423,21 +462,24 @@ export function SwapCard() {
         <div className="surface-panel-raised p-4 sm:p-5">
           <div className="flex justify-between text-[13px] sm:text-[14px] text-[var(--text-muted)] mb-2.5">
             <span>Buy</span>
-            {loading && (
-              <span className="text-[var(--accent)]/80">Finding route…</span>
-            )}
+            {loading && <span className="text-[var(--accent)]/80">Finding route…</span>}
           </div>
           <div className="flex items-center gap-3">
             <div className="flex-1 text-[32px] sm:text-[36px] font-medium tracking-tight min-w-0 font-[family-name:var(--font-mono)]">
               {quote ? (
-                <span className="text-[var(--text-primary)]">{formatOutput(quote.expected_output)}</span>
+                <span className="text-[var(--text-primary)]">
+                  {formatOutput(quote.expected_output)}
+                </span>
               ) : (
                 <span className="text-[var(--text-muted)]/60">0.0</span>
               )}
             </div>
             <TokenSelector
               selected={tokenOut}
-              onSelect={(t) => { setTokenOut(t); setQuote(null); }}
+              onSelect={(t) => {
+                setTokenOut(t);
+                setQuote(null);
+              }}
               exclude={tokenIn.id}
             />
           </div>
@@ -447,7 +489,11 @@ export function SwapCard() {
           <div className="mt-3.5 px-0.5 flex items-center justify-between gap-3 text-[13px] sm:text-[14px] text-[var(--text-muted)]">
             <span className="tabular-nums">
               1 {tokenIn.symbol} ≈{' '}
-              {(parseInt(quote.expected_output, 10) / 10 ** tokenOut.decimals / parseFloat(amountIn)).toLocaleString(undefined, {
+              {(
+                parseInt(quote.expected_output, 10) /
+                10 ** tokenOut.decimals /
+                parseFloat(amountIn)
+              ).toLocaleString(undefined, {
                 maximumFractionDigits: 8,
               })}{' '}
               {tokenOut.symbol}
@@ -483,11 +529,18 @@ export function SwapCard() {
         </div>
 
         {txResult && (
-          <div className={`mt-3 p-3 rounded-xl text-[13px] border ${txResult.success ? 'bg-emerald-500/[0.06] border-emerald-500/20 text-emerald-300' : 'bg-red-500/[0.05] border-red-500/15 text-red-300'}`}>
+          <div
+            className={`mt-3 p-3 rounded-xl text-[13px] border ${txResult.success ? 'bg-emerald-500/[0.06] border-emerald-500/20 text-emerald-300' : 'bg-red-500/[0.05] border-red-500/15 text-red-300'}`}
+          >
             {txResult.success ? (
               <div>
                 Swap submitted successfully.{' '}
-                <a href={`https://stellar.expert/explorer/public/tx/${txResult.hash}`} target="_blank" rel="noopener" className="underline">
+                <a
+                  href={`https://stellar.expert/explorer/public/tx/${txResult.hash}`}
+                  target="_blank"
+                  rel="noopener"
+                  className="underline"
+                >
                   View transaction
                 </a>
               </div>

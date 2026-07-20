@@ -38,7 +38,10 @@ export function HeaderWallet() {
               {address}
             </div>
             <button
-              onClick={() => { disconnect(); setShowMenu(false); }}
+              onClick={() => {
+                disconnect();
+                setShowMenu(false);
+              }}
               className="w-full px-4 py-2.5 text-left text-[13px] text-red-400/90 hover:bg-red-500/[0.06] transition-colors"
             >
               Disconnect

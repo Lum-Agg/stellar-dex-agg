@@ -44,9 +44,7 @@ export function FaqSection() {
     <section className="space-y-5 pt-4 border-t border-white/[0.06]">
       <div className="space-y-2">
         <p className="section-label">FAQ</p>
-        <h2 className="section-title md:text-xl">
-          Common questions
-        </h2>
+        <h2 className="section-title md:text-xl">Common questions</h2>
       </div>
 
       <div className="surface-panel divide-y divide-white/[0.06] overflow-hidden">

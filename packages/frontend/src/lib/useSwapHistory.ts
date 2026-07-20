@@ -17,35 +17,38 @@ export function useSwapHistory() {
     hasSwapsRef.current = swaps.length > 0;
   }, [swaps]);
 
-  const loadSwaps = useCallback(async (opts?: { refetch?: boolean }) => {
-    if (!address) return;
+  const loadSwaps = useCallback(
+    async (opts?: { refetch?: boolean }) => {
+      if (!address) return;
 
-    const gen = ++fetchGenRef.current;
-    setLoading(true);
-    if (!opts?.refetch) {
-      setUnavailable(false);
-      setRefetchError(false);
-    }
+      const gen = ++fetchGenRef.current;
+      setLoading(true);
+      if (!opts?.refetch) {
+        setUnavailable(false);
+        setRefetchError(false);
+      }
 
-    try {
-      const data = await fetchUserSwaps(address);
-      if (gen !== fetchGenRef.current) return;
-      setSwaps(data);
-      setUnavailable(false);
-      setRefetchError(false);
-    } catch {
-      if (gen !== fetchGenRef.current) return;
-      if (hasSwapsRef.current) {
-        setRefetchError(true);
-      } else {
-        setUnavailable(true);
+      try {
+        const data = await fetchUserSwaps(address);
+        if (gen !== fetchGenRef.current) return;
+        setSwaps(data);
+        setUnavailable(false);
+        setRefetchError(false);
+      } catch {
+        if (gen !== fetchGenRef.current) return;
+        if (hasSwapsRef.current) {
+          setRefetchError(true);
+        } else {
+          setUnavailable(true);
+        }
+      } finally {
+        if (gen === fetchGenRef.current) {
+          setLoading(false);
+        }
       }
-    } finally {
-      if (gen === fetchGenRef.current) {
-        setLoading(false);
-      }
-    }
-  }, [address]);
+    },
+    [address],
+  );
 
   useEffect(() => {
     fetchGenRef.current += 1;

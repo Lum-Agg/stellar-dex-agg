@@ -40,10 +40,11 @@ export async function submitTransaction(signedXdr: string): Promise<{
   if (resp.ok) {
     return { hash: data.hash, success: true };
   } else {
-    const error = data.extras?.result_codes?.transaction
-      || data.extras?.result_codes?.operations?.join(', ')
-      || data.title
-      || 'Transaction failed';
+    const error =
+      data.extras?.result_codes?.transaction ||
+      data.extras?.result_codes?.operations?.join(', ') ||
+      data.title ||
+      'Transaction failed';
     return { hash: '', success: false, error };
   }
 }

@@ -21,9 +21,7 @@ const DEX_STYLES: Record<string, { label: string }> = {
 function dexStyle(dex: string) {
   const key = dex.toLowerCase().replace(/\s+/g, '_');
   if (DEX_STYLES[key]) return DEX_STYLES[key];
-  const label = dex
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  const label = dex.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
   return { label };
 }
 
@@ -80,7 +78,9 @@ function RouteAmountPath({
 
   return (
     <div className="flex flex-wrap items-center gap-1.5 text-[13px] text-[var(--text-muted)]">
-      <span className="font-[family-name:var(--font-mono)] text-[var(--text-secondary)]">{formatAmount(amountIn, tokenInDecimals)}</span>
+      <span className="font-[family-name:var(--font-mono)] text-[var(--text-secondary)]">
+        {formatAmount(amountIn, tokenInDecimals)}
+      </span>
       <span className="text-[var(--text-secondary)] font-medium">{symbols[0]}</span>
       {mids.map((sym, idx) => (
         <span key={`${sym}-${idx}`} className="inline-flex items-center gap-1.5">
@@ -89,8 +89,12 @@ function RouteAmountPath({
         </span>
       ))}
       <PathArrow />
-      <span className="font-[family-name:var(--font-mono)] text-[var(--text-secondary)]">{formatAmount(amountOut, tokenOutDecimals)}</span>
-      <span className="text-[var(--text-secondary)] font-medium">{symbols[symbols.length - 1]}</span>
+      <span className="font-[family-name:var(--font-mono)] text-[var(--text-secondary)]">
+        {formatAmount(amountOut, tokenOutDecimals)}
+      </span>
+      <span className="text-[var(--text-secondary)] font-medium">
+        {symbols[symbols.length - 1]}
+      </span>
     </div>
   );
 }
@@ -130,13 +134,19 @@ export function RouteDisplay({
       <div className="flex items-center justify-between">
         <span className="text-[14px] font-medium text-[var(--text-secondary)]">Route</span>
         {quote.compute_time_ms !== undefined && (
-          <span className="text-[13px] text-[var(--text-muted)]">Quoted in {quote.compute_time_ms}ms</span>
+          <span className="text-[13px] text-[var(--text-muted)]">
+            Quoted in {quote.compute_time_ms}ms
+          </span>
         )}
       </div>
 
       {quote.is_split && (
         <div className="flex items-center gap-1.5 text-[13px] text-[var(--text-muted)]">
-          <svg className="w-3 h-3 shrink-0 text-[var(--accent)]/70" fill="currentColor" viewBox="0 0 20 20">
+          <svg
+            className="w-3 h-3 shrink-0 text-[var(--accent)]/70"
+            fill="currentColor"
+            viewBox="0 0 20 20"
+          >
             <path
               fillRule="evenodd"
               d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z"
@@ -154,11 +164,19 @@ export function RouteDisplay({
 
       <div className="space-y-2">
         {displayRoutes.map((route, i) => {
-          const rate = legExchangeRate(route.amount_in, route.amount_out, tokenInDecimals, tokenOutDecimals);
+          const rate = legExchangeRate(
+            route.amount_in,
+            route.amount_out,
+            tokenInDecimals,
+            tokenOutDecimals,
+          );
           const hops = routeDexHops(route);
 
           return (
-            <div key={i} className="rounded-xl border border-[var(--border)] bg-[var(--bg-0)]/50 p-3">
+            <div
+              key={i}
+              className="rounded-xl border border-[var(--border)] bg-[var(--bg-0)]/50 p-3"
+            >
               <div className="flex items-center justify-between gap-2 mb-1.5">
                 <div className="flex flex-wrap items-center gap-1 min-w-0">
                   {hops.map((dex, j) => {
@@ -166,7 +184,9 @@ export function RouteDisplay({
                     return (
                       <span key={`${dex}-${j}`} className="inline-flex items-center gap-1">
                         {j > 0 && <span className="text-[var(--text-muted)] text-[12px]">→</span>}
-                        <span className="text-[13px] font-medium text-[var(--text-secondary)]">{label}</span>
+                        <span className="text-[13px] font-medium text-[var(--text-secondary)]">
+                          {label}
+                        </span>
                       </span>
                     );
                   })}
@@ -199,7 +219,9 @@ export function RouteDisplay({
       <div className="border-t border-[var(--border)] pt-3 space-y-1.5">
         <div className="flex justify-between text-[13px] sm:text-[14px]">
           <span className="text-[var(--text-muted)]">Price impact</span>
-          <span className={quote.price_impact > 1 ? 'text-amber-400' : 'text-[var(--text-secondary)]'}>
+          <span
+            className={quote.price_impact > 1 ? 'text-amber-400' : 'text-[var(--text-secondary)]'}
+          >
             {quote.price_impact > 0 ? `~${quote.price_impact.toFixed(2)}%` : '< 0.01%'}
           </span>
         </div>

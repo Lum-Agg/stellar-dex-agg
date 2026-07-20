@@ -58,7 +58,9 @@ export function SwapHistory({ variant = 'compact' }: SwapHistoryProps) {
         <div className="flex items-center justify-between gap-3">
           <div>
             <h2 className="text-[15px] font-medium text-[var(--text-secondary)]">Activity</h2>
-            <p className="mt-0.5 text-[13px] text-[var(--text-muted)]">Connect to see recent swaps</p>
+            <p className="mt-0.5 text-[13px] text-[var(--text-muted)]">
+              Connect to see recent swaps
+            </p>
           </div>
           <button
             type="button"
@@ -105,8 +107,13 @@ export function SwapHistory({ variant = 'compact' }: SwapHistoryProps) {
                 </thead>
                 <tbody className="divide-y divide-[var(--border)]">
                   {swaps.map((swap) => (
-                    <tr key={`${swap.tx_hash}-${swap.ledger}`} className="hover:bg-white/[0.02] transition-colors">
-                      <td className="px-4 py-3 text-[var(--text-muted)] sm:px-5">{relativeTime(swap.created_at)}</td>
+                    <tr
+                      key={`${swap.tx_hash}-${swap.ledger}`}
+                      className="hover:bg-white/[0.02] transition-colors"
+                    >
+                      <td className="px-4 py-3 text-[var(--text-muted)] sm:px-5">
+                        {relativeTime(swap.created_at)}
+                      </td>
                       <td className="px-3 py-3">
                         <span
                           className={
@@ -124,7 +131,8 @@ export function SwapHistory({ variant = 'compact' }: SwapHistoryProps) {
                         </span>
                         <span className="mx-1.5 text-[var(--text-muted)]">→</span>
                         <span className="text-[var(--text-primary)]">
-                          {amountLabel(swap.amount_out, swap.token_out)} {tokenLabel(swap.token_out)}
+                          {amountLabel(swap.amount_out, swap.token_out)}{' '}
+                          {tokenLabel(swap.token_out)}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right sm:px-5">
@@ -181,7 +189,9 @@ export function SwapHistory({ variant = 'compact' }: SwapHistoryProps) {
                 className="block px-4 py-2.5 hover:bg-white/[0.02] transition-colors"
               >
                 <div className="flex items-center justify-between gap-3">
-                  <span className="text-[12px] text-[var(--text-muted)]">{relativeTime(swap.created_at)}</span>
+                  <span className="text-[12px] text-[var(--text-muted)]">
+                    {relativeTime(swap.created_at)}
+                  </span>
                   <span
                     className={
                       swap.status === 'SUCCESS'

@@ -127,7 +127,9 @@ export default function PortfolioPage() {
           <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-xl border border-[var(--accent)]/20 bg-[var(--accent)]/10 text-[var(--accent)]">
             $
           </div>
-          <h1 className="text-xl font-semibold tracking-tight text-[var(--text-primary)]">Your portfolio</h1>
+          <h1 className="text-xl font-semibold tracking-tight text-[var(--text-primary)]">
+            Your portfolio
+          </h1>
           <p className="mx-auto mt-2 max-w-sm text-[13px] leading-relaxed text-[var(--text-muted)]">
             Connect your wallet to view holdings and swap history.
           </p>
@@ -164,7 +166,10 @@ export default function PortfolioPage() {
             ) : loading ? (
               <div className="grid gap-3">
                 {Array.from({ length: 4 }).map((_, index) => (
-                  <div key={index} className="h-16 animate-pulse rounded-xl border border-[var(--border)] bg-[var(--surface)]/40" />
+                  <div
+                    key={index}
+                    className="h-16 animate-pulse rounded-xl border border-[var(--border)] bg-[var(--surface)]/40"
+                  />
                 ))}
               </div>
             ) : (

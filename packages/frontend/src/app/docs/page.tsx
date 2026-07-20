@@ -37,7 +37,8 @@ export default function DocsOverviewPage() {
       <header className="docs-intro">
         <h1 className="docs-title">Developer documentation</h1>
         <p className="docs-lead">
-          Integrate LumAgg swap routing on Stellar — quote, build unsigned XDR, and sign in your wallet or bot.
+          Integrate LumAgg swap routing on Stellar — quote, build unsigned XDR, and sign in your
+          wallet or bot.
         </p>
         <dl className="docs-ref">
           <div className="docs-ref-row">
@@ -117,8 +118,8 @@ export default function DocsOverviewPage() {
           </table>
         </div>
         <p className="docs-hint">
-          Use <code>prefer_soroban=1</code> on <code>/quote</code> to exclude Classic SDEX when comparing against
-          Soroban-only routers.
+          Use <code>prefer_soroban=1</code> on <code>/quote</code> to exclude Classic SDEX when
+          comparing against Soroban-only routers.
         </p>
       </section>
 

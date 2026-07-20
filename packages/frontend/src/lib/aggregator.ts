@@ -68,15 +68,10 @@ function normalizeSubRoute(raw: Record<string, unknown>): SubRoute {
 
 function normalizeQuoteData(data: QuoteData): QuoteData {
   const sub_routes = (data.sub_routes ?? []).map((r) =>
-    normalizeSubRoute(r as unknown as Record<string, unknown>)
+    normalizeSubRoute(r as unknown as Record<string, unknown>),
   );
-  const subSum = sub_routes.reduce(
-    (s, r) => s + BigInt(r.amount_in || '0'),
-    BigInt(0)
-  );
-  const amount_in =
-    data.amount_in ??
-    (subSum > BigInt(0) ? subSum.toString() : undefined);
+  const subSum = sub_routes.reduce((s, r) => s + BigInt(r.amount_in || '0'), BigInt(0));
+  const amount_in = data.amount_in ?? (subSum > BigInt(0) ? subSum.toString() : undefined);
   return { ...data, sub_routes, amount_in };
 }
 
@@ -85,7 +80,7 @@ export async function getQuote(
   tokenOut: string,
   amountIn: string,
   slippage?: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<QuoteResponse> {
   const params = new URLSearchParams({
     token_in: tokenIn,
@@ -109,7 +104,7 @@ export async function buildSwap(
   tokenOut: string,
   amountIn: string,
   slippage: number,
-  userPublicKey: string
+  userPublicKey: string,
 ): Promise<{ success: boolean; data?: { unsigned_tx_xdr: string }; error?: string }> {
   const resp = await fetch(`${API_URL}/api/v1/swap`, {
     method: 'POST',

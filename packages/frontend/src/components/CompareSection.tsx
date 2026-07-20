@@ -25,9 +25,7 @@ export function CompareSection() {
     <section className="space-y-6 pt-4 border-t border-white/[0.06]">
       <div className="space-y-2">
         <p className="section-label">Why aggregate</p>
-        <h2 className="section-title md:text-xl">
-          One DEX vs. split routing
-        </h2>
+        <h2 className="section-title md:text-xl">One DEX vs. split routing</h2>
         <p className="text-[13px] text-zinc-400 max-w-xl leading-relaxed">
           Same trade size, different execution. LumAgg can send volume through several venues when
           that beats relying on a single pool.

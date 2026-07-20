@@ -11,11 +11,13 @@ export function Sparkline({ points }: { points: PriceHistoryPoint[] }) {
   const low = Math.min(...values);
   const high = Math.max(...values);
   const range = high - low || 1;
-  const coordinates = values.map((value, index) => {
-    const x = 2 + (index / (values.length - 1)) * 76;
-    const y = 26 - ((value - low) / range) * 24;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(' ');
+  const coordinates = values
+    .map((value, index) => {
+      const x = 2 + (index / (values.length - 1)) * 76;
+      const y = 26 - ((value - low) / range) * 24;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
   const stroke = values.at(-1)! >= values[0] ? '#34d399' : '#a1a1aa';
 
   return (

@@ -2,11 +2,7 @@
 
 import { useState, useCallback } from 'react';
 
-export function WalletButton({
-  onConnect,
-}: {
-  onConnect?: (publicKey: string) => void;
-}) {
+export function WalletButton({ onConnect }: { onConnect?: (publicKey: string) => void }) {
   const [publicKey, setPublicKey] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -25,9 +21,10 @@ export function WalletButton({
       }
 
       const result = await freighterApi.requestAccess();
-      const address = typeof result === 'string'
-        ? result
-        : (result as any)?.address || (result as any)?.publicKey || null;
+      const address =
+        typeof result === 'string'
+          ? result
+          : (result as any)?.address || (result as any)?.publicKey || null;
 
       if (address && address.startsWith('G')) {
         setPublicKey(address);
@@ -63,9 +60,7 @@ export function WalletButton({
       >
         {connecting ? 'Connecting…' : 'Connect Wallet'}
       </button>
-      {error && (
-        <p className="text-red-400/80 text-xs mt-2 text-center">{error}</p>
-      )}
+      {error && <p className="text-red-400/80 text-xs mt-2 text-center">{error}</p>}
     </div>
   );
 }

@@ -27,7 +27,7 @@ function horizonBalanceToStroops(balance: string, decimals: number): bigint {
 /** Single SAC balance (any token — used for uncommon assets). */
 export async function fetchTokenBalanceStroops(
   accountId: string,
-  tokenContractId: string
+  tokenContractId: string,
 ): Promise<bigint | null> {
   try {
     const params = new URLSearchParams({ account: accountId, token: tokenContractId });
@@ -43,7 +43,7 @@ export async function fetchTokenBalanceStroops(
 
 async function fetchNativeHorizonBalance(
   accountId: string,
-  decimals: number
+  decimals: number,
 ): Promise<bigint | null> {
   try {
     const resp = await fetch(`${HORIZON}/accounts/${accountId}`);
@@ -99,7 +99,7 @@ export async function fetchSpendableBalanceStroops(
   accountId: string,
   tokenContractId: string,
   decimals: number,
-  cached?: BalanceMap | null
+  cached?: BalanceMap | null,
 ): Promise<bigint | null> {
   if (cached && cached[tokenContractId] !== undefined) {
     return cached[tokenContractId];
@@ -135,13 +135,14 @@ export function formatBalanceDisplay(stroops: bigint, decimals: number): string 
 export function spendableForPercent(
   balanceStroops: bigint,
   percent: number,
-  tokenContractId: string
+  tokenContractId: string,
 ): bigint {
   let available = balanceStroops;
   if (tokenContractId === NATIVE_SAC && percent >= 100) {
-    available = balanceStroops > NATIVE_FEE_RESERVE_STROOPS
-      ? balanceStroops - NATIVE_FEE_RESERVE_STROOPS
-      : BigInt(0);
+    available =
+      balanceStroops > NATIVE_FEE_RESERVE_STROOPS
+        ? balanceStroops - NATIVE_FEE_RESERVE_STROOPS
+        : BigInt(0);
   } else if (percent >= 100) {
     available = balanceStroops;
   } else {
@@ -154,7 +155,7 @@ export function percentToAmountInput(
   balanceStroops: bigint,
   percent: number,
   decimals: number,
-  tokenContractId: string
+  tokenContractId: string,
 ): string {
   const stroops = spendableForPercent(balanceStroops, percent, tokenContractId);
   if (stroops === BigInt(0)) return '';

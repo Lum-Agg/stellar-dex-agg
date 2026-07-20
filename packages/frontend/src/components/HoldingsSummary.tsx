@@ -28,17 +28,21 @@ export function HoldingsSummary() {
   const [prices, setPrices] = useState<Map<string, Price>>(new Map());
 
   const tokenById = useMemo(() => new Map(tokens.map((token) => [token.id, token])), [tokens]);
-  const holdings = useMemo(() => Object.entries(balances)
-    .filter(([, balance]) => balance > BigInt(0))
-    .map(([id, balance]) => {
-      const token = tokenById.get(id);
-      return {
-        id,
-        balance,
-        decimals: token?.decimals ?? 7,
-        symbol: token?.symbol ?? shortContractId(id),
-      };
-    }), [balances, tokenById]);
+  const holdings = useMemo(
+    () =>
+      Object.entries(balances)
+        .filter(([, balance]) => balance > BigInt(0))
+        .map(([id, balance]) => {
+          const token = tokenById.get(id);
+          return {
+            id,
+            balance,
+            decimals: token?.decimals ?? 7,
+            symbol: token?.symbol ?? shortContractId(id),
+          };
+        }),
+    [balances, tokenById],
+  );
 
   const holdingIds = useMemo(() => holdings.map((holding) => holding.id), [holdings]);
   const holdingKey = holdingIds.join(',');
@@ -63,19 +67,25 @@ export function HoldingsSummary() {
     };
   }, [address, holdingKey, holdingIds]);
 
-  const valuedHoldings = useMemo(() => holdings.map((holding) => {
-    const price = prices.get(holding.id)?.price_usdc;
-    const amount = Number(holding.balance) / 10 ** holding.decimals;
-    return {
-      ...holding,
-      amount,
-      value: price === undefined ? null : amount * price,
-    };
-  }).sort((a, b) => (b.value ?? -1) - (a.value ?? -1)), [holdings, prices]);
+  const valuedHoldings = useMemo(
+    () =>
+      holdings
+        .map((holding) => {
+          const price = prices.get(holding.id)?.price_usdc;
+          const amount = Number(holding.balance) / 10 ** holding.decimals;
+          return {
+            ...holding,
+            amount,
+            value: price === undefined ? null : amount * price,
+          };
+        })
+        .sort((a, b) => (b.value ?? -1) - (a.value ?? -1)),
+    [holdings, prices],
+  );
 
   const total = valuedHoldings.reduce<number | null>(
-    (sum, holding) => holding.value === null || sum === null ? null : sum + holding.value,
-    0
+    (sum, holding) => (holding.value === null || sum === null ? null : sum + holding.value),
+    0,
   );
 
   if (!address) {
@@ -123,7 +133,9 @@ export function HoldingsSummary() {
                   {formatBalanceDisplay(holding.balance, holding.decimals)}
                 </p>
               </div>
-              <p className="shrink-0 text-[13px] tabular-nums text-zinc-300">{formatUsd(holding.value)}</p>
+              <p className="shrink-0 text-[13px] tabular-nums text-zinc-300">
+                {formatUsd(holding.value)}
+              </p>
             </div>
           ))}
         </div>

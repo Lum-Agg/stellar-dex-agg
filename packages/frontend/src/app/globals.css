@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
 :root {
   --bg-0: #0a0b0d;
@@ -18,7 +18,7 @@
 }
 
 html {
-  font-feature-settings: "ss01", "cv11";
+  font-feature-settings: 'ss01', 'cv11';
 }
 
 html,
@@ -55,7 +55,9 @@ body {
   background: var(--accent);
   color: var(--accent-contrast);
   font-weight: 600;
-  transition: background-color 0.15s ease, opacity 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    opacity 0.15s ease;
 }
 
 .btn-primary:hover:not(:disabled) {
@@ -155,7 +157,9 @@ body {
   font-weight: 500;
   color: var(--text-secondary);
   text-decoration: none;
-  transition: color 0.15s ease, background-color 0.15s ease;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
 }
 
 .docs-sidebar-link:hover {
