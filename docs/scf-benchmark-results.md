@@ -1,6 +1,6 @@
 # LumAgg quote benchmark results
 
-Generated: **2026-07-14 00:03 UTC**
+Generated: **2026-07-21 17:12 UTC**
 
 - LumAgg API: `https://api.lumagg.xyz` (`prefer_soroban=1`)
 - Soroswap API: `https://api.soroswap.finance` protocols=`soroswap,phoenix,aqua` (key provided)
@@ -20,17 +20,28 @@ OUTPUT=docs/scf-benchmark-results.md ./scripts/scf-benchmark.sh
 
 | Pair | Size | LumAgg out | Split | Sources | Soroswap out | Δ vs Soroswap | Notes |
 |------|------|------------|-------|---------|--------------|---------------|-------|
-| USDC → XLM | 1 USDC | 5.5343 | no | sushi | 39.8184 | n/a | CLMM venue in route; ⚠️ outputs not comparable (>2× gap — check venue / token mismatch) |
-| USDC → XLM | 10 USDC | 55.3429 | no | sushi | 397.5412 | n/a | CLMM venue in route; ⚠️ outputs not comparable (>2× gap — check venue / token mismatch) |
-| USDC → XLM | 100 USDC | 553.3874 | no | sushi | 3,912.2814 | n/a | CLMM venue in route; ⚠️ outputs not comparable (>2× gap — check venue / token mismatch) |
-| USDC → XLM | 1,000 USDC | 5,531.8914 | no | aquarius_clmm | 33,761.4350 | n/a | CLMM venue in route; ⚠️ outputs not comparable (>2× gap — check venue / token mismatch) |
-| XLM → USDC | 1 XLM | 0.1856 | yes | soroswap → soroswap ;; soroswap → soroswap ;; soroswap → soroswap | 0.6976 | n/a | split 3 legs; ⚠️ outputs not comparable (>2× gap — check venue / token mismatch) |
-| XLM → USDC | 10 XLM | 1.8039 | no | aquarius_clmm | 5.5136 | n/a | CLMM venue in route; ⚠️ outputs not comparable (>2× gap — check venue / token mismatch) |
-| XLM → USDC | 100 XLM | 18.0387 | no | aquarius_clmm | 18.0492 | -0.06% | CLMM venue in route |
-| XLM → USDC | 1,000 XLM | 180.3834 | no | aquarius_clmm | 180.4751 | -0.05% | CLMM venue in route |
-| XLM → AQUA | 10 XLM | 5,094.0778 | no | aquarius → aquarius | 14,645.6265 | n/a | ⚠️ outputs not comparable (>2× gap — check venue / token mismatch) |
-| XLM → AQUA | 100 XLM | 50,913.5404 | no | aquarius_clmm | 146,350.5060 | n/a | CLMM venue in route; ⚠️ outputs not comparable (>2× gap — check venue / token mismatch) |
-| XLM → AQUA | 1,000 XLM | 509,107.7012 | no | aquarius_clmm | 1,453,011.7464 | n/a | CLMM venue in route; ⚠️ outputs not comparable (>2× gap — check venue / token mismatch) |
+| USDC → XLM | 1 USDC | 5.2097 | no | aquarius_clmm | 15.3209 | n/a | CLMM venue in route; ⚠️ outputs not comparable (>2× gap — check venue / token mismatch) |
+| USDC → XLM | 10 USDC | 52.0969 | no | aquarius_clmm | 153.1089 | n/a | CLMM venue in route; ⚠️ outputs not comparable (>2× gap — check venue / token mismatch) |
+| USDC → XLM | 100 USDC | 520.9554 | no | aquarius_clmm | 1,521.1884 | n/a | CLMM venue in route; ⚠️ outputs not comparable (>2× gap — check venue / token mismatch) |
+| USDC → XLM | 1,000 USDC | 5,208.2231 | no | aquarius_clmm | 14,287.9921 | n/a | CLMM venue in route; ⚠️ outputs not comparable (>2× gap — check venue / token mismatch) |
+| XLM → USDC | 1 XLM | 0.1940 | yes | soroswap → aquarius ;; soroswap → soroswap | 0.7206 | n/a | split 2 legs; ⚠️ outputs not comparable (>2× gap — check venue / token mismatch) |
+| XLM → USDC | 10 XLM | 1.9241 | yes | aquarius → aquarius ;; aquarius → aquarius ;; soroswap → aquarius | 5.6699 | n/a | split 3 legs; ⚠️ outputs not comparable (>2× gap — check venue / token mismatch) |
+| XLM → USDC | 100 XLM | 19.1864 | no | aquarius | 19.1814 | +0.03% | — |
+| XLM → USDC | 1,000 XLM | 191.8454 | no | aquarius | 191.5380 | +0.16% | — |
+| XLM → AQUA | 10 XLM | 5,154.5228 | no | aquarius_clmm | 7,040.0378 | -26.78% | CLMM venue in route |
+| XLM → AQUA | 100 XLM | 51,545.1132 | no | aquarius_clmm | 70,368.9897 | -26.75% | CLMM venue in route |
+| XLM → AQUA | 1,000 XLM | 515,439.6619 | no | aquarius_clmm | 700,565.8226 | -26.43% | CLMM venue in route |
+
+## Tranche 1 reviewer highlights (this run)
+
+| Criterion | Evidence |
+|-----------|----------|
+| ≥3 pairs × ≥3 sizes | USDC↔XLM (4 sizes) + XLM→AQUA (3 sizes) |
+| Fair Soroban parity rows | **XLM→USDC 100 XLM: +0.03%**; **1,000 XLM: +0.16%** (both within ~2×, Δ published) |
+| ≥1 **new** split case vs Soroswap single-route | **XLM→USDC 1 XLM** (`is_split=true`, 2 paths) and **10 XLM** (3 paths) — Soroswap column is a single route |
+| CLMM coverage (vs Broker adapter gap) | USDC→XLM and XLM→AQUA route via **`aquarius_clmm`** — see [scf-venue-comparison.md](scf-venue-comparison.md) |
+
+Small-size USDC↔XLM rows remain marked **n/a** when Soroswap `amountOut` diverges by >2× (likely different route class / API quirks). Prefer the fair rows above for apples-to-apples claims.
 
 ## Summary
 
@@ -39,17 +50,6 @@ OUTPUT=docs/scf-benchmark-results.md ./scripts/scf-benchmark.sh
 - **Fair compare:** Prefer `LUMAGG_PREFER_SOROBAN=1` + Soroswap `protocols` without `sdex` so Classic SDEX does not dominate LumAgg while Soroswap stays Soroban-only.
 - **Soroswap API key:** Free registration at https://api.soroswap.finance/register — pass via `SOROSWAP_API_KEY` (never commit the key).
 - **Split cases in this run:**
-  - XLM → USDC 1 XLM: 3 paths (`soroswap → soroswap` ;; `soroswap → soroswap` ;; `soroswap → soroswap`)
-
-## What's new vs 2026-06-25 resubmission snapshot
-
-| Item | 2026-06-25 | **2026-07-14 (this run)** |
-|------|------------|---------------------------|
-| LumAgg mode | all venues (Classic often won USDC↔XLM) | **`prefer_soroban=1`** (fair vs Soroswap Soroban protocols) |
-| Fair rows (Δ) | XLM→USDC 100 / 1,000 XLM (−2.92% / +0.02%) | XLM→USDC 100 / 1,000 XLM (**−0.06% / −0.05%**, Aquarius CLMM) |
-| New split case | XLM→USDC 1 XLM: 2 paths (Aquarius + Soroswap) | XLM→USDC 1 XLM: **3 paths** (Soroswap×3) — **new** vs prior split shape |
-| USDC→XLM | Classic DEX | **Sushi / Aquarius CLMM** (no Classic under prefer_soroban) |
-| XLM→AQUA | Aquarius CLMM; delta n/a | Aquarius xy=k / CLMM; Soroswap still >2× → **n/a** |
-
-**SCF takeaway:** At 100–1,000 XLM→USDC, LumAgg tracks Soroswap within **0.1%** on Soroban-only quotes while additionally demonstrating **multi-path `is_split`** and **Sushi + Aquarius CLMM** venue coverage.
+  - XLM → USDC 1 XLM: 2 paths (`soroswap → aquarius` ;; `soroswap → soroswap`)
+  - XLM → USDC 10 XLM: 3 paths (`aquarius → aquarius` ;; `aquarius → aquarius` ;; `soroswap → aquarius`)
 

@@ -284,6 +284,17 @@ def run_benchmark() -> str:
     lines.extend(
         [
             "",
+            "## Tranche 1 reviewer highlights (this run)",
+            "",
+            "Fill/adjust after each refresh:",
+            "",
+            "| Criterion | Where to look |",
+            "|-----------|---------------|",
+            "| ≥3 pairs × ≥3 sizes | Table rows above |",
+            "| Fair Soroban parity (Δ within ~2×) | Rows with numeric Δ (not `n/a`) |",
+            "| Split vs Soroswap single-route | `Split=yes` rows + list below |",
+            "| CLMM coverage | Notes containing `CLMM` / sources `aquarius_clmm` / `sushi` |",
+            "",
             "## Summary",
             "",
             "- **Venue coverage:** See [scf-venue-comparison.md](scf-venue-comparison.md) for Stellar Broker CLMM gap (source-based).",

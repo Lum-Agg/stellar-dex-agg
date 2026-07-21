@@ -4,11 +4,11 @@ Living checklist — tick as evidence lands in repo or production.
 
 ## Tranche 1 · Jul 31, 2026
 
-- [x] D1 Benchmark matrix + refresh ([scf-benchmark-results.md](./scf-benchmark-results.md))
+- [x] D1 Benchmark matrix + refresh ([scf-benchmark-results.md](./scf-benchmark-results.md) — **2026-07-21** fair `prefer_soroban` run; split + parity rows in “Tranche 1 reviewer highlights”)
 - [x] D2 OpenAPI + [integrator-guide.md](./integrator-guide.md) + `prefer_soroban`
-- [ ] D2 ≥1 external integrator: `USER_G=G... ./scripts/integrator-smoke.sh` + feedback
-- [x] D3 Swap UI (logos, balance %, explorer) — self-hosted logos via `https://api.lumagg.xyz/logos/` — **51 official** (SEP-42) + fallback letter avatars (`logo_kind`)
-- [x] D4 Indexer v0 + [sample-indexer-export.json](./sample-indexer-export.json)
+- [ ] D2 ≥1 **external** integrator: `USER_G=G... ./scripts/integrator-smoke.sh` + feedback (founder self-smoke in `./output/` does **not** count alone)
+- [x] D3 Swap UI (logos, balance %, explorer) — self-hosted logos via `https://api.lumagg.xyz/logos/` — prod `/tokens` returns logos; letter-avatar `logo_kind` fallbacks
+- [x] D4 Indexer v0 + [sample-indexer-export.json](./sample-indexer-export.json) + live `GET /api/v1/stats`
 
 ## Tranche 2 · Aug 31, 2026
 
