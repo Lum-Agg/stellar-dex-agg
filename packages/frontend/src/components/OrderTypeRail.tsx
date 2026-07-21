@@ -9,11 +9,17 @@ const ORDER_TYPES: {
   enabled: boolean;
 }[] = [
   { id: 'instant', label: 'Instant', enabled: true },
-  { id: 'limit', label: 'Limit', hint: 'Soon', enabled: false },
+  { id: 'limit', label: 'Limit', enabled: true },
   { id: 'dca', label: 'DCA', hint: 'Soon', enabled: false },
 ];
 
-export function OrderTypeRail({ active = 'instant' }: { active?: OrderTypeId }) {
+export function OrderTypeRail({
+  active = 'instant',
+  onSelect,
+}: {
+  active?: OrderTypeId;
+  onSelect?: (id: 'instant' | 'limit') => void;
+}) {
   return (
     <aside className="w-full sm:w-[148px] shrink-0">
       <p className="hidden sm:block text-[12px] uppercase tracking-[0.08em] text-[var(--text-muted)] mb-3 px-1">
@@ -42,12 +48,18 @@ export function OrderTypeRail({ active = 'instant' }: { active?: OrderTypeId }) 
             );
           }
           return (
-            <div
+            <button
               key={item.id}
-              className={`relative flex items-center rounded-xl px-3 py-2.5 text-[15px] font-medium whitespace-nowrap ${
+              type="button"
+              onClick={() => {
+                if ((item.id === 'instant' || item.id === 'limit') && onSelect) {
+                  onSelect(item.id);
+                }
+              }}
+              className={`relative flex items-center rounded-xl px-3 py-2.5 text-[15px] font-medium whitespace-nowrap text-left w-full transition-colors ${
                 isActive
                   ? 'bg-[var(--surface-raised)] text-[var(--text-primary)] border border-[var(--border)]'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-transparent'
               }`}
               aria-current={isActive ? 'page' : undefined}
             >
@@ -58,7 +70,7 @@ export function OrderTypeRail({ active = 'instant' }: { active?: OrderTypeId }) 
                 />
               )}
               {item.label}
-            </div>
+            </button>
           );
         })}
       </nav>

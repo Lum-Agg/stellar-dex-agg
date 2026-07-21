@@ -8,12 +8,17 @@ import { xBullModule } from '@creit.tech/stellar-wallets-kit/modules/xbull';
 import { LobstrModule } from '@creit.tech/stellar-wallets-kit/modules/lobstr';
 import { AccountBalancesProvider } from '@/lib/account-balances-context';
 
+export interface SignTxOptions {
+  /** Defaults to Networks.PUBLIC (mainnet Instant). Pass Networks.TESTNET for Limit. */
+  networkPassphrase?: string;
+}
+
 export interface WalletState {
   address: string | null;
   connecting: boolean;
   connect: () => void;
   disconnect: () => void;
-  signTx: (xdr: string) => Promise<string>;
+  signTx: (xdr: string, opts?: SignTxOptions) => Promise<string>;
 }
 
 const WalletContext = createContext<WalletState>({
@@ -101,10 +106,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signTx = useCallback(
-    async (xdr: string): Promise<string> => {
+    async (xdr: string, opts?: SignTxOptions): Promise<string> => {
       ensureKit();
       const { signedTxXdr } = await StellarWalletsKit.signTransaction(xdr, {
-        networkPassphrase: Networks.PUBLIC,
+        networkPassphrase: opts?.networkPassphrase ?? Networks.PUBLIC,
         address: address ?? undefined,
       });
       return signedTxXdr;

@@ -12,12 +12,14 @@ quote-api (×N) ──► arb-scanner ──► vault.execute_round_trip ──�
                  Redis pool state          └── principal + profit back to vault
 ```
 
-| Component | Role |
-|-----------|------|
-| `market-data-worker` + Redis | Live pool snapshots for quotes |
-| `api-server` | `/api/v1/quote` (arb uses `prefer_soroban=1`) |
-| `contracts/vault` | Pooled XLM; allowlisted callers |
-| `crates/arbitrage` | Scan → simulate → submit round-trips |
+
+|     |     |
+| --- | --- |
+|     |     |
+|     |     |
+|     |     |
+|     | ·   |
+
 
 Contract details: [contracts/vault/README.md](../contracts/vault/README.md).
 
@@ -27,6 +29,8 @@ Contract details: [contracts/vault/README.md](../contracts/vault/README.md).
 - Redis with pool-state keys (same as production quote API)
 - Admin wallet: deploy vault, `deposit`, `add_caller`
 - Mnemonic or secrets for N caller accounts (hot wallets, fee-only)
+
+
 
 ## 1. Deploy vault (one-time)
 
@@ -49,23 +53,27 @@ Allowlist each bot caller:
 stellar contract invoke --id $VAULT -- add_caller --caller GCALLER...
 ```
 
+
+
 ## 2. Configure arb bot
 
 Copy [scripts/arb.env.example](../scripts/arb.env.example) → `deploy/arb.env` on server.
 
-| Variable | Purpose |
-|----------|---------|
-| `ARB_VAULT_CONTRACT` | Vault contract id |
-| `ARB_AGGREGATOR_CONTRACT` | LumAgg aggregator |
-| `ARB_MNEMONIC_PATH` + `ARB_CALLER_INDICES` | HD-derived callers (e.g. `1,2,…,9`) |
-| `ARB_QUOTE_API_URLS` | Round-robin quote APIs (`3100–3103`) |
-| `ARB_BRIDGE_TOKENS` | SAC hubs for round-trip bridge legs |
-| `ARB_BASE_TOKENS` | Usually XLM SAC |
-| `ARB_SUBMIT_TX` | `0` = build/simulate only; `1` = live submit |
-| `ARB_DRY_RUN` | `1` = log opportunities without chain tx |
-| `ARB_MIN_PROFIT` | Net profit floor after fees (stroops) |
-| `ARB_MAX_AMOUNT_IN` | Soft ceiling; vault float is hard cap |
-| `ARB_TELEGRAM_INTERVAL_SECS` | Hourly P&amp;L report (optional) |
+
+| Variable                                   | Purpose                                      |
+| ------------------------------------------ | -------------------------------------------- |
+| `ARB_VAULT_CONTRACT`                       | Vault contract id                            |
+| `ARB_AGGREGATOR_CONTRACT`                  | LumAgg aggregator                            |
+| `ARB_MNEMONIC_PATH` + `ARB_CALLER_INDICES` | HD-derived callers (e.g. `1,2,…,9`)          |
+| `ARB_QUOTE_API_URLS`                       | Round-robin quote APIs (`3100–3103`)         |
+| `ARB_BRIDGE_TOKENS`                        | SAC hubs for round-trip bridge legs          |
+| `ARB_BASE_TOKENS`                          | Usually XLM SAC                              |
+| `ARB_SUBMIT_TX`                            | `0` = build/simulate only; `1` = live submit |
+| `ARB_DRY_RUN`                              | `1` = log opportunities without chain tx     |
+| `ARB_MIN_PROFIT`                           | Net profit floor after fees (stroops)        |
+| `ARB_MAX_AMOUNT_IN`                        | Soft ceiling; vault float is hard cap        |
+| `ARB_TELEGRAM_INTERVAL_SECS`               | Hourly P&L report (optional)                 |
+
 
 Deploy:
 
@@ -74,22 +82,30 @@ Deploy:
 systemctl status lumagg-arb
 ```
 
+
+
 ## 3. Safe rollout
 
-1. **`ARB_DRY_RUN=1`, `ARB_SUBMIT_TX=0`** — confirm quotes and route labels in logs.
-2. **`ARB_SUBMIT_TX=0`, build+simulate** — verify `min_amount_out` and fee estimates.
-3. **`ARB_SUBMIT_TX=1`** with one caller — watch vault balance and first SUCCESS hashes.
+1. `ARB_DRY_RUN=1`**,** `ARB_SUBMIT_TX=0` — confirm quotes and route labels in logs.
+2. `ARB_SUBMIT_TX=0`**, build+simulate** — verify `min_amount_out` and fee estimates.
+3. `ARB_SUBMIT_TX=1` with one caller — watch vault balance and first SUCCESS hashes.
 4. Scale callers — vault balance ≥ `concurrent_txs × amount_in`.
+
+
 
 ## 4. Monitoring
 
-| Signal | Where |
-|--------|-------|
-| SUCCESS / FAILED txs | `journalctl -u lumagg-arb` |
-| Hourly gross/fees/net + funnel | Telegram (`deploy/telegram.env`) |
-| Quiet window (opps but 0 prepares) | Telegram alert `arb_quiet_window` |
-| On-chain volume | `analytics-indexer status` / `/api/v1/stats` |
-| Caller XLM | Horizon account balance (fee float only) |
+
+| Signal                             | Where                                        |
+| ---------------------------------- | -------------------------------------------- |
+| SUCCESS / FAILED txs               | `journalctl -u lumagg-arb`                   |
+| Hourly gross/fees/net + funnel     | Telegram (`deploy/telegram.env`)             |
+| Quiet window (opps but 0 prepares) | Telegram alert `arb_quiet_window`            |
+| On-chain volume                    | `analytics-indexer status` / `/api/v1/stats` |
+| Caller XLM                         | Horizon account balance (fee float only)     |
+
+
+
 
 ### Quote → sim funnel (long-term)
 
@@ -97,29 +113,35 @@ Local quotes can look profitable while Soroban simulation loses ~20 bps. Prefer 
 
 Every 5 minutes `arb stats summary` logs:
 
-| Field | Meaning |
-|-------|---------|
-| `prepare_rate_bps` | `prepared / opportunities` |
-| `sim_reject_rate_bps` | `sim_profit_rejected / opportunities` |
-| `discard_size_unprofitable` | Optimized size failed break-even on-chain |
-| `discard_below_quoted` | Route ran on-chain but below quoted profit |
-| `discard_fee_gate` | Sim OK but net after fees < `ARB_MIN_PROFIT` |
-| `avg_quote_sim_gap_bps` | Mean (quoted_bps − on_chain_bps); positive = quote optimistic |
+
+| Field                       | Meaning                                                       |
+| --------------------------- | ------------------------------------------------------------- |
+| `prepare_rate_bps`          | `prepared / opportunities`                                    |
+| `sim_reject_rate_bps`       | `sim_profit_rejected / opportunities`                         |
+| `discard_size_unprofitable` | Optimized size failed break-even on-chain                     |
+| `discard_below_quoted`      | Route ran on-chain but below quoted profit                    |
+| `discard_fee_gate`          | Sim OK but net after fees < `ARB_MIN_PROFIT`                  |
+| `avg_quote_sim_gap_bps`     | Mean (quoted_bps − on_chain_bps); positive = quote optimistic |
+
 
 Quiet-window Telegram alert (default: 5×60s ticks with ≥50 new opportunities and 0 prepares):
 
-| Env | Default | Purpose |
-|-----|---------|---------|
-| `ARB_QUIET_ALERT_TICK_SECS` | `60` | Tracker tick |
-| `ARB_QUIET_ALERT_WINDOWS` | `5` | Consecutive quiet ticks before alert |
-| `ARB_QUIET_ALERT_MIN_OPPS` | `50` | Min Δopportunities per tick |
-| `ARB_QUIET_ALERT_COOLDOWN_SECS` | `1800` | Telegram rate limit |
+
+| Env                             | Default | Purpose                              |
+| ------------------------------- | ------- | ------------------------------------ |
+| `ARB_QUIET_ALERT_TICK_SECS`     | `60`    | Tracker tick                         |
+| `ARB_QUIET_ALERT_WINDOWS`       | `5`     | Consecutive quiet ticks before alert |
+| `ARB_QUIET_ALERT_MIN_OPPS`      | `50`    | Min Δopportunities per tick          |
+| `ARB_QUIET_ALERT_COOLDOWN_SECS` | `1800`  | Telegram rate limit                  |
+
 
 Example log grep:
 
 ```bash
 journalctl -u lumagg-arb --since today | grep -E 'arb tx SUCCESS|arb stats summary|quiet window'
 ```
+
+
 
 ### Quote vs on-chain probe (offline)
 
@@ -172,17 +194,24 @@ Manual oneshot: `systemctl start lumagg-quote-sim-probe.service`
 - **Trustlines** — arb uses SAC; callers should **not** need classic trustlines (clean with `clean_caller_trustlines` if legacy cron ran).
 - **Contract upgrades** — WASM upload costs ~20 XLM on mainnet; coordinate before upgrade.
 
+
+
 ## 6. Evidence for grant review
 
-| Criterion | Artifact |
-|-----------|----------|
-| Mainnet vault id | `contracts/vault/README.md` + deploy tx |
-| ≥10 DRY_RUN / simulated txs | `journalctl` excerpts |
-| ≥1 on-chain round-trip | tx hash in logs + [analytics indexer](../docs/analytics-indexer.md) |
-| Operator doc | this file |
+
+| Criterion                   | Artifact                                                            |
+| --------------------------- | ------------------------------------------------------------------- |
+| Mainnet vault id            | `contracts/vault/README.md` + deploy tx                             |
+| ≥10 DRY_RUN / simulated txs | `journalctl` excerpts                                               |
+| ≥1 on-chain round-trip      | tx hash in logs + [analytics indexer](../docs/analytics-indexer.md) |
+| Operator doc                | this file                                                           |
+
+
+
 
 ## 7. Related docs
 
 - [integrator-guide.md](./integrator-guide.md) — quote API for integrators
 - [analytics-indexer.md](./analytics-indexer.md) — on-chain stats pipeline
 - [scf-benchmark-results.md](./scf-benchmark-results.md) — differentiation vs Soroswap
+

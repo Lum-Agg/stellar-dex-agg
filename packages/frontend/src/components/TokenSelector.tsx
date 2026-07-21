@@ -155,14 +155,18 @@ export function TokenSelector({
   selected,
   onSelect,
   exclude,
+  tokens: tokensOverride,
 }: {
   selected: Token;
   onSelect: (token: Token) => void;
   exclude?: string;
+  /** When set, skip mainnet token list (e.g. testnet Limit panel). */
+  tokens?: Token[];
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
-  const tokens = useTokenList();
+  const mainnetTokens = useTokenList();
+  const tokens = tokensOverride ?? mainnetTokens;
   const { getBalance, ready: balancesReady } = useAccountBalances();
 
   const q = search.trim();
