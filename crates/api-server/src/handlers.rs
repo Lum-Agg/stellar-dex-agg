@@ -1536,25 +1536,17 @@ pub async fn build_tx(State(_state): State<AppState>, Json(body): Json<BuildTxRe
     }
 }
 
-/// Fetch account sequence via Soroban RPC (preferred) with Horizon fallback.
-/// Public Horizon is often rate-limited (429); RPC is what we already use for
-/// simulate.
+/// Fetch account sequence via Soroban RPC (`getLedgerEntries`).
 pub(crate) async fn fetch_sequence_number(public_key: &str) -> Result<i64, String> {
     let rpc_url =
         std::env::var("RPC_URL").unwrap_or_else(|_| "https://soroban-rpc.mainnet.stellar.gateway.fm".to_string());
 
-    match fetch_sequence_via_rpc(&rpc_url, public_key).await {
-        Ok(seq) => return Ok(seq),
-        Err(rpc_err) => {
-            tracing::warn!(error = %rpc_err, "RPC sequence lookup failed — trying Horizon");
-            match fetch_sequence_via_horizon(public_key).await {
-                Ok(seq) => Ok(seq),
-                Err(hz_err) => Err(format!(
-                    "Could not load account sequence for {public_key}. RPC: {rpc_err}. Horizon: {hz_err}"
-                )),
-            }
-        }
-    }
+    fetch_sequence_via_rpc(&rpc_url, public_key).await.map_err(|rpc_err| {
+        format!(
+            "Could not load account sequence for {public_key}. RPC: {rpc_err}. \
+             Ensure the account is funded and RPC_URL is reachable."
+        )
+    })
 }
 
 async fn fetch_sequence_via_rpc(rpc_url: &str, public_key: &str) -> Result<i64, String> {
@@ -1614,52 +1606,6 @@ async fn fetch_sequence_via_rpc(rpc_url: &str, public_key: &str) -> Result<i64, 
         return Ok(data.seq_num.0);
     }
     Err("cannot decode account entry from ledger XDR".to_string())
-}
-
-async fn fetch_sequence_via_horizon(public_key: &str) -> Result<i64, String> {
-    let horizon_base = std::env::var("HORIZON_URL").unwrap_or_else(|_| {
-        let rpc = std::env::var("RPC_URL").unwrap_or_default();
-        if rpc.contains("testnet") {
-            "https://horizon-testnet.stellar.org".to_string()
-        } else {
-            "https://horizon.stellar.org".to_string()
-        }
-    });
-    let url = format!("{}/accounts/{}", horizon_base.trim_end_matches('/'), public_key);
-    let client = reqwest::Client::new();
-    let resp = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("Horizon request failed: {}", e))?;
-    let status = resp.status();
-    let data: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("Horizon response parse failed: {}", e))?;
-
-    if status.as_u16() == 429 {
-        return Err(
-            "Horizon rate limit exceeded (429). Retry in a moment, or ensure RPC_URL is reachable.".to_string(),
-        );
-    }
-    if status.as_u16() == 404 {
-        return Err(format!("account not found on Horizon (unfunded?): {}", public_key));
-    }
-    if !status.is_success() {
-        let detail = data
-            .get("detail")
-            .and_then(|v| v.as_str())
-            .or_else(|| data.get("title").and_then(|v| v.as_str()))
-            .unwrap_or("unknown Horizon error");
-        return Err(format!("Horizon HTTP {}: {}", status.as_u16(), detail));
-    }
-
-    let seq_str = data
-        .get("sequence")
-        .and_then(|s| s.as_str())
-        .ok_or_else(|| "Horizon response missing sequence field".to_string())?;
-    seq_str.parse::<i64>().map_err(|e| format!("Invalid sequence: {}", e))
 }
 
 #[cfg(test)]

@@ -2,7 +2,6 @@
 
 import { NATIVE_CONTRACT } from '@/lib/tokenDisplay';
 
-const HORIZON = 'https://horizon.stellar.org';
 const NATIVE_SAC = NATIVE_CONTRACT;
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
 
@@ -22,13 +21,6 @@ export interface AccountBalancesPayload {
 export interface TokenBalanceResult {
   balance: bigint;
   hasTrustline: boolean | null;
-}
-
-function horizonBalanceToStroops(balance: string, decimals: number): bigint {
-  const parts = balance.split('.');
-  const whole = parts[0] || '0';
-  const frac = (parts[1] ?? '').padEnd(decimals, '0').slice(0, decimals);
-  return BigInt(whole) * BigInt(10 ** decimals) + BigInt(frac || '0');
 }
 
 /** Single SAC balance (any token — used for uncommon assets). */
@@ -63,28 +55,6 @@ export async function fetchTokenBalanceStroops(
 ): Promise<bigint | null> {
   const result = await fetchTokenBalance(accountId, tokenContractId);
   return result?.balance ?? null;
-}
-
-async function fetchNativeHorizonBalance(
-  accountId: string,
-  decimals: number,
-): Promise<bigint | null> {
-  try {
-    const resp = await fetch(`${HORIZON}/accounts/${accountId}`);
-    if (!resp.ok) return null;
-    const data = (await resp.json()) as {
-      balances?: Array<{ balance?: string; asset_type?: string }>;
-    };
-
-    for (const b of data.balances ?? []) {
-      if (b.asset_type === 'native' && b.balance) {
-        return horizonBalanceToStroops(b.balance, decimals);
-      }
-    }
-    return null;
-  } catch {
-    return null;
-  }
 }
 
 /** Batch fetch curated common tokens (`scope=common` on api-server). */
@@ -125,20 +95,14 @@ export async function fetchAccountBalances(accountId: string): Promise<AccountBa
 export async function fetchSpendableBalanceStroops(
   accountId: string,
   tokenContractId: string,
-  decimals: number,
+  _decimals: number,
   cached?: BalanceMap | null,
 ): Promise<bigint | null> {
   if (cached && cached[tokenContractId] !== undefined) {
     return cached[tokenContractId];
   }
 
-  const apiBalance = await fetchTokenBalanceStroops(accountId, tokenContractId);
-  if (apiBalance !== null) return apiBalance;
-
-  if (tokenContractId === NATIVE_SAC) {
-    return fetchNativeHorizonBalance(accountId, decimals);
-  }
-  return null;
+  return fetchTokenBalanceStroops(accountId, tokenContractId);
 }
 
 export function stroopsToDecimalString(stroops: bigint, decimals: number): string {
