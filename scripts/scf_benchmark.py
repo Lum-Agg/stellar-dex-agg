@@ -212,7 +212,9 @@ def run_benchmark() -> str:
         "",
         "> **Interpretation:** Use `LUMAGG_PREFER_SOROBAN=1` + Soroswap without `sdex` for Soroban-only rows. "
         "Include `sdex` in `SOROSWAP_PROTOCOLS` when comparing full aggregation. "
-        "Positive Δ = LumAgg higher output for same `amount_in`.",
+        "Positive Δ = LumAgg higher output for same `amount_in`.  ",
+        "> **⚠️ / `n/a` Δ:** not a LumAgg failure — Δ suppressed when outputs diverge by >2× "
+        "(often Soroswap aqua multi-hop optimism on small sizes vs LumAgg/spot).",
         "",
     ]
 
@@ -263,11 +265,17 @@ def run_benchmark() -> str:
         if has_soroswap:
             if soroswap.amount_out is not None and not lumagg.error:
                 if not outputs_comparable(lumagg.amount_out, soroswap.amount_out):
-                    note = (
-                        f"{note}; ⚠️ outputs not comparable (>2× gap — check venue / token mismatch)"
-                        if note != "—"
-                        else "⚠️ outputs not comparable (>2× gap — check venue / token mismatch)"
+                    # LumAgg often matches spot; Soroswap small-size aqua multi-hop can be ~3× optimistic.
+                    ratio = (
+                        max(lumagg.amount_out, soroswap.amount_out)
+                        / min(lumagg.amount_out, soroswap.amount_out)
                     )
+                    gap = (
+                        f"⚠️ not comparable (~{ratio:.1f}× gap): "
+                        "Soroswap amountOut diverges from LumAgg/spot — do not use Δ; "
+                        "often Soroswap aqua multi-hop optimism on small sizes"
+                    )
+                    note = f"{note}; {gap}" if note != "—" else gap
                     delta = "n/a"
                 else:
                     delta = pct_delta(lumagg.amount_out, soroswap.amount_out)

@@ -16,18 +16,19 @@ SOROSWAP_PROTOCOLS=soroswap,phoenix,aqua,sdex SOROSWAP_API_KEY=sk_... ./scripts/
 OUTPUT=docs/scf-benchmark-results.md ./scripts/scf-benchmark.sh
 ```
 
-> **Interpretation:** Use `LUMAGG_PREFER_SOROBAN=1` + Soroswap without `sdex` for Soroban-only rows. Include `sdex` in `SOROSWAP_PROTOCOLS` when comparing full aggregation. Positive Δ = LumAgg higher output for same `amount_in`.
+> **Interpretation:** Use `LUMAGG_PREFER_SOROBAN=1` + Soroswap without `sdex` for Soroban-only rows. Include `sdex` in `SOROSWAP_PROTOCOLS` when comparing full aggregation. Positive Δ = LumAgg higher output for same `amount_in`.  
+> **⚠️ / `n/a` Δ:** not a LumAgg failure — script suppresses Δ when outputs diverge by >2× (here Soroswap small-size aqua multi-hop is ~3× vs LumAgg/spot; large XLM→USDC rows align and publish Δ).
 
 | Pair | Size | LumAgg out | Split | Sources | Soroswap out | Δ vs Soroswap | Notes |
 |------|------|------------|-------|---------|--------------|---------------|-------|
-| USDC → XLM | 1 USDC | 5.2097 | no | aquarius_clmm | 15.3209 | n/a | CLMM venue in route; ⚠️ outputs not comparable (>2× gap — check venue / token mismatch) |
-| USDC → XLM | 10 USDC | 52.0969 | no | aquarius_clmm | 153.1089 | n/a | CLMM venue in route; ⚠️ outputs not comparable (>2× gap — check venue / token mismatch) |
-| USDC → XLM | 100 USDC | 520.9554 | no | aquarius_clmm | 1,521.1884 | n/a | CLMM venue in route; ⚠️ outputs not comparable (>2× gap — check venue / token mismatch) |
-| USDC → XLM | 1,000 USDC | 5,208.2231 | no | aquarius_clmm | 14,287.9921 | n/a | CLMM venue in route; ⚠️ outputs not comparable (>2× gap — check venue / token mismatch) |
-| XLM → USDC | 1 XLM | 0.1940 | yes | soroswap → aquarius ;; soroswap → soroswap | 0.7206 | n/a | split 2 legs; ⚠️ outputs not comparable (>2× gap — check venue / token mismatch) |
-| XLM → USDC | 10 XLM | 1.9241 | yes | aquarius → aquarius ;; aquarius → aquarius ;; soroswap → aquarius | 5.6699 | n/a | split 3 legs; ⚠️ outputs not comparable (>2× gap — check venue / token mismatch) |
-| XLM → USDC | 100 XLM | 19.1864 | no | aquarius | 19.1814 | +0.03% | — |
-| XLM → USDC | 1,000 XLM | 191.8454 | no | aquarius | 191.5380 | +0.16% | — |
+| USDC → XLM | 1 USDC | 5.2097 | no | aquarius_clmm | 15.3209 | n/a | CLMM; ⚠️ ~2.9× gap: Soroswap aqua multi-hop optimism vs LumAgg/spot — do not use Δ |
+| USDC → XLM | 10 USDC | 52.0969 | no | aquarius_clmm | 153.1089 | n/a | CLMM; ⚠️ ~2.9× gap: Soroswap aqua multi-hop optimism vs LumAgg/spot — do not use Δ |
+| USDC → XLM | 100 USDC | 520.9554 | no | aquarius_clmm | 1,521.1884 | n/a | CLMM; ⚠️ ~2.9× gap: Soroswap aqua multi-hop optimism vs LumAgg/spot — do not use Δ |
+| USDC → XLM | 1,000 USDC | 5,208.2231 | no | aquarius_clmm | 14,287.9921 | n/a | CLMM; ⚠️ ~2.7× gap: Soroswap aqua multi-hop optimism vs LumAgg/spot — do not use Δ |
+| XLM → USDC | 1 XLM | 0.1940 | yes | soroswap → aquarius ;; soroswap → soroswap | 0.7206 | n/a | split 2 legs; ⚠️ ~3.7× gap: Soroswap aqua multi-hop optimism — do not use Δ |
+| XLM → USDC | 10 XLM | 1.9241 | yes | aquarius → aquarius ;; aquarius → aquarius ;; soroswap → aquarius | 5.6699 | n/a | split 3 legs; ⚠️ ~2.9× gap: Soroswap aqua multi-hop optimism — do not use Δ |
+| XLM → USDC | 100 XLM | 19.1864 | no | aquarius | 19.1814 | +0.03% | fair row (aligned) |
+| XLM → USDC | 1,000 XLM | 191.8454 | no | aquarius | 191.5380 | +0.16% | fair row (aligned) |
 | XLM → AQUA | 10 XLM | 5,154.5228 | no | aquarius_clmm | 7,040.0378 | -26.78% | CLMM venue in route |
 | XLM → AQUA | 100 XLM | 51,545.1132 | no | aquarius_clmm | 70,368.9897 | -26.75% | CLMM venue in route |
 | XLM → AQUA | 1,000 XLM | 515,439.6619 | no | aquarius_clmm | 700,565.8226 | -26.43% | CLMM venue in route |
@@ -41,7 +42,7 @@ OUTPUT=docs/scf-benchmark-results.md ./scripts/scf-benchmark.sh
 | ≥1 **new** split case vs Soroswap single-route | **XLM→USDC 1 XLM** (`is_split=true`, 2 paths) and **10 XLM** (3 paths) — Soroswap column is a single route |
 | CLMM coverage (vs Broker adapter gap) | USDC→XLM and XLM→AQUA route via **`aquarius_clmm`** — see [scf-venue-comparison.md](scf-venue-comparison.md) |
 
-Small-size USDC↔XLM rows remain marked **n/a** when Soroswap `amountOut` diverges by >2× (likely different route class / API quirks). Prefer the fair rows above for apples-to-apples claims.
+Rows with **⚠️** keep Δ as **n/a** on purpose: LumAgg matches spot (~5.2 XLM per USDC); Soroswap’s small/mid aqua multi-hop quotes are ~3× higher. Use the **fair rows** (100 / 1,000 XLM→USDC) for apples-to-apples Δ.
 
 ## Summary
 
