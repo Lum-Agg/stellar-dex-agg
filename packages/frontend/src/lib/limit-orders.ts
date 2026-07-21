@@ -215,10 +215,11 @@ export async function buildCancelOrder(params: {
   };
 }
 
-/** Submit signed XDR through limit api-server. */
+/** Submit signed XDR through limit api-server (or official testnet RPC if Advanced). */
 export async function submitLimitTx(signedXdr: string): Promise<{ hash: string }> {
   const result = await submitSignedTransaction(signedXdr, {
     apiUrl: LIMIT_API_URL,
+    network: 'testnet',
   });
   if (result.success) {
     return { hash: result.hash };

@@ -16,6 +16,7 @@ import {
   submitLimitTx,
 } from '@/lib/limit-orders';
 import { OpenOrders } from '@/components/OpenOrders';
+import { SubmitViaToggle } from '@/components/SubmitViaToggle';
 
 export function LimitCard() {
   const { address: walletAddress, signTx, connect, connecting } = useWallet();
@@ -302,6 +303,8 @@ export function LimitCard() {
             )}
           </div>
         )}
+
+        <SubmitViaToggle network="testnet" />
       </div>
 
       <OpenOrders refreshKey={refreshKey} onChanged={() => setRefreshKey((k) => k + 1)} />

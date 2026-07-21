@@ -9,17 +9,13 @@ import { RouteDisplay } from './RouteDisplay';
 import { TokenSelector, type Token, TOKENS, useTokenList } from './TokenSelector';
 import { displayTokenSymbol, NATIVE_CONTRACT } from '@/lib/tokenDisplay';
 import { SWAP_SUCCESS_EVENT } from '@/lib/swaps';
-import {
-  getSubmitViaPreference,
-  setSubmitViaPreference,
-  type SubmitVia,
-} from '@/lib/rpc';
 import { submitTransaction } from '@/lib/wallet';
 import {
   buildChangeTrustXdr,
   canAddTrustlineForSac,
   classicAssetForSac,
 } from '@/lib/trustline';
+import { SubmitViaToggle } from '@/components/SubmitViaToggle';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
 const SLIPPAGE_PRESETS = [0.1, 0.5, 1.0] as const;
@@ -154,11 +150,6 @@ export function SwapCard() {
 
   const [swapping, setSwapping] = useState(false);
   const [addingTrustline, setAddingTrustline] = useState(false);
-  const [submitVia, setSubmitVia] = useState<SubmitVia>('lumagg');
-
-  useEffect(() => {
-    setSubmitVia(getSubmitViaPreference());
-  }, []);
   const [txResult, setTxResult] = useState<{
     success: boolean;
     hash?: string;
@@ -265,7 +256,7 @@ export function SwapCard() {
       const signedXdr = await signTx(buildData.data.unsigned_tx_xdr);
 
       // 3. Submit (api-server by default, or official RPC if Advanced is on)
-      const submitResult = await submitTransaction(signedXdr, { via: submitVia });
+      const submitResult = await submitTransaction(signedXdr);
 
       if (submitResult.success) {
         setTxResult({ success: true, hash: submitResult.hash });
@@ -290,8 +281,7 @@ export function SwapCard() {
     signTx,
     refreshBalances,
     getBalance,
-    ensureBalance,
-    submitVia,
+    ensureBalance
   ]);
 
   const handleAddTrustline = useCallback(async () => {
@@ -310,7 +300,7 @@ export function SwapCard() {
     try {
       const unsignedXdr = await buildChangeTrustXdr(walletAddress, asset);
       const signedXdr = await signTx(unsignedXdr);
-      const result = await submitTransaction(signedXdr, { via: submitVia });
+      const result = await submitTransaction(signedXdr);
       if (result.success) {
         setTxResult({ success: true, hash: result.hash });
         void refreshBalances();
@@ -330,8 +320,7 @@ export function SwapCard() {
     tokenOut.symbol,
     signTx,
     refreshBalances,
-    ensureBalance,
-    submitVia,
+    ensureBalance
   ]);
 
   const handlePrimaryAction = useCallback(() => {
@@ -633,22 +622,7 @@ export function SwapCard() {
           </div>
         )}
 
-        <label className="mt-4 flex items-start gap-2 cursor-pointer select-none text-[11px] leading-snug text-[var(--text-muted)]/70 hover:text-[var(--text-muted)]">
-          <input
-            type="checkbox"
-            className="mt-0.5 accent-[var(--accent)]"
-            checked={submitVia === 'official'}
-            onChange={(e) => {
-              const next: SubmitVia = e.target.checked ? 'official' : 'lumagg';
-              setSubmitVia(next);
-              setSubmitViaPreference(next);
-            }}
-          />
-          <span>
-            Advanced: submit via official RPC
-            {submitVia === 'official' ? ' (mainnet.sorobanrpc.com)' : ''}
-          </span>
-        </label>
+        <SubmitViaToggle network="public" />
       </div>
 
       {/* Route Details */}

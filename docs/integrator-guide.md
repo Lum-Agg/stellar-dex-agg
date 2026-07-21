@@ -30,7 +30,7 @@ curl -sG "$API/api/v1/quote" \
 # 3) Build unsigned XDR (POST body from quote sub_routes — see OpenAPI)
 ```
 
-Flow: **`GET /quote`** → map `sub_routes` to **`POST /build_tx`** → wallet signs XDR → submit via Soroban RPC or Horizon.
+Flow: **`GET /quote`** → map `sub_routes` to **`POST /build_tx`** → wallet signs XDR → submit via **`POST /api/v1/submit_tx`** (LumAgg proxies your Soroban RPC) or any same-network Soroban RPC.
 
 ### One-command smoke test (recommended for external integrators)
 
@@ -87,8 +87,11 @@ LUMAGG_PARTNER_API_KEYS=key_one,key_two
 | GET | `/logos/{file}` | Static token logo files (`image/png|jpeg|webp|svg+xml`) |
 | GET | `/api/v1/quote` | Best route |
 | POST | `/api/v1/build_tx` | Unsigned XDR |
-| GET | `/api/v1/balance` | Single SAC balance |
-| GET | `/api/v1/balances` | Batch balances for common tokens |
+| GET | `/api/v1/balance` | Single SAC balance (`has_trustline` when known) |
+| GET | `/api/v1/balances` | Batch balances + per-token `has_trustline` map |
+| GET | `/api/v1/account` | Account sequence (via Soroban RPC `getLedgerEntries`) |
+| GET | `/api/v1/ledger/latest` | Latest closed ledger sequence |
+| POST | `/api/v1/submit_tx` | Submit signed XDR (`{ "signed_tx_xdr": "..." }`) via server RPC |
 | GET | `/api/v1/prices` | Latest USDC marks (batch) |
 | GET | `/api/v1/prices/history` | Sampled price ticks for charts |
 | GET | `/api/v1/orders` | Limit orders for a wallet (indexer DB) |

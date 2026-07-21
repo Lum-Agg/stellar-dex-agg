@@ -34,7 +34,7 @@ curl -sG "$API/api/v1/quote" \
 
 完整流程：
 
-**`GET /quote`** → 将 `sub_routes` 传给 **`POST /build_tx`** → 钱包签署 XDR → 通过 Soroban RPC 或 Horizon 提交交易。
+**`GET /quote`** → 将 `sub_routes` 传给 **`POST /build_tx`** → 钱包签署 XDR → 通过 **`POST /api/v1/submit_tx`**（由 LumAgg 代理自有 Soroban RPC）或任意同网络 Soroban RPC 提交。
 
 ### 外部集成者一键测试（推荐）
 
@@ -103,8 +103,11 @@ LUMAGG_PARTNER_API_KEYS=key_one,key_two
 | GET | `/logos/{file}` | 静态 Token Logo 文件（`image/png|jpeg|webp|svg+xml`） |
 | GET | `/api/v1/quote` | 获取最优路由 |
 | POST | `/api/v1/build_tx` | 构建未签名 XDR |
-| GET | `/api/v1/balance` | 查询单个 SAC 余额 |
-| GET | `/api/v1/balances` | 批量查询常用 Token 余额 |
+| GET | `/api/v1/balance` | 查询单个 SAC 余额（可知时返回 `has_trustline`） |
+| GET | `/api/v1/balances` | 批量查询常用 Token 余额 + 每 token 的 `has_trustline` |
+| GET | `/api/v1/account` | 账户 sequence（Soroban RPC `getLedgerEntries`） |
+| GET | `/api/v1/ledger/latest` | 最新已关闭 ledger |
+| POST | `/api/v1/submit_tx` | 提交已签名 XDR（`{ "signed_tx_xdr": "..." }`，走服务端 RPC） |
 | GET | `/api/v1/prices` | 批量查询最新 USDC 标价 |
 | GET | `/api/v1/prices/history` | 查询采样价格历史（图表） |
 | GET | `/api/v1/orders` | 钱包限价单（indexer DB） |

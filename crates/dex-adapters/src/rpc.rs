@@ -246,22 +246,50 @@ impl SorobanRpc {
     }
 
     /// Account sequence from `getLedgerEntries` (Account ledger key).
+    ///
+    /// Some RPC nodes return `LedgerEntry`, others `LedgerEntryData` / bare
+    /// `AccountEntry` in the `xdr` field — try all shapes (same as arb prepare).
     pub async fn get_account_sequence(&self, public_key: &str) -> Result<i64> {
+        use stellar_xdr::curr::{Limits, ReadXdr, WriteXdr};
+
         let pk = stellar_strkey::ed25519::PublicKey::from_string(public_key)
             .map_err(|e| anyhow!("Invalid public key: {:?}", e))?;
         let account_id = xdr::AccountId(xdr::PublicKey::PublicKeyTypeEd25519(xdr::Uint256(pk.0)));
         let key = xdr::LedgerKey::Account(xdr::LedgerKeyAccount { account_id });
+        let key_b64 = key
+            .to_xdr_base64(Limits::none())
+            .map_err(|e| anyhow!("encode account ledger key: {:?}", e))?;
 
-        let entries = self.get_ledger_entries(vec![key]).await?;
-        let entry = entries
-            .into_iter()
-            .next()
+        let body = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getLedgerEntries",
+            "params": { "keys": [key_b64] }
+        });
+        let resp = self.post_json_with_retry(body).await?;
+        if let Some(error) = resp.get("error") {
+            return Err(anyhow!("getLedgerEntries RPC error: {}", error));
+        }
+
+        let xdr_b64 = resp
+            .pointer("/result/entries/0/xdr")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("account not found on ledger (fund it first): {}", public_key))?;
 
-        match entry.entry.data {
-            xdr::LedgerEntryData::Account(data) => Ok(data.seq_num.0),
-            _ => Err(anyhow!("unexpected ledger entry type for account {}", public_key)),
+        if let Ok(entry) = xdr::LedgerEntry::from_xdr_base64(xdr_b64, Limits::none()) {
+            if let xdr::LedgerEntryData::Account(data) = entry.data {
+                return Ok(data.seq_num.0);
+            }
         }
+        if let Ok(data) = xdr::LedgerEntryData::from_xdr_base64(xdr_b64, Limits::none()) {
+            if let xdr::LedgerEntryData::Account(data) = data {
+                return Ok(data.seq_num.0);
+            }
+        }
+        if let Ok(data) = xdr::AccountEntry::from_xdr_base64(xdr_b64, Limits::none()) {
+            return Ok(data.seq_num.0);
+        }
+        Err(anyhow!("cannot decode account entry from ledger XDR"))
     }
 
     /// Submit a signed transaction envelope XDR via `sendTransaction`.
