@@ -4,8 +4,8 @@
 
 import { Account, Asset, BASE_FEE, Networks, Operation, TransactionBuilder } from '@stellar/stellar-sdk';
 import { NATIVE_CONTRACT } from '@/lib/tokenDisplay';
+import { fetchAccountSequence } from '@/lib/rpc';
 
-const HORIZON_URL = 'https://horizon.stellar.org';
 const NETWORK_PASSPHRASE = Networks.PUBLIC;
 
 export interface ClassicAssetRef {
@@ -34,22 +34,12 @@ export function canAddTrustlineForSac(contractId: string): boolean {
   return classicAssetForSac(contractId) !== null;
 }
 
-async function loadAccountSequence(accountId: string): Promise<string> {
-  const resp = await fetch(`${HORIZON_URL}/accounts/${accountId}`);
-  if (!resp.ok) {
-    throw new Error('Failed to load account from Horizon');
-  }
-  const data = (await resp.json()) as { sequence?: string };
-  if (!data.sequence) throw new Error('Invalid account response');
-  return data.sequence;
-}
-
 /** Unsigned ChangeTrust XDR (max limit — wallet default). */
 export async function buildChangeTrustXdr(
   accountId: string,
   asset: ClassicAssetRef,
 ): Promise<string> {
-  const sequence = await loadAccountSequence(accountId);
+  const sequence = await fetchAccountSequence(accountId);
   const stellarAsset = new Asset(asset.code, asset.issuer);
   const source = new Account(accountId, sequence);
   const tx = new TransactionBuilder(source, {

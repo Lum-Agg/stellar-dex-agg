@@ -44,6 +44,8 @@ OUT=./evidence/pilot-b USER_G=G... ./scripts/integrator-smoke.sh
 
 `USER_G` must be a mainnet account with a sequence number (any small XLM balance is enough). Success prints `unsigned_tx_xdr` prefix.
 
+For swaps into classic-backed SACs (USDC/EURC), the account must already have a **trustline** for the buy asset — otherwise simulate fails with a clear error. Add trustline in Freighter first (~0.5 XLM reserve). Check trustline status via `has_trustline` on `/api/v1/balance` and `/api/v1/balances` (derived from the same SAC `balance` simulate; no extra Horizon call).
+
 SDK alternative:
 
 ```bash

@@ -302,15 +302,15 @@ fn build_cancel_operation(contract: &str, request: &BuildCancelRequest) -> Resul
 }
 
 async fn prepare_order_transaction(
+    rpc: &dex_adapters::rpc::SorobanRpc,
     user: &str,
     contract: String,
     operation: xdr::Operation,
 ) -> Result<BuildTxData, String> {
     const SOROBAN_FEE: u32 = 100_000;
 
-    let sequence = fetch_sequence_number(user).await?;
-    let rpc_url =
-        std::env::var("RPC_URL").unwrap_or_else(|_| "https://soroban-rpc.mainnet.stellar.gateway.fm".to_string());
+    let sequence = fetch_sequence_number(rpc, user).await?;
+    let rpc_url = rpc.url().to_string();
     let network = network_passphrase_from_env();
     let unsigned_tx_xdr = prepare_transaction_xdr_on_network(
         &rpc_url,
@@ -356,7 +356,7 @@ fn order_build_failure(error: String) -> Response {
 }
 
 pub async fn build_create(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     request: Result<Json<BuildCreateRequest>, JsonRejection>,
 ) -> Response {
     let Json(request) = match request {
@@ -375,7 +375,7 @@ pub async fn build_create(
         Err(error) => return order_error(StatusCode::BAD_REQUEST, error),
     };
 
-    match prepare_order_transaction(&request.user, contract, operation).await {
+    match prepare_order_transaction(&state.rpc, &request.user, contract, operation).await {
         Ok(data) => (
             StatusCode::OK,
             Json(BuildTxResponse {
@@ -390,7 +390,7 @@ pub async fn build_create(
 }
 
 pub async fn build_cancel(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     request: Result<Json<BuildCancelRequest>, JsonRejection>,
 ) -> Response {
     let Json(request) = match request {
@@ -409,7 +409,7 @@ pub async fn build_cancel(
         Err(error) => return order_error(StatusCode::BAD_REQUEST, error),
     };
 
-    match prepare_order_transaction(&request.user, contract, operation).await {
+    match prepare_order_transaction(&state.rpc, &request.user, contract, operation).await {
         Ok(data) => (
             StatusCode::OK,
             Json(BuildTxResponse {

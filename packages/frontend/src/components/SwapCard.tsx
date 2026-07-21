@@ -9,6 +9,17 @@ import { RouteDisplay } from './RouteDisplay';
 import { TokenSelector, type Token, TOKENS, useTokenList } from './TokenSelector';
 import { displayTokenSymbol, NATIVE_CONTRACT } from '@/lib/tokenDisplay';
 import { SWAP_SUCCESS_EVENT } from '@/lib/swaps';
+import {
+  getSubmitViaPreference,
+  setSubmitViaPreference,
+  type SubmitVia,
+} from '@/lib/rpc';
+import { submitTransaction } from '@/lib/wallet';
+import {
+  buildChangeTrustXdr,
+  canAddTrustlineForSac,
+  classicAssetForSac,
+} from '@/lib/trustline';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
 const SLIPPAGE_PRESETS = [0.1, 0.5, 1.0] as const;
@@ -36,6 +47,7 @@ export function SwapCard() {
   const { address: walletAddress, signTx, connect, connecting } = useWallet();
   const {
     getBalance,
+    getHasTrustline,
     ensureBalance,
     loading: balancesLoading,
     ready: balancesReady,
@@ -141,6 +153,12 @@ export function SwapCard() {
   };
 
   const [swapping, setSwapping] = useState(false);
+  const [addingTrustline, setAddingTrustline] = useState(false);
+  const [submitVia, setSubmitVia] = useState<SubmitVia>('lumagg');
+
+  useEffect(() => {
+    setSubmitVia(getSubmitViaPreference());
+  }, []);
   const [txResult, setTxResult] = useState<{
     success: boolean;
     hash?: string;
@@ -148,11 +166,17 @@ export function SwapCard() {
   } | null>(null);
 
   const balanceStroops = walletAddress ? getBalance(tokenIn.id) : null;
+  const outputHasTrustline = walletAddress ? getHasTrustline(tokenOut.id) : null;
 
   useEffect(() => {
     if (!walletAddress || !balancesReady) return;
     void ensureBalance(tokenIn.id);
   }, [walletAddress, balancesReady, tokenIn.id, ensureBalance]);
+
+  useEffect(() => {
+    if (!walletAddress || !balancesReady) return;
+    void ensureBalance(tokenOut.id);
+  }, [walletAddress, balancesReady, tokenOut.id, ensureBalance]);
 
   const applyBalancePercent = useCallback(
     (percent: number) => {
@@ -240,26 +264,17 @@ export function SwapCard() {
       // 2. Sign with wallet
       const signedXdr = await signTx(buildData.data.unsigned_tx_xdr);
 
-      // 3. Submit to Horizon
-      const submitResp = await fetch('https://horizon.stellar.org/transactions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `tx=${encodeURIComponent(signedXdr)}`,
-      });
-      const submitData = await submitResp.json();
+      // 3. Submit (api-server by default, or official RPC if Advanced is on)
+      const submitResult = await submitTransaction(signedXdr, { via: submitVia });
 
-      if (submitData.successful || submitData.hash) {
-        setTxResult({ success: true, hash: submitData.hash });
+      if (submitResult.success) {
+        setTxResult({ success: true, hash: submitResult.hash });
         window.dispatchEvent(new Event(SWAP_SUCCESS_EVENT));
         setAmountIn('');
         setQuote(null);
         void refreshBalances();
       } else {
-        const errMsg =
-          submitData.extras?.result_codes?.operations?.[0] ||
-          submitData.title ||
-          'Transaction failed';
-        setTxResult({ success: false, error: errMsg });
+        setTxResult({ success: false, error: submitResult.error || 'Transaction failed' });
       }
     } catch (err: any) {
       setTxResult({ success: false, error: err.message || 'Swap failed' });
@@ -276,6 +291,47 @@ export function SwapCard() {
     refreshBalances,
     getBalance,
     ensureBalance,
+    submitVia,
+  ]);
+
+  const handleAddTrustline = useCallback(async () => {
+    if (!walletAddress) return;
+    const asset = classicAssetForSac(tokenOut.id);
+    if (!asset) {
+      setTxResult({
+        success: false,
+        error: `Add a ${tokenOut.symbol} trustline manually in your wallet, then refresh.`,
+      });
+      return;
+    }
+
+    setAddingTrustline(true);
+    setTxResult(null);
+    try {
+      const unsignedXdr = await buildChangeTrustXdr(walletAddress, asset);
+      const signedXdr = await signTx(unsignedXdr);
+      const result = await submitTransaction(signedXdr, { via: submitVia });
+      if (result.success) {
+        setTxResult({ success: true, hash: result.hash });
+        void refreshBalances();
+        void ensureBalance(tokenOut.id);
+      } else {
+        setTxResult({ success: false, error: result.error || 'Failed to add trustline' });
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to add trustline';
+      setTxResult({ success: false, error: message });
+    } finally {
+      setAddingTrustline(false);
+    }
+  }, [
+    walletAddress,
+    tokenOut.id,
+    tokenOut.symbol,
+    signTx,
+    refreshBalances,
+    ensureBalance,
+    submitVia,
   ]);
 
   const handlePrimaryAction = useCallback(() => {
@@ -283,25 +339,42 @@ export function SwapCard() {
       connect();
       return;
     }
+    if (outputHasTrustline === false) {
+      void handleAddTrustline();
+      return;
+    }
     handleSwap();
-  }, [walletAddress, connect, handleSwap]);
+  }, [walletAddress, connect, handleSwap, outputHasTrustline, handleAddTrustline]);
+
+  const needsTrustline = walletAddress !== null && outputHasTrustline === false;
+  const canAutoAddTrustline = needsTrustline && canAddTrustlineForSac(tokenOut.id);
 
   const primaryDisabled =
-    connecting || swapping || (walletAddress !== null && (loading || !quote || !amountIn));
+    connecting ||
+    swapping ||
+    addingTrustline ||
+    (needsTrustline && !canAutoAddTrustline) ||
+    (walletAddress !== null && !needsTrustline && (loading || !quote || !amountIn));
 
   const primaryLabel = connecting
     ? 'Connecting...'
-    : swapping
-      ? 'Submitting...'
-      : loading && walletAddress
-        ? 'Finding best route...'
-        : !walletAddress
-          ? 'Connect wallet to swap'
-          : !amountIn
-            ? 'Enter amount'
-            : !quote
-              ? 'No route available'
-              : 'Review & swap';
+    : addingTrustline
+      ? 'Adding trustline...'
+      : swapping
+        ? 'Submitting...'
+        : loading && walletAddress && !needsTrustline
+          ? 'Finding best route...'
+          : !walletAddress
+            ? 'Connect wallet to swap'
+            : needsTrustline
+              ? canAutoAddTrustline
+                ? `Add ${tokenOut.symbol} trustline`
+                : `Add ${tokenOut.symbol} trustline in wallet`
+              : !amountIn
+                ? 'Enter amount'
+                : !quote
+                  ? 'No route available'
+                  : 'Review & swap';
 
   return (
     <div className="w-full max-w-none space-y-3">
@@ -517,6 +590,14 @@ export function SwapCard() {
           </div>
         )}
 
+        {walletAddress && outputHasTrustline === false && (
+          <div className="mt-3 text-[13px] text-amber-200/90 border border-amber-500/20 bg-amber-500/[0.06] rounded-xl px-3 py-2.5 text-center">
+            {canAutoAddTrustline
+              ? `Your wallet cannot receive ${tokenOut.symbol} yet. Add a trustline (~0.5 XLM reserve), then swap.`
+              : `Add a ${tokenOut.symbol} trustline in your wallet before swapping (~0.5 XLM reserve).`}
+          </div>
+        )}
+
         <div className="mt-5">
           <button
             type="button"
@@ -534,7 +615,9 @@ export function SwapCard() {
           >
             {txResult.success ? (
               <div>
-                Swap submitted successfully.{' '}
+                {needsTrustline || addingTrustline
+                  ? 'Trustline added. '
+                  : 'Swap submitted successfully. '}
                 <a
                   href={`https://stellar.expert/explorer/public/tx/${txResult.hash}`}
                   target="_blank"
@@ -549,6 +632,23 @@ export function SwapCard() {
             )}
           </div>
         )}
+
+        <label className="mt-4 flex items-start gap-2 cursor-pointer select-none text-[11px] leading-snug text-[var(--text-muted)]/70 hover:text-[var(--text-muted)]">
+          <input
+            type="checkbox"
+            className="mt-0.5 accent-[var(--accent)]"
+            checked={submitVia === 'official'}
+            onChange={(e) => {
+              const next: SubmitVia = e.target.checked ? 'official' : 'lumagg';
+              setSubmitVia(next);
+              setSubmitViaPreference(next);
+            }}
+          />
+          <span>
+            Advanced: submit via official RPC
+            {submitVia === 'official' ? ' (mainnet.sorobanrpc.com)' : ''}
+          </span>
+        </label>
       </div>
 
       {/* Route Details */}

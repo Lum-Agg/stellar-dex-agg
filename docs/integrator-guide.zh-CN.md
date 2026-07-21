@@ -47,6 +47,8 @@ USER_G=G你的已激活主网地址 ./scripts/integrator-smoke.sh
 
 `USER_G` 必须是一个已经存在于 Stellar 主网、拥有 sequence number 的 G 地址；账户中有少量 XLM 即可。脚本只会构建**未签名交易**，不会要求私钥，也不会提交交易。成功时会输出 `unsigned_tx_xdr` 的前缀。
 
+换入经典资产 SAC（如 USDC/EURC）时，账户需**已有**对应 trustline，否则 simulate 会失败。请先在 Freighter 等钱包中添加 trustline（约 0.5 XLM 准备金）。可通过 `/api/v1/balance` 与 `/api/v1/balances` 返回的 `has_trustline` 字段检测（与余额查询共用 SAC simulate，不额外请求 Horizon）。
+
 如需保存测试结果作为 grant 验收证据：
 
 ```bash

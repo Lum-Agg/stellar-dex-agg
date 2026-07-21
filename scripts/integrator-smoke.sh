@@ -7,7 +7,8 @@
 #
 # Env:
 #   API             default https://api.lumagg.xyz
-#   USER_G          required — funded mainnet account (sequence on chain)
+#   USER_G          required — funded mainnet account (sequence on chain).
+#                   For USDC/EURC output, account needs an existing trustline.
 #   AMOUNT_IN       stroops, default 10000000 (1 XLM)
 #   PREFER_SOROBAN  set to 1 for Soroban-only quote
 #   OUT             optional directory — saves quote.json + build_resp.json for D2 evidence

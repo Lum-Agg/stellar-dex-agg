@@ -4,6 +4,7 @@
  */
 
 import { Networks } from '@creit.tech/stellar-wallets-kit/types';
+import { fetchLatestLedger as fetchLatestLedgerRpc, submitSignedTransaction } from '@/lib/rpc';
 
 /** Minimal token shape shared with TokenSelector (avoid circular imports). */
 export interface LimitToken {
@@ -16,8 +17,6 @@ export interface LimitToken {
 }
 
 export const LIMIT_API_URL = process.env.NEXT_PUBLIC_LIMIT_API_URL?.trim() || '';
-export const LIMIT_HORIZON_URL =
-  process.env.NEXT_PUBLIC_LIMIT_HORIZON_URL?.trim() || 'https://horizon-testnet.stellar.org';
 export const LIMIT_NETWORK_PASSPHRASE = Networks.TESTNET;
 
 /** Well-known testnet SACs for the Limit panel (not mainnet TokenSelector list). */
@@ -130,12 +129,7 @@ export const EXPIRY_PRESETS = [
 export type ExpiryPresetId = (typeof EXPIRY_PRESETS)[number]['id'];
 
 export async function fetchLatestLedger(): Promise<number> {
-  const resp = await fetch(`${LIMIT_HORIZON_URL}/`);
-  if (!resp.ok) throw new Error('Failed to fetch testnet ledger');
-  const data = (await resp.json()) as { core_latest_ledger?: number; history_latest_ledger?: number };
-  const ledger = data.core_latest_ledger ?? data.history_latest_ledger;
-  if (typeof ledger !== 'number' || ledger <= 0) throw new Error('Invalid ledger height');
-  return ledger;
+  return fetchLatestLedgerRpc(LIMIT_API_URL);
 }
 
 export async function listOpenOrders(user: string): Promise<LimitOrder[]> {
@@ -221,26 +215,15 @@ export async function buildCancelOrder(params: {
   };
 }
 
-/** Submit signed XDR to Horizon testnet. */
+/** Submit signed XDR through limit api-server. */
 export async function submitLimitTx(signedXdr: string): Promise<{ hash: string }> {
-  const resp = await fetch(`${LIMIT_HORIZON_URL}/transactions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ tx: signedXdr }),
+  const result = await submitSignedTransaction(signedXdr, {
+    apiUrl: LIMIT_API_URL,
   });
-  const data = (await resp.json()) as {
-    successful?: boolean;
-    hash?: string;
-    title?: string;
-    detail?: string;
-    extras?: { result_codes?: { transaction?: string; operations?: string[] } };
-  };
-  if (data.successful || data.hash) {
-    return { hash: String(data.hash) };
+  if (result.success) {
+    return { hash: result.hash };
   }
-  const opErr = data.extras?.result_codes?.operations?.[0];
-  const txErr = data.extras?.result_codes?.transaction;
-  throw new Error(opErr || txErr || data.detail || data.title || 'Submit failed');
+  throw new Error(result.error || 'Submit failed');
 }
 
 export function shortContract(id: string): string {

@@ -244,11 +244,75 @@ impl SorobanRpc {
     pub fn network_passphrase(&self) -> &str {
         &self.network_passphrase
     }
+
+    /// Account sequence from `getLedgerEntries` (Account ledger key).
+    pub async fn get_account_sequence(&self, public_key: &str) -> Result<i64> {
+        let pk = stellar_strkey::ed25519::PublicKey::from_string(public_key)
+            .map_err(|e| anyhow!("Invalid public key: {:?}", e))?;
+        let account_id = xdr::AccountId(xdr::PublicKey::PublicKeyTypeEd25519(xdr::Uint256(pk.0)));
+        let key = xdr::LedgerKey::Account(xdr::LedgerKeyAccount { account_id });
+
+        let entries = self.get_ledger_entries(vec![key]).await?;
+        let entry = entries
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow!("account not found on ledger (fund it first): {}", public_key))?;
+
+        match entry.entry.data {
+            xdr::LedgerEntryData::Account(data) => Ok(data.seq_num.0),
+            _ => Err(anyhow!("unexpected ledger entry type for account {}", public_key)),
+        }
+    }
+
+    /// Submit a signed transaction envelope XDR via `sendTransaction`.
+    pub async fn send_transaction(&self, signed_tx_xdr: &str) -> Result<SendTransactionResult> {
+        let body = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "sendTransaction",
+            "params": {
+                "transaction": signed_tx_xdr
+            }
+        });
+
+        let resp = self.post_json_with_retry(body).await?;
+        if let Some(error) = resp.get("error") {
+            return Err(anyhow!("sendTransaction RPC error: {}", error));
+        }
+
+        let result = resp
+            .get("result")
+            .ok_or_else(|| anyhow!("sendTransaction missing result"))?;
+
+        Ok(SendTransactionResult {
+            status: result
+                .get("status")
+                .and_then(|s| s.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            hash: result
+                .get("hash")
+                .and_then(|s| s.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            error_result_xdr: result
+                .get("errorResultXdr")
+                .and_then(|s| s.as_str())
+                .map(|s| s.to_string()),
+        })
+    }
 }
 
 #[derive(Debug)]
 pub struct LedgerEntryResult {
     pub entry: xdr::LedgerEntry,
+}
+
+#[derive(Debug, Clone)]
+pub struct SendTransactionResult {
+    pub status: String,
+    pub hash: String,
+    pub error_result_xdr: Option<String>,
 }
 
 // ===== ScVal extraction helpers =====

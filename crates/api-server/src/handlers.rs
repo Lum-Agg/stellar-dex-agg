@@ -31,6 +31,9 @@ pub async fn api_root() -> impl IntoResponse {
             "tokens": "/api/v1/tokens",
             "balance": "/api/v1/balance",
             "balances": "/api/v1/balances",
+            "account": "/api/v1/account",
+            "ledger_latest": "/api/v1/ledger/latest",
+            "submit_tx": "/api/v1/submit_tx",
             "stats": "/api/v1/stats",
             "swaps": "/api/v1/swaps",
             "orders": "/api/v1/orders",
@@ -464,7 +467,7 @@ pub async fn build_swap(State(state): State<AppState>, Json(body): Json<SwapRequ
         sub_routes: build_sub_routes,
     };
 
-    match build_tx_impl(&build_req).await {
+    match build_tx_impl(&build_req, &state.rpc).await {
         Ok(tx) => (
             StatusCode::OK,
             Json(SwapResponse {
@@ -502,7 +505,7 @@ pub async fn build_swap(State(state): State<AppState>, Json(body): Json<SwapRequ
     }
 }
 
-pub async fn build_tx_impl(body: &BuildTxRequest) -> Result<BuildTxData, String> {
+pub async fn build_tx_impl(body: &BuildTxRequest, rpc: &dex_adapters::rpc::SorobanRpc) -> Result<BuildTxData, String> {
     use stellar_xdr::{
         curr as xdr,
         curr::{Limits, WriteXdr},
@@ -590,7 +593,7 @@ pub async fn build_tx_impl(body: &BuildTxRequest) -> Result<BuildTxData, String>
 
     let num_ops = ops.len();
     let source_account = xdr::MuxedAccount::Ed25519(xdr::Uint256(user_key.0));
-    let seq_num = fetch_sequence_number(&body.user_public_key).await?;
+    let seq_num = fetch_sequence_number(rpc, &body.user_public_key).await?;
     let base_fee = 100_000u32.saturating_mul(num_ops as u32);
     let operations = ops
         .clone()
@@ -693,6 +696,9 @@ fn merge_prepared_invoke_into_tx(full_tx_xdr: &str, prepared_invoke_xdr: &str) -
 pub async fn build_unsigned_tx_xdr(body: &BuildTxRequest) -> Result<String, String> {
     use stellar_xdr::curr::{Limits, WriteXdr};
 
+    // Use a default SorobanRpc for fetching sequence (test/debug only).
+    let rpc = dex_adapters::rpc::SorobanRpc::mainnet();
+
     let user_key = stellar_strkey::ed25519::PublicKey::from_string(&body.user_public_key)
         .map_err(|e| format!("Invalid public key: {:?}", e))?;
     let amount_in: i128 = body.amount_in.parse().map_err(|_| "Invalid amount_in".to_string())?;
@@ -768,7 +774,7 @@ pub async fn build_unsigned_tx_xdr(body: &BuildTxRequest) -> Result<String, Stri
     }
 
     let source_account = xdr::MuxedAccount::Ed25519(xdr::Uint256(user_key.0));
-    let seq_num = fetch_sequence_number(&body.user_public_key).await?;
+    let seq_num = fetch_sequence_number(&rpc, &body.user_public_key).await?;
     let base_fee = 100_000u32.saturating_mul(ops.len() as u32);
     let operations = ops
         .try_into()
@@ -917,7 +923,8 @@ pub struct BalanceResponse {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub balance: Option<String>,
-    /// Classic trustline exists for this SAC (native XLM always true). Omitted when unknown.
+    /// Classic trustline exists for this SAC (native XLM always true). Omitted
+    /// when unknown.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub has_trustline: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -932,7 +939,8 @@ pub struct BalancesResponse {
     pub scope: String,
     pub tokens_queried: Vec<String>,
     pub balances: std::collections::HashMap<String, String>,
-    /// Per-token classic trustline presence (via SAC balance simulate). Omitted when unknown.
+    /// Per-token classic trustline presence (via SAC balance simulate). Omitted
+    /// when unknown.
     #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub has_trustline: std::collections::HashMap<String, bool>,
     pub updated_at_ms: u64,
@@ -1096,6 +1104,154 @@ pub async fn get_balances(State(state): State<AppState>, Query(query): Query<Bal
             .unwrap_or(0),
         error: None,
     })
+}
+
+// ============================================================
+// GET /api/v1/account, /api/v1/ledger/latest, POST /api/v1/submit_tx
+// (Soroban RPC proxy — keeps RPC_URL server-side)
+// ============================================================
+
+#[derive(Deserialize)]
+pub struct AccountQuery {
+    pub account: String,
+}
+
+#[derive(Serialize)]
+pub struct AccountResponse {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sequence: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+pub async fn get_account(State(state): State<AppState>, Query(query): Query<AccountQuery>) -> impl IntoResponse {
+    let account = query.account.trim();
+    if account.is_empty() {
+        return Json(AccountResponse {
+            success: false,
+            sequence: None,
+            error: Some("Missing account address".to_string()),
+        });
+    }
+
+    match fetch_sequence_number(&state.rpc, account).await {
+        Ok(seq) => Json(AccountResponse {
+            success: true,
+            sequence: Some(seq.to_string()),
+            error: None,
+        }),
+        Err(error) => Json(AccountResponse {
+            success: false,
+            sequence: None,
+            error: Some(error),
+        }),
+    }
+}
+
+#[derive(Serialize)]
+pub struct LatestLedgerResponse {
+    pub success: bool,
+    pub sequence: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+pub async fn get_latest_ledger(State(state): State<AppState>) -> impl IntoResponse {
+    match state.rpc.get_latest_ledger().await {
+        Ok(ledger) => Json(LatestLedgerResponse {
+            success: true,
+            sequence: ledger.sequence as u64,
+            error: None,
+        }),
+        Err(e) => Json(LatestLedgerResponse {
+            success: false,
+            sequence: 0,
+            error: Some(e.to_string()),
+        }),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct SubmitTxRequest {
+    pub signed_tx_xdr: String,
+}
+
+#[derive(Serialize)]
+pub struct SubmitTxResponse {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+pub async fn submit_tx(State(state): State<AppState>, Json(body): Json<SubmitTxRequest>) -> impl IntoResponse {
+    let signed_tx_xdr = body.signed_tx_xdr.trim();
+    if signed_tx_xdr.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(SubmitTxResponse {
+                success: false,
+                hash: None,
+                status: None,
+                error: Some("Missing signed_tx_xdr".to_string()),
+            }),
+        );
+    }
+
+    let mut attempts = 0;
+    loop {
+        match state.rpc.send_transaction(signed_tx_xdr).await {
+            Ok(result) => {
+                if result.status == "TRY_AGAIN_LATER" && attempts < 30 {
+                    attempts += 1;
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    continue;
+                }
+
+                let success = result.status == "PENDING" || result.status == "DUPLICATE";
+                return (
+                    if success {
+                        StatusCode::OK
+                    } else {
+                        StatusCode::BAD_REQUEST
+                    },
+                    Json(SubmitTxResponse {
+                        success,
+                        hash: if result.hash.is_empty() {
+                            None
+                        } else {
+                            Some(result.hash)
+                        },
+                        status: Some(result.status),
+                        error: if success {
+                            None
+                        } else {
+                            Some(
+                                result
+                                    .error_result_xdr
+                                    .unwrap_or_else(|| "Transaction rejected by the network".to_string()),
+                            )
+                        },
+                    }),
+                );
+            }
+            Err(e) => {
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    Json(SubmitTxResponse {
+                        success: false,
+                        hash: None,
+                        status: None,
+                        error: Some(e.to_string()),
+                    }),
+                );
+            }
+        }
+    }
 }
 
 // ============================================================
@@ -1458,7 +1614,7 @@ fn build_aggregator_invoke_op(
     })
 }
 
-pub async fn build_tx(State(_state): State<AppState>, Json(body): Json<BuildTxRequest>) -> impl IntoResponse {
+pub async fn build_tx(State(state): State<AppState>, Json(body): Json<BuildTxRequest>) -> impl IntoResponse {
     if body.sub_routes.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
@@ -1470,7 +1626,7 @@ pub async fn build_tx(State(_state): State<AppState>, Json(body): Json<BuildTxRe
         );
     }
 
-    match build_tx_impl(&body).await {
+    match build_tx_impl(&body, &state.rpc).await {
         Ok(data) => (
             StatusCode::OK,
             Json(BuildTxResponse {
@@ -1536,76 +1692,17 @@ pub async fn build_tx(State(_state): State<AppState>, Json(body): Json<BuildTxRe
     }
 }
 
-/// Fetch account sequence via Soroban RPC (`getLedgerEntries`).
-pub(crate) async fn fetch_sequence_number(public_key: &str) -> Result<i64, String> {
-    let rpc_url =
-        std::env::var("RPC_URL").unwrap_or_else(|_| "https://soroban-rpc.mainnet.stellar.gateway.fm".to_string());
-
-    fetch_sequence_via_rpc(&rpc_url, public_key).await.map_err(|rpc_err| {
+/// Fetch account sequence via the app's Soroban RPC (`getLedgerEntries`).
+pub(crate) async fn fetch_sequence_number(
+    rpc: &dex_adapters::rpc::SorobanRpc,
+    public_key: &str,
+) -> Result<i64, String> {
+    rpc.get_account_sequence(public_key).await.map_err(|e| {
         format!(
-            "Could not load account sequence for {public_key}. RPC: {rpc_err}. \
+            "Could not load account sequence for {public_key}: {e}. \
              Ensure the account is funded and RPC_URL is reachable."
         )
     })
-}
-
-async fn fetch_sequence_via_rpc(rpc_url: &str, public_key: &str) -> Result<i64, String> {
-    use {
-        serde_json::json,
-        stellar_xdr::{
-            curr as xdr,
-            curr::{Limits, ReadXdr, WriteXdr},
-        },
-    };
-
-    let pk = stellar_strkey::ed25519::PublicKey::from_string(public_key)
-        .map_err(|e| format!("Invalid public key: {:?}", e))?;
-    let account_id = xdr::AccountId(xdr::PublicKey::PublicKeyTypeEd25519(xdr::Uint256(pk.0)));
-    let key = xdr::LedgerKey::Account(xdr::LedgerKeyAccount { account_id });
-    let key_b64 = key
-        .to_xdr_base64(Limits::none())
-        .map_err(|e| format!("encode account ledger key: {:?}", e))?;
-
-    let body = json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "getLedgerEntries",
-        "params": { "keys": [key_b64] }
-    });
-
-    let resp: serde_json::Value = reqwest::Client::new()
-        .post(rpc_url)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("RPC getLedgerEntries failed: {}", e))?
-        .json()
-        .await
-        .map_err(|e| format!("RPC getLedgerEntries JSON failed: {}", e))?;
-
-    if let Some(error) = resp.get("error") {
-        return Err(format!("RPC getLedgerEntries error: {}", error));
-    }
-
-    let xdr_b64 = resp
-        .pointer("/result/entries/0/xdr")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| format!("account not found on ledger (fund it on mainnet first): {}", public_key))?;
-
-    if let Ok(entry) = xdr::LedgerEntry::from_xdr_base64(xdr_b64, Limits::none()) {
-        if let xdr::LedgerEntryData::Account(data) = entry.data {
-            return Ok(data.seq_num.0);
-        }
-    }
-    if let Ok(data) = xdr::LedgerEntryData::from_xdr_base64(xdr_b64, Limits::none()) {
-        if let xdr::LedgerEntryData::Account(data) = data {
-            return Ok(data.seq_num.0);
-        }
-    }
-    if let Ok(data) = xdr::AccountEntry::from_xdr_base64(xdr_b64, Limits::none()) {
-        return Ok(data.seq_num.0);
-    }
-    Err("cannot decode account entry from ledger XDR".to_string())
 }
 
 #[cfg(test)]

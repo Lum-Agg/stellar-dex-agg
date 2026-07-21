@@ -2,8 +2,9 @@
  * Wallet utilities for signing and submitting Stellar transactions.
  */
 
+import { submitSignedTransaction, type SubmitTxOptions } from '@/lib/rpc';
+
 const NETWORK = 'PUBLIC';
-const HORIZON_URL = 'https://horizon.stellar.org';
 
 /**
  * Sign a transaction XDR using Freighter.
@@ -16,35 +17,21 @@ export async function signTransaction(xdr: string): Promise<string> {
     return result;
   }
   if (result && typeof result === 'object' && 'signedTxXdr' in result) {
-    return (result as any).signedTxXdr;
+    return (result as { signedTxXdr: string }).signedTxXdr;
   }
   throw new Error('Failed to sign transaction');
 }
 
 /**
- * Submit a signed transaction to the Stellar network.
+ * Submit a signed transaction through api-server.
  */
-export async function submitTransaction(signedXdr: string): Promise<{
+export async function submitTransaction(
+  signedXdr: string,
+  opts?: SubmitTxOptions,
+): Promise<{
   hash: string;
   success: boolean;
   error?: string;
 }> {
-  const resp = await fetch(`${HORIZON_URL}/transactions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `tx=${encodeURIComponent(signedXdr)}`,
-  });
-
-  const data = await resp.json();
-
-  if (resp.ok) {
-    return { hash: data.hash, success: true };
-  } else {
-    const error =
-      data.extras?.result_codes?.transaction ||
-      data.extras?.result_codes?.operations?.join(', ') ||
-      data.title ||
-      'Transaction failed';
-    return { hash: '', success: false, error };
-  }
+  return submitSignedTransaction(signedXdr, opts);
 }
