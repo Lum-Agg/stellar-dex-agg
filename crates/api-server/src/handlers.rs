@@ -917,6 +917,9 @@ pub struct BalanceResponse {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub balance: Option<String>,
+    /// Classic trustline exists for this SAC (native XLM always true). Omitted when unknown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_trustline: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -929,12 +932,53 @@ pub struct BalancesResponse {
     pub scope: String,
     pub tokens_queried: Vec<String>,
     pub balances: std::collections::HashMap<String, String>,
+    /// Per-token classic trustline presence (via SAC balance simulate). Omitted when unknown.
+    #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub has_trustline: std::collections::HashMap<String, bool>,
     pub updated_at_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
 const BALANCE_FETCH_CONCURRENCY: usize = 24;
+const NATIVE_SAC: &str = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";
+
+fn is_native_sac(token: &str) -> bool {
+    token == NATIVE_SAC || token == "native"
+}
+
+fn simulate_indicates_missing_trustline(err: &str) -> bool {
+    let e = err.to_lowercase();
+    e.contains("trustline entry is missing") || e.contains("trustline is missing")
+}
+
+async fn fetch_sac_balance_with_trustline(
+    rpc: &dex_adapters::rpc::SorobanRpc,
+    token: &str,
+    account_arg: &xdr::ScVal,
+) -> (u128, Option<bool>) {
+    if is_native_sac(token) {
+        let balance = match rpc.simulate_call(token, "balance", vec![account_arg.clone()]).await {
+            Ok(val) => scval_to_i128(&val).unwrap_or(0).max(0) as u128,
+            Err(_) => 0,
+        };
+        return (balance, Some(true));
+    }
+
+    match rpc.simulate_call(token, "balance", vec![account_arg.clone()]).await {
+        Ok(val) => {
+            let balance = scval_to_i128(&val).unwrap_or(0).max(0) as u128;
+            (balance, Some(true))
+        }
+        Err(e) => {
+            if simulate_indicates_missing_trustline(&e.to_string()) {
+                (0, Some(false))
+            } else {
+                (0, None)
+            }
+        }
+    }
+}
 
 fn scval_to_i128(val: &xdr::ScVal) -> Option<i128> {
     match val {
@@ -953,13 +997,6 @@ fn account_balance_scval(user_key: &stellar_strkey::ed25519::PublicKey) -> xdr::
     )))
 }
 
-async fn fetch_sac_balance_stroops(rpc: &dex_adapters::rpc::SorobanRpc, token: &str, account_arg: &xdr::ScVal) -> u128 {
-    match rpc.simulate_call(token, "balance", vec![account_arg.clone()]).await {
-        Ok(val) => scval_to_i128(&val).unwrap_or(0).max(0) as u128,
-        Err(_) => 0,
-    }
-}
-
 pub(crate) fn collect_common_balance_token_ids() -> Vec<String> {
     dex_adapters::COMMON_BALANCE_TOKEN_IDS
         .iter()
@@ -974,6 +1011,7 @@ pub async fn get_balance(State(state): State<AppState>, Query(query): Query<Bala
             return Json(BalanceResponse {
                 success: false,
                 balance: None,
+                has_trustline: None,
                 error: Some(error),
             });
         }
@@ -984,16 +1022,18 @@ pub async fn get_balance(State(state): State<AppState>, Query(query): Query<Bala
         return Json(BalanceResponse {
             success: false,
             balance: None,
+            has_trustline: None,
             error: Some("Missing token contract id".to_string()),
         });
     }
 
     let account_arg = account_balance_scval(&user_key);
-    let balance = fetch_sac_balance_stroops(&state.rpc, token, &account_arg).await;
+    let (balance, has_trustline) = fetch_sac_balance_with_trustline(&state.rpc, token, &account_arg).await;
 
     Json(BalanceResponse {
         success: true,
         balance: Some(balance.to_string()),
+        has_trustline,
         error: None,
     })
 }
@@ -1008,6 +1048,7 @@ pub async fn get_balances(State(state): State<AppState>, Query(query): Query<Bal
                 scope: "common".to_string(),
                 tokens_queried: vec![],
                 balances: std::collections::HashMap::new(),
+                has_trustline: std::collections::HashMap::new(),
                 updated_at_ms: 0,
                 error: Some(error),
             });
@@ -1020,6 +1061,7 @@ pub async fn get_balances(State(state): State<AppState>, Query(query): Query<Bal
     let rpc = state.rpc.clone();
 
     let mut balances = std::collections::HashMap::new();
+    let mut has_trustline = std::collections::HashMap::new();
     for chunk in token_ids.chunks(BALANCE_FETCH_CONCURRENCY) {
         let mut tasks = Vec::with_capacity(chunk.len());
         for token in chunk {
@@ -1027,13 +1069,16 @@ pub async fn get_balances(State(state): State<AppState>, Query(query): Query<Bal
             let account_arg = account_arg.clone();
             let token = token.clone();
             tasks.push(async move {
-                let amount = fetch_sac_balance_stroops(&rpc, &token, &account_arg).await;
-                (token, amount)
+                let (amount, tl) = fetch_sac_balance_with_trustline(&rpc, &token, &account_arg).await;
+                (token, amount, tl)
             });
         }
-        for (token, amount) in futures::future::join_all(tasks).await {
+        for (token, amount, tl) in futures::future::join_all(tasks).await {
             if amount > 0 {
-                balances.insert(token, amount.to_string());
+                balances.insert(token.clone(), amount.to_string());
+            }
+            if let Some(v) = tl {
+                has_trustline.insert(token, v);
             }
         }
     }
@@ -1044,6 +1089,7 @@ pub async fn get_balances(State(state): State<AppState>, Query(query): Query<Bal
         scope: "common".to_string(),
         tokens_queried,
         balances,
+        has_trustline,
         updated_at_ms: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
@@ -1454,6 +1500,14 @@ pub async fn build_tx(State(_state): State<AppState>, Json(body): Json<BuildTxRe
                 "Insufficient balance: your wallet does not hold enough of the input token \
                  for this swap amount. Lower the amount and refresh the quote."
                     .to_string()
+            } else if e.contains("trustline entry is missing") ||
+                e.contains("trustline is missing") ||
+                (e.contains("Error(Contract, #13)") && e.contains("trustline"))
+            {
+                "Missing trustline: your wallet cannot receive the output token yet. \
+                 Add a trustline for the buy asset in your wallet (e.g. USDC), then retry. \
+                 Keep ~0.5 XLM free for the new trustline reserve."
+                    .to_string()
             } else if e.contains("Error(Auth, InvalidAction)") && e.contains("approve") {
                 "Swap failed: Comet pool token approval was rejected by simulation. \
                  The on-chain aggregator may need an upgrade; try refreshing the quote or a route without Comet."
@@ -1563,7 +1617,15 @@ async fn fetch_sequence_via_rpc(rpc_url: &str, public_key: &str) -> Result<i64, 
 }
 
 async fn fetch_sequence_via_horizon(public_key: &str) -> Result<i64, String> {
-    let url = format!("https://horizon.stellar.org/accounts/{}", public_key);
+    let horizon_base = std::env::var("HORIZON_URL").unwrap_or_else(|_| {
+        let rpc = std::env::var("RPC_URL").unwrap_or_default();
+        if rpc.contains("testnet") {
+            "https://horizon-testnet.stellar.org".to_string()
+        } else {
+            "https://horizon.stellar.org".to_string()
+        }
+    });
+    let url = format!("{}/accounts/{}", horizon_base.trim_end_matches('/'), public_key);
     let client = reqwest::Client::new();
     let resp = client
         .get(&url)

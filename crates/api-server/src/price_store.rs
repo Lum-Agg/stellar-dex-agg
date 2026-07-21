@@ -3,10 +3,7 @@
 use {
     anyhow::{Context, Result},
     rusqlite::{params, Connection},
-    std::{
-        path::Path,
-        sync::Mutex,
-    },
+    std::{path::Path, sync::Mutex},
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -24,9 +21,7 @@ pub struct PriceStore {
 impl PriceStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let conn = Connection::open(path).context("open price sqlite db")?;
-        let store = Self {
-            conn: Mutex::new(conn),
-        };
+        let store = Self { conn: Mutex::new(conn) };
         store.init_schema()?;
         Ok(store)
     }
@@ -102,10 +97,7 @@ impl PriceStore {
 
     pub fn prune_older_than(&self, cutoff_ts: i64) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
-        let n = conn.execute(
-            "DELETE FROM price_ticks WHERE ts < ?1",
-            params![cutoff_ts],
-        )?;
+        let n = conn.execute("DELETE FROM price_ticks WHERE ts < ?1", params![cutoff_ts])?;
         Ok(n)
     }
 }
@@ -121,8 +113,7 @@ fn row_to_tick(row: &rusqlite::Row<'_>) -> rusqlite::Result<PriceTick> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use tempfile::tempdir;
+    use {super::*, tempfile::tempdir};
 
     #[test]
     fn insert_and_latest() {

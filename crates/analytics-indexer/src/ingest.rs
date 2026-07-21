@@ -152,9 +152,7 @@ async fn ingest_range(
         let events = rpc
             .get_contract_events(start_ledger, Some(end_ledger), &filters, config.page_limit)
             .await
-            .with_context(|| {
-                format!("getEvents escrow [{start_ledger}, {end_ledger}) for {escrow_contract}")
-            })?;
+            .with_context(|| format!("getEvents escrow [{start_ledger}, {end_ledger}) for {escrow_contract}"))?;
 
         let orders_applied = ingest_escrow_order_events(store, &events)?;
         if orders_applied > 0 {

@@ -131,12 +131,7 @@ pub fn apply_parsed_order_event(store: &IndexStore, event: &ParsedOrderEvent) ->
             amount_in_remaining,
             ledger,
             updated_at,
-        } => store.apply_filled(
-            *order_id as i64,
-            amount_in_remaining,
-            *ledger,
-            *updated_at,
-        ),
+        } => store.apply_filled(*order_id as i64, amount_in_remaining, *ledger, *updated_at),
         ParsedOrderEvent::Cancelled {
             order_id,
             ledger,
@@ -152,10 +147,10 @@ pub fn apply_parsed_order_event(store: &IndexStore, event: &ParsedOrderEvent) ->
 
 fn order_event_id(event: &ParsedOrderEvent) -> u64 {
     match event {
-        ParsedOrderEvent::Created { order_id, .. }
-        | ParsedOrderEvent::Filled { order_id, .. }
-        | ParsedOrderEvent::Cancelled { order_id, .. }
-        | ParsedOrderEvent::Expired { order_id, .. } => *order_id,
+        ParsedOrderEvent::Created { order_id, .. } |
+        ParsedOrderEvent::Filled { order_id, .. } |
+        ParsedOrderEvent::Cancelled { order_id, .. } |
+        ParsedOrderEvent::Expired { order_id, .. } => *order_id,
     }
 }
 
@@ -168,7 +163,8 @@ fn order_event_kind(event: &ParsedOrderEvent) -> &'static str {
     }
 }
 
-/// Apply escrow events, warning and continuing on parse skips and missing-order no-ops.
+/// Apply escrow events, warning and continuing on parse skips and missing-order
+/// no-ops.
 pub fn ingest_escrow_order_events(store: &IndexStore, events: &[ContractEvent]) -> Result<u64> {
     let mut applied = 0u64;
     for event in events {
@@ -248,10 +244,7 @@ fn decode_scval(encoded: &str) -> Result<xdr::ScVal> {
 
 fn require_fields(fields: &[xdr::ScVal], count: usize, kind: &str) -> Result<()> {
     if fields.len() < count {
-        return Err(anyhow!(
-            "{kind} expects {count} data fields, got {}",
-            fields.len()
-        ));
+        return Err(anyhow!("{kind} expects {count} data fields, got {}", fields.len()));
     }
     Ok(())
 }
@@ -262,9 +255,7 @@ fn scval_address(value: &xdr::ScVal) -> Result<String> {
             let xdr::PublicKey::PublicKeyTypeEd25519(key) = &account.0;
             Ok(PublicKey(key.0).to_string().to_string())
         }
-        xdr::ScVal::Address(xdr::ScAddress::Contract(id)) => {
-            Ok(Contract(id.0 .0).to_string().to_string())
-        }
+        xdr::ScVal::Address(xdr::ScAddress::Contract(id)) => Ok(Contract(id.0 .0).to_string().to_string()),
         other => Err(anyhow!("expected address, got {other:?}")),
     }
 }
@@ -379,12 +370,7 @@ mod tests {
         let raw = event(
             "order_filled",
             7,
-            vec![
-                contract_address(1),
-                i128_value(200),
-                i128_value(410),
-                i128_value(300),
-            ],
+            vec![contract_address(1), i128_value(200), i128_value(410), i128_value(300)],
         );
         let parsed = parse_escrow_order_event(&raw).unwrap().unwrap();
         assert_eq!(
@@ -403,18 +389,12 @@ mod tests {
         let raw = event(
             "order_filled",
             8,
-            vec![
-                contract_address(1),
-                i128_value(500),
-                i128_value(1000),
-                i128_value(0),
-            ],
+            vec![contract_address(1), i128_value(500), i128_value(1000), i128_value(0)],
         );
         let parsed = parse_escrow_order_event(&raw).unwrap().unwrap();
         match parsed {
             ParsedOrderEvent::Filled {
-                amount_in_remaining,
-                ..
+                amount_in_remaining, ..
             } => assert_eq!(amount_in_remaining, "0"),
             other => panic!("expected filled, got {other:?}"),
         }
@@ -467,12 +447,7 @@ mod tests {
         let filled = event(
             "order_filled",
             99,
-            vec![
-                contract_address(1),
-                i128_value(100),
-                i128_value(200),
-                i128_value(50),
-            ],
+            vec![contract_address(1), i128_value(100), i128_value(200), i128_value(50)],
         );
         let parsed = parse_escrow_order_event(&filled).unwrap().unwrap();
         assert!(!apply_parsed_order_event(&store, &parsed).unwrap());
@@ -508,12 +483,7 @@ mod tests {
         let missing_fill = event(
             "order_filled",
             99,
-            vec![
-                contract_address(1),
-                i128_value(100),
-                i128_value(200),
-                i128_value(50),
-            ],
+            vec![contract_address(1), i128_value(100), i128_value(200), i128_value(50)],
         );
         let mut malformed = event("order_created", 1, vec![contract_address(1)]);
         malformed.value = None;
@@ -533,19 +503,10 @@ mod tests {
         let filled = event(
             "order_filled",
             1,
-            vec![
-                contract_address(1),
-                i128_value(400),
-                i128_value(800),
-                i128_value(600),
-            ],
+            vec![contract_address(1), i128_value(400), i128_value(800), i128_value(600)],
         );
 
-        let applied = ingest_escrow_order_events(
-            &store,
-            &[missing_fill, malformed, created, filled],
-        )
-        .unwrap();
+        let applied = ingest_escrow_order_events(&store, &[missing_fill, malformed, created, filled]).unwrap();
         assert_eq!(applied, 2);
 
         let owner = Contract([1; 32]).to_string().to_string();
@@ -572,11 +533,7 @@ mod tests {
             ],
         );
         let owner = Contract([1; 32]).to_string().to_string();
-        apply_parsed_order_event(
-            &store,
-            &parse_escrow_order_event(&created).unwrap().unwrap(),
-        )
-        .unwrap();
+        apply_parsed_order_event(&store, &parse_escrow_order_event(&created).unwrap().unwrap()).unwrap();
 
         let rows = store.list_by_owner(&owner, None).unwrap();
         assert_eq!(rows.len(), 1);
@@ -587,27 +544,14 @@ mod tests {
         let filled = event(
             "order_filled",
             42,
-            vec![
-                contract_address(1),
-                i128_value(400),
-                i128_value(800),
-                i128_value(600),
-            ],
+            vec![contract_address(1), i128_value(400), i128_value(800), i128_value(600)],
         );
-        apply_parsed_order_event(
-            &store,
-            &parse_escrow_order_event(&filled).unwrap().unwrap(),
-        )
-        .unwrap();
+        apply_parsed_order_event(&store, &parse_escrow_order_event(&filled).unwrap().unwrap()).unwrap();
         let row = store.list_by_owner(&owner, None).unwrap().pop().unwrap();
         assert_eq!(row.amount_in_remaining, "600");
 
         let cancelled = event("order_cancelled", 42, vec![contract_address(1), i128_value(600)]);
-        apply_parsed_order_event(
-            &store,
-            &parse_escrow_order_event(&cancelled).unwrap().unwrap(),
-        )
-        .unwrap();
+        apply_parsed_order_event(&store, &parse_escrow_order_event(&cancelled).unwrap().unwrap()).unwrap();
         let row = store.list_by_owner(&owner, Some("all")).unwrap().pop().unwrap();
         assert_eq!(row.status, "cancelled");
         assert_eq!(row.amount_in_remaining, "0");

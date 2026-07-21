@@ -146,17 +146,16 @@ pub async fn get_swaps(Query(params): Query<SwapsQuery>) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use analytics_indexer::{
-        parser::ParsedInvocation,
-        store::{IndexStore, StoredInvocation},
+    use {
+        super::*,
+        analytics_indexer::{
+            parser::ParsedInvocation,
+            store::{IndexStore, StoredInvocation},
+        },
+        axum::{http::StatusCode, response::IntoResponse},
+        serde_json::Value,
+        tempfile::tempdir,
     };
-    use axum::{
-        http::StatusCode,
-        response::IntoResponse,
-    };
-    use serde_json::Value;
-    use tempfile::tempdir;
 
     const TEST_USER: &str = "GA6RKSBPI2TSP52OW2IJTPK7LRMX24DF42KF3FBGBNMBYCV6NPDMOCBY";
 
@@ -181,9 +180,7 @@ mod tests {
     }
 
     async fn body_json(resp: axum::response::Response) -> Value {
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         serde_json::from_slice(&bytes).unwrap()
     }
 

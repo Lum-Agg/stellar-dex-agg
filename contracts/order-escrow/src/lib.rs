@@ -60,8 +60,8 @@ fn required_min_out(amount_in: i128, limit_out_per_in_e7: i128) -> i128 {
     assert!(limit_out_per_in_e7 > 0, "limit must be positive");
     amount_in
         .checked_mul(limit_out_per_in_e7)
-        .expect("amount and limit multiplication overflow")
-        / RATE_SCALE_E7
+        .expect("amount and limit multiplication overflow") /
+        RATE_SCALE_E7
 }
 
 fn authorize_swap_as_current_contract(
@@ -197,18 +197,11 @@ impl OrderEscrowContract {
         let key = DataKey::Order(order_id);
         let mut order: LimitOrder = env.storage().persistent().get(&key).expect("Order not found");
         assert!(order.status == OrderStatus::Open, "Order is not open");
-        assert!(
-            env.ledger().sequence() > order.expires_ledger,
-            "Order has not expired"
-        );
+        assert!(env.ledger().sequence() > order.expires_ledger, "Order has not expired");
 
         let escrow = env.current_contract_address();
         let refunded_amount = order.amount_in_remaining;
-        token::Client::new(&env, &order.token_in).transfer(
-            &escrow,
-            &order.owner,
-            &refunded_amount,
-        );
+        token::Client::new(&env, &order.token_in).transfer(&escrow, &order.owner, &refunded_amount);
         order.amount_in_remaining = 0;
         order.status = OrderStatus::Expired;
         env.storage().persistent().set(&key, &order);
@@ -519,8 +512,8 @@ mod tests {
             if contract != *escrow_id || topics.len() < 2 {
                 return false;
             }
-            Symbol::try_from_val(env, &topics.get(0).unwrap()) == Ok(expected_topic.clone())
-                && u64::try_from_val(env, &topics.get(1).unwrap()) == Ok(order_id)
+            Symbol::try_from_val(env, &topics.get(0).unwrap()) == Ok(expected_topic.clone()) &&
+                u64::try_from_val(env, &topics.get(1).unwrap()) == Ok(order_id)
         })
     }
 

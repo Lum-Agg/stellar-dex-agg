@@ -1,5 +1,6 @@
 pub mod config;
 pub mod handlers;
+pub mod orders;
 pub mod pool_hydrate;
 pub mod price_mark;
 pub mod price_sampler;
@@ -10,7 +11,6 @@ pub mod snapshot_loader;
 pub mod soroban_prepare;
 pub mod state;
 pub mod stats;
-pub mod orders;
 pub mod swaps;
 pub mod xlm_price;
 

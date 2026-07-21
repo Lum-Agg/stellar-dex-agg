@@ -1,9 +1,10 @@
-//! Wallet-scoped limit orders from analytics-indexer SQLite and escrow transaction builders.
+//! Wallet-scoped limit orders from analytics-indexer SQLite and escrow
+//! transaction builders.
 
 use {
     crate::{
         handlers::{fetch_sequence_number, BuildTxData, BuildTxResponse},
-        soroban_prepare::prepare_transaction_xdr,
+        soroban_prepare::{network_passphrase_from_env, prepare_transaction_xdr_on_network},
         state::AppState,
     },
     analytics_indexer::store::IndexStore,
@@ -310,8 +311,16 @@ async fn prepare_order_transaction(
     let sequence = fetch_sequence_number(user).await?;
     let rpc_url =
         std::env::var("RPC_URL").unwrap_or_else(|_| "https://soroban-rpc.mainnet.stellar.gateway.fm".to_string());
-    let unsigned_tx_xdr =
-        prepare_transaction_xdr(&rpc_url, user.trim(), sequence as u64, &[operation], SOROBAN_FEE).await?;
+    let network = network_passphrase_from_env();
+    let unsigned_tx_xdr = prepare_transaction_xdr_on_network(
+        &rpc_url,
+        user.trim(),
+        sequence as u64,
+        &[operation],
+        SOROBAN_FEE,
+        network,
+    )
+    .await?;
 
     Ok(BuildTxData {
         unsigned_tx_xdr,
@@ -416,17 +425,14 @@ pub async fn build_cancel(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use analytics_indexer::store::IndexStore;
-    use axum::{
-        extract::State,
-        http::StatusCode,
-        response::IntoResponse,
-        Json,
+    use {
+        super::*,
+        crate::{config::AppConfig, state::AppState},
+        analytics_indexer::store::IndexStore,
+        axum::{extract::State, http::StatusCode, response::IntoResponse, Json},
+        serde_json::Value,
+        tempfile::tempdir,
     };
-    use crate::{config::AppConfig, state::AppState};
-    use serde_json::Value;
-    use tempfile::tempdir;
 
     const TEST_USER: &str = "GA6RKSBPI2TSP52OW2IJTPK7LRMX24DF42KF3FBGBNMBYCV6NPDMOCBY";
 
@@ -571,12 +577,9 @@ mod tests {
     #[tokio::test]
     async fn build_create_missing_escrow_contract_is_503() {
         std::env::remove_var("ESCROW_CONTRACT");
-        let resp = build_create(
-            State(dummy_app_state().await),
-            Ok(Json(valid_create_request())),
-        )
-        .await
-        .into_response();
+        let resp = build_create(State(dummy_app_state().await), Ok(Json(valid_create_request())))
+            .await
+            .into_response();
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
         let json = body_json(resp).await;
         assert_eq!(json["success"], false);

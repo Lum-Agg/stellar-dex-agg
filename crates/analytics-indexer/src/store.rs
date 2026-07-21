@@ -299,8 +299,8 @@ impl IndexStore {
         Ok(())
     }
 
-    /// Returns `true` when the row was updated, `false` when the order is missing
-    /// or already in a terminal state.
+    /// Returns `true` when the row was updated, `false` when the order is
+    /// missing or already in a terminal state.
     pub fn apply_filled(
         &self,
         order_id: i64,
@@ -308,35 +308,19 @@ impl IndexStore {
         updated_ledger: u32,
         updated_at: i64,
     ) -> Result<bool> {
-        let status = if amount_in_remaining == "0" {
-            "filled"
-        } else {
-            "open"
-        };
+        let status = if amount_in_remaining == "0" { "filled" } else { "open" };
         let updated = self.conn.execute(
             "UPDATE limit_orders
              SET amount_in_remaining = ?1, status = ?2, updated_ledger = ?3, updated_at = ?4
              WHERE order_id = ?5 AND status = 'open'",
-            params![
-                amount_in_remaining,
-                status,
-                updated_ledger,
-                updated_at,
-                order_id,
-            ],
+            params![amount_in_remaining, status, updated_ledger, updated_at, order_id,],
         )?;
         Ok(updated > 0)
     }
 
-    /// Returns `true` when the row was updated, `false` when the order is missing
-    /// or already in a terminal state.
-    pub fn apply_closed(
-        &self,
-        order_id: i64,
-        status: &str,
-        updated_ledger: u32,
-        updated_at: i64,
-    ) -> Result<bool> {
+    /// Returns `true` when the row was updated, `false` when the order is
+    /// missing or already in a terminal state.
+    pub fn apply_closed(&self, order_id: i64, status: &str, updated_ledger: u32, updated_at: i64) -> Result<bool> {
         anyhow::ensure!(
             status == "cancelled" || status == "expired",
             "invalid closed status: {status}"
@@ -350,11 +334,7 @@ impl IndexStore {
         Ok(updated > 0)
     }
 
-    pub fn list_by_owner(
-        &self,
-        owner: &str,
-        status_filter: Option<&str>,
-    ) -> Result<Vec<LimitOrderRow>> {
+    pub fn list_by_owner(&self, owner: &str, status_filter: Option<&str>) -> Result<Vec<LimitOrderRow>> {
         let sql = match status_filter {
             Some("all") => {
                 "SELECT order_id, owner, token_in, token_out, amount_in_initial,
@@ -389,16 +369,13 @@ impl IndexStore {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::parser::{ParsedInvocation, ParsedLeg};
-    use tempfile::tempdir;
+    use {
+        super::*,
+        crate::parser::{ParsedInvocation, ParsedLeg},
+        tempfile::tempdir,
+    };
 
-    fn sample(
-        tx_hash: &str,
-        user: &str,
-        created_at: i64,
-        amount_in: i128,
-    ) -> StoredInvocation {
+    fn sample(tx_hash: &str, user: &str, created_at: i64, amount_in: i128) -> StoredInvocation {
         StoredInvocation {
             tx_hash: tx_hash.into(),
             ledger: 1,
@@ -444,7 +421,9 @@ mod tests {
         assert_eq!(limited.len(), 1);
         assert_eq!(limited[0].tx_hash, "tx_new");
 
-        let empty = store.list_swaps_by_user("GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCK3LI", 10).unwrap();
+        let empty = store
+            .list_swaps_by_user("GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCK3LI", 10)
+            .unwrap();
         assert!(empty.is_empty());
     }
 
@@ -477,18 +456,7 @@ mod tests {
 
         store
             .upsert_created(
-                1,
-                OWNER,
-                "USDC",
-                "XLM",
-                "1000",
-                "1000",
-                "2500000",
-                999,
-                10,
-                10,
-                1_000,
-                1_000,
+                1, OWNER, "USDC", "XLM", "1000", "1000", "2500000", 999, 10, 10, 1_000, 1_000,
             )
             .unwrap();
 
@@ -597,18 +565,7 @@ mod tests {
 
         store
             .upsert_created(
-                42,
-                OWNER,
-                "USDC",
-                "XLM",
-                "1000",
-                "1000",
-                "2500000",
-                999,
-                50,
-                50,
-                100,
-                100,
+                42, OWNER, "USDC", "XLM", "1000", "1000", "2500000", 999, 50, 50, 100, 100,
             )
             .unwrap();
         assert_eq!(store.list_by_owner(OWNER, None).unwrap().len(), 1);
@@ -624,20 +581,7 @@ mod tests {
         assert_eq!(filled.status, "filled");
 
         store
-            .upsert_created(
-                43,
-                OWNER,
-                "USDC",
-                "XLM",
-                "500",
-                "500",
-                "2500000",
-                999,
-                80,
-                80,
-                400,
-                400,
-            )
+            .upsert_created(43, OWNER, "USDC", "XLM", "500", "500", "2500000", 999, 80, 80, 400, 400)
             .unwrap();
         store.apply_closed(43, "cancelled", 90, 500).unwrap();
         assert!(store.list_by_owner(OWNER, None).unwrap().is_empty());
@@ -661,18 +605,7 @@ mod tests {
 
         store
             .upsert_created(
-                1,
-                OWNER,
-                "USDC",
-                "XLM",
-                "9999",
-                "9999",
-                "1111111",
-                1,
-                999,
-                999,
-                9_999,
-                9_999,
+                1, OWNER, "USDC", "XLM", "9999", "9999", "1111111", 1, 999, 999, 9_999, 9_999,
             )
             .unwrap();
 
@@ -687,18 +620,7 @@ mod tests {
 
         store
             .upsert_created(
-                2,
-                OWNER,
-                "USDC",
-                "XLM",
-                "8888",
-                "8888",
-                "2222222",
-                2,
-                888,
-                888,
-                8_888,
-                8_888,
+                2, OWNER, "USDC", "XLM", "8888", "8888", "2222222", 2, 888, 888, 8_888, 8_888,
             )
             .unwrap();
 

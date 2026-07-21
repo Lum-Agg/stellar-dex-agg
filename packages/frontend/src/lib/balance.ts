@@ -10,11 +10,18 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
 export const NATIVE_FEE_RESERVE_STROOPS = BigInt(5_000_000); // 0.5 XLM
 
 export type BalanceMap = Record<string, bigint>;
+export type TrustlineMap = Record<string, boolean>;
 
 export interface AccountBalancesPayload {
   balances: BalanceMap;
+  hasTrustline: TrustlineMap;
   tokensQueried: string[];
   scope: string;
+}
+
+export interface TokenBalanceResult {
+  balance: bigint;
+  hasTrustline: boolean | null;
 }
 
 function horizonBalanceToStroops(balance: string, decimals: number): bigint {
@@ -25,20 +32,37 @@ function horizonBalanceToStroops(balance: string, decimals: number): bigint {
 }
 
 /** Single SAC balance (any token — used for uncommon assets). */
-export async function fetchTokenBalanceStroops(
+export async function fetchTokenBalance(
   accountId: string,
   tokenContractId: string,
-): Promise<bigint | null> {
+): Promise<TokenBalanceResult | null> {
   try {
     const params = new URLSearchParams({ account: accountId, token: tokenContractId });
     const resp = await fetch(`${API_URL}/api/v1/balance?${params}`);
     if (!resp.ok) return null;
-    const data = (await resp.json()) as { success?: boolean; balance?: string };
-    if (data.success && data.balance !== undefined) return BigInt(data.balance);
+    const data = (await resp.json()) as {
+      success?: boolean;
+      balance?: string;
+      has_trustline?: boolean;
+    };
+    if (data.success && data.balance !== undefined) {
+      return {
+        balance: BigInt(data.balance),
+        hasTrustline: data.has_trustline ?? null,
+      };
+    }
     return null;
   } catch {
     return null;
   }
+}
+
+export async function fetchTokenBalanceStroops(
+  accountId: string,
+  tokenContractId: string,
+): Promise<bigint | null> {
+  const result = await fetchTokenBalance(accountId, tokenContractId);
+  return result?.balance ?? null;
 }
 
 async function fetchNativeHorizonBalance(
@@ -76,6 +100,7 @@ export async function fetchAccountBalances(accountId: string): Promise<AccountBa
     scope?: string;
     tokens_queried?: string[];
     balances?: Record<string, string>;
+    has_trustline?: Record<string, boolean>;
   };
 
   if (!data.success || !data.balances || !data.tokens_queried) {
@@ -83,6 +108,7 @@ export async function fetchAccountBalances(accountId: string): Promise<AccountBa
   }
 
   const balances: BalanceMap = {};
+  const hasTrustline: TrustlineMap = { ...data.has_trustline };
   for (const tokenId of data.tokens_queried) {
     const raw = data.balances[tokenId];
     balances[tokenId] = raw !== undefined ? BigInt(raw) : BigInt(0);
@@ -90,6 +116,7 @@ export async function fetchAccountBalances(accountId: string): Promise<AccountBa
 
   return {
     balances,
+    hasTrustline,
     tokensQueried: data.tokens_queried,
     scope: data.scope ?? 'common',
   };

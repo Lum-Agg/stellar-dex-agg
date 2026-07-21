@@ -18,7 +18,8 @@ use {
 const EURC_SAC: &str = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
 const AQUA_SAC: &str = "CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV";
 
-/// Starts periodic price mark sampling. The caller decides whether sampling is enabled.
+/// Starts periodic price mark sampling. The caller decides whether sampling is
+/// enabled.
 pub fn spawn_price_sampler(state: AppState, store: Arc<PriceStore>) {
     let sample_secs = env_positive_u64("PRICE_SAMPLE_SECS").unwrap_or(600);
     let common_limit = env_usize("PRICE_SAMPLE_TOKEN_LIMIT").unwrap_or(30);

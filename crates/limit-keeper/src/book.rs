@@ -14,16 +14,9 @@ pub struct OpenOrder {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OrderEvent {
     Created(OpenOrder),
-    Filled {
-        order_id: u64,
-        amount_in_remaining: i128,
-    },
-    Cancelled {
-        order_id: u64,
-    },
-    Expired {
-        order_id: u64,
-    },
+    Filled { order_id: u64, amount_in_remaining: i128 },
+    Cancelled { order_id: u64 },
+    Expired { order_id: u64 },
 }
 
 #[derive(Debug, Default)]
@@ -112,4 +105,3 @@ mod tests {
         assert!(book.get(8).is_none());
     }
 }
-
