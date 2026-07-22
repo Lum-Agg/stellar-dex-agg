@@ -68,6 +68,17 @@ OUT=./evidence/pilot-friend USER_G=G... ./scripts/integrator-smoke.sh
 USER_G=G... npx tsx packages/sdk/examples/quote-build.ts
 ```
 
+### 浏览器（Freighter）— 完整签名与提交
+
+CLI smoke 只到未签名 XDR。完整链路（quote → build → Freighter 签名 → `submit_tx` → `tx_status`）：
+
+```bash
+cd packages/sdk && npm run build
+cd examples/browser-swap && npm install && npm run dev
+```
+
+打开 Vite 地址，连接 Freighter（Public）；默认勾选 **Dry-run** 可在签名后停止，取消勾选则会在主网提交。详见 [`packages/sdk/examples/browser-swap/README.md`](../packages/sdk/examples/browser-swap/README.md)。
+
 ## 2. `prefer_soroban`
 
 | 值 | 行为 |
@@ -106,8 +117,10 @@ LUMAGG_PARTNER_API_KEYS=key_one,key_two
 | GET | `/api/v1/balance` | 查询单个 SAC 余额（可知时返回 `has_trustline`） |
 | GET | `/api/v1/balances` | 批量查询常用 Token 余额 + 每 token 的 `has_trustline` |
 | GET | `/api/v1/account` | 账户 sequence（Soroban RPC `getLedgerEntries`） |
+| GET | `/api/v1/classic_asset` | 将 SAC `C…` 解析为 classic `code` / `issuer` |
 | GET | `/api/v1/ledger/latest` | 最新已关闭 ledger |
-| POST | `/api/v1/submit_tx` | 提交已签名 XDR（`{ "signed_tx_xdr": "..." }`，走服务端 RPC） |
+| POST | `/api/v1/submit_tx` | 提交已签名 XDR（`{ "signed_tx_xdr": "..." }`）— 快速入队 |
+| GET | `/api/v1/tx_status` | 在 `submit_tx` 后轮询上链状态（`confirmed` 仅当 SUCCESS） |
 | GET | `/api/v1/prices` | 批量查询最新 USDC 标价 |
 | GET | `/api/v1/prices/history` | 查询采样价格历史（图表） |
 | GET | `/api/v1/orders` | 钱包限价单（indexer DB） |
@@ -143,14 +156,23 @@ LUMAGG_PREFER_SOROBAN=1 SOROSWAP_API_KEY=sk_... ./scripts/scf-benchmark.sh
 
 关于 LumAgg 与 Stellar Broker 的流动性源覆盖矩阵和拆单路由说明，请参阅 [scf-venue-comparison.md](./scf-venue-comparison.md)。
 
-## 7. npm SDK（Tranche 2）
+## 7. npm SDK
 
-已发布：[`@lumagg/sdk`](https://www.npmjs.com/package/@lumagg/sdk)（`0.1.0`）  
-代码目录：`packages/sdk`
+已发布：[`@lumagg/sdk`](https://www.npmjs.com/package/@lumagg/sdk) `0.2.0`（`packages/sdk`）。
+
+| SDK 方法 | REST |
+|----------|------|
+| `quote` / `buildTx` / `quoteAndBuild` | `/quote`, `/build_tx` |
+| `getBalance` / `getBalances` | `/balance`, `/balances` |
+| `getAccount` / `getClassicAsset` / `getLatestLedger` | `/account`, `/classic_asset`, `/ledger/latest` |
+| `submitTx` / `getTxStatus` / `waitForTx` | `/submit_tx`, `/tx_status` |
+| `listTokens` / `getStats` / `listSwaps` / orders / prices | 见 OpenAPI |
 
 ```bash
 npx tsx packages/sdk/examples/quote-build.ts
 npx tsx packages/sdk/examples/basic-usage.ts
+# Freighter 端到端：
+cd packages/sdk/examples/browser-swap && npm run dev
 ```
 
 详情参见 [packages/sdk/README.md](../packages/sdk/README.md)。

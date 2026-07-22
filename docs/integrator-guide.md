@@ -52,6 +52,17 @@ SDK alternative:
 USER_G=G... npx tsx packages/sdk/examples/quote-build.ts
 ```
 
+### Browser (Freighter) — full sign + submit
+
+CLI smoke stops at unsigned XDR. For the full loop (quote → build → Freighter sign → `submit_tx` → `tx_status`):
+
+```bash
+cd packages/sdk && npm run build
+cd examples/browser-swap && npm install && npm run dev
+```
+
+Open the Vite URL, connect Freighter (Public), leave **Dry-run** checked to stop after sign, or uncheck to submit on mainnet. See [`packages/sdk/examples/browser-swap/README.md`](../packages/sdk/examples/browser-swap/README.md).
+
 ## 2. `prefer_soroban`
 
 | Value | Behavior |
@@ -90,8 +101,10 @@ LUMAGG_PARTNER_API_KEYS=key_one,key_two
 | GET | `/api/v1/balance` | Single SAC balance (`has_trustline` when known) |
 | GET | `/api/v1/balances` | Batch balances + per-token `has_trustline` map |
 | GET | `/api/v1/account` | Account sequence (via Soroban RPC `getLedgerEntries`) |
+| GET | `/api/v1/classic_asset` | Resolve SAC `C…` → classic `code` / `issuer` |
 | GET | `/api/v1/ledger/latest` | Latest closed ledger sequence |
-| POST | `/api/v1/submit_tx` | Submit signed XDR (`{ "signed_tx_xdr": "..." }`) via server RPC |
+| POST | `/api/v1/submit_tx` | Submit signed XDR (`{ "signed_tx_xdr": "..." }`) — fast enqueue |
+| GET | `/api/v1/tx_status` | Poll inclusion after `submit_tx` (`confirmed` when SUCCESS) |
 | GET | `/api/v1/prices` | Latest USDC marks (batch) |
 | GET | `/api/v1/prices/history` | Sampled price ticks for charts |
 | GET | `/api/v1/orders` | Limit orders for a wallet (indexer DB) |
@@ -127,13 +140,23 @@ LUMAGG_PREFER_SOROBAN=1 SOROSWAP_API_KEY=sk_... ./scripts/scf-benchmark.sh
 
 See [scf-venue-comparison.md](./scf-venue-comparison.md) for venue matrix vs Stellar Broker and split-routing notes.
 
-## 7. npm SDK (Tranche 2)
+## 7. npm SDK
 
-Published: [`@lumagg/sdk`](https://www.npmjs.com/package/@lumagg/sdk) `0.1.0` (`packages/sdk`).
+Published: [`@lumagg/sdk`](https://www.npmjs.com/package/@lumagg/sdk) `0.2.0` (`packages/sdk`).
+
+| SDK method | REST |
+|------------|------|
+| `quote` / `buildTx` / `quoteAndBuild` | `/quote`, `/build_tx` |
+| `getBalance` / `getBalances` | `/balance`, `/balances` |
+| `getAccount` / `getClassicAsset` / `getLatestLedger` | `/account`, `/classic_asset`, `/ledger/latest` |
+| `submitTx` / `getTxStatus` / `waitForTx` | `/submit_tx`, `/tx_status` |
+| `listTokens` / `getStats` / `listSwaps` / orders / prices | see OpenAPI |
 
 ```bash
 npx tsx packages/sdk/examples/quote-build.ts
 npx tsx packages/sdk/examples/basic-usage.ts
+# Freighter end-to-end:
+cd packages/sdk/examples/browser-swap && npm run dev
 ```
 
 See [packages/sdk/README.md](../packages/sdk/README.md).

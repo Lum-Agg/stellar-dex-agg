@@ -1,0 +1,99 @@
+:root {
+  color-scheme: light;
+  font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif;
+  line-height: 1.45;
+  background: #f3f0e8;
+  color: #1a1a1a;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(ellipse 80% 50% at 10% 0%, #d8ebe3 0%, transparent 55%),
+    radial-gradient(ellipse 60% 40% at 100% 10%, #e8dcc8 0%, transparent 50%),
+    #f3f0e8;
+}
+
+main {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 2.5rem 1.25rem 4rem;
+}
+
+h1 {
+  font-family: 'IBM Plex Serif', Georgia, serif;
+  font-weight: 600;
+  font-size: 1.75rem;
+  margin: 0 0 0.35rem;
+}
+
+.lead {
+  margin: 0 0 1.5rem;
+  color: #444;
+  font-size: 0.95rem;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+label {
+  display: block;
+  margin-bottom: 0.85rem;
+  font-size: 0.85rem;
+  color: #333;
+}
+
+label.check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+input[type='text'] {
+  display: block;
+  width: 100%;
+  margin-top: 0.35rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid #cfc8bc;
+  background: #fffdf8;
+  font: inherit;
+}
+
+button {
+  font: inherit;
+  padding: 0.55rem 1rem;
+  border: 1px solid #1a1a1a;
+  background: #1a1a1a;
+  color: #f7f4ee;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.mono {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+
+#log {
+  margin-top: 1.25rem;
+  padding: 0.85rem;
+  background: #1a1a1a;
+  color: #d7f5e6;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  min-height: 8rem;
+  max-height: 28rem;
+  overflow: auto;
+}

@@ -120,6 +120,75 @@ export function ApiReference() {
 
         <Endpoint
           method="GET"
+          path="/api/v1/balance"
+          description="Single SAC balance and optional classic trustline hint."
+          params={[
+            { name: 'account', type: 'string', required: true, desc: 'G... address' },
+            { name: 'token', type: 'string', required: true, desc: 'SAC contract id' },
+          ]}
+          tryIt={
+            <PingTryIt
+              path={`/api/v1/balance?account=${DEMO_USER}&token=${TOKENS.XLM}`}
+            />
+          }
+        />
+
+        <Endpoint
+          method="GET"
+          path="/api/v1/balances"
+          description="Batch balances for common tokens."
+          params={[{ name: 'account', type: 'string', required: true, desc: 'G... address' }]}
+          tryIt={<PingTryIt path={`/api/v1/balances?account=${DEMO_USER}`} />}
+        />
+
+        <Endpoint
+          method="GET"
+          path="/api/v1/account"
+          description="Account sequence via Soroban RPC."
+          params={[{ name: 'account', type: 'string', required: true, desc: 'G... address' }]}
+          tryIt={<PingTryIt path={`/api/v1/account?account=${DEMO_USER}`} />}
+        />
+
+        <Endpoint
+          method="GET"
+          path="/api/v1/classic_asset"
+          description="Resolve SAC contract to classic code/issuer."
+          params={[
+            { name: 'contract', type: 'string', required: true, desc: 'SAC C… address' },
+          ]}
+          tryIt={<PingTryIt path={`/api/v1/classic_asset?contract=${TOKENS.USDC}`} />}
+        />
+
+        <Endpoint
+          method="GET"
+          path="/api/v1/ledger/latest"
+          description="Latest closed ledger sequence."
+          tryIt={<PingTryIt path="/api/v1/ledger/latest" />}
+        />
+
+        <Endpoint
+          method="POST"
+          path="/api/v1/submit_tx"
+          description="Submit signed XDR (fast enqueue). Poll /tx_status for inclusion."
+          params={[
+            {
+              name: 'signed_tx_xdr',
+              type: 'string',
+              required: true,
+              desc: 'Base64 signed envelope XDR (JSON body)',
+            },
+          ]}
+        />
+
+        <Endpoint
+          method="GET"
+          path="/api/v1/tx_status"
+          description="Poll transaction status after submit_tx. confirmed=true only on SUCCESS."
+          params={[{ name: 'hash', type: 'string', required: true, desc: 'Transaction hash' }]}
+        />
+
+        <Endpoint
+          method="GET"
           path="/api/v1/swaps"
           description="Recent aggregator swaps for a wallet (indexer DB)."
           params={[

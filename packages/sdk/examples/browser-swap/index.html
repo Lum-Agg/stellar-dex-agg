@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LumAgg Freighter swap example</title>
+  </head>
+  <body>
+    <main>
+      <h1>LumAgg · Freighter swap</h1>
+      <p class="lead">
+        Minimal integrator demo: quote → build → Freighter sign → submit → confirm (mainnet).
+      </p>
+      <div class="row">
+        <button id="connect" type="button">Connect Freighter</button>
+        <span id="address" class="mono"></span>
+      </div>
+      <label>
+        Amount (stroops, XLM)
+        <input id="amount" type="text" value="10000000" />
+      </label>
+      <label class="check">
+        <input id="dryRun" type="checkbox" checked />
+        Dry-run (stop after Freighter sign — no submit)
+      </label>
+      <button id="swap" type="button" disabled>Swap XLM → USDC</button>
+      <pre id="log"></pre>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

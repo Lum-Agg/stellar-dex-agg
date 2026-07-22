@@ -1,6 +1,6 @@
 # @lumagg/sdk
 
-TypeScript client for the [LumAgg](https://lumagg.xyz) REST API — quote, build unsigned XDR, tokens.
+TypeScript client for the [LumAgg](https://lumagg.xyz) REST API — quote, build unsigned XDR, wallet helpers, submit + poll.
 
 ## Install
 
@@ -33,7 +33,9 @@ const { unsignedTxXdr } = await client.buildTx({
   subRoutes: quote.subRoutes,
 });
 
-// Sign unsignedTxXdr with Freighter / wallet, submit to Soroban RPC or Horizon.
+// Sign with Freighter / wallet, then:
+// const { hash } = await client.submitTx({ signedTxXdr });
+// await client.waitForTx(hash);
 ```
 
 ## API
@@ -44,8 +46,17 @@ const { unsignedTxXdr } = await client.buildTx({
 | `listTokens()` | `GET /tokens` | Routable tokens + logos |
 | `quote()` | `GET /quote` | Best route; optional `preferSoroban` |
 | `buildTx()` | `POST /build_tx` | Unsigned envelope XDR |
-| `getStats()` | `GET /stats` | On-chain indexer rollup; optional CSV |
 | `quoteAndBuild()` | quote + build_tx | One-call integrator flow |
+| `getBalance()` | `GET /balance` | SAC balance + `hasTrustline` |
+| `getBalances()` | `GET /balances` | Common-token batch |
+| `getAccount()` | `GET /account` | Sequence number |
+| `getClassicAsset()` | `GET /classic_asset` | SAC → code/issuer |
+| `getLatestLedger()` | `GET /ledger/latest` | Latest ledger sequence |
+| `submitTx()` | `POST /submit_tx` | Fast enqueue signed XDR |
+| `getTxStatus()` | `GET /tx_status` | One-shot status |
+| `waitForTx()` | polls `/tx_status` | Until SUCCESS / FAILED / timeout |
+| `getStats()` | `GET /stats` | On-chain indexer rollup; optional CSV |
+| `listSwaps()` / orders / prices | see OpenAPI | |
 
 Partner rate limit: pass `apiKey` in constructor → `X-API-Key` header (60 req/s).
 
@@ -55,6 +66,9 @@ Partner rate limit: pass `apiKey` in constructor → `X-API-Key` header (60 req/
 npx tsx packages/sdk/examples/basic-usage.ts
 npx tsx packages/sdk/examples/quote-build.ts
 npx tsx packages/sdk/examples/stats.ts
+
+# Freighter browser demo (sign + optional submit):
+cd packages/sdk/examples/browser-swap && npm install && npm run dev
 ```
 
 ## Docs
