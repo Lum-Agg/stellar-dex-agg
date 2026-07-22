@@ -329,6 +329,94 @@ impl SorobanRpc {
                 .map(|s| s.to_string()),
         })
     }
+
+    /// Poll `getTransaction` for final status (`SUCCESS` / `FAILED` / …).
+    pub async fn get_transaction(&self, hash: &str) -> Result<GetTransactionResult> {
+        let body = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTransaction",
+            "params": {
+                "hash": hash
+            }
+        });
+
+        let resp = self.post_json_with_retry(body).await?;
+        if let Some(error) = resp.get("error") {
+            return Err(anyhow!("getTransaction RPC error: {}", error));
+        }
+
+        let result = resp
+            .get("result")
+            .ok_or_else(|| anyhow!("getTransaction missing result"))?;
+
+        Ok(GetTransactionResult {
+            status: result
+                .get("status")
+                .and_then(|s| s.as_str())
+                .unwrap_or_default()
+                .to_string(),
+        })
+    }
+
+    /// Submit then wait until the tx is included (or timeout).
+    pub async fn send_transaction_and_wait(
+        &self,
+        signed_tx_xdr: &str,
+        max_wait_secs: u64,
+    ) -> Result<SendTransactionResult> {
+        let mut attempts = 0u32;
+        let send = loop {
+            let result = self.send_transaction(signed_tx_xdr).await?;
+            if result.status == "TRY_AGAIN_LATER" && attempts < 30 {
+                attempts += 1;
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                continue;
+            }
+            break result;
+        };
+
+        if send.status == "ERROR" {
+            return Ok(send);
+        }
+        if send.hash.is_empty() {
+            return Err(anyhow!("sendTransaction returned empty hash"));
+        }
+        if send.status != "PENDING" && send.status != "DUPLICATE" {
+            return Ok(send);
+        }
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(max_wait_secs);
+        loop {
+            let got = self.get_transaction(&send.hash).await?;
+            match got.status.as_str() {
+                "SUCCESS" => {
+                    return Ok(SendTransactionResult {
+                        status: "SUCCESS".to_string(),
+                        hash: send.hash,
+                        error_result_xdr: None,
+                    });
+                }
+                "FAILED" => {
+                    return Ok(SendTransactionResult {
+                        status: "FAILED".to_string(),
+                        hash: send.hash,
+                        error_result_xdr: send.error_result_xdr,
+                    });
+                }
+                // NOT_FOUND / PENDING — keep polling
+                _ => {}
+            }
+            if std::time::Instant::now() >= deadline {
+                return Ok(SendTransactionResult {
+                    status: "TIMEOUT".to_string(),
+                    hash: send.hash,
+                    error_result_xdr: None,
+                });
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -341,6 +429,11 @@ pub struct SendTransactionResult {
     pub status: String,
     pub hash: String,
     pub error_result_xdr: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GetTransactionResult {
+    pub status: String,
 }
 
 // ===== ScVal extraction helpers =====

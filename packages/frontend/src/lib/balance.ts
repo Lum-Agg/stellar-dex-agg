@@ -28,8 +28,11 @@ export async function fetchTokenBalance(
   accountId: string,
   tokenContractId: string,
 ): Promise<TokenBalanceResult | null> {
+  const account = accountId.trim();
+  const token = tokenContractId.trim();
+  if (!account || !token) return null;
   try {
-    const params = new URLSearchParams({ account: accountId, token: tokenContractId });
+    const params = new URLSearchParams({ account, token });
     const resp = await fetch(`${API_URL}/api/v1/balance?${params}`);
     if (!resp.ok) return null;
     const data = (await resp.json()) as {

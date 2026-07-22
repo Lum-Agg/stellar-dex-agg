@@ -32,8 +32,10 @@ pub async fn api_root() -> impl IntoResponse {
             "balance": "/api/v1/balance",
             "balances": "/api/v1/balances",
             "account": "/api/v1/account",
+            "classic_asset": "/api/v1/classic_asset",
             "ledger_latest": "/api/v1/ledger/latest",
             "submit_tx": "/api/v1/submit_tx",
+            "tx_status": "/api/v1/tx_status",
             "stats": "/api/v1/stats",
             "swaps": "/api/v1/swaps",
             "orders": "/api/v1/orders",
@@ -1107,6 +1109,171 @@ pub async fn get_balances(State(state): State<AppState>, Query(query): Query<Bal
 }
 
 // ============================================================
+// GET /api/v1/classic_asset — SAC contract → classic code/issuer
+// ============================================================
+
+#[derive(Deserialize)]
+pub struct ClassicAssetQuery {
+    /// SAC contract id (`C…`).
+    pub contract: String,
+}
+
+#[derive(Serialize)]
+pub struct ClassicAssetResponse {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issuer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Parse stellar.expert `asset` field: `CODE-GISSUER[-domain]`.
+pub(crate) fn parse_expert_asset_field(asset: &str) -> Option<(String, String)> {
+    let (code, rest) = asset.split_once('-')?;
+    if code.is_empty() || code.len() > 12 {
+        return None;
+    }
+    let issuer = rest
+        .split('-')
+        .find(|p| p.len() == 56 && p.starts_with('G'))?
+        .to_string();
+    if !code.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    Some((code.to_string(), issuer))
+}
+
+/// Resolve a Stellar Asset Contract to its classic code + issuer (for ChangeTrust).
+pub async fn get_classic_asset(Query(query): Query<ClassicAssetQuery>) -> impl IntoResponse {
+    let contract = query.contract.trim();
+    if contract.is_empty() {
+        return Json(ClassicAssetResponse {
+            success: false,
+            code: None,
+            issuer: None,
+            error: Some("Missing contract id".to_string()),
+        });
+    }
+    if is_native_sac(contract) {
+        return Json(ClassicAssetResponse {
+            success: false,
+            code: None,
+            issuer: None,
+            error: Some("Native XLM does not require a trustline".to_string()),
+        });
+    }
+    if !contract.starts_with('C') || contract.len() != 56 {
+        return Json(ClassicAssetResponse {
+            success: false,
+            code: None,
+            issuer: None,
+            error: Some("Expected a 56-character SAC contract id (C…)".to_string()),
+        });
+    }
+
+    // Fast path for well-known SACs (same set as classic DEX adapter).
+    const KNOWN: &[(&str, &str, &str)] = &[
+        (
+            "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+            "USDC",
+            "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        ),
+        (
+            "CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV",
+            "EURC",
+            "GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2",
+        ),
+    ];
+    for (sac, code, issuer) in KNOWN {
+        if *sac == contract {
+            return Json(ClassicAssetResponse {
+                success: true,
+                code: Some((*code).to_string()),
+                issuer: Some((*issuer).to_string()),
+                error: None,
+            });
+        }
+    }
+
+    let url = format!(
+        "https://api.stellar.expert/explorer/public/contract/{}",
+        contract
+    );
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return Json(ClassicAssetResponse {
+                success: false,
+                code: None,
+                issuer: None,
+                error: Some(format!("HTTP client error: {e}")),
+            });
+        }
+    };
+
+    match client.get(&url).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            let body: serde_json::Value = match resp.json().await {
+                Ok(v) => v,
+                Err(e) => {
+                    return Json(ClassicAssetResponse {
+                        success: false,
+                        code: None,
+                        issuer: None,
+                        error: Some(format!("Invalid expert response: {e}")),
+                    });
+                }
+            };
+            let Some(asset_str) = body.get("asset").and_then(|v| v.as_str()) else {
+                return Json(ClassicAssetResponse {
+                    success: false,
+                    code: None,
+                    issuer: None,
+                    error: Some(
+                        "Contract is not a classic SAC (no linked asset); trustline N/A"
+                            .to_string(),
+                    ),
+                });
+            };
+            match parse_expert_asset_field(asset_str) {
+                Some((code, issuer)) => Json(ClassicAssetResponse {
+                    success: true,
+                    code: Some(code),
+                    issuer: Some(issuer),
+                    error: None,
+                }),
+                None => Json(ClassicAssetResponse {
+                    success: false,
+                    code: None,
+                    issuer: None,
+                    error: Some(format!("Unrecognized asset encoding: {asset_str}")),
+                }),
+            }
+        }
+        Ok(resp) => Json(ClassicAssetResponse {
+            success: false,
+            code: None,
+            issuer: None,
+            error: Some(format!(
+                "Asset lookup failed ({})",
+                resp.status().as_u16()
+            )),
+        }),
+        Err(e) => Json(ClassicAssetResponse {
+            success: false,
+            code: None,
+            issuer: None,
+            error: Some(format!("Asset lookup error: {e}")),
+        }),
+    }
+}
+
+// ============================================================
 // GET /api/v1/account, /api/v1/ledger/latest, POST /api/v1/submit_tx
 // (Soroban RPC proxy — keeps RPC_URL server-side)
 // ============================================================
@@ -1202,7 +1369,8 @@ pub async fn submit_tx(State(state): State<AppState>, Json(body): Json<SubmitTxR
         );
     }
 
-    let mut attempts = 0;
+    // Fast return: enqueue only. Clients poll `/api/v1/tx_status` (or balance) for inclusion.
+    let mut attempts = 0u32;
     loop {
         match state.rpc.send_transaction(signed_tx_xdr).await {
             Ok(result) => {
@@ -1212,29 +1380,27 @@ pub async fn submit_tx(State(state): State<AppState>, Json(body): Json<SubmitTxR
                     continue;
                 }
 
-                let success = result.status == "PENDING" || result.status == "DUPLICATE";
+                let accepted = result.status == "PENDING" || result.status == "DUPLICATE";
                 return (
-                    if success {
+                    if accepted {
                         StatusCode::OK
                     } else {
                         StatusCode::BAD_REQUEST
                     },
                     Json(SubmitTxResponse {
-                        success,
+                        success: accepted,
                         hash: if result.hash.is_empty() {
                             None
                         } else {
                             Some(result.hash)
                         },
-                        status: Some(result.status),
-                        error: if success {
+                        status: Some(result.status.clone()),
+                        error: if accepted {
                             None
                         } else {
-                            Some(
-                                result
-                                    .error_result_xdr
-                                    .unwrap_or_else(|| "Transaction rejected by the network".to_string()),
-                            )
+                            Some(result.error_result_xdr.unwrap_or_else(|| {
+                                format!("Transaction rejected (status={})", result.status)
+                            }))
                         },
                     }),
                 );
@@ -1251,6 +1417,67 @@ pub async fn submit_tx(State(state): State<AppState>, Json(body): Json<SubmitTxR
                 );
             }
         }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct TxStatusQuery {
+    pub hash: String,
+}
+
+#[derive(Serialize)]
+pub struct TxStatusResponse {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hash: Option<String>,
+    /// `SUCCESS` | `FAILED` | `NOT_FOUND` | …
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// True only when status is `SUCCESS`.
+    pub confirmed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// GET /api/v1/tx_status?hash=… — poll after fast `/api/v1/submit_tx`.
+pub async fn get_tx_status(
+    State(state): State<AppState>,
+    Query(query): Query<TxStatusQuery>,
+) -> impl IntoResponse {
+    let hash = query.hash.trim();
+    if hash.is_empty() {
+        return Json(TxStatusResponse {
+            success: false,
+            hash: None,
+            status: None,
+            confirmed: false,
+            error: Some("Missing hash".to_string()),
+        });
+    }
+
+    match state.rpc.get_transaction(hash).await {
+        Ok(result) => {
+            let confirmed = result.status == "SUCCESS";
+            let failed = result.status == "FAILED";
+            Json(TxStatusResponse {
+                success: true,
+                hash: Some(hash.to_string()),
+                status: Some(result.status.clone()),
+                confirmed,
+                error: if failed {
+                    Some("Transaction failed on-chain".to_string())
+                } else {
+                    None
+                },
+            })
+        }
+        Err(e) => Json(TxStatusResponse {
+            success: false,
+            hash: Some(hash.to_string()),
+            status: None,
+            confirmed: false,
+            error: Some(e.to_string()),
+        }),
     }
 }
 
@@ -1543,7 +1770,7 @@ fn parse_asset_xdr(token: &str) -> Result<stellar_xdr::curr::Asset, String> {
         }));
     }
 
-    if token == "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC" {
+    if token == "CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV" {
         let issuer =
             stellar_strkey::ed25519::PublicKey::from_string("GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2")
                 .map_err(|e| format!("{:?}", e))?;
@@ -1707,7 +1934,7 @@ pub(crate) async fn fetch_sequence_number(
 
 #[cfg(test)]
 mod classic_dest_min_tests {
-    use super::classic_dest_min_for_sub;
+    use super::{classic_dest_min_for_sub, parse_expert_asset_field};
 
     #[test]
     fn single_leg_gets_full_min_out() {
@@ -1728,5 +1955,28 @@ mod classic_dest_min_tests {
     #[test]
     fn rejects_zero_min_out() {
         assert!(classic_dest_min_for_sub(1, 1, 0).is_err());
+    }
+
+    #[test]
+    fn parses_expert_asset_field() {
+        assert_eq!(
+            parse_expert_asset_field(
+                "FADA-GCX3Y4MNI7ZQBQEZQMAXRFVODVFB2PRQS4LTUHP5B34MEYQQTW5LQFLR-1"
+            ),
+            Some((
+                "FADA".to_string(),
+                "GCX3Y4MNI7ZQBQEZQMAXRFVODVFB2PRQS4LTUHP5B34MEYQQTW5LQFLR".to_string()
+            ))
+        );
+        assert_eq!(
+            parse_expert_asset_field(
+                "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN-1"
+            ),
+            Some((
+                "USDC".to_string(),
+                "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN".to_string()
+            ))
+        );
+        assert_eq!(parse_expert_asset_field("native"), None);
     }
 }

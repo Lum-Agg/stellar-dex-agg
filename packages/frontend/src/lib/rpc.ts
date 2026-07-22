@@ -4,6 +4,7 @@
  */
 
 import { Networks, TransactionBuilder, rpc } from '@stellar/stellar-sdk';
+import { fetchTokenBalance } from '@/lib/balance';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
 const LIMIT_API_URL = process.env.NEXT_PUBLIC_LIMIT_API_URL?.trim() || '';
@@ -68,10 +69,11 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Fast enqueue only — clients should poll {@link waitForTxConfirmation}. */
 async function submitViaOfficialRpc(
   signedXdr: string,
   network: SubmitNetwork,
-): Promise<{ hash: string; success: boolean; error?: string }> {
+): Promise<{ hash: string; success: boolean; error?: string; status?: string }> {
   const isTestnet = network === 'testnet';
   const networkPassphrase = isTestnet ? Networks.TESTNET : Networks.PUBLIC;
   const rpcUrl = isTestnet ? OFFICIAL_TESTNET_RPC_URL : OFFICIAL_MAINNET_RPC_URL;
@@ -90,17 +92,19 @@ async function submitViaOfficialRpc(
     return {
       hash: response.hash,
       success: false,
+      status: response.status,
       error: 'Transaction rejected by the network',
     };
   }
 
   if (response.status === 'PENDING' || response.status === 'DUPLICATE') {
-    return { hash: response.hash, success: true };
+    return { hash: response.hash, success: true, status: response.status };
   }
 
   return {
     hash: response.hash ?? '',
     success: false,
+    status: response.status,
     error: `Unexpected RPC status: ${response.status}`,
   };
 }
@@ -108,7 +112,7 @@ async function submitViaOfficialRpc(
 async function submitViaApiServer(
   signedXdr: string,
   apiUrl?: string,
-): Promise<{ hash: string; success: boolean; error?: string }> {
+): Promise<{ hash: string; success: boolean; error?: string; status?: string }> {
   const base = apiUrl?.trim() || API_URL;
   const resp = await fetch(`${base}/api/v1/submit_tx`, {
     method: 'POST',
@@ -124,6 +128,7 @@ async function submitViaApiServer(
   return {
     hash: data.hash || '',
     success: !!data.success,
+    status: data.status,
     error: data.error,
   };
 }
@@ -131,10 +136,153 @@ async function submitViaApiServer(
 export async function submitSignedTransaction(
   signedXdr: string,
   opts?: SubmitTxOptions,
-): Promise<{ hash: string; success: boolean; error?: string }> {
+): Promise<{ hash: string; success: boolean; error?: string; status?: string }> {
   const via = opts?.via ?? getSubmitViaPreference();
   if (via === 'official') {
     return submitViaOfficialRpc(signedXdr, opts?.network ?? 'public');
   }
   return submitViaApiServer(signedXdr, opts?.apiUrl);
+}
+
+export type TxStatus = {
+  success: boolean;
+  hash?: string;
+  status?: string;
+  confirmed: boolean;
+  error?: string;
+};
+
+export type FetchTxStatusOptions = {
+  apiUrl?: string;
+  /** Default: same preference as submit (Advanced toggle). */
+  via?: SubmitVia;
+  network?: SubmitNetwork;
+};
+
+async function fetchTxStatusViaOfficialRpc(
+  hash: string,
+  network: SubmitNetwork,
+): Promise<TxStatus> {
+  const rpcUrl = network === 'testnet' ? OFFICIAL_TESTNET_RPC_URL : OFFICIAL_MAINNET_RPC_URL;
+  const server = new rpc.Server(rpcUrl);
+  try {
+    const result = await server.getTransaction(hash);
+    const raw = String(result.status);
+    const status =
+      result.status === rpc.Api.GetTransactionStatus.SUCCESS
+        ? 'SUCCESS'
+        : result.status === rpc.Api.GetTransactionStatus.FAILED
+          ? 'FAILED'
+          : result.status === rpc.Api.GetTransactionStatus.NOT_FOUND
+            ? 'NOT_FOUND'
+            : raw;
+    return {
+      success: true,
+      hash,
+      status,
+      confirmed: status === 'SUCCESS',
+      error: status === 'FAILED' ? 'Transaction failed on-chain' : undefined,
+    };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'getTransaction failed';
+    return { success: false, hash, confirmed: false, error: message };
+  }
+}
+
+async function fetchTxStatusViaApi(hash: string, apiUrl?: string): Promise<TxStatus> {
+  const base = apiUrl?.trim() || API_URL;
+  const params = new URLSearchParams({ hash });
+  const resp = await fetch(`${base}/api/v1/tx_status?${params}`);
+  const data = (await resp.json()) as TxStatus;
+  return {
+    success: !!data.success,
+    hash: data.hash,
+    status: data.status,
+    confirmed: !!data.confirmed,
+    error: data.error,
+  };
+}
+
+/** One-shot status check — LumAgg API or official RPC (matches Advanced submit). */
+export async function fetchTxStatus(
+  hash: string,
+  opts?: FetchTxStatusOptions | string,
+): Promise<TxStatus> {
+  // Back-compat: fetchTxStatus(hash, apiUrl)
+  const options: FetchTxStatusOptions =
+    typeof opts === 'string' ? { apiUrl: opts } : (opts ?? {});
+  const via = options.via ?? getSubmitViaPreference();
+  if (via === 'official') {
+    return fetchTxStatusViaOfficialRpc(hash, options.network ?? 'public');
+  }
+  return fetchTxStatusViaApi(hash, options.apiUrl);
+}
+
+export type WaitForTxOptions = {
+  apiUrl?: string;
+  via?: SubmitVia;
+  network?: SubmitNetwork;
+  /** Max wait (ms). Default 60s. */
+  timeoutMs?: number;
+  /** Poll interval (ms). Default 1s. */
+  intervalMs?: number;
+  /**
+   * For ChangeTrust: also succeed when SAC balance reports has_trustline.
+   * Useful when getTransaction lags but classic trustline is already live.
+   */
+  trustline?: { account: string; token: string };
+};
+
+/**
+ * After fast submit, poll until SUCCESS / FAILED / timeout.
+ * Status source follows Advanced toggle (official RPC vs `/api/v1/tx_status`).
+ * Optionally short-circuit when trustline appears on `/api/v1/balance`.
+ */
+export async function waitForTxConfirmation(
+  hash: string,
+  opts?: WaitForTxOptions,
+): Promise<{ success: boolean; status?: string; error?: string }> {
+  if (!hash) {
+    return { success: false, error: 'Missing transaction hash' };
+  }
+
+  const timeoutMs = opts?.timeoutMs ?? 60_000;
+  const intervalMs = opts?.intervalMs ?? 1_000;
+  const deadline = Date.now() + timeoutMs;
+  const via = opts?.via ?? getSubmitViaPreference();
+  const network = opts?.network ?? 'public';
+
+  while (Date.now() < deadline) {
+    if (opts?.trustline) {
+      const bal = await fetchTokenBalance(opts.trustline.account, opts.trustline.token);
+      if (bal?.hasTrustline === true) {
+        return { success: true, status: 'TRUSTLINE_READY' };
+      }
+    }
+
+    const tx = await fetchTxStatus(hash, {
+      apiUrl: opts?.apiUrl,
+      via,
+      network,
+    });
+    if (tx.confirmed || tx.status === 'SUCCESS') {
+      return { success: true, status: tx.status ?? 'SUCCESS' };
+    }
+    if (tx.status === 'FAILED') {
+      return {
+        success: false,
+        status: 'FAILED',
+        error: tx.error || 'Transaction failed on-chain',
+      };
+    }
+
+    await sleep(intervalMs);
+  }
+
+  return {
+    success: false,
+    status: 'TIMEOUT',
+    error:
+      'Transaction submitted but not confirmed within 60s — check the hash on stellar.expert',
+  };
 }

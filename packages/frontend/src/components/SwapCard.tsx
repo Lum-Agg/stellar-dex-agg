@@ -10,10 +10,12 @@ import { TokenSelector, type Token, TOKENS, useTokenList } from './TokenSelector
 import { displayTokenSymbol, NATIVE_CONTRACT } from '@/lib/tokenDisplay';
 import { SWAP_SUCCESS_EVENT } from '@/lib/swaps';
 import { submitTransaction } from '@/lib/wallet';
+import { waitForTxConfirmation } from '@/lib/rpc';
 import {
   buildChangeTrustXdr,
   canAddTrustlineForSac,
-  classicAssetForSac,
+  resolveClassicAssetForSac,
+  type ClassicAssetRef,
 } from '@/lib/trustline';
 import { SubmitViaToggle } from '@/components/SubmitViaToggle';
 
@@ -45,6 +47,7 @@ export function SwapCard() {
     getBalance,
     getHasTrustline,
     ensureBalance,
+    markHasTrustline,
     loading: balancesLoading,
     ready: balancesReady,
     refresh: refreshBalances,
@@ -150,10 +153,13 @@ export function SwapCard() {
 
   const [swapping, setSwapping] = useState(false);
   const [addingTrustline, setAddingTrustline] = useState(false);
+  const [resolvedClassicAsset, setResolvedClassicAsset] = useState<ClassicAssetRef | null>(null);
+  const [resolvingClassicAsset, setResolvingClassicAsset] = useState(false);
   const [txResult, setTxResult] = useState<{
     success: boolean;
     hash?: string;
     error?: string;
+    kind?: 'trustline' | 'swap';
   } | null>(null);
 
   const balanceStroops = walletAddress ? getBalance(tokenIn.id) : null;
@@ -168,6 +174,40 @@ export function SwapCard() {
     if (!walletAddress || !balancesReady) return;
     void ensureBalance(tokenOut.id);
   }, [walletAddress, balancesReady, tokenOut.id, ensureBalance]);
+
+  // Resolve SAC → classic code/issuer so any token can get a ChangeTrust CTA.
+  useEffect(() => {
+    let cancelled = false;
+    const needsResolve =
+      walletAddress !== null &&
+      outputHasTrustline === false &&
+      canAddTrustlineForSac(tokenOut.id);
+
+    if (!needsResolve) {
+      setResolvedClassicAsset(null);
+      setResolvingClassicAsset(false);
+      return;
+    }
+
+    setResolvingClassicAsset(true);
+    setResolvedClassicAsset(null);
+    void resolveClassicAssetForSac(tokenOut.id)
+      .then((asset) => {
+        if (cancelled) return;
+        setResolvedClassicAsset(asset);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setResolvedClassicAsset(null);
+      })
+      .finally(() => {
+        if (!cancelled) setResolvingClassicAsset(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [walletAddress, outputHasTrustline, tokenOut.id]);
 
   const applyBalancePercent = useCallback(
     (percent: number) => {
@@ -259,7 +299,16 @@ export function SwapCard() {
       const submitResult = await submitTransaction(signedXdr);
 
       if (submitResult.success) {
-        setTxResult({ success: true, hash: submitResult.hash });
+        const confirmed = await waitForTxConfirmation(submitResult.hash);
+        if (!confirmed.success) {
+          setTxResult({
+            success: false,
+            hash: submitResult.hash,
+            error: confirmed.error || 'Transaction not confirmed',
+          });
+          return;
+        }
+        setTxResult({ success: true, hash: submitResult.hash, kind: 'swap' });
         window.dispatchEvent(new Event(SWAP_SUCCESS_EVENT));
         setAmountIn('');
         setQuote(null);
@@ -286,25 +335,40 @@ export function SwapCard() {
 
   const handleAddTrustline = useCallback(async () => {
     if (!walletAddress) return;
-    const asset = classicAssetForSac(tokenOut.id);
-    if (!asset) {
-      setTxResult({
-        success: false,
-        error: `Add a ${tokenOut.symbol} trustline manually in your wallet, then refresh.`,
-      });
-      return;
-    }
 
     setAddingTrustline(true);
     setTxResult(null);
     try {
+      const asset =
+        resolvedClassicAsset ?? (await resolveClassicAssetForSac(tokenOut.id));
+      if (!asset) {
+        setTxResult({
+          success: false,
+          error: `Could not resolve ${tokenOut.symbol} to a classic asset. Add the trustline manually in your wallet, then refresh.`,
+        });
+        return;
+      }
+      setResolvedClassicAsset(asset);
+
       const unsignedXdr = await buildChangeTrustXdr(walletAddress, asset);
       const signedXdr = await signTx(unsignedXdr);
       const result = await submitTransaction(signedXdr);
       if (result.success) {
-        setTxResult({ success: true, hash: result.hash });
-        void refreshBalances();
-        void ensureBalance(tokenOut.id);
+        const confirmed = await waitForTxConfirmation(result.hash, {
+          trustline: { account: walletAddress, token: tokenOut.id },
+          intervalMs: 1000,
+        });
+        if (!confirmed.success) {
+          setTxResult({
+            success: false,
+            hash: result.hash,
+            error: confirmed.error || 'Trustline not confirmed',
+          });
+          return;
+        }
+        markHasTrustline(tokenOut.id, true);
+        setTxResult({ success: true, hash: result.hash, kind: 'trustline' });
+        void refreshBalances().then(() => ensureBalance(tokenOut.id, { force: true }));
       } else {
         setTxResult({ success: false, error: result.error || 'Failed to add trustline' });
       }
@@ -318,9 +382,11 @@ export function SwapCard() {
     walletAddress,
     tokenOut.id,
     tokenOut.symbol,
+    resolvedClassicAsset,
     signTx,
     refreshBalances,
-    ensureBalance
+    ensureBalance,
+    markHasTrustline,
   ]);
 
   const handlePrimaryAction = useCallback(() => {
@@ -336,34 +402,41 @@ export function SwapCard() {
   }, [walletAddress, connect, handleSwap, outputHasTrustline, handleAddTrustline]);
 
   const needsTrustline = walletAddress !== null && outputHasTrustline === false;
-  const canAutoAddTrustline = needsTrustline && canAddTrustlineForSac(tokenOut.id);
+  const canAutoAddTrustline = needsTrustline && resolvedClassicAsset !== null;
+  const trustlineLookupPending =
+    needsTrustline && resolvingClassicAsset && resolvedClassicAsset === null;
+  const trustlineUnresolved =
+    needsTrustline && !resolvingClassicAsset && resolvedClassicAsset === null;
 
   const primaryDisabled =
     connecting ||
     swapping ||
     addingTrustline ||
-    (needsTrustline && !canAutoAddTrustline) ||
+    trustlineLookupPending ||
+    trustlineUnresolved ||
     (walletAddress !== null && !needsTrustline && (loading || !quote || !amountIn));
 
   const primaryLabel = connecting
     ? 'Connecting...'
     : addingTrustline
-      ? 'Adding trustline...'
-      : swapping
-        ? 'Submitting...'
-        : loading && walletAddress && !needsTrustline
-          ? 'Finding best route...'
-          : !walletAddress
-            ? 'Connect wallet to swap'
-            : needsTrustline
-              ? canAutoAddTrustline
-                ? `Add ${tokenOut.symbol} trustline`
-                : `Add ${tokenOut.symbol} trustline in wallet`
-              : !amountIn
-                ? 'Enter amount'
-                : !quote
-                  ? 'No route available'
-                  : 'Review & swap';
+      ? 'Confirming trustline...'
+      : trustlineLookupPending
+        ? 'Looking up trustline...'
+        : swapping
+          ? 'Submitting...'
+          : loading && walletAddress && !needsTrustline
+            ? 'Finding best route...'
+            : !walletAddress
+              ? 'Connect wallet to swap'
+              : needsTrustline
+                ? canAutoAddTrustline
+                  ? `Add ${tokenOut.symbol} trustline`
+                  : `Add ${tokenOut.symbol} trustline in wallet`
+                : !amountIn
+                  ? 'Enter amount'
+                  : !quote
+                    ? 'No route available'
+                    : 'Review & swap';
 
   return (
     <div className="w-full max-w-none space-y-3">
@@ -583,7 +656,9 @@ export function SwapCard() {
           <div className="mt-3 text-[13px] text-amber-200/90 border border-amber-500/20 bg-amber-500/[0.06] rounded-xl px-3 py-2.5 text-center">
             {canAutoAddTrustline
               ? `Your wallet cannot receive ${tokenOut.symbol} yet. Add a trustline (~0.5 XLM reserve), then swap.`
-              : `Add a ${tokenOut.symbol} trustline in your wallet before swapping (~0.5 XLM reserve).`}
+              : trustlineLookupPending
+                ? `Looking up ${tokenOut.symbol} trustline details…`
+                : `Could not auto-build a ${tokenOut.symbol} trustline (not a classic SAC). Add it in your wallet (~0.5 XLM reserve), then refresh.`}
           </div>
         )}
 
@@ -604,8 +679,8 @@ export function SwapCard() {
           >
             {txResult.success ? (
               <div>
-                {needsTrustline || addingTrustline
-                  ? 'Trustline added. '
+                {txResult.kind === 'trustline'
+                  ? 'Trustline added. You can swap now. '
                   : 'Swap submitted successfully. '}
                 <a
                   href={`https://stellar.expert/explorer/public/tx/${txResult.hash}`}
