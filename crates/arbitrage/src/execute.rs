@@ -40,9 +40,9 @@ pub struct PreparedArbTx {
     pub simulated: bool,
 }
 
-/// Reuse scanner quote (already sized/optimized). Cap by config max.
-fn quote_for_execute<'a>(ctx: &ArbContext, opp: &'a ArbOpportunity) -> Option<&'a RoundTripQuote> {
-    let max_in = resolve_max_amount_in(ctx, &opp.quote.base.canonical());
+/// Reuse scanner quote (already sized/optimized). Cap by config/vault max.
+async fn quote_for_execute<'a>(ctx: &ArbContext, opp: &'a ArbOpportunity) -> Option<&'a RoundTripQuote> {
+    let max_in = resolve_max_amount_in(ctx, &opp.quote.base.canonical()).await;
     if opp.quote.amount_in < ctx.config.min_amount_in || opp.quote.amount_in > max_in {
         return None;
     }
@@ -98,7 +98,7 @@ pub async fn prepare_opportunity_tx(
         return Ok(None);
     };
 
-    let Some(initial) = quote_for_execute(ctx, opp) else {
+    let Some(initial) = quote_for_execute(ctx, opp).await else {
         return Ok(None);
     };
     let mut quote = initial.clone();

@@ -35,7 +35,7 @@ pub async fn evaluate_bridge_pair(
     bridge: &TokenId,
     stats: &ArbStats,
 ) -> Result<Option<ArbOpportunity>> {
-    let max_in = resolve_max_amount_in(ctx, &base.canonical());
+    let max_in = resolve_max_amount_in(ctx, &base.canonical()).await;
     if max_in < ctx.config.min_amount_in {
         return Ok(None);
     }
@@ -44,7 +44,9 @@ pub async fn evaluate_bridge_pair(
         return Ok(None);
     };
 
-    let quote = if ctx.config.optimize_amount && probe.profit() >= ctx.config.min_profit {
+    // Always size-search when enabled — small probe can be flat while a larger
+    // size clears ARB_MIN_PROFIT (still gated below after optimize).
+    let quote = if ctx.config.optimize_amount {
         optimize_round_trip(
             ctx,
             base,
@@ -112,7 +114,7 @@ async fn scan_with_context(runtime: &ArbRuntime, ctx: &ArbContext) -> Result<Vec
 
     for base in &ctx.config.base_tokens {
         let mut quoted = 0usize;
-        let max_in = resolve_max_amount_in(ctx, &base.canonical());
+        let max_in = resolve_max_amount_in(ctx, &base.canonical()).await;
         if max_in < ctx.config.min_amount_in {
             warn!(
                 base = %base.canonical(),

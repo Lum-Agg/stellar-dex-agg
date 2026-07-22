@@ -71,7 +71,8 @@ Copy [scripts/arb.env.example](../scripts/arb.env.example) → `deploy/arb.env` 
 | `ARB_SUBMIT_TX`                            | `0` = build/simulate only; `1` = live submit |
 | `ARB_DRY_RUN`                              | `1` = log opportunities without chain tx     |
 | `ARB_MIN_PROFIT`                           | Net profit floor after fees (stroops)        |
-| `ARB_MAX_AMOUNT_IN`                        | Soft ceiling; vault float is hard cap        |
+| `ARB_MAX_AMOUNT_IN`                        | Soft ceiling; also capped by vault base SAC balance when vault is set |
+| `ARB_OPTIMIZE_AMOUNT`                      | `1` (default) = always log-space size search (even if probe is flat) |
 | `ARB_TELEGRAM_INTERVAL_SECS`               | Hourly P&L report (optional)                 |
 
 
@@ -109,7 +110,7 @@ systemctl status lumagg-arb
 
 ### Quote → sim funnel (long-term)
 
-Local quotes can look profitable while Soroban simulation loses ~20 bps. Prefer fixing the **quote path** (fresher pool state / venue math) over execution-side workarounds.
+Local quotes can look profitable while Soroban simulation loses ~20 bps. Prefer fixing the **quote path** (fresher pool state / venue math / optional on-chain hop validation) over execution-side workarounds. Scanner already size-optimizes even when the 10 XLM probe is flat; post-fee `ARB_MIN_PROFIT` still applies after simulate.
 
 Every 5 minutes `arb stats summary` logs:
 

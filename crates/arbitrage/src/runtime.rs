@@ -40,7 +40,12 @@ impl ArbRuntime {
     }
 
     pub async fn connect(&self) -> Result<ArbContext> {
-        ArbContext::connect_with_ledger_cache(self.config.clone(), self.latest_ledger.clone()).await
+        ArbContext::connect_with_caches(
+            self.config.clone(),
+            self.latest_ledger.clone(),
+            Arc::new(crate::vault::VaultBalanceCache::new()),
+        )
+        .await
     }
 
     pub fn build_enabled(&self) -> bool {
