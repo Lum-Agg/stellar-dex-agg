@@ -1,5 +1,5 @@
 /**
- * LumAgg TypeScript SDK — quote + build_tx (production REST surface).
+ * LumAgg TypeScript SDK — quote, build_tx, wallet helpers, submit/poll.
  */
 export interface ClientOptions {
     apiUrl: string;
@@ -136,6 +136,39 @@ export interface PricePoint {
     ts: number;
     priceUsdc: number;
 }
+export interface BalanceResult {
+    balance?: string;
+    hasTrustline?: boolean;
+}
+export interface BalancesResult {
+    account: string;
+    scope: string;
+    tokensQueried: string[];
+    balances: Record<string, string>;
+    hasTrustline: Record<string, boolean>;
+    updatedAtMs: number;
+}
+export interface AccountResult {
+    sequence: string;
+}
+export interface ClassicAssetResult {
+    code?: string;
+    issuer?: string;
+}
+export interface SubmitTxResult {
+    hash: string;
+    status?: string;
+}
+export interface TxStatusResult {
+    hash?: string;
+    status?: string;
+    confirmed: boolean;
+    error?: string;
+}
+export interface WaitForTxOptions {
+    timeoutMs?: number;
+    intervalMs?: number;
+}
 export interface TokenInfo {
     id: string;
     symbol: string;
@@ -170,6 +203,30 @@ export declare class LumAggClient {
     listSwaps(params: ListSwapsParams): Promise<SwapRecord[]>;
     getPrices(ids: string[]): Promise<PriceQuote[]>;
     getPriceHistory(id: string, range?: '24h' | '7d'): Promise<PricePoint[]>;
+    getBalance(params: {
+        account: string;
+        token: string;
+    }): Promise<BalanceResult>;
+    getBalances(params: {
+        account: string;
+    }): Promise<BalancesResult>;
+    getAccount(params: {
+        account: string;
+    }): Promise<AccountResult>;
+    getClassicAsset(params: {
+        contract: string;
+    }): Promise<ClassicAssetResult>;
+    getLatestLedger(): Promise<{
+        sequence: number;
+    }>;
+    submitTx(params: {
+        signedTxXdr: string;
+    }): Promise<SubmitTxResult>;
+    getTxStatus(params: {
+        hash: string;
+    }): Promise<TxStatusResult>;
+    /** Poll `/tx_status` until SUCCESS, FAILED, or timeout. */
+    waitForTx(hash: string, opts?: WaitForTxOptions): Promise<TxStatusResult>;
     /** Public on-chain stats from analytics-indexer (Tranche 3). */
     getStats(params?: StatsParams): Promise<StatsResult | string>;
 }

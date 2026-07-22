@@ -1,5 +1,5 @@
 /**
- * LumAgg TypeScript SDK — quote + build_tx (production REST surface).
+ * LumAgg TypeScript SDK — quote, build_tx, wallet helpers, submit/poll.
  */
 
 export interface ClientOptions {
@@ -151,6 +151,46 @@ export interface PriceQuote {
 export interface PricePoint {
   ts: number;
   priceUsdc: number;
+}
+
+export interface BalanceResult {
+  balance?: string;
+  hasTrustline?: boolean;
+}
+
+export interface BalancesResult {
+  account: string;
+  scope: string;
+  tokensQueried: string[];
+  balances: Record<string, string>;
+  hasTrustline: Record<string, boolean>;
+  updatedAtMs: number;
+}
+
+export interface AccountResult {
+  sequence: string;
+}
+
+export interface ClassicAssetResult {
+  code?: string;
+  issuer?: string;
+}
+
+export interface SubmitTxResult {
+  hash: string;
+  status?: string;
+}
+
+export interface TxStatusResult {
+  hash?: string;
+  status?: string;
+  confirmed: boolean;
+  error?: string;
+}
+
+export interface WaitForTxOptions {
+  timeoutMs?: number;
+  intervalMs?: number;
 }
 
 export interface TokenInfo {
@@ -396,6 +436,125 @@ export class LumAggClient {
       ts: Number(r.ts ?? 0),
       priceUsdc: Number(r.price_usdc ?? 0),
     }));
+  }
+
+  async getBalance(params: { account: string; token: string }): Promise<BalanceResult> {
+    const search = new URLSearchParams({
+      account: params.account,
+      token: params.token,
+    });
+    const resp = await fetch(`${this.baseUrl}/api/v1/balance?${search}`, {
+      headers: this.headers(),
+    });
+    const json = await resp.json();
+    if (!json.success) throw new Error(json.error || 'getBalance failed');
+    return {
+      balance: json.balance != null ? String(json.balance) : undefined,
+      hasTrustline: typeof json.has_trustline === 'boolean' ? json.has_trustline : undefined,
+    };
+  }
+
+  async getBalances(params: { account: string }): Promise<BalancesResult> {
+    const search = new URLSearchParams({ account: params.account });
+    const resp = await fetch(`${this.baseUrl}/api/v1/balances?${search}`, {
+      headers: this.headers(),
+    });
+    const json = await resp.json();
+    if (!json.success) throw new Error(json.error || 'getBalances failed');
+    return {
+      account: String(json.account ?? params.account),
+      scope: String(json.scope ?? 'common'),
+      tokensQueried: Array.isArray(json.tokens_queried)
+        ? json.tokens_queried.map((t: unknown) => String(t))
+        : [],
+      balances: (json.balances ?? {}) as Record<string, string>,
+      hasTrustline: (json.has_trustline ?? {}) as Record<string, boolean>,
+      updatedAtMs: Number(json.updated_at_ms ?? 0),
+    };
+  }
+
+  async getAccount(params: { account: string }): Promise<AccountResult> {
+    const search = new URLSearchParams({ account: params.account });
+    const resp = await fetch(`${this.baseUrl}/api/v1/account?${search}`, {
+      headers: this.headers(),
+    });
+    const json = await resp.json();
+    if (!json.success) throw new Error(json.error || 'getAccount failed');
+    if (json.sequence == null) throw new Error('getAccount: missing sequence');
+    return { sequence: String(json.sequence) };
+  }
+
+  async getClassicAsset(params: { contract: string }): Promise<ClassicAssetResult> {
+    const search = new URLSearchParams({ contract: params.contract });
+    const resp = await fetch(`${this.baseUrl}/api/v1/classic_asset?${search}`, {
+      headers: this.headers(),
+    });
+    const json = await resp.json();
+    if (!json.success) throw new Error(json.error || 'getClassicAsset failed');
+    return {
+      code: json.code != null ? String(json.code) : undefined,
+      issuer: json.issuer != null ? String(json.issuer) : undefined,
+    };
+  }
+
+  async getLatestLedger(): Promise<{ sequence: number }> {
+    const resp = await fetch(`${this.baseUrl}/api/v1/ledger/latest`, {
+      headers: this.headers(),
+    });
+    const json = await resp.json();
+    if (!json.success) throw new Error(json.error || 'getLatestLedger failed');
+    return { sequence: Number(json.sequence ?? 0) };
+  }
+
+  async submitTx(params: { signedTxXdr: string }): Promise<SubmitTxResult> {
+    const resp = await fetch(`${this.baseUrl}/api/v1/submit_tx`, {
+      method: 'POST',
+      headers: this.headers(true),
+      body: JSON.stringify({ signed_tx_xdr: params.signedTxXdr }),
+    });
+    const json = await resp.json();
+    if (!json.success) throw new Error(json.error || 'submitTx failed');
+    const hash = String(json.hash ?? '');
+    if (!hash) throw new Error('submitTx: missing hash');
+    return {
+      hash,
+      status: json.status != null ? String(json.status) : undefined,
+    };
+  }
+
+  async getTxStatus(params: { hash: string }): Promise<TxStatusResult> {
+    const search = new URLSearchParams({ hash: params.hash });
+    const resp = await fetch(`${this.baseUrl}/api/v1/tx_status?${search}`, {
+      headers: this.headers(),
+    });
+    const json = await resp.json();
+    if (!json.success && json.error) {
+      return {
+        hash: json.hash != null ? String(json.hash) : params.hash,
+        status: json.status != null ? String(json.status) : undefined,
+        confirmed: Boolean(json.confirmed),
+        error: String(json.error),
+      };
+    }
+    return {
+      hash: json.hash != null ? String(json.hash) : params.hash,
+      status: json.status != null ? String(json.status) : undefined,
+      confirmed: Boolean(json.confirmed),
+      error: json.error != null ? String(json.error) : undefined,
+    };
+  }
+
+  /** Poll `/tx_status` until SUCCESS, FAILED, or timeout. */
+  async waitForTx(hash: string, opts: WaitForTxOptions = {}): Promise<TxStatusResult> {
+    const timeoutMs = opts.timeoutMs ?? 60_000;
+    const intervalMs = opts.intervalMs ?? 1_000;
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const st = await this.getTxStatus({ hash });
+      if (st.confirmed || st.status === 'FAILED') return st;
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+    throw new Error(`waitForTx timeout after ${timeoutMs}ms (hash=${hash})`);
   }
 
   /** Public on-chain stats from analytics-indexer (Tranche 3). */
