@@ -85,15 +85,6 @@ paths:
             enum: [0, 1]
             default: 0
           description: When `1`, exclude Classic SDEX — Soroban AMMs only
-        - name: on_chain_validate
-          in: query
-          required: false
-          schema:
-            type: integer
-            enum: [0, 1]
-          description: |
-            When `1`, re-quote hop outputs via on-chain pool math (slower).
-            Omit = server `QUOTE_ON_CHAIN_VALIDATE` env (default off). Used by arb / diagnostics.
         - name: debug
           in: query
           required: false
