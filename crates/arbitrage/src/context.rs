@@ -1,10 +1,7 @@
 //! Arb runtime context: quote-api client.
 
 use {
-    crate::{
-        config::ArbConfig, prepare::LatestLedgerCache, quote_client::QuoteApiClient,
-        vault::VaultBalanceCache,
-    },
+    crate::{config::ArbConfig, prepare::LatestLedgerCache, quote_client::QuoteApiClient, vault::VaultBalanceCache},
     anyhow::Result,
     std::sync::Arc,
 };

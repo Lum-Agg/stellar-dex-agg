@@ -248,7 +248,8 @@ impl SorobanRpc {
     /// Account sequence from `getLedgerEntries` (Account ledger key).
     ///
     /// Some RPC nodes return `LedgerEntry`, others `LedgerEntryData` / bare
-    /// `AccountEntry` in the `xdr` field — try all shapes (same as arb prepare).
+    /// `AccountEntry` in the `xdr` field — try all shapes (same as arb
+    /// prepare).
     pub async fn get_account_sequence(&self, public_key: &str) -> Result<i64> {
         use stellar_xdr::curr::{Limits, ReadXdr, WriteXdr};
 

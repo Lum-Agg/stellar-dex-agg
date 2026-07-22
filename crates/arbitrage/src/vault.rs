@@ -4,13 +4,13 @@ use {
     crate::context::ArbContext,
     anyhow::Result,
     dex_adapters::rpc::{scval_to_i128, SorobanRpc},
-    stellar_strkey::Contract,
-    stellar_xdr::curr as xdr,
     std::{
         collections::HashMap,
         sync::Mutex,
         time::{Duration, Instant},
     },
+    stellar_strkey::Contract,
+    stellar_xdr::curr as xdr,
 };
 
 const MAINNET_PASSPHRASE: &str = "Public Global Stellar Network ; September 2015";
@@ -71,11 +71,7 @@ pub async fn resolve_max_amount_in(ctx: &ArbContext, base_token: &str) -> u128 {
     let Some(vault) = ctx.config.vault_contract.as_deref() else {
         return cfg_max;
     };
-    match ctx
-        .vault_balances
-        .get(&ctx.config.rpc_url, vault, base_token)
-        .await
-    {
+    match ctx.vault_balances.get(&ctx.config.rpc_url, vault, base_token).await {
         Ok(bal) => cfg_max.min(bal),
         Err(e) => {
             tracing::warn!(

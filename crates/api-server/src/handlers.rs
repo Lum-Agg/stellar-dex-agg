@@ -1145,7 +1145,8 @@ pub(crate) fn parse_expert_asset_field(asset: &str) -> Option<(String, String)> 
     Some((code.to_string(), issuer))
 }
 
-/// Resolve a Stellar Asset Contract to its classic code + issuer (for ChangeTrust).
+/// Resolve a Stellar Asset Contract to its classic code + issuer (for
+/// ChangeTrust).
 pub async fn get_classic_asset(Query(query): Query<ClassicAssetQuery>) -> impl IntoResponse {
     let contract = query.contract.trim();
     if contract.is_empty() {
@@ -1197,10 +1198,7 @@ pub async fn get_classic_asset(Query(query): Query<ClassicAssetQuery>) -> impl I
         }
     }
 
-    let url = format!(
-        "https://api.stellar.expert/explorer/public/contract/{}",
-        contract
-    );
+    let url = format!("https://api.stellar.expert/explorer/public/contract/{}", contract);
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(8))
         .build()
@@ -1234,10 +1232,7 @@ pub async fn get_classic_asset(Query(query): Query<ClassicAssetQuery>) -> impl I
                     success: false,
                     code: None,
                     issuer: None,
-                    error: Some(
-                        "Contract is not a classic SAC (no linked asset); trustline N/A"
-                            .to_string(),
-                    ),
+                    error: Some("Contract is not a classic SAC (no linked asset); trustline N/A".to_string()),
                 });
             };
             match parse_expert_asset_field(asset_str) {
@@ -1259,10 +1254,7 @@ pub async fn get_classic_asset(Query(query): Query<ClassicAssetQuery>) -> impl I
             success: false,
             code: None,
             issuer: None,
-            error: Some(format!(
-                "Asset lookup failed ({})",
-                resp.status().as_u16()
-            )),
+            error: Some(format!("Asset lookup failed ({})", resp.status().as_u16())),
         }),
         Err(e) => Json(ClassicAssetResponse {
             success: false,
@@ -1369,7 +1361,8 @@ pub async fn submit_tx(State(state): State<AppState>, Json(body): Json<SubmitTxR
         );
     }
 
-    // Fast return: enqueue only. Clients poll `/api/v1/tx_status` (or balance) for inclusion.
+    // Fast return: enqueue only. Clients poll `/api/v1/tx_status` (or balance) for
+    // inclusion.
     let mut attempts = 0u32;
     loop {
         match state.rpc.send_transaction(signed_tx_xdr).await {
@@ -1398,9 +1391,11 @@ pub async fn submit_tx(State(state): State<AppState>, Json(body): Json<SubmitTxR
                         error: if accepted {
                             None
                         } else {
-                            Some(result.error_result_xdr.unwrap_or_else(|| {
-                                format!("Transaction rejected (status={})", result.status)
-                            }))
+                            Some(
+                                result
+                                    .error_result_xdr
+                                    .unwrap_or_else(|| format!("Transaction rejected (status={})", result.status)),
+                            )
                         },
                     }),
                 );
@@ -1440,10 +1435,7 @@ pub struct TxStatusResponse {
 }
 
 /// GET /api/v1/tx_status?hash=… — poll after fast `/api/v1/submit_tx`.
-pub async fn get_tx_status(
-    State(state): State<AppState>,
-    Query(query): Query<TxStatusQuery>,
-) -> impl IntoResponse {
+pub async fn get_tx_status(State(state): State<AppState>, Query(query): Query<TxStatusQuery>) -> impl IntoResponse {
     let hash = query.hash.trim();
     if hash.is_empty() {
         return Json(TxStatusResponse {
@@ -1960,18 +1952,14 @@ mod classic_dest_min_tests {
     #[test]
     fn parses_expert_asset_field() {
         assert_eq!(
-            parse_expert_asset_field(
-                "FADA-GCX3Y4MNI7ZQBQEZQMAXRFVODVFB2PRQS4LTUHP5B34MEYQQTW5LQFLR-1"
-            ),
+            parse_expert_asset_field("FADA-GCX3Y4MNI7ZQBQEZQMAXRFVODVFB2PRQS4LTUHP5B34MEYQQTW5LQFLR-1"),
             Some((
                 "FADA".to_string(),
                 "GCX3Y4MNI7ZQBQEZQMAXRFVODVFB2PRQS4LTUHP5B34MEYQQTW5LQFLR".to_string()
             ))
         );
         assert_eq!(
-            parse_expert_asset_field(
-                "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN-1"
-            ),
+            parse_expert_asset_field("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN-1"),
             Some((
                 "USDC".to_string(),
                 "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN".to_string()
