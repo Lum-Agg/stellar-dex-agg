@@ -7,6 +7,7 @@ use {
         Json,
     },
     router_engine::{
+        apply_on_chain_hop_validation,
         types::{RouteRequest, TokenId},
         QuoteEngine,
     },
@@ -73,6 +74,9 @@ pub struct QuoteQuery {
     pub max_hops: Option<usize>,
     /// Max parallel sub-routes in a split quote. Omit = server default.
     pub max_splits: Option<usize>,
+    /// When `1`, re-quote selected hops via on-chain pool math (slower; for arb / diagnostics).
+    /// Omit = use server env `QUOTE_ON_CHAIN_VALIDATE` (default off).
+    pub on_chain_validate: Option<u8>,
 }
 
 #[derive(Serialize)]
@@ -94,6 +98,9 @@ pub struct QuoteData {
     pub is_split: bool,
     pub sub_routes: Vec<SubRouteData>,
     pub compute_time_ms: u64,
+    /// True when this response applied on-chain hop validation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_chain_validated: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub debug: Option<QuoteDebugData>,
 }
@@ -176,6 +183,12 @@ pub async fn get_quote(State(state): State<AppState>, Query(params): Query<Quote
 
     let slippage_bps = params.slippage.map(|s| (s * 100.0) as u32).unwrap_or(50); // default 0.5%
     let include_debug = params.debug.unwrap_or(0) != 0;
+    let on_chain_validate = match params.on_chain_validate {
+        Some(v) => v != 0,
+        None => std::env::var("QUOTE_ON_CHAIN_VALIDATE")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false),
+    };
 
     let request = RouteRequest {
         token_in: TokenId::from_str_auto(&params.token_in),
@@ -188,7 +201,19 @@ pub async fn get_quote(State(state): State<AppState>, Query(params): Query<Quote
     };
 
     let engine = state.current_engine().await;
-    let route = state.quote_route(&request).await;
+    let mut route = state.quote_route(&request).await;
+
+    if on_chain_validate && !route.sub_orders.is_empty() {
+        let before = route.total_expected_out;
+        route = apply_on_chain_hop_validation(&state.rpc, &engine, route, slippage_bps).await;
+        tracing::info!(
+            on_chain_validate = true,
+            before_out = before,
+            after_out = route.total_expected_out,
+            delta = before as i128 - route.total_expected_out as i128,
+            "quote on-chain hop validation"
+        );
+    }
 
     if route.sub_orders.is_empty() {
         return (
@@ -255,6 +280,7 @@ pub async fn get_quote(State(state): State<AppState>, Query(params): Query<Quote
                 is_split: route.is_split,
                 sub_routes,
                 compute_time_ms: route.compute_time_ms,
+                on_chain_validated: on_chain_validate.then_some(true),
                 debug: if include_debug {
                     route.debug.as_ref().map(|d| QuoteDebugData {
                         quoted_paths_count: d.quoted_paths_count,
@@ -490,6 +516,7 @@ pub async fn build_swap(State(state): State<AppState>, Json(body): Json<SwapRequ
                         is_split: route.is_split,
                         sub_routes,
                         compute_time_ms: route.compute_time_ms,
+                        on_chain_validated: None,
                         debug: None,
                     },
                 }),

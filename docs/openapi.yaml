@@ -85,6 +85,15 @@ paths:
             enum: [0, 1]
             default: 0
           description: When `1`, exclude Classic SDEX — Soroban AMMs only
+        - name: on_chain_validate
+          in: query
+          required: false
+          schema:
+            type: integer
+            enum: [0, 1]
+          description: |
+            When `1`, re-quote hop outputs via on-chain pool math (slower).
+            Omit = server `QUOTE_ON_CHAIN_VALIDATE` env (default off). Used by arb / diagnostics.
         - name: debug
           in: query
           required: false
@@ -540,6 +549,9 @@ components:
                 $ref: '#/components/schemas/SubRoute'
             compute_time_ms:
               type: integer
+            on_chain_validated:
+              type: boolean
+              description: Present and true when on-chain hop validation ran for this quote
         error:
           type: string
     SubRoute:

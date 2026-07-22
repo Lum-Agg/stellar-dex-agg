@@ -34,6 +34,8 @@ pub struct ArbConfig {
     pub slippage_bps: u32,
     pub max_hops: usize,
     pub max_splits: usize,
+    /// Request `on_chain_validate=1` on quote-api (arb default on).
+    pub on_chain_validate: bool,
     /// Delay between full base×bridge cycles (milliseconds). 0 = no pause.
     pub scan_interval_ms: u64,
     /// Gap between yielding consecutive bridge scan items (milliseconds).
@@ -122,6 +124,11 @@ impl ArbConfig {
             .and_then(|v| v.parse().ok())
             .unwrap_or(1);
 
+        let on_chain_validate = std::env::var("ARB_ON_CHAIN_VALIDATE")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(true);
+
         let scan_interval_ms = std::env::var("ARB_SCAN_INTERVAL_MS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
@@ -205,6 +212,7 @@ impl ArbConfig {
             slippage_bps,
             max_hops,
             max_splits,
+            on_chain_validate,
             scan_interval_ms,
             item_gap_ms,
             worker_count,

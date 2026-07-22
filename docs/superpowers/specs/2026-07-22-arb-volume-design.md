@@ -38,8 +38,13 @@ When no vault (direct aggregator mode), behavior unchanged (config ceiling only)
 
 - Lowering `ARB_MIN_PROFIT`
 - Default `ARB_MAX_SPLITS > 1`
-- Wiring on-chain hop validation into quote hot path (next pass)
 - Bridge token list expansion (ops / suggest script)
+
+## Follow-up (done 2026-07-22)
+
+Opt-in on-chain hop validation on quote-api:
+- Query `on_chain_validate=1` or env `QUOTE_ON_CHAIN_VALIDATE=1`
+- Arb default `ARB_ON_CHAIN_VALIDATE=1` appends the query param
 
 ## Success
 

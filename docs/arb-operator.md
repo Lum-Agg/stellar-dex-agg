@@ -73,6 +73,7 @@ Copy [scripts/arb.env.example](../scripts/arb.env.example) → `deploy/arb.env` 
 | `ARB_MIN_PROFIT`                           | Net profit floor after fees (stroops)        |
 | `ARB_MAX_AMOUNT_IN`                        | Soft ceiling; also capped by vault base SAC balance when vault is set |
 | `ARB_OPTIMIZE_AMOUNT`                      | `1` (default) = always log-space size search (even if probe is flat) |
+| `ARB_ON_CHAIN_VALIDATE`                    | `1` (default) = quote-api `on_chain_validate=1` (slower, fewer phantom opps) |
 | `ARB_TELEGRAM_INTERVAL_SECS`               | Hourly P&L report (optional)                 |
 
 
@@ -111,6 +112,17 @@ systemctl status lumagg-arb
 ### Quote → sim funnel (long-term)
 
 Local quotes can look profitable while Soroban simulation loses ~20 bps. Prefer fixing the **quote path** (fresher pool state / venue math / optional on-chain hop validation) over execution-side workarounds. Scanner already size-optimizes even when the 10 XLM probe is flat; post-fee `ARB_MIN_PROFIT` still applies after simulate.
+
+Arb requests quote-api with `on_chain_validate=1` by default (`ARB_ON_CHAIN_VALIDATE`). Retail UI leaves it off. Manual check:
+
+```bash
+curl -sG https://api.lumagg.xyz/api/v1/quote \
+  --data-urlencode "token_in=$XLM" \
+  --data-urlencode "token_out=$USDC" \
+  --data-urlencode "amount_in=100000000" \
+  --data-urlencode "prefer_soroban=1" \
+  --data-urlencode "on_chain_validate=1" | jq '.data | {expected_output, on_chain_validated}'
+```
 
 Every 5 minutes `arb stats summary` logs:
 

@@ -94,7 +94,7 @@ impl QuoteApiClient {
 
         let slippage_pct = config.slippage_bps as f64 / 100.0;
         let base_url = self.next_base_url();
-        let url = format!(
+        let mut url = format!(
             "{base_url}/api/v1/quote?token_in={}&token_out={}&amount_in={}&slippage={slippage_pct}&prefer_soroban=1&max_hops={}&max_splits={}",
             token_in.canonical(),
             token_out.canonical(),
@@ -102,6 +102,9 @@ impl QuoteApiClient {
             config.max_hops,
             config.max_splits,
         );
+        if config.on_chain_validate {
+            url.push_str("&on_chain_validate=1");
+        }
 
         let resp = self.http.get(&url).send().await.with_context(|| format!("GET {url}"))?;
 
