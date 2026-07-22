@@ -414,12 +414,20 @@ function SharePanel({
   entries: [string, number][];
   colorFn: (name: string, index: number) => string;
 }) {
-  const total = entries.reduce((s, [, n]) => s + n, 0) || 1;
+  const totalCount = entries.reduce((s, [, n]) => s + n, 0);
+  const total = totalCount || 1;
 
   return (
     <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/60 px-4 sm:px-5 py-4">
-      <h2 className="text-[15px] font-medium text-[var(--text-primary)]">{title}</h2>
-      <p className="text-[12px] text-[var(--text-primary)]0 mt-0.5 mb-4">{subtitle}</p>
+      <div className="flex items-start justify-between gap-3 mb-0.5">
+        <h2 className="text-[15px] font-medium text-[var(--text-primary)]">{title}</h2>
+        {totalCount > 0 && (
+          <span className="text-[12px] text-[var(--text-muted)] tabular-nums shrink-0">
+            Total {totalCount.toLocaleString()}
+          </span>
+        )}
+      </div>
+      <p className="text-[12px] text-[var(--text-muted)] mt-0.5 mb-4">{subtitle}</p>
       {entries.length === 0 ? (
         <p className="text-[13px] text-[var(--text-muted)]">No data yet</p>
       ) : (
@@ -431,8 +439,8 @@ function SharePanel({
               <li key={name}>
                 <div className="flex items-center justify-between gap-2 text-[12px] mb-1.5">
                   <span className="text-[var(--text-secondary)] font-medium truncate">{name}</span>
-                  <span className="text-[var(--text-primary)]0 tabular-nums shrink-0">
-                    {count.toLocaleString()} · {pct.toFixed(pct >= 10 ? 0 : 1)}%
+                  <span className="text-[var(--text-muted)] tabular-nums shrink-0">
+                    {count.toLocaleString()} · {pct.toFixed(1)}%
                   </span>
                 </div>
                 <div className="h-2 rounded-full bg-[var(--surface-raised)] overflow-hidden">
