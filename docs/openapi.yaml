@@ -540,9 +540,6 @@ components:
                 $ref: '#/components/schemas/SubRoute'
             compute_time_ms:
               type: integer
-            on_chain_validated:
-              type: boolean
-              description: Present and true when on-chain hop validation ran for this quote
         error:
           type: string
     SubRoute:
