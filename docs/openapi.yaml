@@ -7,7 +7,7 @@ info:
 
     **Rate limits:** 10 req/s per IP; 60 req/s with valid `X-API-Key` (partner keys).
     See [integrator-guide.md](./integrator-guide.md).
-  version: 1.0.0
+  version: 1.1.0
   license:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -21,6 +21,8 @@ tags:
   - name: tokens
   - name: prices
   - name: orders
+  - name: wallet
+  - name: tx
   - name: health
 paths:
   /api/v1/health:
@@ -337,6 +339,146 @@ paths:
                 $ref: '#/components/schemas/PriceHistoryResponse'
         '400':
           description: Missing or invalid `id` / `range`
+  /api/v1/balance:
+    get:
+      tags: [wallet]
+      summary: Single SAC balance + trustline hint
+      description: |
+        Simulates SAC `balance` for `account`/`token`. Native XLM SAC always reports
+        `has_trustline: true`. Missing classic trustline yields `balance: "0"` and
+        `has_trustline: false` when detectable.
+      parameters:
+        - name: account
+          in: query
+          required: true
+          schema:
+            type: string
+            example: "GA6RKSBPI2TSP52OW2IJTPK7LRMX24DF42KF3FBGBNMBYCV6NPDMOCBY"
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+            example: "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
+      responses:
+        '200':
+          description: BalanceResponse
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BalanceResponse'
+  /api/v1/balances:
+    get:
+      tags: [wallet]
+      summary: Common-token balances for account
+      description: Batch balances for curated common token ids (same set as portfolio).
+      parameters:
+        - name: account
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: BalancesResponse
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BalancesResponse'
+  /api/v1/account:
+    get:
+      tags: [wallet]
+      summary: Account sequence via Soroban RPC
+      parameters:
+        - name: account
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: AccountResponse
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+  /api/v1/classic_asset:
+    get:
+      tags: [wallet]
+      summary: Resolve SAC contract to classic code/issuer
+      parameters:
+        - name: contract
+          in: query
+          required: true
+          schema:
+            type: string
+            description: SAC contract id (`C…`)
+      responses:
+        '200':
+          description: ClassicAssetResponse
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClassicAssetResponse'
+  /api/v1/ledger/latest:
+    get:
+      tags: [wallet]
+      summary: Latest closed ledger sequence
+      responses:
+        '200':
+          description: LatestLedgerResponse
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LatestLedgerResponse'
+  /api/v1/submit_tx:
+    post:
+      tags: [tx]
+      summary: Submit signed XDR (fast enqueue)
+      description: |
+        Proxies signed envelope to the server Soroban RPC and returns quickly
+        (`PENDING` / hash). Poll `GET /api/v1/tx_status` for inclusion.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [signed_tx_xdr]
+              properties:
+                signed_tx_xdr:
+                  type: string
+                  description: Base64 signed transaction envelope XDR
+      responses:
+        '200':
+          description: Enqueued or accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmitTxResponse'
+        '400':
+          description: Missing signed_tx_xdr
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmitTxResponse'
+  /api/v1/tx_status:
+    get:
+      tags: [tx]
+      summary: Poll inclusion after submit_tx
+      parameters:
+        - name: hash
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: TxStatusResponse (`confirmed` true only when status is SUCCESS)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TxStatusResponse'
 components:
   parameters:
     token_in:
@@ -752,6 +894,103 @@ components:
         price_usdc:
           type: number
           format: double
+    BalanceResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        balance:
+          type: string
+          description: Raw token units (stroops-style)
+        has_trustline:
+          type: boolean
+          description: Classic trustline presence when known
+        error:
+          type: string
+    BalancesResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        account:
+          type: string
+        scope:
+          type: string
+          example: common
+        tokens_queried:
+          type: array
+          items:
+            type: string
+        balances:
+          type: object
+          additionalProperties:
+            type: string
+        has_trustline:
+          type: object
+          additionalProperties:
+            type: boolean
+        updated_at_ms:
+          type: integer
+          format: int64
+        error:
+          type: string
+    AccountResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        sequence:
+          type: string
+        error:
+          type: string
+    ClassicAssetResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        code:
+          type: string
+        issuer:
+          type: string
+        error:
+          type: string
+    LatestLedgerResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        sequence:
+          type: integer
+          format: int64
+        error:
+          type: string
+    SubmitTxResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        hash:
+          type: string
+        status:
+          type: string
+          description: e.g. PENDING, DUPLICATE, ERROR
+        error:
+          type: string
+    TxStatusResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        hash:
+          type: string
+        status:
+          type: string
+          description: SUCCESS | FAILED | NOT_FOUND | …
+        confirmed:
+          type: boolean
+          description: True only when status is SUCCESS
+        error:
+          type: string
   securitySchemes:
     ApiKeyAuth:
       type: apiKey
