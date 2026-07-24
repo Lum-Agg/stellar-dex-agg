@@ -29,7 +29,8 @@ type SwapHistoryProps = {
 export function SwapHistory({ variant = 'compact' }: SwapHistoryProps) {
   const { address, connect, connecting } = useWallet();
   const tokens = useTokenList();
-  const { swaps, loading, unavailable, refetchError } = useSwapHistory();
+  const { swaps, loading, loadingMore, hasMore, loadMore, unavailable, refetchError } =
+    useSwapHistory();
 
   const tokenById = useMemo(() => new Map(tokens.map((token) => [token.id, token])), [tokens]);
 
@@ -154,6 +155,18 @@ export function SwapHistory({ variant = 'compact' }: SwapHistoryProps) {
               <p className="border-t border-[var(--border)] px-4 py-2 text-[12px] text-[var(--text-muted)]">
                 Refreshing…
               </p>
+            )}
+            {hasMore && (
+              <div className="border-t border-[var(--border)] px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => void loadMore()}
+                  disabled={loadingMore}
+                  className="w-full rounded-xl border border-[var(--border)] px-4 py-2.5 text-[13px] text-[var(--text-secondary)] hover:border-[var(--accent)]/40 hover:text-[var(--accent)] disabled:opacity-50 transition-colors"
+                >
+                  {loadingMore ? 'Loading…' : 'Load more'}
+                </button>
+              </div>
             )}
           </>
         )}

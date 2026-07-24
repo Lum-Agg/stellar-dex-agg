@@ -1,14 +1,18 @@
-//! SAC contracts batch-fetched by `GET /api/v1/balances`.
+//! SAC contracts batch-fetched by `GET /api/v1/balances` as a **fallback**
+//! when the quote-engine catalog is empty, and always **merged into** the
+//! catalog set (priority hubs).
 //!
-//! Curated for swap UI — **not** the full quote-engine catalog (~230 tokens).
-//! Sources (keep in sync when adding hubs):
+//! Primary scope is now the full quote-engine token catalog (Soroban
+//! `balance` simulates — no Horizon).
+//!
+//! Sources for this curated subset:
 //! - [`crate::classic_dex::CLASSIC_ASSETS`] — XLM / USDC / EURC classic +
 //!   Soroban paths
 //! - Frontend swap defaults (`TokenSelector` priority row)
 //! - [`crate::sushi`] pool-discovery hub list (BLND, yXLM, …)
 //! - High-volume mainnet SACs (BTC, etc.)
 //!
-//! Unlisted tokens: frontend calls `GET /api/v1/balance` lazily per token.
+//! Tokens outside the catalog still use `GET /api/v1/balance` lazily.
 
 /// Mainnet SAC ids queried in one `/api/v1/balances` request.
 pub const COMMON_BALANCE_TOKEN_IDS: &[&str] = &[

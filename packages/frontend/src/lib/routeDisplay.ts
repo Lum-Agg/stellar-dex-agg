@@ -28,6 +28,44 @@ export function subRoutesForDisplay(
   return visible.length > 0 ? visible : routes;
 }
 
+/**
+ * Legs used for `build_tx`: drop dust and fold their input into the largest
+ * kept leg so amount_in still sums to the quote total.
+ */
+export function subRoutesForBuild(
+  routes: SubRoute[],
+  totalAmountIn: string | undefined,
+): SubRoute[] {
+  if (!routes.length) return routes;
+  const total = BigInt(totalAmountIn || '0');
+  if (total === BigInt(0)) return routes;
+
+  const minIn = (total * BigInt(MIN_DISPLAY_LEG_INPUT_BPS)) / BigInt(10000);
+  const kept: SubRoute[] = [];
+  let dust = BigInt(0);
+  for (const r of routes) {
+    const leg = BigInt(r.amount_in || '0');
+    if (leg >= minIn) kept.push({ ...r });
+    else dust += leg;
+  }
+  if (dust === BigInt(0) || kept.length === 0) return routes;
+
+  let largestIdx = 0;
+  let largestAmt = BigInt(0);
+  kept.forEach((r, i) => {
+    const ain = BigInt(r.amount_in || '0');
+    if (ain > largestAmt) {
+      largestAmt = ain;
+      largestIdx = i;
+    }
+  });
+  kept[largestIdx] = {
+    ...kept[largestIdx],
+    amount_in: (largestAmt + dust).toString(),
+  };
+  return kept;
+}
+
 // ---------------------------------------------------------------------------
 // Leg percentage formatting
 // ---------------------------------------------------------------------------

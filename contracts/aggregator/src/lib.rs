@@ -271,6 +271,11 @@ impl AggregatorContract {
 
     /// Execute sub-routes that share the same token_in → token_out pair;
     /// returns total output.
+    ///
+    /// Parallel split paths share hop indices (`path_base + hop`). After all
+    /// paths run, `leg_counter` advances by the **serial depth** (longest path
+    /// hop count), not by total hop executions — so routed volume stays
+    /// `entry × serial_hops` under splits.
     fn execute_sub_routes(
         env: &Env,
         token_in: &Address,
@@ -281,6 +286,8 @@ impl AggregatorContract {
     ) -> i128 {
         assert!(!sub_routes.is_empty(), "Empty sub_routes");
 
+        let path_base = *leg_counter;
+        let mut max_depth: u32 = 0;
         let mut total_output: i128 = 0;
         for sr in sub_routes.iter() {
             assert!(!sr.steps.is_empty(), "Empty steps");
@@ -290,9 +297,11 @@ impl AggregatorContract {
             if let Some(last_step) = sr.steps.last() {
                 assert!(last_step.token_out == *token_out, "Sub-route must end with token_out");
             }
-            let output = Self::execute_path(env, &sr.steps, sr.amount_in, contract_addr, leg_counter);
+            let output =
+                Self::execute_path(env, &sr.steps, sr.amount_in, contract_addr, path_base, &mut max_depth);
             total_output += output;
         }
+        *leg_counter = path_base + max_depth;
         total_output
     }
 
@@ -310,12 +319,18 @@ impl AggregatorContract {
         steps: &Vec<SwapStep>,
         amount_in: i128,
         my_address: &Address,
-        leg_counter: &mut u32,
+        path_base: u32,
+        max_depth: &mut u32,
     ) -> i128 {
         let mut current_amount = amount_in;
 
-        for step in steps.iter() {
-            current_amount = Self::execute_step(env, &step, current_amount, my_address, leg_counter);
+        for (i, step) in steps.iter().enumerate() {
+            let hop_idx = path_base + i as u32;
+            current_amount = Self::execute_step(env, step, current_amount, my_address, hop_idx);
+            let depth = (i as u32) + 1;
+            if depth > *max_depth {
+                *max_depth = depth;
+            }
         }
 
         current_amount
@@ -332,18 +347,17 @@ impl AggregatorContract {
     }
 
     /// Execute a single swap step on the appropriate DEX.
-    fn execute_step(env: &Env, step: &SwapStep, amount_in: i128, my_address: &Address, leg_counter: &mut u32) -> i128 {
+    fn execute_step(env: &Env, step: &SwapStep, amount_in: i128, my_address: &Address, hop_idx: u32) -> i128 {
         let output = Self::execute_step_inner(env, step, amount_in, my_address);
         env.events().publish(
             (Symbol::new(env, "leg"),),
             (
-                *leg_counter,
+                hop_idx,
                 Self::dex_tag(&step.dex_type),
                 step.dex_id.clone(),
                 amount_in,
             ),
         );
-        *leg_counter += 1;
         output
     }
 

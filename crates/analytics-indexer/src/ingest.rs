@@ -95,7 +95,7 @@ async fn ingest_range(
     start_ledger: u32,
     end_ledger: u32,
 ) -> Result<u64> {
-    let mut records = Vec::new();
+    let mut ingested = 0u64;
 
     if config.use_events() {
         let filters = vec![EventFilterSpec {
@@ -106,7 +106,11 @@ async fn ingest_range(
             .get_contract_events(start_ledger, Some(end_ledger), &filters, config.page_limit)
             .await
             .with_context(|| format!("getEvents [{start_ledger}, {end_ledger})"))?;
-        records.extend(build_invocations_from_events(&events)?);
+        for record in build_invocations_from_events(&events)? {
+            if store.insert_invocation(&record)? {
+                ingested += 1;
+            }
+        }
     }
 
     if config.envelope_fallback {
@@ -127,20 +131,20 @@ async fn ingest_range(
                     continue;
                 }
             };
-            records.push(StoredInvocation {
+            let record = StoredInvocation {
                 tx_hash: tx.tx_hash.clone(),
                 ledger: tx.ledger,
                 created_at: tx.created_at,
                 status: tx.status.clone(),
                 parsed,
-            });
-        }
-    }
-
-    let mut ingested = 0u64;
-    for record in records {
-        if store.insert_invocation(&record)? {
-            ingested += 1;
+            };
+            // Prefer envelope-derived serial hop indices when the row already
+            // exists from events (legacy monotonic hop counter).
+            if store.insert_invocation(&record)? {
+                ingested += 1;
+            } else {
+                let _ = store.replace_invocation_legs(&record.tx_hash, &record.parsed)?;
+            }
         }
     }
 
@@ -167,6 +171,52 @@ async fn ingest_range(
     }
 
     Ok(ingested)
+}
+
+/// Re-parse envelopes for stored txs and rewrite `swap_legs.leg_index` to
+/// serial hop depth (fixes split over-count from the old monotonic counter).
+pub async fn repair_leg_indices(config: IndexerConfig, created_at_from: i64) -> Result<u64> {
+    config.ensure_parent_dir()?;
+    let store = IndexStore::open(&config.db_path)?;
+    let rpc = config.rpc();
+    let txs = store.list_tx_hashes_since(created_at_from)?;
+    let mut fixed = 0u64;
+    for (tx_hash, _ledger) in txs {
+        let got = match rpc.get_transaction(&tx_hash).await {
+            Ok(g) => g,
+            Err(e) => {
+                warn!(tx = %tx_hash, error = %e, "repair getTransaction failed");
+                continue;
+            }
+        };
+        let Some(env) = got.envelope_xdr.as_deref() else {
+            warn!(tx = %tx_hash, "repair missing envelopeXdr");
+            continue;
+        };
+        let parsed = match parse_envelope(env, &config.aggregator_contract, got.result_xdr.as_deref()) {
+            Ok(Some(p)) => p,
+            Ok(None) => {
+                warn!(tx = %tx_hash, "repair envelope had no aggregator invoke");
+                continue;
+            }
+            Err(e) => {
+                warn!(tx = %tx_hash, error = %e, "repair parse failed");
+                continue;
+            }
+        };
+        if store.replace_invocation_legs(&tx_hash, &parsed)? {
+            fixed += 1;
+            info!(
+                tx = %tx_hash,
+                legs = parsed.legs.len(),
+                max_idx = parsed.legs.iter().map(|l| l.leg_index).max().unwrap_or(0),
+                is_split = parsed.is_split,
+                "repaired leg indices"
+            );
+        }
+    }
+    info!(fixed, "leg index repair complete");
+    Ok(fixed)
 }
 
 /// One-shot backfill for `[start_ledger, latest)` then exit.

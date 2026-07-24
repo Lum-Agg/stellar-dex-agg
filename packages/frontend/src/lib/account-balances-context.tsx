@@ -96,29 +96,48 @@ export function AccountBalancesProvider({ children }: { children: ReactNode }) {
     // Keep previous ready/trustline visible while refreshing — avoids wiping
     // optimistic ChangeTrust marks and button flicker.
     try {
-      const payload = await fetchAccountBalances(address);
+      // Parallel: common unlocks UI fast; catalog fills the rest.
+      const commonPromise = fetchAccountBalances(address, 'common');
+      const catalogPromise = fetchAccountBalances(address, 'catalog');
+
+      const common = await commonPromise;
       if (id !== requestId.current) return;
 
-      // Drop overrides the API now confirms.
       for (const [tokenId, value] of Object.entries(trustlineOverrides.current)) {
-        if (value === true && payload.hasTrustline[tokenId] === true) {
+        if (value === true && common.hasTrustline[tokenId] === true) {
           delete trustlineOverrides.current[tokenId];
         }
       }
 
-      setBalances(payload.balances);
-      setHasTrustline(mergeTrustlines(payload.hasTrustline, trustlineOverrides.current));
-      setTokensQueried(payload.tokensQueried);
+      setBalances(common.balances);
+      setHasTrustline(mergeTrustlines(common.hasTrustline, trustlineOverrides.current));
+      setTokensQueried(common.tokensQueried);
       setReady(true);
+      setLoading(false);
+
+      const catalog = await catalogPromise;
+      if (id !== requestId.current) return;
+
+      for (const [tokenId, value] of Object.entries(trustlineOverrides.current)) {
+        if (value === true && catalog.hasTrustline[tokenId] === true) {
+          delete trustlineOverrides.current[tokenId];
+        }
+      }
+
+      setBalances({ ...common.balances, ...catalog.balances });
+      setHasTrustline(
+        mergeTrustlines(
+          { ...common.hasTrustline, ...catalog.hasTrustline },
+          trustlineOverrides.current,
+        ),
+      );
+      setTokensQueried(catalog.tokensQueried);
     } catch {
       if (id === requestId.current) {
         setBalances({});
         setHasTrustline({ ...trustlineOverrides.current });
         setTokensQueried([]);
         setReady(false);
-      }
-    } finally {
-      if (id === requestId.current) {
         setLoading(false);
       }
     }
@@ -196,7 +215,7 @@ export function AccountBalancesProvider({ children }: { children: ReactNode }) {
         delete trustlineOverrides.current[tokenId];
         setHasTrustline((prev) => ({ ...prev, [tokenId]: true }));
       } else if (result.hasTrustline === false) {
-        // Do not clobber a post-ChangeTrust override (Soroban RPC often lags Horizon).
+        // Do not clobber a post-ChangeTrust override (Soroban RPC often lags).
         if (trustlineOverrides.current[tokenId] !== true) {
           setHasTrustline((prev) => ({ ...prev, [tokenId]: false }));
         }

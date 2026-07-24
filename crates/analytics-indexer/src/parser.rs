@@ -52,32 +52,66 @@ pub fn parse_envelope(
     };
 
     let agg_hash = contract_hash(aggregator_contract)?;
+    let amount_out = result_xdr.and_then(parse_success_return_i128);
 
     for op in tx.operations.iter() {
         let xdr::OperationBody::InvokeHostFunction(invoke) = &op.body else {
             continue;
         };
-        let xdr::HostFunction::InvokeContract(args) = &invoke.host_function else {
-            continue;
-        };
 
-        let xdr::ScAddress::Contract(contract_id) = &args.contract_address else {
-            continue;
-        };
-        if contract_id.0 .0 != agg_hash {
-            continue;
+        // Direct aggregator invoke (user → aggregator).
+        if let xdr::HostFunction::InvokeContract(args) = &invoke.host_function {
+            if let Some(parsed) = try_parse_aggregator_invoke(args, &agg_hash, amount_out)? {
+                return Ok(Some(parsed));
+            }
         }
 
-        let function = args.function_name.to_string();
-        let amount_out = result_xdr.and_then(parse_success_return_i128);
-
-        return match function.as_str() {
-            "swap" => parse_swap(args, amount_out),
-            "round_trip_swap" => parse_round_trip_swap(args, amount_out),
-            _ => Ok(None),
-        };
+        // Vault / nested auth: aggregator call lives in authorization tree.
+        for auth in invoke.auth.iter() {
+            if let Some(parsed) = find_aggregator_in_auth(&auth.root_invocation, &agg_hash, amount_out)? {
+                return Ok(Some(parsed));
+            }
+        }
     }
 
+    Ok(None)
+}
+
+fn try_parse_aggregator_invoke(
+    args: &xdr::InvokeContractArgs,
+    agg_hash: &[u8; 32],
+    amount_out: Option<i128>,
+) -> Result<Option<ParsedInvocation>> {
+    let xdr::ScAddress::Contract(contract_id) = &args.contract_address else {
+        return Ok(None);
+    };
+    if contract_id.0 .0 != *agg_hash {
+        return Ok(None);
+    }
+
+    let function = args.function_name.to_string();
+    match function.as_str() {
+        "swap" => parse_swap(args, amount_out),
+        "round_trip_swap" => parse_round_trip_swap(args, amount_out),
+        _ => Ok(None),
+    }
+}
+
+fn find_aggregator_in_auth(
+    inv: &xdr::SorobanAuthorizedInvocation,
+    agg_hash: &[u8; 32],
+    amount_out: Option<i128>,
+) -> Result<Option<ParsedInvocation>> {
+    if let xdr::SorobanAuthorizedFunction::ContractFn(cfn) = &inv.function {
+        if let Some(parsed) = try_parse_aggregator_invoke(cfn, agg_hash, amount_out)? {
+            return Ok(Some(parsed));
+        }
+    }
+    for sub in inv.sub_invocations.iter() {
+        if let Some(parsed) = find_aggregator_in_auth(sub, agg_hash, amount_out)? {
+            return Ok(Some(parsed));
+        }
+    }
     Ok(None)
 }
 
@@ -94,7 +128,6 @@ fn parse_swap(args: &xdr::InvokeContractArgs, amount_out: Option<i128>) -> Resul
 
     let mut legs = Vec::new();
     let mut amount_in: i128 = 0;
-    let mut leg_index = 0u32;
 
     for sub_route in &sub_routes {
         let map = scval_map(&sub_route).ok_or_else(|| anyhow!("sub_route not a map"))?;
@@ -102,10 +135,9 @@ fn parse_swap(args: &xdr::InvokeContractArgs, amount_out: Option<i128>) -> Resul
         amount_in = amount_in.saturating_add(route_amount);
 
         if let Some(steps) = get_map_field(map, "steps").and_then(scval_vec) {
-            for step in steps {
-                if let Some(step_map) = scval_map(&step) {
-                    legs.push(parse_step(step_map, leg_index, Some(route_amount))?);
-                    leg_index += 1;
+            for (hop, step) in steps.iter().enumerate() {
+                if let Some(step_map) = scval_map(step) {
+                    legs.push(parse_step(step_map, hop as u32, Some(route_amount))?);
                 }
             }
         }
@@ -134,25 +166,35 @@ fn parse_round_trip_swap(args: &xdr::InvokeContractArgs, amount_out: Option<i128
     let amount_in = scval_i128(&args.args[3]).unwrap_or(0);
 
     let mut legs = Vec::new();
-    let mut leg_index = 0u32;
+    let mut path_base = 0u32;
+    let mut is_split = false;
 
-    for (route_idx, route_arg) in args.args[4..6].iter().enumerate() {
-        if let Some(sub_routes) = scval_vec(route_arg) {
-            for sub_route in sub_routes {
-                if let Some(map) = scval_map(&sub_route) {
-                    let route_amount = get_map_i128(map, "amount_in");
-                    if let Some(steps) = get_map_field(map, "steps").and_then(scval_vec) {
-                        for step in steps {
-                            if let Some(step_map) = scval_map(&step) {
-                                legs.push(parse_step(step_map, leg_index, route_amount)?);
-                                leg_index += 1;
-                            }
-                        }
-                    }
-                }
-                let _ = route_idx;
-            }
+    // args[4]=leg_out, args[5]=leg_back. Parallel sub-routes share hop indices;
+    // back continues after the longest out path (serial RT depth).
+    for route_arg in &args.args[4..6] {
+        let Some(sub_routes) = scval_vec(route_arg) else {
+            continue;
+        };
+        if sub_routes.len() > 1 {
+            is_split = true;
         }
+        let mut max_depth = 0u32;
+        for sub_route in &sub_routes {
+            let Some(map) = scval_map(sub_route) else {
+                continue;
+            };
+            let route_amount = get_map_i128(map, "amount_in");
+            let Some(steps) = get_map_field(map, "steps").and_then(scval_vec) else {
+                continue;
+            };
+            for (hop, step) in steps.iter().enumerate() {
+                if let Some(step_map) = scval_map(step) {
+                    legs.push(parse_step(step_map, path_base + hop as u32, route_amount)?);
+                }
+            }
+            max_depth = max_depth.max(steps.len() as u32);
+        }
+        path_base = path_base.saturating_add(max_depth);
     }
 
     Ok(Some(ParsedInvocation {
@@ -162,7 +204,7 @@ fn parse_round_trip_swap(args: &xdr::InvokeContractArgs, amount_out: Option<i128
         token_out: Some(base_token),
         amount_in,
         amount_out,
-        is_split: false,
+        is_split,
         legs,
     }))
 }
@@ -402,5 +444,26 @@ mod tests {
             .unwrap()
             .expect("fixture should decode to swap");
         assert_eq!(parsed.function_name, "swap");
+    }
+
+    /// Vault `execute_round_trip` wraps aggregator `round_trip_swap` in auth.
+    /// Split 2+2 with 2 hops each must report serial depth 4 (not 8).
+    #[test]
+    fn parses_vault_split_round_trip_serial_hops() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/vault_round_trip_split.b64");
+        if !path.exists() {
+            return;
+        }
+        let env = std::fs::read_to_string(path).unwrap();
+        let parsed = parse_envelope(env.trim(), AGG, None)
+            .unwrap()
+            .expect("vault auth should expose round_trip_swap");
+        assert_eq!(parsed.function_name, "round_trip_swap");
+        assert!(parsed.is_split);
+        let max_idx = parsed.legs.iter().map(|l| l.leg_index).max().unwrap();
+        assert_eq!(max_idx + 1, 4, "serial hop depth should be 4 for 2hop+2hop RT");
+        // Parallel paths share indices 0..3 → more than 4 leg rows.
+        assert!(parsed.legs.len() > 4);
     }
 }

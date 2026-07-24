@@ -106,7 +106,7 @@ impl Default for AppConfig {
             split_threshold_bps: 5,
             split_competitive_delta_bps: 50,
             min_split_fraction_bps: 5,
-            max_splits: 5,
+            max_splits: 3,
             path_finder_max_hops: 3,
             path_finder_max_multi_hop_paths: 50,
             path_finder_max_direct_paths: 0,

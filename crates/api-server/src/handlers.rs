@@ -74,8 +74,9 @@ pub struct QuoteQuery {
     pub max_hops: Option<usize>,
     /// Max parallel sub-routes in a split quote. Omit = server default.
     pub max_splits: Option<usize>,
-    /// When `1`, re-quote selected hops via on-chain pool math (slower; for arb / diagnostics).
-    /// Omit = use server env `QUOTE_ON_CHAIN_VALIDATE` (default off).
+    /// When `1`, re-quote selected hops via on-chain pool math (slower; for arb
+    /// / diagnostics). Omit = use server env `QUOTE_ON_CHAIN_VALIDATE`
+    /// (default off).
     pub on_chain_validate: Option<u8>,
 }
 
@@ -534,11 +535,71 @@ pub async fn build_swap(State(state): State<AppState>, Json(body): Json<SwapRequ
     }
 }
 
+/// Drop dust legs (< `MIN_DISPLAY_LEG_INPUT_BPS` of total input) and fold their
+/// `amount_in` into the largest kept leg. Matches frontend route display and
+/// avoids burning Soroban CPU on near-zero parallel paths.
+const BUILD_MIN_LEG_INPUT_BPS: u128 = 10;
+
+fn fold_dust_sub_routes(body: &BuildTxRequest) -> Result<BuildTxRequest, String> {
+    if body.sub_routes.len() < 2 {
+        return Ok(body.clone());
+    }
+    let amount_in: u128 = body
+        .amount_in
+        .parse()
+        .map_err(|_| "Invalid amount_in".to_string())?;
+    if amount_in == 0 {
+        return Ok(body.clone());
+    }
+    let min_in = amount_in.saturating_mul(BUILD_MIN_LEG_INPUT_BPS) / 10_000;
+
+    let mut kept: Vec<BuildTxSubRoute> = Vec::new();
+    let mut dust_sum: u128 = 0;
+    for sub in &body.sub_routes {
+        let leg: u128 = sub
+            .amount_in
+            .parse()
+            .map_err(|_| format!("Invalid sub-route amount_in: {}", sub.amount_in))?;
+        if leg >= min_in {
+            kept.push(sub.clone());
+        } else {
+            dust_sum = dust_sum.saturating_add(leg);
+        }
+    }
+    if dust_sum == 0 || kept.is_empty() {
+        return Ok(body.clone());
+    }
+
+    let largest_idx = kept
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, s)| s.amount_in.parse::<u128>().unwrap_or(0))
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    let largest_amt: u128 = kept[largest_idx]
+        .amount_in
+        .parse()
+        .map_err(|_| "Invalid sub-route amount_in".to_string())?;
+    kept[largest_idx].amount_in = (largest_amt.saturating_add(dust_sum)).to_string();
+
+    Ok(BuildTxRequest {
+        user_public_key: body.user_public_key.clone(),
+        amount_in: body.amount_in.clone(),
+        token_in: body.token_in.clone(),
+        token_out: body.token_out.clone(),
+        min_amount_out: body.min_amount_out.clone(),
+        sub_routes: kept,
+    })
+}
+
 pub async fn build_tx_impl(body: &BuildTxRequest, rpc: &dex_adapters::rpc::SorobanRpc) -> Result<BuildTxData, String> {
     use stellar_xdr::{
         curr as xdr,
         curr::{Limits, WriteXdr},
     };
+
+    let body = fold_dust_sub_routes(body)?;
+    let body = &body;
 
     let user_key = stellar_strkey::ed25519::PublicKey::from_string(&body.user_public_key)
         .map_err(|e| format!("Invalid public key: {:?}", e))?;
@@ -945,6 +1006,9 @@ pub struct BalanceQuery {
 #[derive(Deserialize)]
 pub struct BalancesQuery {
     pub account: String,
+    /// `common` = curated hubs (~15, fast). `catalog` = full quote-engine SACs.
+    #[serde(default)]
+    pub scope: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -964,7 +1028,7 @@ pub struct BalanceResponse {
 pub struct BalancesResponse {
     pub success: bool,
     pub account: String,
-    /// `common` = curated list in dex-adapters `COMMON_BALANCE_TOKEN_IDS`.
+    /// `catalog` = quote-engine SACs ∪ curated common list (Soroban RPC).
     pub scope: String,
     pub tokens_queried: Vec<String>,
     pub balances: std::collections::HashMap<String, String>,
@@ -977,7 +1041,7 @@ pub struct BalancesResponse {
     pub error: Option<String>,
 }
 
-const BALANCE_FETCH_CONCURRENCY: usize = 24;
+const BALANCE_FETCH_CONCURRENCY: usize = 64;
 const NATIVE_SAC: &str = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";
 
 fn is_native_sac(token: &str) -> bool {
@@ -1041,6 +1105,75 @@ pub(crate) fn collect_common_balance_token_ids() -> Vec<String> {
         .collect()
 }
 
+/// SAC ids to batch-balance: quote-engine catalog ∪ curated common list.
+/// Soroban-only (no Horizon). Classic `CODE:ISSUER` / `native` aliases skipped.
+async fn collect_catalog_balance_token_ids(state: &AppState) -> Vec<String> {
+    let engine = state.current_engine().await;
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+
+    for id in engine.get_all_tokens().await {
+        if id.starts_with('C') && id.len() == 56 && seen.insert(id.clone()) {
+            out.push(id);
+        }
+    }
+    for id in collect_common_balance_token_ids() {
+        if seen.insert(id.clone()) {
+            out.push(id);
+        }
+    }
+    out
+}
+
+fn normalize_balances_scope(raw: Option<&str>) -> &'static str {
+    match raw.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+        Some("common") => "common",
+        _ => "catalog",
+    }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+async fn fetch_balances_for_tokens(
+    rpc: std::sync::Arc<dex_adapters::rpc::SorobanRpc>,
+    account_arg: &xdr::ScVal,
+    token_ids: Vec<String>,
+) -> (std::collections::HashMap<String, String>, std::collections::HashMap<String, bool>) {
+    use futures::stream::{self, StreamExt};
+
+    let mut balances = std::collections::HashMap::new();
+    let mut has_trustline = std::collections::HashMap::new();
+
+    let results: Vec<_> = stream::iter(token_ids)
+        .map(|token| {
+            let rpc = rpc.clone();
+            let account_arg = account_arg.clone();
+            async move {
+                let (amount, tl) = fetch_sac_balance_with_trustline(&rpc, &token, &account_arg).await;
+                (token, amount, tl)
+            }
+        })
+        .buffer_unordered(BALANCE_FETCH_CONCURRENCY)
+        .collect()
+        .await;
+
+    for (token, amount, tl) in results {
+        if amount > 0 {
+            balances.insert(token.clone(), amount.to_string());
+        }
+        if let Some(v) = tl {
+            has_trustline.insert(token, v);
+        }
+    }
+
+    (balances, has_trustline)
+}
+
 pub async fn get_balance(State(state): State<AppState>, Query(query): Query<BalanceQuery>) -> impl IntoResponse {
     let user_key = match parse_account_public_key(&query.account) {
         Ok(key) => key,
@@ -1076,13 +1209,16 @@ pub async fn get_balance(State(state): State<AppState>, Query(query): Query<Bala
 }
 
 pub async fn get_balances(State(state): State<AppState>, Query(query): Query<BalancesQuery>) -> impl IntoResponse {
-    let user_key = match parse_account_public_key(&query.account) {
+    let scope = normalize_balances_scope(query.scope.as_deref());
+    let account = query.account.trim().to_string();
+
+    let user_key = match parse_account_public_key(&account) {
         Ok(key) => key,
         Err(error) => {
             return Json(BalancesResponse {
                 success: false,
                 account: query.account,
-                scope: "common".to_string(),
+                scope: scope.to_string(),
                 tokens_queried: vec![],
                 balances: std::collections::HashMap::new(),
                 has_trustline: std::collections::HashMap::new(),
@@ -1092,45 +1228,23 @@ pub async fn get_balances(State(state): State<AppState>, Query(query): Query<Bal
         }
     };
 
-    let token_ids = collect_common_balance_token_ids();
+    let token_ids = match scope {
+        "common" => collect_common_balance_token_ids(),
+        _ => collect_catalog_balance_token_ids(&state).await,
+    };
     let tokens_queried = token_ids.clone();
     let account_arg = account_balance_scval(&user_key);
-    let rpc = state.rpc.clone();
-
-    let mut balances = std::collections::HashMap::new();
-    let mut has_trustline = std::collections::HashMap::new();
-    for chunk in token_ids.chunks(BALANCE_FETCH_CONCURRENCY) {
-        let mut tasks = Vec::with_capacity(chunk.len());
-        for token in chunk {
-            let rpc = rpc.clone();
-            let account_arg = account_arg.clone();
-            let token = token.clone();
-            tasks.push(async move {
-                let (amount, tl) = fetch_sac_balance_with_trustline(&rpc, &token, &account_arg).await;
-                (token, amount, tl)
-            });
-        }
-        for (token, amount, tl) in futures::future::join_all(tasks).await {
-            if amount > 0 {
-                balances.insert(token.clone(), amount.to_string());
-            }
-            if let Some(v) = tl {
-                has_trustline.insert(token, v);
-            }
-        }
-    }
+    let (balances, has_trustline) =
+        fetch_balances_for_tokens(state.rpc.clone(), &account_arg, token_ids).await;
 
     Json(BalancesResponse {
         success: true,
-        account: query.account.trim().to_string(),
-        scope: "common".to_string(),
+        account,
+        scope: scope.to_string(),
         tokens_queried,
         balances,
         has_trustline,
-        updated_at_ms: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0),
+        updated_at_ms: now_ms(),
         error: None,
     })
 }
@@ -1534,7 +1648,7 @@ const AGGREGATOR_CONTRACT: &str = "CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQ
 /// Soroban legs use aggregator `swap`; Classic legs use
 /// `PathPaymentStrictSend`. Mixed routes emit both operation types in one
 /// atomic transaction.
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct BuildTxRequest {
     /// User's Stellar public key (G...)
     pub user_public_key: String,
@@ -1891,6 +2005,11 @@ pub async fn build_tx(State(state): State<AppState>, Json(body): Json<BuildTxReq
             {
                 "Swap failed: on-chain output was below your minimum (quote vs execution drift, \
                  common on split routes). Refresh the quote, increase slippage, or retry with a single-path route."
+                    .to_string()
+            } else if e.contains("ExceededLimit") || e.contains("Budget")
+            {
+                "Swap simulation failed: this route is too heavy for Soroban CPU limits \
+                 (too many split paths / hops). Refresh the quote — a simpler route should appear."
                     .to_string()
             } else if e.contains("EmptyPool") || e.contains("empty") {
                 "Swap failed: one of the pools has insufficient liquidity. \

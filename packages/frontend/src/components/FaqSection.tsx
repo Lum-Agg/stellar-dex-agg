@@ -21,7 +21,7 @@ const FAQ = [
   },
   {
     q: 'What is slippage tolerance?',
-    a: 'It is the maximum price movement you accept before the swap fails. The quote includes a minimum received amount based on your chosen slippage (0.1%, 0.5%, or 1%).',
+    a: 'It is the maximum price movement you accept before the swap fails. Open Swap Settings (slippage chip) to set 0.5%, 1%, or a custom percent. The quote includes a minimum received amount based on your choice.',
   },
   {
     q: 'Is there an API?',

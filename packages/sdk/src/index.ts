@@ -139,6 +139,13 @@ export interface SwapRecord {
 export interface ListSwapsParams {
   user: string;
   limit?: number;
+  /** Opaque cursor from a previous page (`nextCursor`). */
+  cursor?: string;
+}
+
+export interface ListSwapsResult {
+  swaps: SwapRecord[];
+  nextCursor?: string;
 }
 
 export interface PriceQuote {
@@ -388,15 +395,16 @@ export class LumAggClient {
     return mapBuildOrderTxResult(json.data);
   }
 
-  async listSwaps(params: ListSwapsParams): Promise<SwapRecord[]> {
+  async listSwaps(params: ListSwapsParams): Promise<ListSwapsResult> {
     const search = new URLSearchParams({ user: params.user });
     if (params.limit !== undefined) search.set('limit', String(params.limit));
+    if (params.cursor) search.set('cursor', params.cursor);
     const resp = await fetch(`${this.baseUrl}/api/v1/swaps?${search}`, {
       headers: this.headers(),
     });
     const json = await resp.json();
     if (!json.success) throw new Error(json.error || 'listSwaps failed');
-    return (json.data?.swaps || []).map((r: Record<string, unknown>) => ({
+    const swaps = (json.data?.swaps || []).map((r: Record<string, unknown>) => ({
       txHash: String(r.tx_hash ?? ''),
       ledger: Number(r.ledger ?? 0),
       createdAt: Number(r.created_at ?? 0),
@@ -408,6 +416,11 @@ export class LumAggClient {
       amountOut: r.amount_out != null ? String(r.amount_out) : undefined,
       isSplit: Boolean(r.is_split),
     }));
+    const nextCursor =
+      json.data?.next_cursor != null && String(json.data.next_cursor).length > 0
+        ? String(json.data.next_cursor)
+        : undefined;
+    return { swaps, nextCursor };
   }
 
   async getPrices(ids: string[]): Promise<PriceQuote[]> {

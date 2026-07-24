@@ -53,8 +53,19 @@ async fn main() -> Result<()> {
             );
             Ok(())
         }
+        "repair-legs" => {
+            let from: i64 = std::env::var("REPAIR_FROM_TS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            let fixed = ingest::repair_leg_indices(config, from).await?;
+            println!("{{\"repaired\":{fixed}}}");
+            Ok(())
+        }
         other => {
-            eprintln!("usage: analytics-indexer [run|backfill|export-daily [YYYY-MM-DD]|status]");
+            eprintln!(
+                "usage: analytics-indexer [run|backfill|export-daily [YYYY-MM-DD]|status|repair-legs]"
+            );
             Err(anyhow::anyhow!("unknown command: {}", other))
         }
     }

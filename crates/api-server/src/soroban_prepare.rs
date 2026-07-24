@@ -5,16 +5,26 @@
 use {
     soroban_client::{
         network::{NetworkPassphrase, Networks},
-        transaction::{AccountBehavior, TransactionBehavior},
+        transaction::{assemble_transaction, AccountBehavior, TransactionBehavior},
         transaction_builder::{TransactionBuilder, TransactionBuilderBehavior, TIMEOUT_INFINITE},
         xdr::{self, Limits, ReadXdr, WriteXdr},
-        Options, Server,
+        Options, Server, SimulationOptions,
     },
     stellar_xdr::{
         curr as sxdr,
         curr::{Limits as StellarLimits, WriteXdr as StellarWriteXdr},
     },
 };
+
+/// Extra CPU instructions for `simulateTransaction` beyond the default budget.
+/// Multi-hop split swaps often exceed the default and fail with
+/// `HostError: Error(Budget, ExceededLimit)` without this leeway.
+fn instruction_leeway() -> u64 {
+    std::env::var("INSTRUCTION_LEEWAY")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(100_000_000)
+}
 
 pub fn rpc_server(rpc_url: &str) -> Result<Server, String> {
     Server::new(
@@ -84,10 +94,18 @@ pub async fn prepare_transaction_xdr_on_network(
         .build();
 
     let server = rpc_server(rpc_url)?;
-    let prepared = server
-        .prepare_transaction(&tx)
+    let sim_response = server
+        .simulate_transaction(
+            &tx,
+            Some(SimulationOptions {
+                cpu_instructions: instruction_leeway(),
+                auth_mode: None,
+            }),
+        )
         .await
         .map_err(|e| format!("prepare_transaction: {:?}", e))?;
+    let prepared =
+        assemble_transaction(&tx, sim_response).map_err(|e| format!("prepare_transaction: {:?}", e))?;
 
     let envelope = prepared.to_envelope().map_err(|e| format!("to_envelope: {}", e))?;
 

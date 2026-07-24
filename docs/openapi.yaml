@@ -77,6 +77,22 @@ paths:
             format: double
             example: 0.5
           description: Slippage tolerance in percent (default 0.5)
+        - name: max_hops
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            example: 3
+          description: Path-finder hop limit (pool hops). Omit = server default
+        - name: max_splits
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            example: 3
+          description: Max parallel sub-routes in a split quote. Omit = server default
         - name: prefer_soroban
           in: query
           required: false
@@ -184,6 +200,15 @@ paths:
             maximum: 50
             default: 20
           description: Max rows to return (default 20)
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            example: "1700000200:ccc"
+          description: |
+            Opaque pagination cursor from a previous response's `next_cursor`
+            (`{created_at}:{tx_hash}`). Returns rows older than that position.
       responses:
         '200':
           description: Swap history for the wallet (may be empty)
@@ -370,14 +395,25 @@ paths:
   /api/v1/balances:
     get:
       tags: [wallet]
-      summary: Common-token balances for account
-      description: Batch balances for curated common token ids (same set as portfolio).
+      summary: Token balances for account
+      description: >
+        Batch SAC balances via Soroban RPC (no Horizon).
+        `scope=common` — curated hubs (~15, fast).
+        `scope=catalog` — full quote-engine token set.
       parameters:
         - name: account
           in: query
           required: true
           schema:
             type: string
+        - name: scope
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [common, catalog]
+            default: catalog
+            description: common = fast hubs; catalog = full set
       responses:
         '200':
           description: BalancesResponse
@@ -684,6 +720,10 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/SwapItem'
+            next_cursor:
+              type: string
+              nullable: true
+              description: Pass as `cursor` to fetch the next older page; omitted when no further rows
         error:
           type: string
     SwapItem:
@@ -916,7 +956,7 @@ components:
           type: string
         scope:
           type: string
-          example: common
+          example: catalog
         tokens_queried:
           type: array
           items:

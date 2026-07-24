@@ -357,6 +357,14 @@ impl SorobanRpc {
                 .and_then(|s| s.as_str())
                 .unwrap_or_default()
                 .to_string(),
+            envelope_xdr: result
+                .get("envelopeXdr")
+                .and_then(|s| s.as_str())
+                .map(|s| s.to_string()),
+            result_xdr: result
+                .get("resultXdr")
+                .and_then(|s| s.as_str())
+                .map(|s| s.to_string()),
         })
     }
 
@@ -435,6 +443,8 @@ pub struct SendTransactionResult {
 #[derive(Debug, Clone)]
 pub struct GetTransactionResult {
     pub status: String,
+    pub envelope_xdr: Option<String>,
+    pub result_xdr: Option<String>,
 }
 
 // ===== ScVal extraction helpers =====

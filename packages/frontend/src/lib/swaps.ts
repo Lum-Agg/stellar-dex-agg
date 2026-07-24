@@ -13,14 +13,29 @@ export type UserSwap = {
   is_split: boolean;
 };
 
-export async function fetchUserSwaps(user: string, limit = 20): Promise<UserSwap[]> {
-  const qs = new URLSearchParams({ user, limit: String(limit) });
+export type UserSwapsPage = {
+  swaps: UserSwap[];
+  nextCursor: string | null;
+};
+
+export async function fetchUserSwaps(
+  user: string,
+  opts?: { limit?: number; cursor?: string | null },
+): Promise<UserSwapsPage> {
+  const qs = new URLSearchParams({
+    user,
+    limit: String(opts?.limit ?? 20),
+  });
+  if (opts?.cursor) qs.set('cursor', opts.cursor);
   const resp = await fetch(`${API_URL}/api/v1/swaps?${qs}`);
   const json = await resp.json();
   if (!resp.ok || !json.success) {
     throw new Error(json.error || `swaps HTTP ${resp.status}`);
   }
-  return json.data?.swaps ?? [];
+  return {
+    swaps: json.data?.swaps ?? [],
+    nextCursor: json.data?.next_cursor ?? null,
+  };
 }
 
 export const SWAP_SUCCESS_EVENT = 'lumagg:swap-success';

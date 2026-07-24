@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { displayTokenSymbol, NATIVE_CONTRACT } from '@/lib/tokenDisplay';
 import { useAccountBalances } from '@/lib/account-balances-context';
@@ -172,16 +172,33 @@ export function TokenSelector({
   const q = search.trim();
   const qLower = q.toLowerCase();
 
-  const filtered = tokens.filter((t) => {
-    if (t.id === exclude) return false;
-    const matchesBasic =
-      t.symbol.toLowerCase().includes(qLower) ||
-      t.name.toLowerCase().includes(qLower) ||
-      t.id.toLowerCase().includes(qLower);
-    const matchesNative =
-      qLower === 'native' && (t.symbol.toLowerCase() === 'xlm' || t.id === NATIVE_CONTRACT);
-    return matchesBasic || matchesNative;
-  });
+  const filtered = useMemo(() => {
+    const matched = tokens.filter((t) => {
+      if (t.id === exclude) return false;
+      const matchesBasic =
+        t.symbol.toLowerCase().includes(qLower) ||
+        t.name.toLowerCase().includes(qLower) ||
+        t.id.toLowerCase().includes(qLower);
+      const matchesNative =
+        qLower === 'native' && (t.symbol.toLowerCase() === 'xlm' || t.id === NATIVE_CONTRACT);
+      return matchesBasic || matchesNative;
+    });
+
+    // Non-zero balances first (desc), then catalog order.
+    if (!balancesReady) return matched;
+    return [...matched].sort((a, b) => {
+      const ba = getBalance(a.id) ?? BigInt(0);
+      const bb = getBalance(b.id) ?? BigInt(0);
+      const aOwned = ba > BigInt(0);
+      const bOwned = bb > BigInt(0);
+      if (aOwned && bOwned) {
+        if (ba === bb) return 0;
+        return ba > bb ? -1 : 1;
+      }
+      if (aOwned !== bOwned) return aOwned ? -1 : 1;
+      return 0;
+    });
+  }, [tokens, exclude, qLower, balancesReady, getBalance]);
 
   const exactIdMatch =
     filtered.length === 1 && q.length > 0 && qLower === filtered[0].id.toLowerCase();

@@ -60,9 +60,12 @@ export async function fetchTokenBalanceStroops(
   return result?.balance ?? null;
 }
 
-/** Batch fetch curated common tokens (`scope=common` on api-server). */
-export async function fetchAccountBalances(accountId: string): Promise<AccountBalancesPayload> {
-  const params = new URLSearchParams({ account: accountId });
+/** Batch SAC balances via Soroban RPC. `common` ≈15 hubs (fast); `catalog` = full set. */
+export async function fetchAccountBalances(
+  accountId: string,
+  scope: 'common' | 'catalog' = 'catalog',
+): Promise<AccountBalancesPayload> {
+  const params = new URLSearchParams({ account: accountId, scope });
   const resp = await fetch(`${API_URL}/api/v1/balances?${params}`);
   if (!resp.ok) {
     throw new Error('Failed to fetch balances');
@@ -82,16 +85,16 @@ export async function fetchAccountBalances(accountId: string): Promise<AccountBa
 
   const balances: BalanceMap = {};
   const hasTrustline: TrustlineMap = { ...data.has_trustline };
-  for (const tokenId of data.tokens_queried) {
-    const raw = data.balances[tokenId];
-    balances[tokenId] = raw !== undefined ? BigInt(raw) : BigInt(0);
+  // API only includes non-zero amounts; do not synthesize zeros for the whole catalog.
+  for (const [tokenId, raw] of Object.entries(data.balances)) {
+    balances[tokenId] = BigInt(raw);
   }
 
   return {
     balances,
     hasTrustline,
     tokensQueried: data.tokens_queried,
-    scope: data.scope ?? 'common',
+    scope: data.scope ?? scope,
   };
 }
 

@@ -196,6 +196,29 @@ impl IndexStore {
         Ok(true)
     }
 
+    /// Replace hop rows for an existing invocation (e.g. fix serial `leg_index`
+    /// after re-parsing the envelope). Also updates `is_split`.
+    pub fn replace_invocation_legs(&self, tx_hash: &str, parsed: &crate::parser::ParsedInvocation) -> Result<bool> {
+        let exists: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM swap_invocations WHERE tx_hash = ?1",
+            params![tx_hash],
+            |r| r.get(0),
+        )?;
+        if exists == 0 {
+            return Ok(false);
+        }
+        self.conn
+            .execute("DELETE FROM swap_legs WHERE tx_hash = ?1", params![tx_hash])?;
+        self.conn.execute(
+            "UPDATE swap_invocations SET is_split = ?1 WHERE tx_hash = ?2",
+            params![parsed.is_split as i32, tx_hash],
+        )?;
+        for leg in &parsed.legs {
+            self.insert_leg(tx_hash, leg)?;
+        }
+        Ok(true)
+    }
+
     fn insert_leg(&self, tx_hash: &str, leg: &ParsedLeg) -> Result<()> {
         self.conn.execute(
             "INSERT INTO swap_legs (
@@ -214,6 +237,22 @@ impl IndexStore {
         Ok(())
     }
 
+    pub fn list_tx_hashes_since(&self, created_at_from: i64) -> Result<Vec<(String, u32)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT tx_hash, ledger FROM swap_invocations
+             WHERE created_at >= ?1
+             ORDER BY created_at ASC",
+        )?;
+        let rows = stmt.query_map(params![created_at_from], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u32))
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
     pub fn count_invocations(&self) -> Result<i64> {
         let count: i64 = self
             .conn
@@ -228,17 +267,18 @@ impl IndexStore {
         Ok(ts)
     }
 
-    pub fn list_swaps_by_user(&self, user: &str, limit: u32) -> Result<Vec<UserSwapRow>> {
+    /// List swaps for `user`, newest first.
+    ///
+    /// When `before` is `Some((created_at, tx_hash))`, returns rows strictly older
+    /// than that cursor (`ORDER BY created_at DESC, tx_hash DESC`).
+    pub fn list_swaps_by_user(
+        &self,
+        user: &str,
+        limit: u32,
+        before: Option<(i64, &str)>,
+    ) -> Result<Vec<UserSwapRow>> {
         let limit = limit.clamp(1, 50);
-        let mut stmt = self.conn.prepare(
-            "SELECT tx_hash, ledger, created_at, status, function_name, user_address,
-                    token_in, token_out, amount_in, amount_out, is_split
-             FROM swap_invocations
-             WHERE user_address = ?1
-             ORDER BY created_at DESC, tx_hash DESC
-             LIMIT ?2",
-        )?;
-        let rows = stmt.query_map(params![user, limit], |row| {
+        let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<UserSwapRow> {
             Ok(UserSwapRow {
                 tx_hash: row.get(0)?,
                 ledger: row.get::<_, i64>(1)? as u32,
@@ -252,10 +292,36 @@ impl IndexStore {
                 amount_out: row.get(9)?,
                 is_split: row.get::<_, i32>(10)? != 0,
             })
-        })?;
+        };
+
         let mut out = Vec::new();
-        for r in rows {
-            out.push(r?);
+        if let Some((created_at, tx_hash)) = before {
+            let mut stmt = self.conn.prepare(
+                "SELECT tx_hash, ledger, created_at, status, function_name, user_address,
+                        token_in, token_out, amount_in, amount_out, is_split
+                 FROM swap_invocations
+                 WHERE user_address = ?1
+                   AND (created_at < ?2 OR (created_at = ?2 AND tx_hash < ?3))
+                 ORDER BY created_at DESC, tx_hash DESC
+                 LIMIT ?4",
+            )?;
+            let rows = stmt.query_map(params![user, created_at, tx_hash, limit], map_row)?;
+            for r in rows {
+                out.push(r?);
+            }
+        } else {
+            let mut stmt = self.conn.prepare(
+                "SELECT tx_hash, ledger, created_at, status, function_name, user_address,
+                        token_in, token_out, amount_in, amount_out, is_split
+                 FROM swap_invocations
+                 WHERE user_address = ?1
+                 ORDER BY created_at DESC, tx_hash DESC
+                 LIMIT ?2",
+            )?;
+            let rows = stmt.query_map(params![user, limit], map_row)?;
+            for r in rows {
+                out.push(r?);
+            }
         }
         Ok(out)
     }
@@ -412,17 +478,23 @@ mod tests {
         store.insert_invocation(&sample("tx_new", u1, 200, 20)).unwrap();
         store.insert_invocation(&sample("tx_other", u2, 300, 30)).unwrap();
 
-        let rows = store.list_swaps_by_user(u1, 10).unwrap();
+        let rows = store.list_swaps_by_user(u1, 10, None).unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].tx_hash, "tx_new");
         assert_eq!(rows[1].tx_hash, "tx_old");
 
-        let limited = store.list_swaps_by_user(u1, 1).unwrap();
+        let limited = store.list_swaps_by_user(u1, 1, None).unwrap();
         assert_eq!(limited.len(), 1);
         assert_eq!(limited[0].tx_hash, "tx_new");
 
+        let page2 = store
+            .list_swaps_by_user(u1, 10, Some((limited[0].created_at, limited[0].tx_hash.as_str())))
+            .unwrap();
+        assert_eq!(page2.len(), 1);
+        assert_eq!(page2[0].tx_hash, "tx_old");
+
         let empty = store
-            .list_swaps_by_user("GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCK3LI", 10)
+            .list_swaps_by_user("GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCK3LI", 10, None)
             .unwrap();
         assert!(empty.is_empty());
     }

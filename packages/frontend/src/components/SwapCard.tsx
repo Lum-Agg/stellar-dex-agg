@@ -18,27 +18,25 @@ import {
   type ClassicAssetRef,
 } from '@/lib/trustline';
 import { SubmitViaToggle } from '@/components/SubmitViaToggle';
+import { SwapSettingsModal } from '@/components/SwapSettingsModal';
+import { subRoutesForBuild } from '@/lib/routeDisplay';
+import {
+  DEFAULT_SWAP_SETTINGS,
+  formatSlippageLabel,
+  loadSwapSettings,
+  saveSwapSettings,
+  type SwapSettings,
+} from '@/lib/swap-settings';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
-const SLIPPAGE_PRESETS = [0.1, 0.5, 1.0] as const;
-const SLIPPAGE_MIN = 0.01;
-const SLIPPAGE_MAX = 50;
-
-function parseSlippageInput(raw: string): number | null {
-  if (!raw || raw === '.') return null;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return null;
-  if (n < SLIPPAGE_MIN || n > SLIPPAGE_MAX) return null;
-  return n;
-}
 
 export function SwapCard() {
   const [tokenIn, setTokenIn] = useState<Token>(TOKENS[0]);
   const [tokenOut, setTokenOut] = useState<Token>(TOKENS[1]);
   const [amountIn, setAmountIn] = useState('');
-  const [slippage, setSlippage] = useState(1.0);
-  const [customSlippage, setCustomSlippage] = useState('');
-  const [slippageCustomMode, setSlippageCustomMode] = useState(false);
+  const [settings, setSettings] = useState<SwapSettings>(DEFAULT_SWAP_SETTINGS);
+  const [settingsReady, setSettingsReady] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [quote, setQuote] = useState<QuoteData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,8 +53,19 @@ export function SwapCard() {
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
   const quoteFingerprintRef = useRef('');
   const tokenList = useTokenList();
-  const quoteFingerprint = `${tokenIn.id}:${tokenOut.id}:${amountIn}:${slippage}`;
+  const { slippage, maxHops, maxSplits } = settings;
+  const quoteFingerprint = `${tokenIn.id}:${tokenOut.id}:${amountIn}:${slippage}:${maxHops}:${maxSplits}`;
   quoteFingerprintRef.current = quoteFingerprint;
+
+  useEffect(() => {
+    setSettings(loadSwapSettings());
+    setSettingsReady(true);
+  }, []);
+
+  const updateSettings = useCallback((next: SwapSettings) => {
+    setSettings(next);
+    saveSwapSettings(next);
+  }, []);
   const resolveTokenSymbol = useMemo(() => {
     const byId = new Map(tokenList.map((t) => [t.id, t.symbol]));
     return (contractId: string) => {
@@ -70,7 +79,7 @@ export function SwapCard() {
   const loadQuote = useCallback(
     async (opts?: { silent?: boolean }) => {
       const silent = opts?.silent ?? false;
-      const requestFingerprint = `${tokenIn.id}:${tokenOut.id}:${amountIn}:${slippage}`;
+      const requestFingerprint = `${tokenIn.id}:${tokenOut.id}:${amountIn}:${slippage}:${maxHops}:${maxSplits}`;
 
       if (!amountIn || parseFloat(amountIn) <= 0) {
         setQuote(null);
@@ -84,7 +93,11 @@ export function SwapCard() {
 
       try {
         const amountStroops = Math.floor(parseFloat(amountIn) * 10 ** tokenIn.decimals).toString();
-        const result = await getQuote(tokenIn.id, tokenOut.id, amountStroops, slippage);
+        const result = await getQuote(tokenIn.id, tokenOut.id, amountStroops, {
+          slippage,
+          maxHops,
+          maxSplits,
+        });
 
         if (requestFingerprint !== quoteFingerprintRef.current) return;
 
@@ -106,11 +119,12 @@ export function SwapCard() {
         }
       }
     },
-    [amountIn, tokenIn, tokenOut, slippage],
+    [amountIn, tokenIn, tokenOut, slippage, maxHops, maxSplits],
   );
 
-  // Auto-fetch quote when amount changes (debounced)
+  // Auto-fetch quote when amount / settings change (debounced)
   useEffect(() => {
+    if (!settingsReady) return;
     if (!amountIn || parseFloat(amountIn) <= 0) {
       setQuote(null);
       return;
@@ -125,9 +139,10 @@ export function SwapCard() {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [amountIn, loadQuote]);
+  }, [amountIn, loadQuote, settingsReady]);
 
   useEffect(() => {
+    if (!settingsReady) return;
     if (!amountIn || parseFloat(amountIn) <= 0) return;
 
     const interval = setInterval(() => {
@@ -135,7 +150,7 @@ export function SwapCard() {
     }, 12_000);
 
     return () => clearInterval(interval);
-  }, [amountIn, loadQuote]);
+  }, [amountIn, loadQuote, settingsReady]);
 
   const swapDirection = () => {
     setTokenIn(tokenOut);
@@ -261,7 +276,8 @@ export function SwapCard() {
         return;
       }
 
-      const sub_routes = quote.sub_routes.map((route) => ({
+      const buildRoutes = subRoutesForBuild(quote.sub_routes, totalAmountIn);
+      const sub_routes = buildRoutes.map((route) => ({
         amount_in: route.amount_in,
         steps: route.pool_addresses.map((pool: string, i: number) => ({
           dex_type: route.dex_types[i] ?? 'aquarius',
@@ -445,75 +461,44 @@ export function SwapCard() {
           <h2 className="text-[17px] sm:text-[18px] font-semibold tracking-tight text-[var(--text-primary)]">
             Swap
           </h2>
-          <div className="flex items-center gap-0.5 rounded-full border border-[var(--border)] bg-[var(--bg-0)]/50 p-0.5">
-            {SLIPPAGE_PRESETS.map((s) => {
-              const active = !slippageCustomMode && slippage === s;
-              return (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => {
-                    setSlippage(s);
-                    setSlippageCustomMode(false);
-                    setCustomSlippage('');
-                  }}
-                  className={`px-3 py-1.5 rounded-full text-[13px] transition-colors ${
-                    active
-                      ? 'bg-[var(--surface-raised)] text-[var(--text-primary)]'
-                      : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
-                  }`}
-                >
-                  {s}%
-                </button>
-              );
-            })}
-            <label
-              className={`flex items-center gap-0.5 rounded-full px-2 py-1 transition-colors ${
-                slippageCustomMode
-                  ? 'bg-[var(--surface-raised)] text-[var(--text-primary)]'
-                  : 'text-[var(--text-muted)]'
-              }`}
+          <button
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-strong)] bg-[var(--bg-0)]/40 px-2.5 py-1.5 text-[13px] text-[var(--text-secondary)] transition-colors hover:border-[var(--accent)]/40 hover:text-[var(--text-primary)]"
+            aria-label={`Swap settings, slippage ${formatSlippageLabel(slippage)}`}
+          >
+            <span className="tabular-nums font-medium text-[var(--text-primary)]">
+              {formatSlippageLabel(slippage)}
+            </span>
+            <svg
+              className="h-3.5 w-3.5 text-[var(--text-muted)]"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              aria-hidden
             >
-              <input
-                type="text"
-                inputMode="decimal"
-                aria-label="Custom slippage percent"
-                placeholder="Custom"
-                value={slippageCustomMode ? customSlippage : ''}
-                onFocus={() => {
-                  setSlippageCustomMode(true);
-                  setCustomSlippage(customSlippage || String(slippage));
-                }}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  if (!/^\d*\.?\d*$/.test(val)) return;
-                  setSlippageCustomMode(true);
-                  setCustomSlippage(val);
-                  const parsed = parseSlippageInput(val);
-                  if (parsed !== null) setSlippage(parsed);
-                }}
-                onBlur={() => {
-                  const parsed = parseSlippageInput(customSlippage);
-                  if (parsed === null) {
-                    // Keep last valid slippage; snap UI back to a preset if it matches.
-                    const preset = SLIPPAGE_PRESETS.find((s) => s === slippage);
-                    if (preset !== undefined) {
-                      setSlippageCustomMode(false);
-                      setCustomSlippage('');
-                    } else {
-                      setCustomSlippage(String(slippage));
-                    }
-                    return;
-                  }
-                  setSlippage(parsed);
-                  setCustomSlippage(String(parsed));
-                }}
-                className="w-12 bg-transparent text-[13px] text-right outline-none placeholder-[var(--text-muted)]/70 tabular-nums"
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 15.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7z"
               />
-              <span className="text-[13px] shrink-0">%</span>
-            </label>
-          </div>
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"
+              />
+            </svg>
+          </button>
         </div>
+
+        <SwapSettingsModal
+          open={settingsOpen}
+          settings={settings}
+          onClose={() => setSettingsOpen(false)}
+          onChange={updateSettings}
+        />
 
         <div className="surface-panel-raised p-4 sm:p-5">
           <div className="flex justify-between items-center text-[13px] sm:text-[14px] text-[var(--text-muted)] mb-2.5 gap-2">

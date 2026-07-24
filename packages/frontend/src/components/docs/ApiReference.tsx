@@ -194,6 +194,12 @@ export function ApiReference() {
           params={[
             { name: 'user', type: 'string', required: true, desc: 'G... address' },
             { name: 'limit', type: 'number', required: false, desc: '1–50, default 20' },
+            {
+              name: 'cursor',
+              type: 'string',
+              required: false,
+              desc: 'Pagination cursor from previous next_cursor',
+            },
           ]}
           tryIt={<SwapsTryIt />}
         />

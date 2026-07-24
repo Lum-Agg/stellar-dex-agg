@@ -75,23 +75,43 @@ function normalizeQuoteData(data: QuoteData): QuoteData {
   return { ...data, sub_routes, amount_in };
 }
 
+export type QuoteOptions = {
+  slippage?: number;
+  maxHops?: number;
+  maxSplits?: number;
+  signal?: AbortSignal;
+};
+
 export async function getQuote(
   tokenIn: string,
   tokenOut: string,
   amountIn: string,
-  slippage?: number,
+  slippageOrOpts?: number | QuoteOptions,
   signal?: AbortSignal,
 ): Promise<QuoteResponse> {
+  const opts: QuoteOptions =
+    typeof slippageOrOpts === 'number' || slippageOrOpts === undefined
+      ? { slippage: slippageOrOpts, signal }
+      : slippageOrOpts;
+
   const params = new URLSearchParams({
     token_in: tokenIn,
     token_out: tokenOut,
     amount_in: amountIn,
   });
-  if (slippage !== undefined) {
-    params.set('slippage', slippage.toString());
+  if (opts.slippage !== undefined) {
+    params.set('slippage', opts.slippage.toString());
+  }
+  if (opts.maxHops !== undefined) {
+    params.set('max_hops', String(opts.maxHops));
+  }
+  if (opts.maxSplits !== undefined) {
+    params.set('max_splits', String(opts.maxSplits));
   }
 
-  const resp = await fetch(`${API_URL}/api/v1/quote?${params}`, { signal });
+  const resp = await fetch(`${API_URL}/api/v1/quote?${params}`, {
+    signal: opts.signal ?? signal,
+  });
   const json = (await resp.json()) as QuoteResponse;
   if (json.success && json.data) {
     json.data = normalizeQuoteData(json.data);

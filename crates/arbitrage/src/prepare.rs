@@ -258,6 +258,12 @@ pub async fn prepare_transaction_xdr(
         .await
         .map_err(|e| anyhow!("simulate_transaction: {:?}", e))?;
 
+    let resource_fee: u128 = sim_response
+        .min_resource_fee
+        .as_deref()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
     let amount_out = match sim_response.to_result().and_then(|(ret, _)| scval_i128_to_u128(&ret)) {
         Some(v) => v,
         None => {
@@ -265,15 +271,11 @@ pub async fn prepare_transaction_xdr(
                 .error
                 .clone()
                 .unwrap_or_else(|| "no simulation error detail".to_string());
-            return Err(anyhow!("simulation missing i128 return value: {detail}"));
+            return Err(anyhow!(
+                "simulation missing i128 return value (resource_fee_stroops={resource_fee}): {detail}"
+            ));
         }
     };
-
-    let resource_fee: u128 = sim_response
-        .min_resource_fee
-        .as_deref()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
     let estimated_fee_stroops = u128::from(fee).saturating_add(resource_fee);
 
     let prepared = assemble_transaction(&tx, sim_response).map_err(|e| anyhow!("assemble_transaction: {:?}", e))?;

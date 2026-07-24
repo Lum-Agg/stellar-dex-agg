@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import type { QuoteData, SubRoute } from '@/lib/aggregator';
 import {
   formatExchangeRate,
@@ -54,6 +55,20 @@ function PathArrow() {
   );
 }
 
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      className={`w-3.5 h-3.5 text-[var(--text-muted)] transition-transform ${open ? 'rotate-180' : ''}`}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      aria-hidden
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+    </svg>
+  );
+}
+
 function RouteAmountPath({
   path,
   amountIn,
@@ -99,6 +114,16 @@ function RouteAmountPath({
   );
 }
 
+function routeSummaryLabel(routes: SubRoute[]): string {
+  if (routes.length === 0) return '—';
+  if (routes.length === 1) {
+    const hops = routeDexHops(routes[0]);
+    if (hops.length === 1) return dexStyle(hops[0]).label;
+    return `${hops.length} hops`;
+  }
+  return `${routes.length} paths`;
+}
+
 export function RouteDisplay({
   quote,
   tokenInSymbol,
@@ -114,6 +139,13 @@ export function RouteDisplay({
   tokenOutDecimals?: number;
   resolveTokenSymbol: (contractId: string) => string;
 }) {
+  const [open, setOpen] = useState(false);
+
+  // New quote → collapse again (avoid stale expanded state).
+  useEffect(() => {
+    setOpen(false);
+  }, [quote.amount_in, quote.expected_output, quote.sub_routes.length]);
+
   const formatAmount = (stroops: string, decimals: number) => {
     const val = parseInt(stroops, 10) / 10 ** decimals;
     if (val >= 1000) return val.toFixed(2);
@@ -128,110 +160,108 @@ export function RouteDisplay({
     tokenInSymbol ||
     (quote.sub_routes[0]?.path[0] ? resolveTokenSymbol(quote.sub_routes[0].path[0]) : '') ||
     '???';
+  const summary = routeSummaryLabel(displayRoutes);
 
   return (
-    <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)]/80 p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <span className="text-[14px] font-medium text-[var(--text-secondary)]">Route</span>
-        {quote.compute_time_ms !== undefined && (
-          <span className="text-[13px] text-[var(--text-muted)]">
-            Quoted in {quote.compute_time_ms}ms
-          </span>
-        )}
+    <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)]/80 px-4 py-3 space-y-2.5">
+      <div className="flex justify-between text-[13px] sm:text-[14px]">
+        <span className="text-[var(--text-muted)]">Price impact</span>
+        <span
+          className={quote.price_impact > 1 ? 'text-amber-400' : 'text-[var(--text-secondary)]'}
+        >
+          {quote.price_impact > 0 ? `~${quote.price_impact.toFixed(2)}%` : '< 0.01%'}
+        </span>
+      </div>
+      <div className="flex justify-between text-[13px] sm:text-[14px]">
+        <span className="text-[var(--text-muted)]">Minimum received</span>
+        <span className="text-[var(--text-secondary)] font-[family-name:var(--font-mono)]">
+          {formatAmount(quote.minimum_output, tokenOutDecimals)} {tokenOutSymbol}
+        </span>
       </div>
 
-      {quote.is_split && (
-        <div className="flex items-center gap-1.5 text-[13px] text-[var(--text-muted)]">
-          <svg
-            className="w-3 h-3 shrink-0 text-[var(--accent)]/70"
-            fill="currentColor"
-            viewBox="0 0 20 20"
-          >
-            <path
-              fillRule="evenodd"
-              d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z"
-              clipRule="evenodd"
-            />
-          </svg>
-          <span>
-            Split across {displayRoutes.length} path{displayRoutes.length === 1 ? '' : 's'}
-            {hiddenLegCount > 0
-              ? ` (${hiddenLegCount} dust leg${hiddenLegCount === 1 ? '' : 's'} hidden)`
-              : ''}
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="w-full flex items-center justify-between gap-3 pt-1 text-[13px] sm:text-[14px] hover:opacity-90 transition-opacity"
+      >
+        <span className="text-[var(--text-muted)]">Route</span>
+        <span className="inline-flex items-center gap-2 min-w-0">
+          <span className="rounded-full border border-[var(--border)] bg-[var(--bg-0)]/60 px-2.5 py-0.5 text-[12px] font-medium text-[var(--text-secondary)] truncate max-w-[10rem] sm:max-w-[14rem]">
+            {summary}
           </span>
+          <Chevron open={open} />
+        </span>
+      </button>
+
+      {open && (
+        <div className="space-y-2 pt-1 border-t border-[var(--border)]">
+          {quote.compute_time_ms !== undefined && (
+            <div className="text-[12px] text-[var(--text-muted)]">
+              Quoted in {quote.compute_time_ms}ms
+              {hiddenLegCount > 0
+                ? ` · ${hiddenLegCount} dust leg${hiddenLegCount === 1 ? '' : 's'} hidden`
+                : ''}
+            </div>
+          )}
+
+          <div className="space-y-2">
+            {displayRoutes.map((route, i) => {
+              const rate = legExchangeRate(
+                route.amount_in,
+                route.amount_out,
+                tokenInDecimals,
+                tokenOutDecimals,
+              );
+              const hops = routeDexHops(route);
+
+              return (
+                <div
+                  key={i}
+                  className="rounded-xl border border-[var(--border)] bg-[var(--bg-0)]/50 p-3"
+                >
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <div className="flex flex-wrap items-center gap-1 min-w-0">
+                      {hops.map((dex, j) => {
+                        const { label } = dexStyle(dex);
+                        return (
+                          <span key={`${dex}-${j}`} className="inline-flex items-center gap-1">
+                            {j > 0 && (
+                              <span className="text-[var(--text-muted)] text-[12px]">→</span>
+                            )}
+                            <span className="text-[13px] font-medium text-[var(--text-secondary)]">
+                              {label}
+                            </span>
+                          </span>
+                        );
+                      })}
+                    </div>
+                    <div className="text-right shrink-0">
+                      <span className="text-[13px] text-[var(--text-muted)] font-[family-name:var(--font-mono)] block">
+                        {formatLegPercent(route.percentage)}
+                      </span>
+                      {rate != null && inSym && outSym && (
+                        <span className="text-[12px] text-[var(--text-muted)] font-[family-name:var(--font-mono)]">
+                          {formatExchangeRate(rate)} {outSym}/{inSym}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <RouteAmountPath
+                    path={route.path}
+                    amountIn={route.amount_in}
+                    amountOut={route.amount_out}
+                    tokenInDecimals={tokenInDecimals}
+                    tokenOutDecimals={tokenOutDecimals}
+                    resolveTokenSymbol={resolveTokenSymbol}
+                    formatAmount={formatAmount}
+                  />
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
-
-      <div className="space-y-2">
-        {displayRoutes.map((route, i) => {
-          const rate = legExchangeRate(
-            route.amount_in,
-            route.amount_out,
-            tokenInDecimals,
-            tokenOutDecimals,
-          );
-          const hops = routeDexHops(route);
-
-          return (
-            <div
-              key={i}
-              className="rounded-xl border border-[var(--border)] bg-[var(--bg-0)]/50 p-3"
-            >
-              <div className="flex items-center justify-between gap-2 mb-1.5">
-                <div className="flex flex-wrap items-center gap-1 min-w-0">
-                  {hops.map((dex, j) => {
-                    const { label } = dexStyle(dex);
-                    return (
-                      <span key={`${dex}-${j}`} className="inline-flex items-center gap-1">
-                        {j > 0 && <span className="text-[var(--text-muted)] text-[12px]">→</span>}
-                        <span className="text-[13px] font-medium text-[var(--text-secondary)]">
-                          {label}
-                        </span>
-                      </span>
-                    );
-                  })}
-                </div>
-                <div className="text-right shrink-0">
-                  <span className="text-[13px] text-[var(--text-muted)] font-[family-name:var(--font-mono)] block">
-                    {formatLegPercent(route.percentage)}
-                  </span>
-                  {rate != null && inSym && outSym && (
-                    <span className="text-[12px] text-[var(--text-muted)] font-[family-name:var(--font-mono)]">
-                      {formatExchangeRate(rate)} {outSym}/{inSym}
-                    </span>
-                  )}
-                </div>
-              </div>
-              <RouteAmountPath
-                path={route.path}
-                amountIn={route.amount_in}
-                amountOut={route.amount_out}
-                tokenInDecimals={tokenInDecimals}
-                tokenOutDecimals={tokenOutDecimals}
-                resolveTokenSymbol={resolveTokenSymbol}
-                formatAmount={formatAmount}
-              />
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="border-t border-[var(--border)] pt-3 space-y-1.5">
-        <div className="flex justify-between text-[13px] sm:text-[14px]">
-          <span className="text-[var(--text-muted)]">Price impact</span>
-          <span
-            className={quote.price_impact > 1 ? 'text-amber-400' : 'text-[var(--text-secondary)]'}
-          >
-            {quote.price_impact > 0 ? `~${quote.price_impact.toFixed(2)}%` : '< 0.01%'}
-          </span>
-        </div>
-        <div className="flex justify-between text-[13px] sm:text-[14px]">
-          <span className="text-[var(--text-muted)]">Minimum received</span>
-          <span className="text-[var(--text-secondary)] font-[family-name:var(--font-mono)]">
-            {formatAmount(quote.minimum_output, tokenOutDecimals)} {tokenOutSymbol}
-          </span>
-        </div>
-      </div>
     </div>
   );
 }
