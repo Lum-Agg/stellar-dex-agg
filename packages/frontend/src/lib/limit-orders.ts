@@ -4,6 +4,7 @@
  */
 
 import { Networks } from '@creit.tech/stellar-wallets-kit/types';
+import { decimalToAtomicUnits } from '@/lib/balance';
 import { fetchLatestLedger as fetchLatestLedgerRpc, submitSignedTransaction } from '@/lib/rpc';
 
 /** Minimal token shape shared with TokenSelector (avoid circular imports). */
@@ -60,18 +61,6 @@ export interface BuildOrderTxResult {
   contract?: string;
 }
 
-function humanToStroops(amount: string, decimals: number): string {
-  const cleaned = amount.trim();
-  if (!cleaned || cleaned === '.') throw new Error('Invalid amount');
-  const [wholePart, fracPart = ''] = cleaned.split('.');
-  const whole = wholePart === '' ? '0' : wholePart;
-  if (!/^\d+$/.test(whole) || !/^\d*$/.test(fracPart)) throw new Error('Invalid amount');
-  const frac = fracPart.padEnd(decimals, '0').slice(0, decimals);
-  const stroops = BigInt(whole) * BigInt(10 ** decimals) + BigInt(frac || '0');
-  if (stroops <= BigInt(0)) throw new Error('Amount must be positive');
-  return stroops.toString();
-}
-
 /** OUT per 1 whole IN → e7 fixed-point string (adjusts for decimal mismatch). */
 export function priceHumanToE7(
   priceHuman: string,
@@ -104,13 +93,13 @@ export function e7ToPriceHuman(
 }
 
 export function amountToStroops(amount: string, decimals: number): string {
-  return humanToStroops(amount, decimals);
+  return decimalToAtomicUnits(amount, decimals);
 }
 
 export function formatStroops(stroops: string, decimals: number): string {
   try {
     const n = BigInt(stroops);
-    const base = BigInt(10 ** decimals);
+    const base = BigInt(10) ** BigInt(decimals);
     const whole = n / base;
     const frac = n % base;
     const fracStr = frac.toString().padStart(decimals, '0').replace(/0+$/, '');

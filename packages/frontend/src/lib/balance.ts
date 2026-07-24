@@ -23,6 +23,34 @@ export interface TokenBalanceResult {
   hasTrustline: boolean | null;
 }
 
+/** Convert a human decimal amount to atomic units without floating-point rounding. */
+export function decimalToAtomicUnits(amount: string, decimals: number): string {
+  if (!Number.isInteger(decimals) || decimals < 0) {
+    throw new Error('Invalid token decimals');
+  }
+
+  const cleaned = amount.trim();
+  if (!cleaned || cleaned === '.') throw new Error('Invalid amount');
+
+  const parts = cleaned.split('.');
+  if (parts.length > 2) throw new Error('Invalid amount');
+
+  const [wholePart, fracPart = ''] = parts;
+  const whole = wholePart === '' ? '0' : wholePart;
+  if (!/^\d+$/.test(whole) || !/^\d*$/.test(fracPart)) {
+    throw new Error('Invalid amount');
+  }
+  if (fracPart.length > decimals) {
+    throw new Error(`Amount supports at most ${decimals} decimal places`);
+  }
+
+  const base = BigInt(10) ** BigInt(decimals);
+  const fraction = fracPart.padEnd(decimals, '0');
+  const atomic = BigInt(whole) * base + BigInt(fraction || '0');
+  if (atomic <= BigInt(0)) throw new Error('Amount must be positive');
+  return atomic.toString();
+}
+
 /** Single SAC balance (any token — used for uncommon assets). */
 export async function fetchTokenBalance(
   accountId: string,
@@ -112,7 +140,7 @@ export async function fetchSpendableBalanceStroops(
 }
 
 export function stroopsToDecimalString(stroops: bigint, decimals: number): string {
-  const base = BigInt(10 ** decimals);
+  const base = BigInt(10) ** BigInt(decimals);
   const whole = stroops / base;
   const frac = stroops % base;
   if (frac === BigInt(0)) return whole.toString();

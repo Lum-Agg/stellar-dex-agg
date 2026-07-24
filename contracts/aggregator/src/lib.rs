@@ -297,8 +297,7 @@ impl AggregatorContract {
             if let Some(last_step) = sr.steps.last() {
                 assert!(last_step.token_out == *token_out, "Sub-route must end with token_out");
             }
-            let output =
-                Self::execute_path(env, &sr.steps, sr.amount_in, contract_addr, path_base, &mut max_depth);
+            let output = Self::execute_path(env, &sr.steps, sr.amount_in, contract_addr, path_base, &mut max_depth);
             total_output += output;
         }
         *leg_counter = path_base + max_depth;
@@ -351,12 +350,7 @@ impl AggregatorContract {
         let output = Self::execute_step_inner(env, step, amount_in, my_address);
         env.events().publish(
             (Symbol::new(env, "leg"),),
-            (
-                hop_idx,
-                Self::dex_tag(&step.dex_type),
-                step.dex_id.clone(),
-                amount_in,
-            ),
+            (hop_idx, Self::dex_tag(&step.dex_type), step.dex_id.clone(), amount_in),
         );
         output
     }

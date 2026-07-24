@@ -32,7 +32,8 @@ pub struct SwapsResponse {
 #[derive(Debug, Serialize)]
 pub struct SwapsData {
     pub swaps: Vec<SwapItem>,
-    /// Present when another page may exist (pass as `cursor` on the next request).
+    /// Present when another page may exist (pass as `cursor` on the next
+    /// request).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
 }

@@ -361,10 +361,7 @@ impl SorobanRpc {
                 .get("envelopeXdr")
                 .and_then(|s| s.as_str())
                 .map(|s| s.to_string()),
-            result_xdr: result
-                .get("resultXdr")
-                .and_then(|s| s.as_str())
-                .map(|s| s.to_string()),
+            result_xdr: result.get("resultXdr").and_then(|s| s.as_str()).map(|s| s.to_string()),
         })
     }
 

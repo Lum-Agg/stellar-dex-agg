@@ -7,6 +7,7 @@ use {
         handlers::{build_tx_impl, build_unsigned_tx_xdr, BuildTxRequest, BuildTxStep, BuildTxSubRoute},
         soroban_prepare::prepare_transaction_xdr,
     },
+    dex_adapters::rpc::SorobanRpc,
     stellar_xdr::curr::{Limits, ReadXdr},
 };
 
@@ -241,7 +242,8 @@ async fn api_build_tx_xdr_aquarius_simulates() {
 #[tokio::test]
 #[ignore = "mainnet RPC"]
 async fn api_build_tx_xdr_hybrid_simulates() {
-    let err = match build_tx_impl(&build_hybrid_request()).await {
+    let rpc = SorobanRpc::mainnet();
+    let err = match build_tx_impl(&build_hybrid_request(), &rpc).await {
         Ok(_) => panic!("hybrid build should be rejected"),
         Err(err) => err,
     };

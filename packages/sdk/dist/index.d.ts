@@ -125,6 +125,12 @@ export interface SwapRecord {
 export interface ListSwapsParams {
     user: string;
     limit?: number;
+    /** Opaque cursor from a previous page (`nextCursor`). */
+    cursor?: string;
+}
+export interface ListSwapsResult {
+    swaps: SwapRecord[];
+    nextCursor?: string;
 }
 export interface PriceQuote {
     id: string;
@@ -200,7 +206,7 @@ export declare class LumAggClient {
     listOrders(params: ListOrdersParams): Promise<OrderRecord[]>;
     buildCreateOrder(params: BuildCreateOrderParams): Promise<BuildOrderTxResult>;
     buildCancelOrder(params: BuildCancelOrderParams): Promise<BuildOrderTxResult>;
-    listSwaps(params: ListSwapsParams): Promise<SwapRecord[]>;
+    listSwaps(params: ListSwapsParams): Promise<ListSwapsResult>;
     getPrices(ids: string[]): Promise<PriceQuote[]>;
     getPriceHistory(id: string, range?: '24h' | '7d'): Promise<PricePoint[]>;
     getBalance(params: {

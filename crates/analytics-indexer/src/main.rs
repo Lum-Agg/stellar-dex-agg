@@ -63,9 +63,7 @@ async fn main() -> Result<()> {
             Ok(())
         }
         other => {
-            eprintln!(
-                "usage: analytics-indexer [run|backfill|export-daily [YYYY-MM-DD]|status|repair-legs]"
-            );
+            eprintln!("usage: analytics-indexer [run|backfill|export-daily [YYYY-MM-DD]|status|repair-legs]");
             Err(anyhow::anyhow!("unknown command: {}", other))
         }
     }

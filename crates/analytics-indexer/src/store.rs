@@ -269,14 +269,9 @@ impl IndexStore {
 
     /// List swaps for `user`, newest first.
     ///
-    /// When `before` is `Some((created_at, tx_hash))`, returns rows strictly older
-    /// than that cursor (`ORDER BY created_at DESC, tx_hash DESC`).
-    pub fn list_swaps_by_user(
-        &self,
-        user: &str,
-        limit: u32,
-        before: Option<(i64, &str)>,
-    ) -> Result<Vec<UserSwapRow>> {
+    /// When `before` is `Some((created_at, tx_hash))`, returns rows strictly
+    /// older than that cursor (`ORDER BY created_at DESC, tx_hash DESC`).
+    pub fn list_swaps_by_user(&self, user: &str, limit: u32, before: Option<(i64, &str)>) -> Result<Vec<UserSwapRow>> {
         let limit = limit.clamp(1, 50);
         let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<UserSwapRow> {
             Ok(UserSwapRow {

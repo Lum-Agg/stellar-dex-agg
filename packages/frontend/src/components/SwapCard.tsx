@@ -2,7 +2,11 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { getQuote, type QuoteData } from '@/lib/aggregator';
-import { formatBalanceDisplay, percentToAmountInput } from '@/lib/balance';
+import {
+  decimalToAtomicUnits,
+  formatBalanceDisplay,
+  percentToAmountInput,
+} from '@/lib/balance';
 import { useAccountBalances } from '@/lib/account-balances-context';
 import { useWallet } from '@/lib/wallet-context';
 import { RouteDisplay } from './RouteDisplay';
@@ -92,7 +96,7 @@ export function SwapCard() {
       }
 
       try {
-        const amountStroops = Math.floor(parseFloat(amountIn) * 10 ** tokenIn.decimals).toString();
+        const amountStroops = decimalToAtomicUnits(amountIn, tokenIn.decimals);
         const result = await getQuote(tokenIn.id, tokenOut.id, amountStroops, {
           slippage,
           maxHops,
@@ -108,10 +112,10 @@ export function SwapCard() {
           setQuote(null);
           setError(result.error || 'No route found');
         }
-      } catch {
+      } catch (err) {
         if (!silent && requestFingerprint === quoteFingerprintRef.current) {
           setQuote(null);
-          setError('Failed to fetch quote');
+          setError(err instanceof Error ? err.message : 'Failed to fetch quote');
         }
       } finally {
         if (!silent && requestFingerprint === quoteFingerprintRef.current) {
@@ -244,7 +248,7 @@ export function SwapCard() {
     setTxResult(null);
 
     try {
-      const totalAmountIn = Math.floor(parseFloat(amountIn) * 10 ** tokenIn.decimals).toString();
+      const totalAmountIn = decimalToAtomicUnits(amountIn, tokenIn.decimals);
 
       const subSum = quote.sub_routes.reduce((s, r) => s + BigInt(r.amount_in || '0'), BigInt(0));
       if (subSum.toString() !== totalAmountIn) {

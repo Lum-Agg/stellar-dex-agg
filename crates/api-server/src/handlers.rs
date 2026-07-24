@@ -9,10 +9,8 @@ use {
     router_engine::{
         apply_on_chain_hop_validation,
         types::{RouteRequest, TokenId},
-        QuoteEngine,
     },
     serde::{Deserialize, Serialize},
-    std::sync::Arc,
     stellar_xdr::{
         curr as xdr,
         curr::{Limits, WriteXdr},
@@ -169,7 +167,7 @@ pub struct SubRouteData {
 
 pub async fn get_quote(State(state): State<AppState>, Query(params): Query<QuoteQuery>) -> impl IntoResponse {
     let amount_in: u128 = match params.amount_in.parse() {
-        Ok(v) => v,
+        Ok(v) if v > 0 => v,
         Err(_) => {
             return (
                 StatusCode::BAD_REQUEST,
@@ -180,9 +178,30 @@ pub async fn get_quote(State(state): State<AppState>, Query(params): Query<Quote
                 }),
             );
         }
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(QuoteResponse {
+                    success: false,
+                    data: None,
+                    error: Some("amount_in must be positive".to_string()),
+                }),
+            );
+        }
     };
 
-    let slippage_bps = params.slippage.map(|s| (s * 100.0) as u32).unwrap_or(50); // default 0.5%
+    let slippage = params.slippage.unwrap_or(0.5);
+    if !slippage.is_finite() || !(0.0..100.0).contains(&slippage) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(QuoteResponse {
+                success: false,
+                data: None,
+                error: Some("slippage must be between 0 (inclusive) and 100 (exclusive)".to_string()),
+            }),
+        );
+    }
+    let slippage_bps = (slippage * 100.0).round() as u32;
     let include_debug = params.debug.unwrap_or(0) != 0;
     let on_chain_validate = match params.on_chain_validate {
         Some(v) => v != 0,
@@ -332,209 +351,6 @@ pub async fn get_quote(State(state): State<AppState>, Query(params): Query<Quote
     )
 }
 
-// ============================================================
-// POST /api/v1/swap
-// ============================================================
-
-#[derive(Deserialize)]
-pub struct SwapRequest {
-    pub token_in: String,
-    pub token_out: String,
-    pub amount_in: String,
-    pub slippage: f64,
-    pub user_public_key: String,
-}
-
-#[derive(Serialize)]
-pub struct SwapResponse {
-    pub success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<SwapData>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-#[derive(Serialize)]
-pub struct SwapData {
-    pub unsigned_tx_xdr: String,
-    pub simulation: SimulationData,
-    pub route: QuoteData,
-}
-
-#[derive(Serialize)]
-pub struct SimulationData {
-    pub success: bool,
-    pub actual_output: Option<String>,
-    pub fee: Option<String>,
-    pub error: Option<String>,
-}
-
-async fn route_to_sub_routes(
-    engine: &Arc<QuoteEngine>,
-    route: &router_engine::types::OptimalRoute,
-) -> Result<(Vec<SubRouteData>, Vec<BuildTxSubRoute>), String> {
-    let mut sub_routes = Vec::new();
-    let mut build_sub_routes = Vec::new();
-
-    for so in &route.sub_orders {
-        let mut in_indices = Vec::new();
-        let mut out_indices = Vec::new();
-        let mut build_steps = Vec::new();
-
-        for i in 0..so.path.hops {
-            let token_in = &so.path.tokens[i];
-            let token_out = &so.path.tokens[i + 1];
-            let pool = &so.path.pool_addresses[i];
-            let dex_type = so.path.sources[i].clone();
-
-            let (in_idx, out_idx) = engine
-                .get_pool_indices(pool, token_in, token_out)
-                .await
-                .ok_or_else(|| {
-                    format!(
-                        "Cannot resolve pool token indices for {} → {} on {}",
-                        token_in.canonical(),
-                        token_out.canonical(),
-                        pool
-                    )
-                })?;
-
-            in_indices.push(in_idx);
-            out_indices.push(out_idx);
-            build_steps.push(BuildTxStep {
-                dex_type,
-                pool_address: pool.clone(),
-                token_in: token_in.canonical(),
-                token_out: token_out.canonical(),
-                in_idx,
-                out_idx,
-            });
-        }
-
-        sub_routes.push(SubRouteData {
-            source: so.path.sources.join(" → "),
-            path: so.path.tokens.iter().map(|t| t.canonical()).collect(),
-            pool_addresses: so.path.pool_addresses.clone(),
-            dex_types: so.path.sources.clone(),
-            in_indices,
-            out_indices,
-            amount_in: so.amount_in.to_string(),
-            amount_out: so.expected_amount_out.to_string(),
-            percentage: so.fraction * 100.0,
-        });
-        build_sub_routes.push(BuildTxSubRoute {
-            amount_in: so.amount_in.to_string(),
-            steps: build_steps,
-        });
-    }
-
-    Ok((sub_routes, build_sub_routes))
-}
-
-pub async fn build_swap(State(state): State<AppState>, Json(body): Json<SwapRequest>) -> impl IntoResponse {
-    let amount_in: u128 = match body.amount_in.parse() {
-        Ok(v) => v,
-        Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(SwapResponse {
-                    success: false,
-                    data: None,
-                    error: Some("Invalid amount_in".to_string()),
-                }),
-            );
-        }
-    };
-
-    let slippage_bps = (body.slippage * 100.0) as u32;
-
-    // 1. Get the optimal route
-    let request = RouteRequest {
-        token_in: TokenId::from_str_auto(&body.token_in),
-        token_out: TokenId::from_str_auto(&body.token_out),
-        amount_in,
-        slippage_bps: Some(slippage_bps),
-        max_hops: None,
-        max_splits: None,
-        prefer_soroban: None,
-    };
-
-    let engine = state.current_engine().await;
-    let route = state.quote_route(&request).await;
-
-    if route.sub_orders.is_empty() {
-        return (
-            StatusCode::OK,
-            Json(SwapResponse {
-                success: false,
-                data: None,
-                error: Some("No route available".to_string()),
-            }),
-        );
-    }
-
-    let (sub_routes, build_sub_routes) = match route_to_sub_routes(&engine, &route).await {
-        Ok(v) => v,
-        Err(e) => {
-            return (
-                StatusCode::OK,
-                Json(SwapResponse {
-                    success: false,
-                    data: None,
-                    error: Some(e),
-                }),
-            );
-        }
-    };
-
-    let build_req = BuildTxRequest {
-        user_public_key: body.user_public_key.clone(),
-        amount_in: route.total_amount_in.to_string(),
-        token_in: body.token_in.clone(),
-        token_out: body.token_out.clone(),
-        min_amount_out: route.minimum_out.to_string(),
-        sub_routes: build_sub_routes,
-    };
-
-    match build_tx_impl(&build_req, &state.rpc).await {
-        Ok(tx) => (
-            StatusCode::OK,
-            Json(SwapResponse {
-                success: true,
-                data: Some(SwapData {
-                    unsigned_tx_xdr: tx.unsigned_tx_xdr,
-                    simulation: SimulationData {
-                        success: true,
-                        actual_output: Some(route.total_expected_out.to_string()),
-                        fee: Some(tx.fee),
-                        error: None,
-                    },
-                    route: QuoteData {
-                        amount_in: route.total_amount_in.to_string(),
-                        expected_output: route.total_expected_out.to_string(),
-                        minimum_output: route.minimum_out.to_string(),
-                        price_impact: route.price_impact_bps as f64 / 100.0,
-                        is_split: route.is_split,
-                        sub_routes,
-                        compute_time_ms: route.compute_time_ms,
-                        on_chain_validated: None,
-                        debug: None,
-                    },
-                }),
-                error: None,
-            }),
-        ),
-        Err(e) => (
-            StatusCode::OK,
-            Json(SwapResponse {
-                success: false,
-                data: None,
-                error: Some(format!("Transaction build failed: {}", e)),
-            }),
-        ),
-    }
-}
-
 /// Drop dust legs (< `MIN_DISPLAY_LEG_INPUT_BPS` of total input) and fold their
 /// `amount_in` into the largest kept leg. Matches frontend route display and
 /// avoids burning Soroban CPU on near-zero parallel paths.
@@ -544,10 +360,7 @@ fn fold_dust_sub_routes(body: &BuildTxRequest) -> Result<BuildTxRequest, String>
     if body.sub_routes.len() < 2 {
         return Ok(body.clone());
     }
-    let amount_in: u128 = body
-        .amount_in
-        .parse()
-        .map_err(|_| "Invalid amount_in".to_string())?;
+    let amount_in: u128 = body.amount_in.parse().map_err(|_| "Invalid amount_in".to_string())?;
     if amount_in == 0 {
         return Ok(body.clone());
     }
@@ -592,6 +405,63 @@ fn fold_dust_sub_routes(body: &BuildTxRequest) -> Result<BuildTxRequest, String>
     })
 }
 
+fn validate_build_tx_request(body: &BuildTxRequest) -> Result<(), String> {
+    let amount_in: i128 = body.amount_in.parse().map_err(|_| "Invalid amount_in".to_string())?;
+    if amount_in <= 0 {
+        return Err("amount_in must be positive".to_string());
+    }
+
+    let min_amount_out: i128 = body
+        .min_amount_out
+        .parse()
+        .map_err(|_| "Invalid min_amount_out".to_string())?;
+    if min_amount_out <= 0 {
+        return Err("min_amount_out must be positive".to_string());
+    }
+    if body.sub_routes.is_empty() {
+        return Err("At least one sub-route is required".to_string());
+    }
+
+    let mut sub_routes_total = 0i128;
+    for (route_index, sub) in body.sub_routes.iter().enumerate() {
+        let leg_amount: i128 = sub
+            .amount_in
+            .parse()
+            .map_err(|_| format!("Invalid sub-route amount_in: {}", sub.amount_in))?;
+        if leg_amount <= 0 {
+            return Err(format!("sub-route {} amount_in must be positive", route_index + 1));
+        }
+        sub_routes_total = sub_routes_total
+            .checked_add(leg_amount)
+            .ok_or_else(|| "sub-route amount_in sum exceeds i128".to_string())?;
+
+        let first = sub
+            .steps
+            .first()
+            .ok_or_else(|| format!("sub-route {} must have at least one step", route_index + 1))?;
+        let last = sub.steps.last().expect("first step already checked");
+        if first.token_in != body.token_in {
+            return Err(format!("sub-route {} does not start with token_in", route_index + 1));
+        }
+        if last.token_out != body.token_out {
+            return Err(format!("sub-route {} does not end with token_out", route_index + 1));
+        }
+        for pair in sub.steps.windows(2) {
+            if pair[0].token_out != pair[1].token_in {
+                return Err(format!("sub-route {} has a disconnected token path", route_index + 1));
+            }
+        }
+    }
+
+    if sub_routes_total != amount_in {
+        return Err(format!(
+            "sub_routes amount_in sum ({}) does not match amount_in ({})",
+            sub_routes_total, amount_in
+        ));
+    }
+    Ok(())
+}
+
 pub async fn build_tx_impl(body: &BuildTxRequest, rpc: &dex_adapters::rpc::SorobanRpc) -> Result<BuildTxData, String> {
     use stellar_xdr::{
         curr as xdr,
@@ -600,6 +470,7 @@ pub async fn build_tx_impl(body: &BuildTxRequest, rpc: &dex_adapters::rpc::Sorob
 
     let body = fold_dust_sub_routes(body)?;
     let body = &body;
+    validate_build_tx_request(body)?;
 
     let user_key = stellar_strkey::ed25519::PublicKey::from_string(&body.user_public_key)
         .map_err(|e| format!("Invalid public key: {:?}", e))?;
@@ -1143,7 +1014,10 @@ async fn fetch_balances_for_tokens(
     rpc: std::sync::Arc<dex_adapters::rpc::SorobanRpc>,
     account_arg: &xdr::ScVal,
     token_ids: Vec<String>,
-) -> (std::collections::HashMap<String, String>, std::collections::HashMap<String, bool>) {
+) -> (
+    std::collections::HashMap<String, String>,
+    std::collections::HashMap<String, bool>,
+) {
     use futures::stream::{self, StreamExt};
 
     let mut balances = std::collections::HashMap::new();
@@ -1234,8 +1108,7 @@ pub async fn get_balances(State(state): State<AppState>, Query(query): Query<Bal
     };
     let tokens_queried = token_ids.clone();
     let account_arg = account_balance_scval(&user_key);
-    let (balances, has_trustline) =
-        fetch_balances_for_tokens(state.rpc.clone(), &account_arg, token_ids).await;
+    let (balances, has_trustline) = fetch_balances_for_tokens(state.rpc.clone(), &account_arg, token_ids).await;
 
     Json(BalancesResponse {
         success: true,
@@ -2006,8 +1879,7 @@ pub async fn build_tx(State(state): State<AppState>, Json(body): Json<BuildTxReq
                 "Swap failed: on-chain output was below your minimum (quote vs execution drift, \
                  common on split routes). Refresh the quote, increase slippage, or retry with a single-path route."
                     .to_string()
-            } else if e.contains("ExceededLimit") || e.contains("Budget")
-            {
+            } else if e.contains("ExceededLimit") || e.contains("Budget") {
                 "Swap simulation failed: this route is too heavy for Soroban CPU limits \
                  (too many split paths / hops). Refresh the quote — a simpler route should appear."
                     .to_string()
@@ -2072,7 +1944,41 @@ pub(crate) async fn fetch_sequence_number(
 
 #[cfg(test)]
 mod classic_dest_min_tests {
-    use super::{classic_dest_min_for_sub, parse_expert_asset_field};
+    use super::{
+        classic_dest_min_for_sub, parse_expert_asset_field, validate_build_tx_request, BuildTxRequest, BuildTxStep,
+        BuildTxSubRoute,
+    };
+
+    fn valid_build_request() -> BuildTxRequest {
+        BuildTxRequest {
+            user_public_key: "GA6RKSBPI2TSP52OW2IJTPK7LRMX24DF42KF3FBGBNMBYCV6NPDMOCBY".into(),
+            amount_in: "100".into(),
+            token_in: "TOKEN_A".into(),
+            token_out: "TOKEN_C".into(),
+            min_amount_out: "90".into(),
+            sub_routes: vec![BuildTxSubRoute {
+                amount_in: "100".into(),
+                steps: vec![
+                    BuildTxStep {
+                        dex_type: "aquarius".into(),
+                        pool_address: "POOL_1".into(),
+                        token_in: "TOKEN_A".into(),
+                        token_out: "TOKEN_B".into(),
+                        in_idx: 0,
+                        out_idx: 1,
+                    },
+                    BuildTxStep {
+                        dex_type: "aquarius".into(),
+                        pool_address: "POOL_2".into(),
+                        token_in: "TOKEN_B".into(),
+                        token_out: "TOKEN_C".into(),
+                        in_idx: 0,
+                        out_idx: 1,
+                    },
+                ],
+            }],
+        }
+    }
 
     #[test]
     fn single_leg_gets_full_min_out() {
@@ -2093,6 +1999,39 @@ mod classic_dest_min_tests {
     #[test]
     fn rejects_zero_min_out() {
         assert!(classic_dest_min_for_sub(1, 1, 0).is_err());
+    }
+
+    #[test]
+    fn validates_well_formed_build_route() {
+        assert!(validate_build_tx_request(&valid_build_request()).is_ok());
+    }
+
+    #[test]
+    fn rejects_non_positive_build_amounts() {
+        let mut request = valid_build_request();
+        request.amount_in = "-100".into();
+        request.sub_routes[0].amount_in = "-100".into();
+        assert_eq!(
+            validate_build_tx_request(&request).unwrap_err(),
+            "amount_in must be positive"
+        );
+
+        let mut request = valid_build_request();
+        request.min_amount_out = "0".into();
+        assert_eq!(
+            validate_build_tx_request(&request).unwrap_err(),
+            "min_amount_out must be positive"
+        );
+    }
+
+    #[test]
+    fn rejects_disconnected_build_route() {
+        let mut request = valid_build_request();
+        request.sub_routes[0].steps[1].token_in = "OTHER_TOKEN".into();
+        assert_eq!(
+            validate_build_tx_request(&request).unwrap_err(),
+            "sub-route 1 has a disconnected token path"
+        );
     }
 
     #[test]

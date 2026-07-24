@@ -450,8 +450,7 @@ mod tests {
     /// Split 2+2 with 2 hops each must report serial depth 4 (not 8).
     #[test]
     fn parses_vault_split_round_trip_serial_hops() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/vault_round_trip_split.b64");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vault_round_trip_split.b64");
         if !path.exists() {
             return;
         }

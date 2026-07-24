@@ -104,8 +104,7 @@ pub async fn prepare_transaction_xdr_on_network(
         )
         .await
         .map_err(|e| format!("prepare_transaction: {:?}", e))?;
-    let prepared =
-        assemble_transaction(&tx, sim_response).map_err(|e| format!("prepare_transaction: {:?}", e))?;
+    let prepared = assemble_transaction(&tx, sim_response).map_err(|e| format!("prepare_transaction: {:?}", e))?;
 
     let envelope = prepared.to_envelope().map_err(|e| format!("to_envelope: {}", e))?;
 

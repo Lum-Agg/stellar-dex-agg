@@ -32,6 +32,20 @@ export interface QuoteResponse {
   error?: string;
 }
 
+interface BuildTxStep {
+  dex_type: string;
+  pool_address: string;
+  token_in: string;
+  token_out: string;
+  in_idx: number;
+  out_idx: number;
+}
+
+interface BuildTxSubRoute {
+  amount_in: string;
+  steps: BuildTxStep[];
+}
+
 /** Raw API row may omit indices or use camelCase; pad to pool hop count. */
 function normalizeSubRoute(raw: Record<string, unknown>): SubRoute {
   const pool_addresses =
@@ -73,6 +87,20 @@ function normalizeQuoteData(data: QuoteData): QuoteData {
   const subSum = sub_routes.reduce((s, r) => s + BigInt(r.amount_in || '0'), BigInt(0));
   const amount_in = data.amount_in ?? (subSum > BigInt(0) ? subSum.toString() : undefined);
   return { ...data, sub_routes, amount_in };
+}
+
+function buildTxSubRoutesFromQuote(subRoutes: SubRoute[]): BuildTxSubRoute[] {
+  return subRoutes.map((subRoute) => ({
+    amount_in: subRoute.amount_in,
+    steps: subRoute.pool_addresses.map((poolAddress, index) => ({
+      dex_type: subRoute.dex_types[index] ?? 'aquarius',
+      pool_address: poolAddress,
+      token_in: subRoute.path[index] ?? '',
+      token_out: subRoute.path[index + 1] ?? '',
+      in_idx: subRoute.in_indices[index] ?? 0,
+      out_idx: subRoute.out_indices[index] ?? 1,
+    })),
+  }));
 }
 
 export type QuoteOptions = {
@@ -126,15 +154,24 @@ export async function buildSwap(
   slippage: number,
   userPublicKey: string,
 ): Promise<{ success: boolean; data?: { unsigned_tx_xdr: string }; error?: string }> {
-  const resp = await fetch(`${API_URL}/api/v1/swap`, {
+  const quote = await getQuote(tokenIn, tokenOut, amountIn, { slippage });
+  if (!quote.success || !quote.data) {
+    return {
+      success: false,
+      error: quote.error || 'Failed to fetch quote',
+    };
+  }
+
+  const resp = await fetch(`${API_URL}/api/v1/build_tx`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
+      user_public_key: userPublicKey,
       token_in: tokenIn,
       token_out: tokenOut,
-      amount_in: amountIn,
-      slippage,
-      user_public_key: userPublicKey,
+      amount_in: quote.data.amount_in ?? amountIn,
+      min_amount_out: quote.data.minimum_output,
+      sub_routes: buildTxSubRoutesFromQuote(quote.data.sub_routes),
     }),
   });
   return resp.json();
