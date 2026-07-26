@@ -230,6 +230,7 @@ mod tests {
                         user_address: TEST_USER.into(),
                         token_in: Some("TIN".into()),
                         token_out: Some("TOUT".into()),
+                        bridge_token: None,
                         amount_in: 1_000_0000,
                         amount_out: Some(2_000_0000),
                         is_split: false,

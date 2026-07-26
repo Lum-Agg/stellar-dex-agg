@@ -36,6 +36,7 @@ pub async fn api_root() -> impl IntoResponse {
             "submit_tx": "/api/v1/submit_tx",
             "tx_status": "/api/v1/tx_status",
             "stats": "/api/v1/stats",
+            "arbitrage": "/api/v1/arbitrage",
             "swaps": "/api/v1/swaps",
             "orders": "/api/v1/orders",
             "build_create_order": "/api/v1/orders/build_create",
@@ -1377,23 +1378,28 @@ pub async fn submit_tx(State(state): State<AppState>, Json(body): Json<SubmitTxR
 
     // Fast return: enqueue only. Clients poll `/api/v1/tx_status` (or balance) for
     // inclusion.
-    let mut attempts = 0u32;
+    const MAX_TRY_AGAIN_RETRIES: u32 = 2;
+    let mut retries = 0u32;
     loop {
         match state.rpc.send_transaction(signed_tx_xdr).await {
             Ok(result) => {
-                if result.status == "TRY_AGAIN_LATER" && attempts < 30 {
-                    attempts += 1;
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                if result.status == "TRY_AGAIN_LATER" && retries < MAX_TRY_AGAIN_RETRIES {
+                    retries += 1;
+                    tokio::time::sleep(std::time::Duration::from_millis(250 * retries as u64)).await;
                     continue;
                 }
 
-                let accepted = result.status == "PENDING" || result.status == "DUPLICATE";
+                let accepted_status = result.status == "PENDING" || result.status == "DUPLICATE";
+                let accepted = accepted_status && !result.hash.is_empty();
+                let response_status = if accepted {
+                    StatusCode::OK
+                } else if result.status == "TRY_AGAIN_LATER" {
+                    StatusCode::SERVICE_UNAVAILABLE
+                } else {
+                    StatusCode::BAD_REQUEST
+                };
                 return (
-                    if accepted {
-                        StatusCode::OK
-                    } else {
-                        StatusCode::BAD_REQUEST
-                    },
+                    response_status,
                     Json(SubmitTxResponse {
                         success: accepted,
                         hash: if result.hash.is_empty() {
@@ -1404,6 +1410,10 @@ pub async fn submit_tx(State(state): State<AppState>, Json(body): Json<SubmitTxR
                         status: Some(result.status.clone()),
                         error: if accepted {
                             None
+                        } else if accepted_status {
+                            Some("Transaction accepted without a transaction hash".to_string())
+                        } else if result.status == "TRY_AGAIN_LATER" {
+                            Some("Transaction queue is temporarily unavailable; retry shortly".to_string())
                         } else {
                             Some(
                                 result

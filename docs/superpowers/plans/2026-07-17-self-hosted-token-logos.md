@@ -354,7 +354,7 @@ Expected: all commands PASS without warnings.
 - [ ] **Step 2: Wait for metadata republish**
 
 ```bash
-ssh root@178.63.81.216 \
+ssh root@88.198.16.144 \
   'journalctl -u lumagg-worker --since "10 minutes ago" --no-pager | grep "token metadata enrichment"'
 ```
 

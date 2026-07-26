@@ -78,9 +78,9 @@ pub async fn resolve_max_amount_in(ctx: &ArbContext, base_token: &str) -> u128 {
                 error = %e,
                 vault,
                 token = base_token,
-                "vault balance read failed — using ARB_MAX_AMOUNT_IN only"
+                "vault balance read failed — skipping base"
             );
-            cfg_max
+            0
         }
     }
 }

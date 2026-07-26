@@ -112,7 +112,7 @@ pub async fn get_stats(Query(params): Query<StatsQuery>) -> Response {
     enrich_daily_with_historical_usd(&mut daily).await;
     let usd_pricing = daily
         .iter()
-        .any(|d| d.total_amount_in_usd.is_some())
+        .any(|d| d.total_amount_in_usd.is_some() || d.round_trip_gross_surplus_usd.is_some())
         .then_some("per_token_historical_usd_daily");
 
     let invocation_count = store.count_invocations().unwrap_or(0);
@@ -121,12 +121,12 @@ pub async fn get_stats(Query(params): Query<StatsQuery>) -> Response {
 
     if params.format.as_deref() == Some("csv") {
         let mut lines = vec![
-            "day,tx_count,unique_users,notional_in_stroops,notional_in_usd,routed_dex_volume_stroops,routed_dex_volume_usd,xlm_usd,split_swap_count,success_count,failed_count"
+            "day,tx_count,unique_users,notional_in_stroops,notional_in_usd,routed_dex_volume_stroops,routed_dex_volume_usd,routed_leg_count,routed_priced_leg_count,routed_pricing_coverage,round_trip_count,round_trip_gross_surplus_usd,xlm_usd,split_swap_count,success_count,failed_count"
                 .into(),
         ];
         for d in &daily {
             lines.push(format!(
-                "{},{},{},{},{},{},{},{},{},{},{}",
+                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
                 d.day,
                 d.tx_count,
                 d.unique_users,
@@ -134,6 +134,13 @@ pub async fn get_stats(Query(params): Query<StatsQuery>) -> Response {
                 d.total_amount_in_usd.map(|v| format!("{v:.6}")).unwrap_or_default(),
                 d.total_routed_dex_volume,
                 d.total_routed_dex_volume_usd
+                    .map(|v| format!("{v:.6}"))
+                    .unwrap_or_default(),
+                d.routed_leg_count,
+                d.routed_priced_leg_count,
+                d.routed_pricing_coverage.map(|v| format!("{v:.6}")).unwrap_or_default(),
+                d.round_trip_count,
+                d.round_trip_gross_surplus_usd
                     .map(|v| format!("{v:.6}"))
                     .unwrap_or_default(),
                 d.xlm_usd.map(|v| format!("{v:.8}")).unwrap_or_default(),

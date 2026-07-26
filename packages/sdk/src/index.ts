@@ -562,12 +562,26 @@ export class LumAggClient {
     const timeoutMs = opts.timeoutMs ?? 60_000;
     const intervalMs = opts.intervalMs ?? 1_000;
     const start = Date.now();
+    let lastError: unknown;
     while (Date.now() - start < timeoutMs) {
-      const st = await this.getTxStatus({ hash });
-      if (st.confirmed || st.status === 'FAILED') return st;
+      try {
+        const st = await this.getTxStatus({ hash });
+        if (st.confirmed || st.status === 'FAILED') return st;
+        if (!st.confirmed && st.error) lastError = st.error;
+      } catch (err) {
+        lastError = err;
+      }
       await new Promise((r) => setTimeout(r, intervalMs));
     }
-    throw new Error(`waitForTx timeout after ${timeoutMs}ms (hash=${hash})`);
+    const detail =
+      lastError instanceof Error
+        ? lastError.message
+        : typeof lastError === 'string'
+          ? lastError
+          : undefined;
+    throw new Error(
+      `waitForTx timeout after ${timeoutMs}ms (hash=${hash})${detail ? `; last error: ${detail}` : ''}`,
+    );
   }
 
   /** Public on-chain stats from analytics-indexer (Tranche 3). */

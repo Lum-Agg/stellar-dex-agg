@@ -35,8 +35,18 @@ impl ArbContext {
         latest_ledger: Arc<LatestLedgerCache>,
         vault_balances: Arc<VaultBalanceCache>,
     ) -> Result<Self> {
+        let quote_client = QuoteApiClient::from_config(&config);
+        Self::connect_with_resources(config, latest_ledger, vault_balances, quote_client).await
+    }
+
+    pub async fn connect_with_resources(
+        config: ArbConfig,
+        latest_ledger: Arc<LatestLedgerCache>,
+        vault_balances: Arc<VaultBalanceCache>,
+        quote_client: QuoteApiClient,
+    ) -> Result<Self> {
         Ok(Self {
-            quote_client: QuoteApiClient::from_config(&config),
+            quote_client,
             config,
             latest_ledger,
             vault_balances,

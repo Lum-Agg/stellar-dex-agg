@@ -16,6 +16,8 @@ pub struct ParsedLeg {
     pub token_in: Option<String>,
     pub token_out: Option<String>,
     pub amount_in: Option<i128>,
+    pub amount_out: Option<i128>,
+    pub amount_is_actual: bool,
 }
 
 /// Parsed aggregator invocation (swap or round_trip_swap).
@@ -25,6 +27,7 @@ pub struct ParsedInvocation {
     pub user_address: String,
     pub token_in: Option<String>,
     pub token_out: Option<String>,
+    pub bridge_token: Option<String>,
     pub amount_in: i128,
     pub amount_out: Option<i128>,
     pub is_split: bool,
@@ -148,6 +151,7 @@ fn parse_swap(args: &xdr::InvokeContractArgs, amount_out: Option<i128>) -> Resul
         user_address,
         token_in,
         token_out,
+        bridge_token: None,
         amount_in,
         amount_out,
         is_split,
@@ -162,7 +166,7 @@ fn parse_round_trip_swap(args: &xdr::InvokeContractArgs, amount_out: Option<i128
 
     let user_address = scval_address_str(&args.args[0])?;
     let base_token = scval_address_str(&args.args[1])?;
-    let _bridge = scval_address_str(&args.args[2])?;
+    let bridge_token = scval_address_str(&args.args[2])?;
     let amount_in = scval_i128(&args.args[3]).unwrap_or(0);
 
     let mut legs = Vec::new();
@@ -202,6 +206,7 @@ fn parse_round_trip_swap(args: &xdr::InvokeContractArgs, amount_out: Option<i128
         user_address,
         token_in: Some(base_token.clone()),
         token_out: Some(base_token),
+        bridge_token: Some(bridge_token),
         amount_in,
         amount_out,
         is_split,
@@ -228,6 +233,8 @@ fn parse_step(map: &xdr::ScMap, leg_index: u32, amount_in: Option<i128>) -> Resu
         token_in,
         token_out,
         amount_in,
+        amount_out: None,
+        amount_is_actual: false,
     })
 }
 

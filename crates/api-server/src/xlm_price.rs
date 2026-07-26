@@ -35,20 +35,52 @@ pub async fn enrich_daily_with_historical_usd(daily: &mut [DailyStats]) {
 
         let mut notional_usd = 0.0;
         let mut routed_usd = 0.0;
-        let mut priced_any = false;
+        let mut routed_priced_leg_count = 0u64;
+        let mut gross_surplus_usd = 0.0;
+        let mut notional_priced_any = false;
+        let mut routed_priced_any = false;
+        let mut surplus_priced_any = false;
 
         for tv in &row.by_token {
             let Some(usd_per_token) = usd_price_for_token(&tv.token, xlm_px) else {
                 continue;
             };
-            priced_any = true;
-            notional_usd += (tv.amount_in as f64 / TOKEN_DECIMALS) * usd_per_token;
+            if tv.amount_in != 0 {
+                notional_priced_any = true;
+                notional_usd += (tv.amount_in as f64 / TOKEN_DECIMALS) * usd_per_token;
+            }
+        }
+        for tv in &row.routed_by_token {
+            let Some(usd_per_token) = usd_price_for_token(&tv.token, xlm_px) else {
+                continue;
+            };
+            routed_priced_any = true;
             routed_usd += (tv.routed_volume as f64 / TOKEN_DECIMALS) * usd_per_token;
+            routed_priced_leg_count += tv.routed_leg_count;
         }
 
-        if priced_any {
+        if notional_priced_any {
             row.total_amount_in_usd = Some(notional_usd);
+        }
+        if routed_priced_any {
             row.total_routed_dex_volume_usd = Some(routed_usd);
+        }
+        row.routed_priced_leg_count = routed_priced_leg_count;
+        if row.routed_leg_count > 0 {
+            row.routed_pricing_coverage = Some(routed_priced_leg_count as f64 / row.routed_leg_count as f64);
+        }
+
+        for surplus in &mut row.round_trip_by_token {
+            let Some(usd_per_token) = usd_price_for_token(&surplus.base_token, xlm_px) else {
+                continue;
+            };
+            let value = (surplus.gross_surplus as f64 / TOKEN_DECIMALS) * usd_per_token;
+            surplus.gross_surplus_usd = Some(value);
+            gross_surplus_usd += value;
+            surplus_priced_any = true;
+        }
+        if surplus_priced_any {
+            row.round_trip_gross_surplus_usd = Some(gross_surplus_usd);
         }
     }
 }

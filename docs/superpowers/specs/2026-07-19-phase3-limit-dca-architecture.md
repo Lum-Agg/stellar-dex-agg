@@ -141,7 +141,7 @@ Aggregator today: **user auth on `swap`**. Escrow fill must either:
 |------|------------|
 | Filler griefing / bad routes | On-chain min_out check; failed sim costs filler only |
 | Price gap between quote and fill | Slippage in fill `min_amount_out`; keeper re-quotes often |
-| Escrow rent / TTL | Extend TTL on create/fill; ops runbook |
+| Escrow rent / TTL | External keeper renews code, instance, and persistent entries; ops runbook |
 | Aggregator auth incompatibility | 3a spike before full build |
 | Partial fill dust | Min fill size; cancel dust threshold |
 | No filler liveness | Self-run keeper SLA; later incentives |

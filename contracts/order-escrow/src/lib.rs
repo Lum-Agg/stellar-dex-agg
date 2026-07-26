@@ -29,6 +29,9 @@ pub enum DataKey {
     Order(u64),
 }
 
+const LEDGERS_PER_DAY: u32 = 17_280;
+const MAX_ORDER_LIFETIME: u32 = 30 * LEDGERS_PER_DAY;
+
 #[contracttype]
 #[derive(Clone, PartialEq, Eq)]
 pub enum OrderStatus {
@@ -138,6 +141,10 @@ impl OrderEscrowContract {
             expires_ledger > env.ledger().sequence(),
             "expiration must be in the future"
         );
+        assert!(
+            expires_ledger <= env.ledger().sequence().saturating_add(MAX_ORDER_LIFETIME),
+            "expiration exceeds maximum order lifetime"
+        );
 
         let order_id: u64 = env
             .storage()
@@ -156,7 +163,8 @@ impl OrderEscrowContract {
             expires_ledger,
             status: OrderStatus::Open,
         };
-        env.storage().persistent().set(&DataKey::Order(order_id), &order);
+        let key = DataKey::Order(order_id);
+        env.storage().persistent().set(&key, &order);
         env.storage().instance().set(
             &DataKey::NextOrderId,
             &order_id.checked_add(1).expect("order id overflow"),
@@ -307,7 +315,10 @@ impl OrderEscrowContract {
 #[cfg(test)]
 mod tests {
     use {
-        super::{required_min_out, DataKey, LimitOrder, OrderEscrowContract, OrderEscrowContractClient, OrderStatus},
+        super::{
+            required_min_out, DataKey, LimitOrder, OrderEscrowContract, OrderEscrowContractClient, OrderStatus,
+            MAX_ORDER_LIFETIME,
+        },
         aggregator_contract::AggregatorContract,
         lumagg_contract_types::{DexType, SubRoute, SwapStep},
         soroban_sdk::{
@@ -530,6 +541,23 @@ mod tests {
         let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000_000, &20_000_000, &100);
 
         assert!(has_lifecycle_event(&env, &escrow_id, "order_created", order_id));
+    }
+
+    #[test]
+    fn create_limit_rejects_excessive_lifetime() {
+        let env = test_env();
+        env.mock_all_auths();
+        let owner = gen_addr(&env);
+        let (_, escrow) = setup_escrow(&env);
+        let (token_in, token_in_sac) = create_token(&env);
+        let (token_out, _) = create_token(&env);
+        token_in_sac.mint(&owner, &5_000);
+        let expires = env.ledger().sequence().saturating_add(MAX_ORDER_LIFETIME + 1);
+
+        let result = escrow.try_create_limit(&owner, &token_in, &token_out, &5_000, &10_000_000, &expires);
+
+        assert!(matches!(result, Ok(Err(_)) | Err(_)), "{result:?}");
+        assert_eq!(token::Client::new(&env, &token_in).balance(&owner), 5_000);
     }
 
     #[test]

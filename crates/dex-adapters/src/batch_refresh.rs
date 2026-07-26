@@ -359,7 +359,7 @@ mod tests {
     #[ignore] // requires network
     async fn test_batch_refresh_soroswap() {
         let rpc = SorobanRpc::new(
-            "http://178.63.81.216:8003",
+            "http://88.198.16.144:8003",
             "Public Global Stellar Network ; September 2015",
         );
 
@@ -378,7 +378,7 @@ mod tests {
     #[ignore] // requires network
     async fn test_batch_refresh_aquarius() {
         let rpc = SorobanRpc::new(
-            "http://178.63.81.216:8003",
+            "http://88.198.16.144:8003",
             "Public Global Stellar Network ; September 2015",
         );
 

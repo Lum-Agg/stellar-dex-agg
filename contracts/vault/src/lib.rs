@@ -78,7 +78,7 @@ impl VaultContract {
     pub fn add_caller(env: Env, caller: Address) {
         let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("Not initialized");
         admin.require_auth();
-        env.storage().persistent().set(&DataKey::Caller(caller.clone()), &true);
+        env.storage().persistent().set(&DataKey::Caller(caller), &true);
     }
 
     pub fn remove_caller(env: Env, caller: Address) {

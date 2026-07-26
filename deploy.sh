@@ -4,7 +4,7 @@
 
 set -e
 
-SERVER="root@178.63.81.216"
+SERVER="root@88.198.16.144"
 SSH_KEY="~/.ssh/id_rsa"
 REMOTE_DIR="/opt/stellar-dex-aggregator"
 
@@ -48,6 +48,6 @@ ssh -i $SSH_KEY $SERVER "systemctl daemon-reload && systemctl enable lumagg-api 
 
 echo "=== Testing ==="
 sleep 3
-curl -s http://178.63.81.216:3100/api/v1/health && echo " ✓"
+curl -s http://88.198.16.144:3100/api/v1/health && echo " ✓"
 
 echo "=== Done ==="

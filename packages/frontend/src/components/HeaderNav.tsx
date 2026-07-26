@@ -13,6 +13,11 @@ const LINKS = [
   },
   { href: '/docs', label: 'Docs', match: (path: string) => path.startsWith('/docs') },
   { href: '/stats', label: 'Stats', match: (path: string) => path.startsWith('/stats') },
+  {
+    href: '/arbitrage',
+    label: 'Arbitrage',
+    match: (path: string) => path.startsWith('/arbitrage'),
+  },
 ] as const;
 
 export function HeaderNav() {

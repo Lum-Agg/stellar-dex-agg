@@ -138,8 +138,8 @@ async fn ingest_range(
                 status: tx.status.clone(),
                 parsed,
             };
-            // Prefer envelope-derived serial hop indices when the row already
-            // exists from events (legacy monotonic hop counter).
+            // Enrich event-derived actual leg amounts with envelope token and
+            // path metadata.
             if store.insert_invocation(&record)? {
                 ingested += 1;
             } else {
@@ -173,8 +173,8 @@ async fn ingest_range(
     Ok(ingested)
 }
 
-/// Re-parse envelopes for stored txs and rewrite `swap_legs.leg_index` to
-/// serial hop depth (fixes split over-count from the old monotonic counter).
+/// Re-parse envelopes for stored txs and enrich leg route metadata while
+/// preserving actual event-derived amounts.
 pub async fn repair_leg_indices(config: IndexerConfig, created_at_from: i64) -> Result<u64> {
     config.ensure_parent_dir()?;
     let store = IndexStore::open(&config.db_path)?;

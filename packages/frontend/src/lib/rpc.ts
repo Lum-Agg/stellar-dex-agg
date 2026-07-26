@@ -125,8 +125,17 @@ async function submitViaApiServer(
     error?: string;
     status?: string;
   };
+  const hash = data.hash || '';
+  if (data.success && !hash) {
+    return {
+      hash: '',
+      success: false,
+      status: data.status,
+      error: 'Transaction was accepted without a transaction hash',
+    };
+  }
   return {
-    hash: data.hash || '',
+    hash,
     success: !!data.success,
     status: data.status,
     error: data.error,
@@ -251,6 +260,7 @@ export async function waitForTxConfirmation(
   const deadline = Date.now() + timeoutMs;
   const via = opts?.via ?? getSubmitViaPreference();
   const network = opts?.network ?? 'public';
+  let lastStatusError: string | undefined;
 
   while (Date.now() < deadline) {
     if (opts?.trustline) {
@@ -260,20 +270,25 @@ export async function waitForTxConfirmation(
       }
     }
 
-    const tx = await fetchTxStatus(hash, {
-      apiUrl: opts?.apiUrl,
-      via,
-      network,
-    });
-    if (tx.confirmed || tx.status === 'SUCCESS') {
-      return { success: true, status: tx.status ?? 'SUCCESS' };
-    }
-    if (tx.status === 'FAILED') {
-      return {
-        success: false,
-        status: 'FAILED',
-        error: tx.error || 'Transaction failed on-chain',
-      };
+    try {
+      const tx = await fetchTxStatus(hash, {
+        apiUrl: opts?.apiUrl,
+        via,
+        network,
+      });
+      if (tx.confirmed || tx.status === 'SUCCESS') {
+        return { success: true, status: tx.status ?? 'SUCCESS' };
+      }
+      if (tx.status === 'FAILED') {
+        return {
+          success: false,
+          status: 'FAILED',
+          error: tx.error || 'Transaction failed on-chain',
+        };
+      }
+      if (!tx.success && tx.error) lastStatusError = tx.error;
+    } catch (err) {
+      lastStatusError = err instanceof Error ? err.message : 'Transaction status unavailable';
     }
 
     await sleep(intervalMs);
@@ -282,7 +297,8 @@ export async function waitForTxConfirmation(
   return {
     success: false,
     status: 'TIMEOUT',
-    error:
-      'Transaction submitted but not confirmed within 60s — check the hash on stellar.expert',
+    error: `Transaction submitted but not confirmed within ${Math.ceil(timeoutMs / 1000)}s — check the hash on stellar.expert${
+      lastStatusError ? ` (last status error: ${lastStatusError})` : ''
+    }`,
   };
 }

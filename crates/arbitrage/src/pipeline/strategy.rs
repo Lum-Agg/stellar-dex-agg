@@ -41,14 +41,20 @@ impl Strategy<Event, Action> for BridgeStrategy {
             anyhow::bail!("BridgeStrategy already synced");
         }
 
-        let (tx, rx) = async_channel::unbounded();
+        // Backpressure keeps slow quote APIs from creating an unbounded queue
+        // of stale market scans.
+        let queue_capacity = self.worker_count.saturating_mul(2).max(1);
+        let (tx, rx) = async_channel::bounded(queue_capacity);
         self.item_sender = Some(tx.clone());
 
         for id in 0..self.worker_count {
             spawn_worker(id, self.runtime.clone(), rx.clone(), submitter.clone());
         }
 
-        info!(workers = self.worker_count, "bridge quote workers spawned");
+        info!(
+            workers = self.worker_count,
+            queue_capacity, "bridge quote workers spawned"
+        );
         Ok(())
     }
 

@@ -22,9 +22,18 @@ pub fn compute_profit_bps(amount_in: u128, amount_out: u128) -> i64 {
     if amount_in == 0 {
         return 0;
     }
-    let ain = amount_in as i64;
-    let aout = amount_out as i64;
-    (aout - ain) * 10_000 / ain
+    let (negative, delta) = if amount_out >= amount_in {
+        (false, amount_out - amount_in)
+    } else {
+        (true, amount_in - amount_out)
+    };
+    let magnitude = delta.saturating_mul(10_000) / amount_in;
+    let magnitude = i64::try_from(magnitude).unwrap_or(i64::MAX);
+    if negative {
+        -magnitude
+    } else {
+        magnitude
+    }
 }
 
 /// Quote + size one base×bridge pair; used by burberry workers and legacy
@@ -166,4 +175,16 @@ async fn scan_with_context(runtime: &ArbRuntime, ctx: &ArbContext) -> Result<Vec
     }
 
     Ok(opportunities)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compute_profit_bps;
+
+    #[test]
+    fn computes_profit_bps_without_narrowing_amounts() {
+        let amount_in = (i64::MAX as u128 + 1) * 100;
+        assert_eq!(compute_profit_bps(amount_in, amount_in + amount_in / 100), 100);
+        assert_eq!(compute_profit_bps(amount_in, amount_in - amount_in / 100), -100);
+    }
 }

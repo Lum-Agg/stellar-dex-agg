@@ -150,6 +150,8 @@ paths:
       description: |
         Daily rollups from `analytics-indexer` SQLite. Requires `INDEXER_DB_PATH` on the API server.
         Optional `day=YYYY-MM-DD` filters to a single UTC day. Set `format=csv` for grant report download.
+        Routed volume is the sum of actual inputs processed by successful DEX legs, priced by each leg's input token.
+        Round-trip gross surplus is actual on-chain `amount_out - amount_in`; transaction fees are not deducted.
       parameters:
         - name: day
           in: query
@@ -174,6 +176,44 @@ paths:
             text/csv:
               schema:
                 type: string
+        '503':
+          description: INDEXER_DB_PATH not configured
+  /api/v1/arbitrage:
+    get:
+      tags: [health]
+      summary: Successful round-trip (arbitrage) history
+      description: |
+        Recent successful on-chain `round_trip_swap` invocations from the analytics indexer.
+        Gross surplus is `amount_out - amount_in` in base-token stroops; transaction fees are not deducted.
+        Requires `INDEXER_DB_PATH` on the API server.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 25
+          description: Max rows to return (default 25)
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            example: "1700000200:ccc"
+          description: |
+            Opaque pagination cursor from a previous response's `next_cursor`
+            (`{created_at}:{tx_hash}`). Returns rows older than that position.
+      responses:
+        '200':
+          description: Successful round trips (may be empty)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArbitrageResponse'
+        '400':
+          description: Invalid `cursor`
         '503':
           description: INDEXER_DB_PATH not configured
   /api/v1/swaps:
@@ -493,7 +533,19 @@ paths:
               schema:
                 $ref: '#/components/schemas/SubmitTxResponse'
         '400':
-          description: Missing signed_tx_xdr
+          description: Missing XDR or transaction rejected by the network
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmitTxResponse'
+        '502':
+          description: Upstream Soroban RPC request failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmitTxResponse'
+        '503':
+          description: Soroban transaction queue temporarily unavailable; retry shortly
           content:
             application/json:
               schema:
@@ -700,6 +752,73 @@ components:
                     type: integer
                   total_amount_in:
                     type: string
+                  total_amount_in_usd:
+                    type: number
+                    nullable: true
+                  total_routed_dex_volume:
+                    type: string
+                    description: Sum of actual DEX leg inputs in mixed atomic units; use USD or by_token for reporting
+                  total_routed_dex_volume_usd:
+                    type: number
+                    nullable: true
+                  routed_leg_count:
+                    type: integer
+                  routed_priced_leg_count:
+                    type: integer
+                  routed_pricing_coverage:
+                    type: number
+                    nullable: true
+                    description: Fraction of actual DEX legs included in routed USD
+                  round_trip_count:
+                    type: integer
+                  round_trip_gross_surplus_usd:
+                    type: number
+                    nullable: true
+                    description: Successful on-chain round-trip surplus before transaction fees
+                  round_trip_by_token:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        base_token:
+                          type: string
+                        tx_count:
+                          type: integer
+                        amount_in:
+                          type: string
+                        gross_surplus:
+                          type: string
+                        gross_surplus_usd:
+                          type: number
+                          nullable: true
+                  by_token:
+                    type: array
+                    description: Entry notional grouped by invocation token_in
+                    items:
+                      type: object
+                      properties:
+                        token:
+                          type: string
+                        amount_in:
+                          type: string
+                          description: Entry notional in this token
+                        routed_volume:
+                          type: string
+                          description: Actual input processed by DEX legs in this token
+                        routed_leg_count:
+                          type: integer
+                  routed_by_token:
+                    type: array
+                    description: Actual DEX leg inputs grouped by each leg's token_in
+                    items:
+                      type: object
+                      properties:
+                        token:
+                          type: string
+                        routed_volume:
+                          type: string
+                        routed_leg_count:
+                          type: integer
                   split_swap_count:
                     type: integer
                   success_count:
@@ -708,6 +827,55 @@ components:
                     type: integer
         error:
           type: string
+    ArbitrageResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            round_trips:
+              type: array
+              items:
+                $ref: '#/components/schemas/RoundTripItem'
+            next_cursor:
+              type: string
+              nullable: true
+              description: Pass as `cursor` to fetch the next older page; omitted when no further rows
+        error:
+          type: string
+    RoundTripItem:
+      type: object
+      properties:
+        tx_hash:
+          type: string
+        ledger:
+          type: integer
+        created_at:
+          type: integer
+          description: Unix timestamp (seconds)
+        status:
+          type: string
+          example: SUCCESS
+        base_token:
+          type: string
+          nullable: true
+          description: Round-trip base (token_in / token_out)
+        bridge_token:
+          type: string
+          nullable: true
+        amount_in:
+          type: string
+        amount_out:
+          type: string
+          nullable: true
+        gross_surplus:
+          type: string
+          nullable: true
+          description: amount_out − amount_in in base-token stroops
+        is_split:
+          type: boolean
     SwapsResponse:
       type: object
       properties:

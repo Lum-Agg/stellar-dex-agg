@@ -73,7 +73,7 @@ fn scale_sub_routes_to_total(env: &Env, routes: &Vec<SubRoute>, target_total: i1
             allocated = allocated.checked_add(scaled).expect("allocated overflow");
             scaled
         };
-        assert!(amount >= 0, "scaled amount underflow");
+        assert!(amount > 0, "scaled sub-route amount must be positive");
         out.push_back(SubRoute {
             amount_in: amount,
             steps: sr.steps.clone(),
@@ -126,29 +126,18 @@ impl AggregatorContract {
         min_amount_out: i128,
     ) -> i128 {
         user.require_auth();
+        assert!(token_in != token_out, "tokens must differ");
+        assert!(min_amount_out > 0, "min_amount_out must be positive");
 
         let contract_addr = env.current_contract_address();
-
-        // Calculate total input
-        let mut total_in: i128 = 0;
-        for sr in sub_routes.iter() {
-            total_in += sr.amount_in;
-        }
-        assert!(total_in > 0, "Total input must be positive");
+        let total_in = Self::validate_sub_routes(&token_in, &token_out, &sub_routes);
 
         // Pull total input from user
         let token_in_client = token::Client::new(&env, &token_in);
         token_in_client.transfer(&user, &contract_addr, &total_in);
 
         let mut leg_counter: u32 = 0;
-        let total_output = Self::execute_sub_routes(
-            &env,
-            &token_in,
-            &token_out,
-            &sub_routes,
-            &contract_addr,
-            &mut leg_counter,
-        );
+        let total_output = Self::execute_sub_routes(&env, &sub_routes, &contract_addr, &mut leg_counter);
 
         // Slippage: per-hop pool mins are 0; only check total output here (all
         // sub_routes summed).
@@ -218,37 +207,22 @@ impl AggregatorContract {
 
         let mut leg_counter: u32 = 0;
 
-        let mut leg_out_in: i128 = 0;
-        for sr in leg_out.iter() {
-            leg_out_in += sr.amount_in;
-        }
+        let leg_out_in = Self::validate_sub_routes(&base_token, &bridge_token, &leg_out);
+        Self::validate_sub_routes(&bridge_token, &base_token, &leg_back);
         assert!(leg_out_in == amount_in, "leg_out amounts must sum to amount_in");
+        let is_split = leg_out.len() > 1 || leg_back.len() > 1;
 
         // Pull base from user
         let base_client = token::Client::new(&env, &base_token);
         base_client.transfer(&user, &contract_addr, &amount_in);
 
-        let bridge_total = Self::execute_sub_routes(
-            &env,
-            &base_token,
-            &bridge_token,
-            &leg_out,
-            &contract_addr,
-            &mut leg_counter,
-        );
+        let bridge_total = Self::execute_sub_routes(&env, &leg_out, &contract_addr, &mut leg_counter);
         assert!(bridge_total > 0, "leg_out produced zero bridge token");
 
         // Scale leg_back weights → absolute bridge inputs that sum to o1.
         let scaled_back = scale_sub_routes_to_total(&env, &leg_back, bridge_total);
 
-        let base_total = Self::execute_sub_routes(
-            &env,
-            &bridge_token,
-            &base_token,
-            &scaled_back,
-            &contract_addr,
-            &mut leg_counter,
-        );
+        let base_total = Self::execute_sub_routes(&env, &scaled_back, &contract_addr, &mut leg_counter);
 
         assert!(base_total >= min_amount_out, "Output below minimum");
 
@@ -263,10 +237,34 @@ impl AggregatorContract {
                 amount_in,
                 base_total,
                 leg_counter,
+                is_split,
             ),
         );
 
         base_total
+    }
+
+    fn validate_sub_routes(token_in: &Address, token_out: &Address, sub_routes: &Vec<SubRoute>) -> i128 {
+        assert!(!sub_routes.is_empty(), "Empty sub_routes");
+
+        let mut total_in = 0i128;
+        for sr in sub_routes.iter() {
+            assert!(sr.amount_in > 0, "Sub-route amount must be positive");
+            total_in = total_in.checked_add(sr.amount_in).expect("total input overflow");
+            assert!(!sr.steps.is_empty(), "Empty steps");
+
+            let first_step = sr.steps.first().unwrap();
+            let last_step = sr.steps.last().unwrap();
+            assert!(first_step.token_in == *token_in, "Sub-route must start with token_in");
+            assert!(last_step.token_out == *token_out, "Sub-route must end with token_out");
+
+            for i in 1..sr.steps.len() {
+                let previous = sr.steps.get(i - 1).unwrap();
+                let current = sr.steps.get(i).unwrap();
+                assert!(previous.token_out == current.token_in, "Disconnected sub-route");
+            }
+        }
+        total_in
     }
 
     /// Execute sub-routes that share the same token_in → token_out pair;
@@ -274,33 +272,22 @@ impl AggregatorContract {
     ///
     /// Parallel split paths share hop indices (`path_base + hop`). After all
     /// paths run, `leg_counter` advances by the **serial depth** (longest path
-    /// hop count), not by total hop executions — so routed volume stays
-    /// `entry × serial_hops` under splits.
+    /// hop count), not by total hop executions. Exact routed volume is derived
+    /// from each emitted `leg` event's actual input.
     fn execute_sub_routes(
         env: &Env,
-        token_in: &Address,
-        token_out: &Address,
         sub_routes: &Vec<SubRoute>,
         contract_addr: &Address,
         leg_counter: &mut u32,
     ) -> i128 {
-        assert!(!sub_routes.is_empty(), "Empty sub_routes");
-
         let path_base = *leg_counter;
         let mut max_depth: u32 = 0;
         let mut total_output: i128 = 0;
         for sr in sub_routes.iter() {
-            assert!(!sr.steps.is_empty(), "Empty steps");
-            if let Some(first_step) = sr.steps.first() {
-                assert!(first_step.token_in == *token_in, "Sub-route must start with token_in");
-            }
-            if let Some(last_step) = sr.steps.last() {
-                assert!(last_step.token_out == *token_out, "Sub-route must end with token_out");
-            }
             let output = Self::execute_path(env, &sr.steps, sr.amount_in, contract_addr, path_base, &mut max_depth);
-            total_output += output;
+            total_output = total_output.checked_add(output).expect("total output overflow");
         }
-        *leg_counter = path_base + max_depth;
+        *leg_counter = path_base.checked_add(max_depth).expect("leg counter overflow");
         total_output
     }
 
@@ -321,11 +308,15 @@ impl AggregatorContract {
         path_base: u32,
         max_depth: &mut u32,
     ) -> i128 {
+        assert!(amount_in > 0, "Path input must be positive");
         let mut current_amount = amount_in;
 
         for (i, step) in steps.iter().enumerate() {
+            assert!(step.token_in != step.token_out, "Step tokens must differ");
+            assert!(step.in_idx != step.out_idx, "Step indices must differ");
             let hop_idx = path_base + i as u32;
-            current_amount = Self::execute_step(env, step, current_amount, my_address, hop_idx);
+            current_amount = Self::execute_step(env, &step, current_amount, my_address, hop_idx);
+            assert!(current_amount > 0, "Step output must be positive");
             let depth = (i as u32) + 1;
             if depth > *max_depth {
                 *max_depth = depth;
@@ -350,7 +341,13 @@ impl AggregatorContract {
         let output = Self::execute_step_inner(env, step, amount_in, my_address);
         env.events().publish(
             (Symbol::new(env, "leg"),),
-            (hop_idx, Self::dex_tag(&step.dex_type), step.dex_id.clone(), amount_in),
+            (
+                hop_idx,
+                Self::dex_tag(&step.dex_type),
+                step.dex_id.clone(),
+                step.token_in.clone(),
+                amount_in,
+            ),
         );
         output
     }
@@ -1533,13 +1530,52 @@ mod test {
         env.mock_all_auths();
         let user = gen_addr(&env);
         let (_, agg) = setup_agg(&env);
-        let (t, sac, _) = create_token(&env);
+        let (token_in, sac, _) = create_token(&env);
+        let (token_out, _, _) = create_token(&env);
         sac.mint(&user, &1_000_000);
         let sub = SubRoute {
             amount_in: 1000,
             steps: vec![&env],
         };
-        agg.swap(&user, &t, &t, &vec![&env, sub], &1);
+        agg.swap(&user, &token_in, &token_out, &vec![&env, sub], &1);
+    }
+
+    #[test]
+    #[should_panic(expected = "Disconnected sub-route")]
+    fn test_disconnected_sub_route_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let user = gen_addr(&env);
+        let (_, agg) = setup_agg(&env);
+        let (a, sac_a, _) = create_token(&env);
+        let (b, _, _) = create_token(&env);
+        let (c, _, _) = create_token(&env);
+        let (d, _, _) = create_token(&env);
+        sac_a.mint(&user, &1_000_000);
+
+        let sub = SubRoute {
+            amount_in: 1000,
+            steps: vec![
+                &env,
+                SwapStep {
+                    dex_id: gen_addr(&env),
+                    dex_type: DexType::Aquarius,
+                    token_in: a.clone(),
+                    token_out: b,
+                    in_idx: 0,
+                    out_idx: 1,
+                },
+                SwapStep {
+                    dex_id: gen_addr(&env),
+                    dex_type: DexType::Aquarius,
+                    token_in: c,
+                    token_out: d.clone(),
+                    in_idx: 0,
+                    out_idx: 1,
+                },
+            ],
+        };
+        agg.swap(&user, &a, &d, &vec![&env, sub], &1);
     }
 
     #[test]

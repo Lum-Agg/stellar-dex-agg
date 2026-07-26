@@ -48,6 +48,21 @@ pub struct UserSwapRow {
     pub is_split: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct RoundTripRow {
+    pub tx_hash: String,
+    pub ledger: u32,
+    pub created_at: i64,
+    pub status: String,
+    pub user_address: String,
+    pub token_in: Option<String>,
+    pub token_out: Option<String>,
+    pub bridge_token: Option<String>,
+    pub amount_in: String,
+    pub amount_out: Option<String>,
+    pub is_split: bool,
+}
+
 pub struct IndexStore {
     conn: Connection,
 }
@@ -96,6 +111,7 @@ impl IndexStore {
                 user_address TEXT NOT NULL,
                 token_in TEXT,
                 token_out TEXT,
+                bridge_token TEXT,
                 amount_in TEXT NOT NULL,
                 amount_out TEXT,
                 is_split INTEGER NOT NULL DEFAULT 0
@@ -110,6 +126,8 @@ impl IndexStore {
                 token_in TEXT,
                 token_out TEXT,
                 amount_in TEXT,
+                amount_out TEXT,
+                amount_is_actual INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY (tx_hash) REFERENCES swap_invocations(tx_hash)
             );
 
@@ -138,6 +156,48 @@ impl IndexStore {
             CREATE INDEX IF NOT EXISTS idx_limit_orders_owner ON limit_orders(owner, status);
             ",
         )?;
+        // Older production DBs were created before bridge_token / amount_is_actual
+        // existed. CREATE TABLE IF NOT EXISTS does not alter existing tables.
+        self.ensure_column("swap_invocations", "bridge_token", "TEXT")?;
+        self.ensure_column("swap_invocations", "is_split", "INTEGER NOT NULL DEFAULT 0")?;
+        self.ensure_column("swap_legs", "token_in", "TEXT")?;
+        self.ensure_column("swap_legs", "token_out", "TEXT")?;
+        self.ensure_column("swap_legs", "amount_out", "TEXT")?;
+        // Legacy rows predate the actual-vs-envelope distinction; treat them as
+        // actual so historical routed volume does not collapse to zero.
+        self.ensure_column(
+            "swap_legs",
+            "amount_is_actual",
+            "INTEGER NOT NULL DEFAULT 1",
+        )?;
+        Ok(())
+    }
+
+    fn table_has_column(&self, table: &str, column: &str) -> Result<bool> {
+        let mut stmt = self
+            .conn
+            .prepare(&format!("PRAGMA table_info({table})"))
+            .with_context(|| format!("pragma table_info({table})"))?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let name: String = row.get(1)?;
+            if name == column {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn ensure_column(&self, table: &str, column: &str, ddl_type: &str) -> Result<()> {
+        if self.table_has_column(table, column)? {
+            return Ok(());
+        }
+        self.conn
+            .execute(
+                &format!("ALTER TABLE {table} ADD COLUMN {column} {ddl_type}"),
+                [],
+            )
+            .with_context(|| format!("add column {table}.{column}"))?;
         Ok(())
     }
 
@@ -169,8 +229,8 @@ impl IndexStore {
         let inserted = self.conn.execute(
             "INSERT OR IGNORE INTO swap_invocations (
                 tx_hash, ledger, created_at, status, function_name, user_address,
-                token_in, token_out, amount_in, amount_out, is_split
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                token_in, token_out, bridge_token, amount_in, amount_out, is_split
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 record.tx_hash,
                 record.ledger,
@@ -180,6 +240,7 @@ impl IndexStore {
                 p.user_address,
                 p.token_in,
                 p.token_out,
+                p.bridge_token,
                 p.amount_in.to_string(),
                 p.amount_out.map(|v| v.to_string()),
                 p.is_split as i32,
@@ -196,8 +257,8 @@ impl IndexStore {
         Ok(true)
     }
 
-    /// Replace hop rows for an existing invocation (e.g. fix serial `leg_index`
-    /// after re-parsing the envelope). Also updates `is_split`.
+    /// Enrich event-derived legs with envelope route metadata. Match by hop,
+    /// DEX, and pool so actual event amounts stay attached to the correct leg.
     pub fn replace_invocation_legs(&self, tx_hash: &str, parsed: &crate::parser::ParsedInvocation) -> Result<bool> {
         let exists: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM swap_invocations WHERE tx_hash = ?1",
@@ -207,14 +268,51 @@ impl IndexStore {
         if exists == 0 {
             return Ok(false);
         }
+
+        let mut stored_legs = {
+            let mut stmt = self.conn.prepare(
+                "SELECT leg_index, dex_source, pool_address, amount_in, amount_out,
+                        amount_is_actual
+                 FROM swap_legs WHERE tx_hash = ?1 ORDER BY id",
+            )?;
+            let rows = stmt.query_map(params![tx_hash], |row| {
+                Ok((
+                    row.get::<_, i64>(0)? as u32,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?
+                        .and_then(|value| value.parse::<i128>().ok()),
+                    row.get::<_, Option<String>>(4)?
+                        .and_then(|value| value.parse::<i128>().ok()),
+                    row.get::<_, i32>(5)? != 0,
+                ))
+            })?;
+            let mut legs = Vec::new();
+            for row in rows {
+                legs.push(row?);
+            }
+            legs
+        };
+
         self.conn
             .execute("DELETE FROM swap_legs WHERE tx_hash = ?1", params![tx_hash])?;
         self.conn.execute(
-            "UPDATE swap_invocations SET is_split = ?1 WHERE tx_hash = ?2",
-            params![parsed.is_split as i32, tx_hash],
+            "UPDATE swap_invocations
+             SET bridge_token = ?1, is_split = ?2
+             WHERE tx_hash = ?3",
+            params![parsed.bridge_token, parsed.is_split as i32, tx_hash],
         )?;
         for leg in &parsed.legs {
-            self.insert_leg(tx_hash, leg)?;
+            let mut enriched = leg.clone();
+            if let Some(index) = stored_legs.iter().position(|stored| {
+                stored.0 == leg.leg_index && stored.1 == leg.dex_source && stored.2 == leg.pool_address
+            }) {
+                let stored = stored_legs.remove(index);
+                enriched.amount_in = stored.3.or(leg.amount_in);
+                enriched.amount_out = stored.4.or(leg.amount_out);
+                enriched.amount_is_actual = stored.5;
+            }
+            self.insert_leg(tx_hash, &enriched)?;
         }
         Ok(true)
     }
@@ -222,8 +320,9 @@ impl IndexStore {
     fn insert_leg(&self, tx_hash: &str, leg: &ParsedLeg) -> Result<()> {
         self.conn.execute(
             "INSERT INTO swap_legs (
-                tx_hash, leg_index, dex_source, pool_address, token_in, token_out, amount_in
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                tx_hash, leg_index, dex_source, pool_address, token_in, token_out,
+                amount_in, amount_out, amount_is_actual
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 tx_hash,
                 leg.leg_index,
@@ -232,6 +331,8 @@ impl IndexStore {
                 leg.token_in,
                 leg.token_out,
                 leg.amount_in.map(|v| v.to_string()),
+                leg.amount_out.map(|v| v.to_string()),
+                leg.amount_is_actual as i32,
             ],
         )?;
         Ok(())
@@ -314,6 +415,66 @@ impl IndexStore {
                  LIMIT ?2",
             )?;
             let rows = stmt.query_map(params![user, limit], map_row)?;
+            for r in rows {
+                out.push(r?);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Successful on-chain `round_trip_swap` rows, newest first.
+    ///
+    /// When `before` is `Some((created_at, tx_hash))`, returns rows strictly
+    /// older than that cursor (`ORDER BY created_at DESC, tx_hash DESC`).
+    pub fn list_recent_round_trips(
+        &self,
+        limit: u32,
+        before: Option<(i64, &str)>,
+    ) -> Result<Vec<RoundTripRow>> {
+        let limit = limit.clamp(1, 50);
+        let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<RoundTripRow> {
+            Ok(RoundTripRow {
+                tx_hash: row.get(0)?,
+                ledger: row.get::<_, i64>(1)? as u32,
+                created_at: row.get(2)?,
+                status: row.get(3)?,
+                user_address: row.get(4)?,
+                token_in: row.get(5)?,
+                token_out: row.get(6)?,
+                bridge_token: row.get(7)?,
+                amount_in: row.get(8)?,
+                amount_out: row.get(9)?,
+                is_split: row.get::<_, i32>(10)? != 0,
+            })
+        };
+
+        let mut out = Vec::new();
+        if let Some((created_at, tx_hash)) = before {
+            let mut stmt = self.conn.prepare(
+                "SELECT tx_hash, ledger, created_at, status, user_address,
+                        token_in, token_out, bridge_token, amount_in, amount_out, is_split
+                 FROM swap_invocations
+                 WHERE function_name = 'round_trip_swap'
+                   AND status = 'SUCCESS'
+                   AND (created_at < ?1 OR (created_at = ?1 AND tx_hash < ?2))
+                 ORDER BY created_at DESC, tx_hash DESC
+                 LIMIT ?3",
+            )?;
+            let rows = stmt.query_map(params![created_at, tx_hash, limit], map_row)?;
+            for r in rows {
+                out.push(r?);
+            }
+        } else {
+            let mut stmt = self.conn.prepare(
+                "SELECT tx_hash, ledger, created_at, status, user_address,
+                        token_in, token_out, bridge_token, amount_in, amount_out, is_split
+                 FROM swap_invocations
+                 WHERE function_name = 'round_trip_swap'
+                   AND status = 'SUCCESS'
+                 ORDER BY created_at DESC, tx_hash DESC
+                 LIMIT ?1",
+            )?;
+            let rows = stmt.query_map(params![limit], map_row)?;
             for r in rows {
                 out.push(r?);
             }
@@ -447,6 +608,7 @@ mod tests {
                 user_address: user.into(),
                 token_in: Some("TOKEN_IN".into()),
                 token_out: Some("TOKEN_OUT".into()),
+                bridge_token: None,
                 amount_in,
                 amount_out: Some(amount_in + 1),
                 is_split: false,
@@ -457,6 +619,8 @@ mod tests {
                     token_in: Some("TOKEN_IN".into()),
                     token_out: Some("TOKEN_OUT".into()),
                     amount_in: Some(amount_in),
+                    amount_out: None,
+                    amount_is_actual: false,
                 }],
             },
         }
@@ -492,6 +656,150 @@ mod tests {
             .list_swaps_by_user("GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCK3LI", 10, None)
             .unwrap();
         assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn list_recent_round_trips_filters_and_orders() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.db");
+        let store = IndexStore::open(&path).unwrap();
+        let user = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+
+        let swap = sample("tx_swap", user, 50, 10);
+        store.insert_invocation(&swap).unwrap();
+
+        let mut old = sample("tx_rt_old", user, 100, 1_000_0000);
+        old.parsed.function_name = "round_trip_swap".into();
+        old.parsed.bridge_token = Some("BRIDGE".into());
+        old.parsed.amount_out = Some(1_000_5000);
+        store.insert_invocation(&old).unwrap();
+
+        let mut newer = sample("tx_rt_new", user, 200, 2_000_0000);
+        newer.parsed.function_name = "round_trip_swap".into();
+        newer.parsed.bridge_token = Some("BRIDGE".into());
+        newer.parsed.amount_out = Some(2_001_0000);
+        store.insert_invocation(&newer).unwrap();
+
+        let mut failed = sample("tx_rt_fail", user, 300, 3_000_0000);
+        failed.parsed.function_name = "round_trip_swap".into();
+        failed.status = "FAILED".into();
+        store.insert_invocation(&failed).unwrap();
+
+        let rows = store.list_recent_round_trips(10, None).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].tx_hash, "tx_rt_new");
+        assert_eq!(rows[0].bridge_token.as_deref(), Some("BRIDGE"));
+        assert_eq!(rows[1].tx_hash, "tx_rt_old");
+
+        let page2 = store
+            .list_recent_round_trips(10, Some((rows[0].created_at, rows[0].tx_hash.as_str())))
+            .unwrap();
+        assert_eq!(page2.len(), 1);
+        assert_eq!(page2[0].tx_hash, "tx_rt_old");
+    }
+
+    #[test]
+    fn open_migrates_legacy_schema_missing_columns() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("legacy.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "
+                CREATE TABLE swap_invocations (
+                    tx_hash TEXT PRIMARY KEY,
+                    ledger INTEGER NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    function_name TEXT NOT NULL,
+                    user_address TEXT NOT NULL,
+                    token_in TEXT,
+                    token_out TEXT,
+                    amount_in TEXT NOT NULL,
+                    amount_out TEXT
+                );
+                CREATE TABLE swap_legs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tx_hash TEXT NOT NULL,
+                    leg_index INTEGER NOT NULL,
+                    dex_source TEXT NOT NULL,
+                    pool_address TEXT NOT NULL,
+                    amount_in TEXT,
+                    amount_out TEXT
+                );
+                INSERT INTO swap_invocations (
+                    tx_hash, ledger, created_at, status, function_name, user_address,
+                    token_in, token_out, amount_in, amount_out
+                ) VALUES (
+                    'tx_rt', 1, 100, 'SUCCESS', 'round_trip_swap', 'USER',
+                    'BASE', 'BASE', '1000', '1100'
+                );
+                ",
+            )
+            .unwrap();
+        }
+
+        let store = IndexStore::open(&path).unwrap();
+        assert!(store.table_has_column("swap_invocations", "bridge_token").unwrap());
+        assert!(store.table_has_column("swap_invocations", "is_split").unwrap());
+        assert!(store.table_has_column("swap_legs", "amount_is_actual").unwrap());
+
+        let rows = store.list_recent_round_trips(10, None).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].tx_hash, "tx_rt");
+        assert!(rows[0].bridge_token.is_none());
+    }
+
+    #[test]
+    fn envelope_enrichment_preserves_event_leg_amounts() {
+        let dir = tempdir().unwrap();
+        let store = IndexStore::open(dir.path().join("test.db")).unwrap();
+        let mut event_record = sample("tx", "USER", 100, 100);
+        event_record.parsed.legs = vec![
+            ParsedLeg {
+                leg_index: 0,
+                dex_source: "soroswap".into(),
+                pool_address: "POOL_1".into(),
+                token_in: None,
+                token_out: None,
+                amount_in: Some(100),
+                amount_out: Some(55),
+                amount_is_actual: true,
+            },
+            ParsedLeg {
+                leg_index: 1,
+                dex_source: "phoenix".into(),
+                pool_address: "POOL_2".into(),
+                token_in: None,
+                token_out: None,
+                amount_in: Some(55),
+                amount_out: Some(40),
+                amount_is_actual: true,
+            },
+        ];
+        store.insert_invocation(&event_record).unwrap();
+
+        let mut envelope = event_record.parsed.clone();
+        envelope.legs[0].token_in = Some("TOKEN_A".into());
+        envelope.legs[0].token_out = Some("TOKEN_B".into());
+        envelope.legs[1].token_in = Some("TOKEN_B".into());
+        envelope.legs[1].token_out = Some("TOKEN_C".into());
+        envelope.legs[1].amount_in = Some(100);
+        store.replace_invocation_legs("tx", &envelope).unwrap();
+
+        let mut stmt = store
+            .conn()
+            .prepare("SELECT token_in, amount_in FROM swap_legs WHERE tx_hash = 'tx' ORDER BY id")
+            .unwrap();
+        let rows: Vec<(String, String)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            rows,
+            vec![("TOKEN_A".into(), "100".into()), ("TOKEN_B".into(), "55".into())]
+        );
     }
 
     const OWNER: &str = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";

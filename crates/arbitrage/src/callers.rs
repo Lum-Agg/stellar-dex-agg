@@ -5,6 +5,7 @@ use {
     anyhow::{anyhow, Context, Result},
     soroban_client::keypair::{Keypair, KeypairBehavior},
     std::{
+        collections::HashSet,
         sync::{
             atomic::{AtomicU64, AtomicUsize, Ordering},
             Arc,
@@ -65,6 +66,9 @@ impl CallerPool {
             }
         }
 
+        let mut public_keys = HashSet::new();
+        keypairs.retain(|keypair| public_keys.insert(keypair.public_key()));
+
         if keypairs.is_empty() {
             return Ok(None);
         }
@@ -89,6 +93,10 @@ impl CallerPool {
 
     pub fn len(&self) -> usize {
         self.slots.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.slots.is_empty()
     }
 
     pub fn public_keys(&self) -> Vec<String> {
@@ -179,6 +187,22 @@ mod tests {
         assert_ne!(b.public_key(), c.public_key());
         assert_ne!(a.public_key(), c.public_key());
         assert!(pool.try_acquire().await.is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn duplicate_caller_indices_share_one_slot() {
+        let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let dir = std::env::temp_dir().join(format!("arb-caller-dedup-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("mnemonic.txt");
+        std::fs::write(&path, phrase).unwrap();
+
+        let pool = CallerPool::from_config(Some(path.to_str().unwrap()), &[1, 1], &[])
+            .unwrap()
+            .unwrap();
+        assert_eq!(pool.len(), 1);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

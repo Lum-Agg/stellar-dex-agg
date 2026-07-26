@@ -82,8 +82,20 @@ impl ClassicDexAdapter {
             .build()
             .unwrap_or_else(|_| Client::new());
 
+        // Prefer explicit arg, then HORIZON_URL, then public Horizon.
+        // New hosts often get 429 from horizon.stellar.org — point at local.
+        let horizon_url = horizon_url
+            .map(str::to_string)
+            .or_else(|| {
+                std::env::var("HORIZON_URL")
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            })
+            .unwrap_or_else(|| DEFAULT_HORIZON_URL.to_string());
+
         Self {
-            horizon_url: horizon_url.unwrap_or(DEFAULT_HORIZON_URL).to_string(),
+            horizon_url,
             client,
             pairs: RwLock::new(Vec::new()),
         }

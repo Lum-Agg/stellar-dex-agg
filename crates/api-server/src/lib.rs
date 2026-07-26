@@ -1,3 +1,4 @@
+pub mod arbitrage;
 pub mod config;
 pub mod handlers;
 pub mod orders;
@@ -43,6 +44,7 @@ fn build_router(app_state: AppState, rate_limit: RateLimitState, logo_dir: PathB
         .route("/api/v1/tx_status", get(handlers::get_tx_status))
         .route("/api/v1/health", get(handlers::health_check))
         .route("/api/v1/stats", get(stats::get_stats))
+        .route("/api/v1/arbitrage", get(arbitrage::get_arbitrage))
         .route("/api/v1/swaps", get(swaps::get_swaps))
         .route("/api/v1/orders", get(orders::get_orders))
         .route("/api/v1/orders/build_create", post(orders::build_create))

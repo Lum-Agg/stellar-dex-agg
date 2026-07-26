@@ -25,7 +25,7 @@ case "$MODE" in
     ;;
 esac
 
-SERVER="root@178.63.81.216"
+SERVER="root@88.198.16.144"
 REMOTE_SRC="/opt/stellar-dex-aggregator-src"
 REMOTE_APP_DIR="/opt/stellar-dex-aggregator"
 REMOTE_ARB_BIN="${REMOTE_APP_DIR}/target/release/arb-scanner"

@@ -7,7 +7,7 @@
 #   ./scripts/collect-arb-evidence.sh --output docs/arb-evidence-snapshot.md
 #
 # Remote:
-#   ssh root@178.63.81.216 'bash -s' < scripts/collect-arb-evidence.sh
+#   ssh root@88.198.16.144 'bash -s' < scripts/collect-arb-evidence.sh
 set -euo pipefail
 
 SINCE="2026-07-13 00:00:00"

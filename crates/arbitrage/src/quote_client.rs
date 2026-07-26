@@ -5,8 +5,13 @@ use {
     anyhow::{anyhow, Context, Result},
     router_engine::{OptimalRoute, Path, SubOrder, TokenId},
     serde::Deserialize,
-    std::sync::atomic::{AtomicUsize, Ordering},
+    std::{
+        sync::atomic::{AtomicUsize, Ordering},
+        time::Duration,
+    },
 };
+
+const QUOTE_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
 pub struct QuoteApiClient {
@@ -106,7 +111,13 @@ impl QuoteApiClient {
             url.push_str("&on_chain_validate=1");
         }
 
-        let resp = self.http.get(&url).send().await.with_context(|| format!("GET {url}"))?;
+        let resp = self
+            .http
+            .get(&url)
+            .timeout(QUOTE_REQUEST_TIMEOUT)
+            .send()
+            .await
+            .with_context(|| format!("GET {url}"))?;
 
         let status = resp.status();
         let body: QuoteApiResponse = resp
@@ -127,7 +138,23 @@ impl QuoteApiClient {
             .data
             .ok_or_else(|| anyhow!("quote-api returned success without data"))?;
 
-        leg_quote_from_api(data)
+        let leg = leg_quote_from_api(data)?;
+        if leg.route.total_amount_in != amount_in {
+            return Err(anyhow!(
+                "quote-api amount_in mismatch: requested {amount_in}, returned {}",
+                leg.route.total_amount_in
+            ));
+        }
+        for sub in &leg.route.sub_orders {
+            let first = sub.path.tokens.first().map(TokenId::canonical);
+            let last = sub.path.tokens.last().map(TokenId::canonical);
+            if first.as_deref() != Some(token_in.canonical().as_str()) ||
+                last.as_deref() != Some(token_out.canonical().as_str())
+            {
+                return Err(anyhow!("quote-api sub_route token endpoints mismatch"));
+            }
+        }
+        Ok(leg)
     }
 }
 
@@ -152,6 +179,22 @@ pub fn leg_quote_from_api(data: QuoteApiData) -> Result<LegQuote> {
     let total_amount_in = parse_u128_field("amount_in", &data.amount_in)?;
     let total_expected_out = parse_u128_field("expected_output", &data.expected_output)?;
     let minimum_out = parse_u128_field("minimum_output", &data.minimum_output)?;
+    let sub_amount_in = sub_orders.iter().try_fold(0u128, |total, sub| {
+        total
+            .checked_add(sub.amount_in)
+            .ok_or_else(|| anyhow!("sub_route amount_in sum overflow"))
+    })?;
+    let sub_amount_out = sub_orders.iter().try_fold(0u128, |total, sub| {
+        total
+            .checked_add(sub.expected_amount_out)
+            .ok_or_else(|| anyhow!("sub_route amount_out sum overflow"))
+    })?;
+    if sub_amount_in != total_amount_in || sub_amount_out != total_expected_out {
+        return Err(anyhow!("quote-api sub_route totals do not match quote totals"));
+    }
+    if minimum_out > total_expected_out {
+        return Err(anyhow!("quote-api minimum_output exceeds expected_output"));
+    }
 
     Ok(LegQuote {
         route: OptimalRoute {
@@ -216,6 +259,15 @@ fn steps_from_api_sub_route(sub: &QuoteApiSubRoute) -> Result<Vec<ArbSwapStep>> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn round_robin_cursor_is_shared_across_clones() {
+        let client = QuoteApiClient::new(vec!["http://one".into(), "http://two".into()]);
+        let clone = client.clone();
+        assert_eq!(client.next_base_url(), "http://one");
+        assert_eq!(clone.next_base_url(), "http://two");
+        assert_eq!(client.next_base_url(), "http://one");
+    }
 
     #[test]
     fn parses_api_sub_route() {

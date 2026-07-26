@@ -3,7 +3,7 @@
 Auto-generated summary for Tranche 2 Deliverable 6. Re-run:
 
 ```bash
-ssh root@178.63.81.216 'bash -s' < scripts/collect-arb-evidence.sh
+ssh root@88.198.16.144 'bash -s' < scripts/collect-arb-evidence.sh
 # or locally on server:
 ./scripts/collect-arb-evidence.sh --since "2026-07-13 00:00:00"
 ```

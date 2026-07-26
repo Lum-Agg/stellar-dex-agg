@@ -34,25 +34,31 @@ impl Executor<ArbOpportunity> for TxExecutor {
                 return;
             };
 
-            let ctx = match runtime.connect().await {
-                Ok(c) => c,
-                Err(e) => {
-                    warn!(route = %opp.route_label, error = %e, "executor connect failed");
-                    return;
-                }
-            };
-
             let path_key = round_trip_dedup_key(&opp.quote.base, &opp.quote.bridge);
-            if runtime.submit_enabled() {
+            let reserved = if runtime.submit_enabled() {
                 let mut cache = runtime.path_cache.lock().await;
-                if cache.recently_submitted(&path_key) {
+                if !cache.try_reserve(path_key.clone()) {
                     runtime
                         .stats
                         .txs_dedup_skipped
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     return;
                 }
-            }
+                true
+            } else {
+                false
+            };
+
+            let ctx = match runtime.connect().await {
+                Ok(c) => c,
+                Err(e) => {
+                    if reserved {
+                        runtime.path_cache.lock().await.release(&path_key);
+                    }
+                    warn!(route = %opp.route_label, error = %e, "executor connect failed");
+                    return;
+                }
+            };
 
             match try_execute_opportunity(
                 &ctx,
@@ -64,14 +70,18 @@ impl Executor<ArbOpportunity> for TxExecutor {
             )
             .await
             {
-                Ok(true) if runtime.submit_enabled() => {
-                    // Only lock the pair after a successful broadcast, so failed
-                    // sims / busy callers do not burn the dedup window.
-                    let mut cache = runtime.path_cache.lock().await;
-                    cache.mark_submitted(path_key);
+                Ok(true) if reserved => {
+                    runtime.path_cache.lock().await.mark_submitted(path_key);
                 }
-                Ok(_) => {}
+                Ok(_) => {
+                    if reserved {
+                        runtime.path_cache.lock().await.release(&path_key);
+                    }
+                }
                 Err(e) => {
+                    if reserved {
+                        runtime.path_cache.lock().await.release(&path_key);
+                    }
                     warn!(route = %opp.route_label, error = %e, "round_trip_swap pipeline failed");
                 }
             }

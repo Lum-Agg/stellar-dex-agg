@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import Link from 'next/link';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
 
@@ -8,6 +9,21 @@ interface TokenVolume {
   token: string;
   amount_in: string | number;
   routed_volume: string | number;
+  routed_leg_count?: number;
+}
+
+interface RoutedTokenVolume {
+  token: string;
+  routed_volume: string | number;
+  routed_leg_count: number;
+}
+
+interface RoundTripSurplus {
+  base_token: string;
+  tx_count: number;
+  amount_in: string | number;
+  gross_surplus: string | number;
+  gross_surplus_usd?: number | null;
 }
 
 interface DailyStats {
@@ -16,11 +32,18 @@ interface DailyStats {
   unique_users: number;
   /** Sum of entry amounts — mixed tokens; do not treat as XLM. */
   total_amount_in: string | number;
-  /** Entry × serial hops — mixed token units; prefer USD fields. */
+  /** Actual DEX leg inputs — mixed token units; prefer USD fields. */
   total_routed_dex_volume?: string | number;
+  routed_leg_count?: number;
+  routed_priced_leg_count?: number;
+  routed_pricing_coverage?: number | null;
   by_token?: TokenVolume[];
+  routed_by_token?: RoutedTokenVolume[];
   by_function: Record<string, number>;
   by_dex: Record<string, number>;
+  round_trip_count?: number;
+  round_trip_by_token?: RoundTripSurplus[];
+  round_trip_gross_surplus_usd?: number | null;
   split_swap_count: number;
   success_count: number;
   failed_count: number;
@@ -39,6 +62,16 @@ function dayRoutedUsd(d: DailyStats): number | null {
 function dayNotionalUsd(d: DailyStats): number | null {
   if (typeof d.total_amount_in_usd === 'number' && Number.isFinite(d.total_amount_in_usd)) {
     return d.total_amount_in_usd;
+  }
+  return null;
+}
+
+function dayGrossSurplusUsd(d: DailyStats): number | null {
+  if (
+    typeof d.round_trip_gross_surplus_usd === 'number' &&
+    Number.isFinite(d.round_trip_gross_surplus_usd)
+  ) {
+    return d.round_trip_gross_surplus_usd;
   }
   return null;
 }
@@ -114,18 +147,35 @@ export default function StatsPage() {
     let routedUsd = 0;
     let usdCovered = 0;
     let txs = 0;
+    let roundTrips = 0;
+    let grossSurplusUsd = 0;
+    let surplusPricedDays = 0;
+    let surplusPricedRoundTrips = 0;
+    let routedLegs = 0;
+    let routedPricedLegs = 0;
     const dexTotals: Record<string, number> = {};
     const fnTotals: Record<string, number> = {};
 
     for (const d of days) {
       txs += d.tx_count;
+      roundTrips += d.round_trip_count ?? 0;
+      routedLegs += d.routed_leg_count ?? 0;
+      routedPricedLegs += d.routed_priced_leg_count ?? 0;
       const nUsd = dayNotionalUsd(d);
       const rUsd = dayRoutedUsd(d);
+      const surplusUsd = dayGrossSurplusUsd(d);
       if (nUsd != null) {
         notionalUsd += nUsd;
         usdCovered += 1;
       }
       if (rUsd != null) routedUsd += rUsd;
+      if (surplusUsd != null) {
+        grossSurplusUsd += surplusUsd;
+        surplusPricedDays += 1;
+        surplusPricedRoundTrips += (d.round_trip_by_token ?? [])
+          .filter((row) => typeof row.gross_surplus_usd === 'number')
+          .reduce((sum, row) => sum + row.tx_count, 0);
+      }
       for (const [k, v] of Object.entries(d.by_dex)) {
         dexTotals[k] = (dexTotals[k] || 0) + v;
       }
@@ -152,6 +202,12 @@ export default function StatsPage() {
       routedUsd: usdCovered > 0 || routedUsd > 0 ? routedUsd : null,
       avgXlmUsd,
       txs,
+      routedPricingCoverage: routedLegs > 0 ? routedPricedLegs / routedLegs : null,
+      roundTrips,
+      grossSurplusUsd: surplusPricedDays > 0 ? grossSurplusUsd : null,
+      averageGrossSurplusUsd:
+        surplusPricedRoundTrips > 0 ? grossSurplusUsd / surplusPricedRoundTrips : null,
+      surplusPricedDays,
       venuesHit,
       dexTotals,
       fnTotals,
@@ -169,9 +225,10 @@ export default function StatsPage() {
           </h1>
           <p className="text-[13px] text-[var(--text-primary)]0 mt-2 leading-relaxed max-w-xl">
             Aggregator contract invocations only — volume LumAgg routed onto Stellar Soroban DEXes,
-            not market-wide pool volume. Routed volume = entry amount × serial hops (e.g. a→b→c
-            with 100 in → 200 of that input token). Parallel splits share a hop index and are not
-            double-counted. USD prices each input token (XLM = historical UTC day close; USDC = $1).
+            not market-wide pool volume. Routed volume sums the actual input value processed by
+            every executed DEX leg. Split routes use each pool&apos;s real allocation; multi-hop and
+            round-trip legs are priced in their own input token (XLM = historical UTC day close;
+            USDC = $1).
           </p>
         </div>
         {data && (
@@ -209,7 +266,11 @@ export default function StatsPage() {
             <KpiCard
               label="Routed (USD)"
               value={derived.routedUsd != null ? formatUsd(derived.routedUsd) : '—'}
-              hint="entry × serial hops, priced per token_in"
+              hint={
+                derived.routedPricingCoverage != null
+                  ? `actual DEX leg inputs · ${(derived.routedPricingCoverage * 100).toFixed(1)}% legs priced`
+                  : 'sum of actual DEX leg inputs'
+              }
               accent
               delay={0}
             />
@@ -242,7 +303,7 @@ export default function StatsPage() {
               <div>
                 <h2 className="text-[15px] font-medium text-[var(--text-primary)]">Daily volume</h2>
                 <p className="text-[12px] text-[var(--text-primary)]0 mt-0.5">
-                  Routed = entry × hops · Notional = entry amount · cyan = transactions
+                  Routed = actual DEX leg inputs · Notional = entry amount · cyan = transactions
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--text-primary)]0">
@@ -265,6 +326,52 @@ export default function StatsPage() {
               maxVol={derived.maxVol}
               maxTx={derived.maxTx}
             />
+          </section>
+
+          <section className="rounded-xl border border-teal-400/20 bg-[linear-gradient(115deg,rgba(45,212,191,0.08),rgba(15,23,42,0.18))] px-4 sm:px-5 py-4">
+            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+              <div>
+                <h2 className="text-[15px] font-medium text-[var(--text-primary)]">
+                  Arbitrage execution
+                </h2>
+                <p className="text-[12px] text-[var(--text-primary)]0 mt-1 max-w-2xl">
+                  Successful on-chain round trips. Gross surplus is the actual base token returned
+                  minus the base token supplied; it excludes transaction fees and is not net P&amp;L.
+                  See the{' '}
+                  <Link href="/arbitrage" className="text-teal-300/90 hover:text-teal-200 underline underline-offset-2">
+                    Arbitrage
+                  </Link>{' '}
+                  page for recent trades.
+                </p>
+              </div>
+              <span className="text-[10px] uppercase tracking-[0.16em] text-teal-300/70 whitespace-nowrap">
+                On-chain actuals
+              </span>
+            </div>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-5 gap-y-4 mt-5">
+              <ArbMetric
+                label="Gross surplus (USD)"
+                value={
+                  derived.grossSurplusUsd != null ? formatUsd(derived.grossSurplusUsd) : '—'
+                }
+              />
+              <ArbMetric
+                label="Successful round trips"
+                value={derived.roundTrips.toLocaleString()}
+              />
+              <ArbMetric
+                label="Avg gross / round trip"
+                value={
+                  derived.averageGrossSurplusUsd != null
+                    ? formatUsd(derived.averageGrossSurplusUsd)
+                    : '—'
+                }
+              />
+              <ArbMetric
+                label="Surplus days priced"
+                value={`${derived.surplusPricedDays} / ${derived.days.length}`}
+              />
+            </div>
           </section>
 
           <div className="grid lg:grid-cols-2 gap-4">
@@ -327,6 +434,7 @@ export default function StatsPage() {
                     <th className="px-3 py-2 font-medium">Users</th>
                     <th className="px-3 py-2 font-medium">Notional USD</th>
                     <th className="px-3 py-2 font-medium">Routed USD</th>
+                    <th className="px-3 py-2 font-medium">RT gross USD</th>
                     <th className="px-3 py-2 font-medium">XLM/USD</th>
                     <th className="px-3 py-2 font-medium">Split</th>
                   </tr>
@@ -335,6 +443,7 @@ export default function StatsPage() {
                   {[...derived.days].reverse().map((d) => {
                     const notionalUsd = dayNotionalUsd(d);
                     const routedUsd = dayRoutedUsd(d);
+                    const grossSurplusUsd = dayGrossSurplusUsd(d);
                     return (
                       <tr key={d.day} className="text-[var(--text-secondary)]">
                         <td className="px-3 py-2 whitespace-nowrap">{d.day}</td>
@@ -345,6 +454,9 @@ export default function StatsPage() {
                         </td>
                         <td className="px-3 py-2">
                           {routedUsd != null ? formatUsd(routedUsd) : '—'}
+                        </td>
+                        <td className="px-3 py-2">
+                          {grossSurplusUsd != null ? formatUsd(grossSurplusUsd) : '—'}
                         </td>
                         <td className="px-3 py-2 tabular-nums">
                           {typeof d.xlm_usd === 'number' ? `$${d.xlm_usd.toFixed(4)}` : '—'}
@@ -359,6 +471,17 @@ export default function StatsPage() {
           </details>
         </>
       )}
+    </div>
+  );
+}
+
+function ArbMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">{label}</div>
+      <div className="text-lg sm:text-xl font-semibold text-teal-200 mt-1.5 tabular-nums">
+        {value}
+      </div>
     </div>
   );
 }

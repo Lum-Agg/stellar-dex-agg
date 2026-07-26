@@ -3,7 +3,8 @@
 use {
     crate::{
         callers::CallerPool, config::ArbConfig, context::ArbContext, dedup::SubmittedPathCache,
-        prepare::LatestLedgerCache, profit::ProfitBook, stats::ArbStats,
+        prepare::LatestLedgerCache, profit::ProfitBook, quote_client::QuoteApiClient, stats::ArbStats,
+        vault::VaultBalanceCache,
     },
     anyhow::Result,
     std::sync::Arc,
@@ -18,6 +19,8 @@ pub struct ArbRuntime {
     pub path_cache: Mutex<SubmittedPathCache>,
     pub caller_pool: Option<CallerPool>,
     pub latest_ledger: Arc<LatestLedgerCache>,
+    pub vault_balances: Arc<VaultBalanceCache>,
+    pub quote_client: QuoteApiClient,
 }
 
 impl ArbRuntime {
@@ -27,6 +30,7 @@ impl ArbRuntime {
             CallerPool::from_config(config.mnemonic_path.as_deref(), &config.caller_indices, &secret_keys)?;
 
         let dedup_secs = config.submit_dedup_secs;
+        let quote_client = QuoteApiClient::from_config(&config);
         Ok(Self {
             config,
             stats: Arc::new(ArbStats::default()),
@@ -36,14 +40,17 @@ impl ArbRuntime {
             ))),
             caller_pool,
             latest_ledger: Arc::new(LatestLedgerCache::new()),
+            vault_balances: Arc::new(VaultBalanceCache::new()),
+            quote_client,
         })
     }
 
     pub async fn connect(&self) -> Result<ArbContext> {
-        ArbContext::connect_with_caches(
+        ArbContext::connect_with_resources(
             self.config.clone(),
             self.latest_ledger.clone(),
-            Arc::new(crate::vault::VaultBalanceCache::new()),
+            self.vault_balances.clone(),
+            self.quote_client.clone(),
         )
         .await
     }
@@ -61,7 +68,7 @@ impl ArbRuntime {
     }
 
     pub fn has_callers(&self) -> bool {
-        self.caller_pool.as_ref().map(|p| p.len() > 0).unwrap_or(false)
+        self.caller_pool.as_ref().map(|p| !p.is_empty()).unwrap_or(false)
     }
 
     pub fn log_startup(&self) {
