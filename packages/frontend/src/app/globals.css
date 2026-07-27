@@ -187,13 +187,16 @@ body {
 /* ——— Docs page ——— */
 
 .docs-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--docs-gap);
   color: var(--text-secondary);
   font-size: 0.9375rem;
   line-height: 1.55;
 }
 
 .docs-intro {
-  margin-bottom: var(--docs-gap);
+  margin-bottom: 0;
 }
 
 .docs-title {
@@ -237,7 +240,7 @@ body {
 .docs-card-grid {
   display: grid;
   gap: var(--docs-gap);
-  margin-bottom: var(--docs-gap);
+  margin-bottom: 0;
 }
 
 @media (min-width: 768px) {
@@ -387,7 +390,7 @@ body {
 }
 
 .docs-dexes {
-  margin-top: var(--docs-gap);
+  margin-top: 0;
 }
 
 .docs-endpoint-head {
