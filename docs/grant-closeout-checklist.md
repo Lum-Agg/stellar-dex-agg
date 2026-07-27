@@ -6,7 +6,7 @@ Living checklist — tick as evidence lands in repo or production.
 
 - [x] D1 Benchmark matrix + refresh ([scf-benchmark-results.md](./scf-benchmark-results.md) — **2026-07-21** fair `prefer_soroban` run; split + parity rows in “Tranche 1 reviewer highlights”)
 - [x] D2 OpenAPI + [integrator-guide.md](./integrator-guide.md) + `prefer_soroban`
-- [ ] D2 ≥1 **external** integrator: `USER_G=G... ./scripts/integrator-smoke.sh` + feedback (founder self-smoke in `./output/` does **not** count alone)
+- [x] D2 ≥1 **external** integrator: [docs/evidence/d2-integrator-smoke/](./evidence/d2-integrator-smoke/) (`USER_G=GDXRRY4HHIER…`, 2026-07-27 quote + unsigned XDR)
 - [x] D3 Swap UI (logos, balance %, explorer) — self-hosted logos via `https://api.lumagg.xyz/logos/` — prod `/tokens` returns logos; letter-avatar `logo_kind` fallbacks
 - [x] D4 Indexer v0 + [sample-indexer-export.json](./sample-indexer-export.json) + live `GET /api/v1/stats`
 

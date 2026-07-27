@@ -32,56 +32,92 @@ pub async fn enrich_daily_with_historical_usd(daily: &mut [DailyStats]) {
         if let Some(px) = xlm_px {
             row.xlm_usd = Some(px);
         }
+        enrich_row_with_usd(row, xlm_px);
+    }
+}
 
-        let mut notional_usd = 0.0;
-        let mut routed_usd = 0.0;
-        let mut routed_priced_leg_count = 0u64;
-        let mut gross_surplus_usd = 0.0;
-        let mut notional_priced_any = false;
-        let mut routed_priced_any = false;
-        let mut surplus_priced_any = false;
+/// Sync USD fields for one daily row (testable without network).
+fn enrich_row_with_usd(row: &mut DailyStats, xlm_px: Option<f64>) {
+    let mut notional_usd = 0.0;
+    let mut gross_surplus_usd = 0.0;
+    let mut notional_priced_any = false;
+    let mut surplus_priced_any = false;
 
-        for tv in &row.by_token {
-            let Some(usd_per_token) = usd_price_for_token(&tv.token, xlm_px) else {
-                continue;
-            };
-            if tv.amount_in != 0 {
-                notional_priced_any = true;
-                notional_usd += (tv.amount_in as f64 / TOKEN_DECIMALS) * usd_per_token;
-            }
+    for tv in &row.by_token {
+        let Some(usd_per_token) = usd_price_for_token(&tv.token, xlm_px) else {
+            continue;
+        };
+        if tv.amount_in != 0 {
+            notional_priced_any = true;
+            notional_usd += (tv.amount_in as f64 / TOKEN_DECIMALS) * usd_per_token;
         }
-        for tv in &row.routed_by_token {
-            let Some(usd_per_token) = usd_price_for_token(&tv.token, xlm_px) else {
-                continue;
-            };
-            routed_priced_any = true;
-            routed_usd += (tv.routed_volume as f64 / TOKEN_DECIMALS) * usd_per_token;
-            routed_priced_leg_count += tv.routed_leg_count;
-        }
+    }
 
-        if notional_priced_any {
-            row.total_amount_in_usd = Some(notional_usd);
-        }
-        if routed_priced_any {
-            row.total_routed_dex_volume_usd = Some(routed_usd);
-        }
-        row.routed_priced_leg_count = routed_priced_leg_count;
-        if row.routed_leg_count > 0 {
-            row.routed_pricing_coverage = Some(routed_priced_leg_count as f64 / row.routed_leg_count as f64);
-        }
+    // Hop-scaled routed volume: each successful DEX leg moves ~the same USD
+    // notional as the entry (efficient swaps). 2-leg round trips → ~2×; 4-hop
+    // routes → ~4×. This avoids mis-pricing polluted intermediate amounts
+    // (e.g. AQUA units copied onto a USDC leg after envelope enrichment).
+    let hop_legs: u64 = row.by_dex.values().copied().sum();
+    let hop_routed_usd = if notional_priced_any && row.tx_count > 0 && hop_legs > 0 {
+        Some(notional_usd * (hop_legs as f64 / row.tx_count as f64))
+    } else {
+        None
+    };
 
-        for surplus in &mut row.round_trip_by_token {
-            let Some(usd_per_token) = usd_price_for_token(&surplus.base_token, xlm_px) else {
-                continue;
-            };
-            let value = (surplus.gross_surplus as f64 / TOKEN_DECIMALS) * usd_per_token;
-            surplus.gross_surplus_usd = Some(value);
-            gross_surplus_usd += value;
-            surplus_priced_any = true;
-        }
-        if surplus_priced_any {
-            row.round_trip_gross_surplus_usd = Some(gross_surplus_usd);
-        }
+    // Fallback when DEX legs are missing: base_in + base_out for round trips (~2×).
+    let mut rt_routed_usd = 0.0;
+    let mut rt_priced_any = false;
+    for surplus in &row.round_trip_by_token {
+        let Some(usd_per_token) = usd_price_for_token(&surplus.base_token, xlm_px) else {
+            continue;
+        };
+        let amount_out = surplus.amount_in.saturating_add(surplus.gross_surplus);
+        rt_routed_usd +=
+            ((surplus.amount_in as f64 + amount_out as f64) / TOKEN_DECIMALS) * usd_per_token;
+        rt_priced_any = true;
+    }
+
+    let (routed_usd, routed_priced_any, routed_priced_leg_count) =
+        if let Some(hop) = hop_routed_usd {
+            (hop, true, hop_legs)
+        } else if rt_priced_any {
+            let rt_legs = row
+                .round_trip_by_token
+                .iter()
+                .map(|s| s.tx_count.saturating_mul(2))
+                .sum::<u64>();
+            (rt_routed_usd, true, rt_legs)
+        } else {
+            (0.0, false, 0)
+        };
+
+    if notional_priced_any {
+        row.total_amount_in_usd = Some(notional_usd);
+    }
+    if routed_priced_any {
+        row.total_routed_dex_volume_usd = Some(routed_usd);
+    }
+    row.routed_priced_leg_count = routed_priced_leg_count;
+    if hop_legs > 0 {
+        row.routed_pricing_coverage = Some(1.0);
+    } else if row.routed_leg_count > 0 {
+        row.routed_pricing_coverage =
+            Some(routed_priced_leg_count as f64 / row.routed_leg_count as f64);
+    } else if rt_priced_any {
+        row.routed_pricing_coverage = Some(1.0);
+    }
+
+    for surplus in &mut row.round_trip_by_token {
+        let Some(usd_per_token) = usd_price_for_token(&surplus.base_token, xlm_px) else {
+            continue;
+        };
+        let value = (surplus.gross_surplus as f64 / TOKEN_DECIMALS) * usd_per_token;
+        surplus.gross_surplus_usd = Some(value);
+        gross_surplus_usd += value;
+        surplus_priced_any = true;
+    }
+    if surplus_priced_any {
+        row.round_trip_gross_surplus_usd = Some(gross_surplus_usd);
     }
 }
 
@@ -249,7 +285,11 @@ fn days_from_civil(y: i32, m: u32, d: u32) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {
+        super::*,
+        analytics_indexer::export::{DailyStats, RoundTripSurplus, TokenVolume},
+        std::collections::BTreeMap,
+    };
 
     #[test]
     fn civil_epoch_day() {
@@ -261,5 +301,102 @@ mod tests {
     #[test]
     fn lookback_spans() {
         assert!(lookback_days_from_oldest("2026-07-13").unwrap() >= 7);
+    }
+
+    #[test]
+    fn round_trip_routed_scales_with_hop_count() {
+        let xlm = XLM_SAC.to_string();
+        let mut by_dex = BTreeMap::new();
+        // 2 txs × 4 hops = 8 legs → routed ≈ 4× notional
+        by_dex.insert("aquarius".into(), 8);
+
+        let mut row = DailyStats {
+            day: "2026-07-21".into(),
+            tx_count: 2,
+            unique_users: 1,
+            total_amount_in: 20_000_0000,
+            total_routed_dex_volume: 0,
+            routed_leg_count: 8,
+            routed_priced_leg_count: 0,
+            routed_pricing_coverage: None,
+            by_token: vec![TokenVolume {
+                token: xlm.clone(),
+                amount_in: 20_000_0000,
+                routed_volume: 0,
+                routed_leg_count: 0,
+            }],
+            routed_by_token: vec![],
+            by_function: BTreeMap::new(),
+            by_dex,
+            round_trip_count: 2,
+            round_trip_by_token: vec![RoundTripSurplus {
+                base_token: xlm,
+                tx_count: 2,
+                amount_in: 20_000_0000,
+                gross_surplus: 10_0000,
+                gross_surplus_usd: None,
+            }],
+            round_trip_gross_surplus_usd: None,
+            split_swap_count: 0,
+            success_count: 2,
+            failed_count: 0,
+            xlm_usd: None,
+            total_amount_in_usd: None,
+            total_routed_dex_volume_usd: None,
+        };
+
+        enrich_row_with_usd(&mut row, Some(0.2));
+
+        let notional = row.total_amount_in_usd.unwrap();
+        let routed = row.total_routed_dex_volume_usd.unwrap();
+        assert!((notional - 4.0).abs() < 1e-6, "notional={notional}");
+        assert!((routed - 16.0).abs() < 1e-6, "routed={routed}");
+    }
+
+    #[test]
+    fn round_trip_without_legs_falls_back_to_2x_base() {
+        let xlm = XLM_SAC.to_string();
+        let mut row = DailyStats {
+            day: "2026-07-21".into(),
+            tx_count: 2,
+            unique_users: 1,
+            total_amount_in: 20_000_0000,
+            total_routed_dex_volume: 0,
+            routed_leg_count: 0,
+            routed_priced_leg_count: 0,
+            routed_pricing_coverage: None,
+            by_token: vec![TokenVolume {
+                token: xlm.clone(),
+                amount_in: 20_000_0000,
+                routed_volume: 0,
+                routed_leg_count: 0,
+            }],
+            routed_by_token: vec![],
+            by_function: BTreeMap::new(),
+            by_dex: BTreeMap::new(),
+            round_trip_count: 2,
+            round_trip_by_token: vec![RoundTripSurplus {
+                base_token: xlm,
+                tx_count: 2,
+                amount_in: 20_000_0000,
+                gross_surplus: 10_0000,
+                gross_surplus_usd: None,
+            }],
+            round_trip_gross_surplus_usd: None,
+            split_swap_count: 0,
+            success_count: 2,
+            failed_count: 0,
+            xlm_usd: None,
+            total_amount_in_usd: None,
+            total_routed_dex_volume_usd: None,
+        };
+
+        enrich_row_with_usd(&mut row, Some(0.2));
+
+        let notional = row.total_amount_in_usd.unwrap();
+        let routed = row.total_routed_dex_volume_usd.unwrap();
+        assert!((notional - 4.0).abs() < 1e-6, "notional={notional}");
+        assert!(routed > notional * 1.99, "routed={routed} notional={notional}");
+        assert!(routed < notional * 2.01, "routed={routed} notional={notional}");
     }
 }

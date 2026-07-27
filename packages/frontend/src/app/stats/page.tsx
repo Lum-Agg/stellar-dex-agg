@@ -268,8 +268,8 @@ export default function StatsPage() {
               value={derived.routedUsd != null ? formatUsd(derived.routedUsd) : '—'}
               hint={
                 derived.routedPricingCoverage != null
-                  ? `actual DEX leg inputs · ${(derived.routedPricingCoverage * 100).toFixed(1)}% legs priced`
-                  : 'sum of actual DEX leg inputs'
+                  ? `notional × avg hops · ${(derived.routedPricingCoverage * 100).toFixed(0)}% legs counted`
+                  : 'notional × DEX hops'
               }
               accent
               delay={0}
@@ -292,8 +292,8 @@ export default function StatsPage() {
             />
             <KpiCard
               label="Days priced"
-              value={String(data.daily.filter((d) => dayRoutedUsd(d) != null).length)}
-              hint={data.usd_pricing ? 'per-token historical USD' : 'USD enrichment offline'}
+              value={String(data.daily.filter((d) => dayNotionalUsd(d) != null).length)}
+              hint={data.usd_pricing ? 'notional days with USD' : 'USD enrichment offline'}
               delay={180}
             />
           </div>
@@ -303,7 +303,8 @@ export default function StatsPage() {
               <div>
                 <h2 className="text-[15px] font-medium text-[var(--text-primary)]">Daily volume</h2>
                 <p className="text-[12px] text-[var(--text-primary)]0 mt-0.5">
-                  Routed = actual DEX leg inputs · Notional = entry amount · cyan = transactions
+                  Routed ≈ notional × hops (each DEX leg) · Notional = entry amount · cyan =
+                  transactions
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--text-primary)]0">

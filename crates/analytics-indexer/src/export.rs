@@ -129,6 +129,7 @@ fn export_range(store: &IndexStore, start_ts: i64, end_ts: i64, day_label: &str)
          JOIN swap_invocations i ON i.tx_hash = l.tx_hash
          WHERE i.created_at >= ?1 AND i.created_at < ?2
            AND i.status = 'SUCCESS'
+           AND l.token_in IS NOT NULL
            AND l.amount_in IS NOT NULL
            AND l.amount_is_actual = 1",
         params![start_ts, end_ts],
@@ -140,6 +141,7 @@ fn export_range(store: &IndexStore, start_ts: i64, end_ts: i64, day_label: &str)
          JOIN swap_invocations i ON i.tx_hash = l.tx_hash
          WHERE i.created_at >= ?1 AND i.created_at < ?2
            AND i.status = 'SUCCESS'
+           AND l.token_in IS NOT NULL
            AND l.amount_in IS NOT NULL
            AND l.amount_is_actual = 1",
         params![start_ts, end_ts],
@@ -186,7 +188,6 @@ fn export_range(store: &IndexStore, start_ts: i64, end_ts: i64, day_label: &str)
              JOIN swap_invocations i ON i.tx_hash = l.tx_hash
              WHERE i.created_at >= ?1 AND i.created_at < ?2
                AND i.status = 'SUCCESS'
-               AND l.amount_is_actual = 1
              GROUP BY l.dex_source",
         )?;
         let rows = stmt.query_map(params![start_ts, end_ts], |row| {
