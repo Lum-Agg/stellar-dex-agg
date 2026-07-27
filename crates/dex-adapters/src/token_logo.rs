@@ -1,15 +1,19 @@
 //! Filesystem-backed token logo cache with remote download and SVG fallback.
 
 use {
+    image::{imageops::FilterType, ImageFormat},
     sha2::{Digest, Sha256},
     std::{
         env,
+        io::Cursor,
         path::{Path, PathBuf},
         time::Duration,
     },
 };
 
 const MAX_LOGO_BYTES: u64 = 1024 * 1024; // 1 MiB
+const MAX_DOWNLOAD_BYTES: u64 = 4 * 1024 * 1024; // enough to normalize oversized source art
+const MAX_RASTER_DIMENSION: u32 = 512;
 const DEFAULT_DIR: &str = "data/logos";
 const DEFAULT_BASE_URL: &str = "https://api.lumagg.xyz/logos";
 const CACHED_EXTENSIONS: &[&str] = &["png", "jpg", "webp", "gif", "svg"];
@@ -134,7 +138,7 @@ impl TokenLogoCache {
         }
 
         if let Some(len) = response.content_length() {
-            if len > MAX_LOGO_BYTES {
+            if len > MAX_DOWNLOAD_BYTES {
                 return None;
             }
         }
@@ -147,7 +151,7 @@ impl TokenLogoCache {
             .to_string();
 
         let bytes = response.bytes().await.ok()?;
-        if bytes.is_empty() || bytes.len() as u64 > MAX_LOGO_BYTES {
+        if bytes.is_empty() || bytes.len() as u64 > MAX_DOWNLOAD_BYTES {
             return None;
         }
 
@@ -159,6 +163,11 @@ impl TokenLogoCache {
         if ext == "svg" {
             let sanitized = sanitize_svg(&bytes)?;
             return Some((sanitized.into_bytes(), ext));
+        }
+
+        if bytes.len() as u64 > MAX_LOGO_BYTES {
+            let normalized = normalize_oversized_raster(&bytes)?;
+            return Some((normalized, "png"));
         }
 
         Some((bytes.to_vec(), ext))
@@ -195,6 +204,19 @@ impl TokenLogoCache {
 
         Ok(())
     }
+}
+
+fn normalize_oversized_raster(bytes: &[u8]) -> Option<Vec<u8>> {
+    let image = image::load_from_memory(bytes).ok()?;
+    for dimension in [MAX_RASTER_DIMENSION, MAX_RASTER_DIMENSION / 2] {
+        let resized = image.resize(dimension, dimension, FilterType::Lanczos3);
+        let mut output = Cursor::new(Vec::new());
+        resized.write_to(&mut output, ImageFormat::Png).ok()?;
+        if output.get_ref().len() as u64 <= MAX_LOGO_BYTES {
+            return Some(output.into_inner());
+        }
+    }
+    None
 }
 
 /// Map an HTTP Content-Type to a supported image extension, if known.
@@ -611,6 +633,25 @@ mod tests {
 
         let html2 = b"<html><head></head></html>";
         assert_eq!(detect_image_ext(html2, "image/svg+xml"), None);
+    }
+
+    #[test]
+    fn oversized_raster_is_normalized_to_bounded_png() {
+        let source = image::RgbaImage::from_fn(768, 768, |x, y| {
+            let value = x.wrapping_mul(1_664_525).wrapping_add(y.wrapping_mul(1_013_904_223));
+            image::Rgba([(value >> 16) as u8, (value >> 8) as u8, value as u8, 255])
+        });
+        let mut encoded = Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(source)
+            .write_to(&mut encoded, ImageFormat::Png)
+            .unwrap();
+        assert!(encoded.get_ref().len() as u64 > MAX_LOGO_BYTES);
+
+        let normalized = normalize_oversized_raster(encoded.get_ref()).unwrap();
+        let decoded = image::load_from_memory(&normalized).unwrap();
+        assert!(normalized.len() as u64 <= MAX_LOGO_BYTES);
+        assert!(decoded.width() <= MAX_RASTER_DIMENSION);
+        assert!(decoded.height() <= MAX_RASTER_DIMENSION);
     }
 
     #[test]

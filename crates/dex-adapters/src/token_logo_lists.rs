@@ -1,9 +1,11 @@
-//! SEP-42 token list index: contract address → official icon URL.
+//! Token logo index: contract address → official icon URL.
 //!
 //! Sources (merged in priority order):
-//! 1. Soroswap token list
-//! 2. LOBSTR curated list (hex contract IDs normalized to StrKey)
-//! 3. StellarExpert Top50
+//! 1. LumAgg overrides verified against exact mainnet contract IDs
+//! 2. Soroswap token list
+//! 3. LOBSTR curated list (hex contract IDs normalized to StrKey)
+//! 4. StellarExpert Top50
+//! 5. MetaMask Stellar token list
 
 use {
     serde::Deserialize,
@@ -17,6 +19,40 @@ const DEFAULT_LIST_URLS: &[&str] = &[
     "https://lobstr.co/api/v1/sep/assets/curated.json",
     "https://api.stellar.expert/explorer/public/asset-list/top50",
     "https://raw.githubusercontent.com/MetaMask/snap-stellar-wallet/main/tokenlists/unified-pubnet.json",
+];
+
+// Keep this list deliberately small. A symbol alone is not enough to identify
+// a Stellar asset; every entry must be verified against the exact contract ID.
+const VERIFIED_LOGO_OVERRIDES: &[(&str, &str)] = &[
+    (
+        // Native XLM SAC; icon is served by the Stellar Development Foundation.
+        "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+        "https://cdn.sanity.io/images/e2r40yh6/production-i18n/d4809d7123ca78f57b05601982932f5cfa62c3ac-32x32.png?w=192&h=192&fm=png",
+    ),
+    (
+        // Gravity HITZ official repository.
+        "CBAPZAZNNB4X3VPXV2LYA5RMV7XHXIVREES2GG7R5GUXDZ4R4CKOY4EU",
+        "https://raw.githubusercontent.com/skyhitz/hitz-gravity/main/frontend/public/icon-128.png",
+    ),
+    (
+        // XAU contract published by xau.cl.
+        "CC5UXAGZOU27OQBKBYTQMES3NVO6EV6FCMWSNPPHAPIS6S24ENM3C24A",
+        "https://xau.cl/wp-content/uploads/2024/01/logo_xau_low.png",
+    ),
+    (
+        // Balanced's Stellar configuration maps this contract to bnUSD.
+        "CCT4ZYIYZ3TUO2AWQFEOFGBZ6HQP3GW5TA37CK7CRZVFRDXYTHTYX7KP",
+        "https://raw.githubusercontent.com/balancednetwork/icons/main/tokens/bnusd.png",
+    ),
+    (
+        // LIBRE and DAWG contracts are published by LibreQuidity and Soroswap's list.
+        "CBEM2CAIYLM3HBOPU5HLQL7V5BUAKM3N77DYQKX4FNHTQLQUUD2ZFBOX",
+        "https://librequidity.org/LIBRE.png",
+    ),
+    (
+        "CD3X4GOWBPDU57NIPMPEMH7LFNAMBDTY5SKJCHLY7IDDWJQVUTU7CBBK",
+        "https://librequidity.org/DAWG.png",
+    ),
 ];
 
 const IPFS_GATEWAY: &str = "https://ipfs.io/ipfs/";
@@ -90,7 +126,10 @@ impl TokenLogoListIndex {
             return self.icons.read().await.len();
         }
 
-        let mut merged = HashMap::new();
+        let mut merged: HashMap<String, String> = VERIFIED_LOGO_OVERRIDES
+            .iter()
+            .map(|(contract, icon)| ((*contract).to_string(), (*icon).to_string()))
+            .collect();
         for url in &self.list_urls {
             match self.fetch_list(url).await {
                 Ok(entries) => {
@@ -235,6 +274,14 @@ mod tests {
         let parsed = parse_sep42_assets(&assets);
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].1, "https://example.com/usdc.png");
+    }
+
+    #[test]
+    fn verified_overrides_use_valid_contracts_and_https_urls() {
+        for (contract, icon) in VERIFIED_LOGO_OVERRIDES {
+            assert_eq!(normalize_contract_id(contract).as_deref(), Some(*contract));
+            assert!(icon.starts_with("https://"));
+        }
     }
 
     #[tokio::test]
