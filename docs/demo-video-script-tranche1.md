@@ -8,6 +8,27 @@ Audience: SCF reviewers verifying D1–D4. Do **not** spend time on arb vault / 
 
 ---
 
+## 最简单的录制方法（无口播、无需剪辑）
+
+1. 用 Keynote 打开字幕 PPT，选择 `Play → In Window`，不要全屏播放。
+2. 打开浏览器并按下面顺序准备标签页：Swap、Docs、GitHub evidence、Benchmark、Stats。
+3. 在 macOS 按 `⌘⇧5`，选择 **Record Entire Screen**；在 `Options` 中将
+   `Microphone` 设为 **None**，保存位置选 Desktop，然后点击 `Record`。
+4. 从字幕 PPT 第 1 页开始。每张字幕卡停留 5–10 秒，然后用 `⌘Tab` 切换到浏览器，
+   按对应章节操作。演示完成后再 `⌘Tab` 回 Keynote，按右方向键进入下一张字幕卡。
+5. 全程不要讲话。鼠标移动慢一点，在关键内容上停留 2–3 秒，让审阅者看清楚。
+6. 最后一张卡停留 10 秒后，点击菜单栏录制图标停止。得到的 `.mov` 可以直接上传，
+   不需要加音乐、转场或摄像头画面。
+
+建议只录一条连续视频；操作失误时停两秒再继续即可，不必追求专业剪辑。目标是让审阅者
+确认 D1–D4 的证据，不是制作宣传片。
+
+录完后上传到 YouTube Studio，标题可用 `LumAgg — SCF #44 Tranche 1 Demo`，将
+Visibility 设为 **Unlisted**。等待处理完成后，用无痕窗口打开分享链接，确认不登录也能
+播放，再把链接填入 completion form 的 `Deliverable Verification - Video`。
+
+---
+
 ## Pre-flight (do once before record)
 
 1. Browser: clean window, 1920×1080, hide bookmarks bar; English UI if possible.
@@ -22,9 +43,12 @@ Audience: SCF reviewers verifying D1–D4. Do **not** spend time on arb vault / 
    # D1 — optional, show results file instead of full re-run if slow
    head -40 docs/scf-benchmark-results.md
 
-   # D2 — use friend G or any funded mainnet G (do not need to submit tx)
-   USER_G=GYourFriendAddress ./scripts/integrator-smoke.sh
-   # Keep OUT dir open, or open docs/evidence/d2-integrator-smoke/
+   # D2 — do not re-run during recording; show the committed external evidence
+   ls docs/evidence/d2-integrator-smoke/
+   jq '{success, is_split: .data.is_split, routes: (.data.sub_routes | length)}' \
+     docs/evidence/d2-integrator-smoke/quote.json
+   jq '{success, xdr_prefix: .data.unsigned_tx_xdr[:60]}' \
+     docs/evidence/d2-integrator-smoke/build_resp.json
    ```
 4. Freighter: connected on mainnet (optional for UI segment). If you skip signing, still show logos / balance / % chips.
 5. Pre-warm one quote on the swap page (XLM → USDC) so the live take is snappy.
@@ -45,7 +69,7 @@ Text on screen:
 
 **Show:** lumagg.xyz homepage / swap.
 
-**Say:**
+**Optional narration (skip this when using caption cards):**
 > This is LumAgg, a Stellar DEX aggregator. Tranche 1 delivers four things: live differentiation benchmarks, an integrator-ready public API, completed swap UX, and an on-chain analytics indexer. I’ll walk through each with live evidence.
 
 ---
@@ -59,9 +83,11 @@ Text on screen:
 2. Connect wallet (or already connected) → **spendable balance** on input token.
 3. Click **25% / 50% / 75% / 100%** chips; note XLM keeps reserve.
 4. Hit quote → if split, highlight **two legs / percentages / DEX names**.
-5. Optional: sign a tiny swap and open the **explorer link**. If not signing: say “same quote → build_tx → Freighter path; I’ll skip broadcast to save time.”
+5. Optional: sign a tiny swap and open the **explorer link**. If not signing,
+   leave the quote visible for 3 seconds; the D2 section separately proves the
+   `build_tx` path.
 
-**Say:**
+**Optional narration (skip this when using caption cards):**
 > Deliverable 3 closes retail UX gaps: logos from the tokens API, wallet balance, quick amounts, and explorer link after submit. Routing still goes through the public quote and build_tx APIs.
 
 ---
@@ -90,7 +116,7 @@ jq '.success, .data.unsigned_tx_xdr[:60]' docs/evidence/d2-integrator-smoke/buil
 - `unsigned_tx_xdr` prefix (do **not** scroll forever)
 - README: external / non-founder `USER_G`
 
-**Say:**
+**Optional narration (skip this when using caption cards):**
 > Deliverable 2: partners can quote and get an unsigned XDR from docs alone. Here is an external G-address smoke — quote plus build_tx — no founder key. OpenAPI and the integrator guide are linked from the docs site; prefer_soroban excludes Classic when integrators need Soroban-only comparison.
 
 ---
@@ -99,10 +125,10 @@ jq '.success, .data.unsigned_tx_xdr[:60]' docs/evidence/d2-integrator-smoke/buil
 
 **Show:**
 1. `docs/scf-venue-comparison.md` (GitHub or local) — Broker adapter gap / LumAgg venue list.
-2. `docs/scf-benchmark-results.md` — dated table rows (XLM→USDC sizes, split row, prefer_soroban fair row).
+2. `docs/scf-benchmark-results.md` — show only the top **Tranche 1 reviewer summary** table; do not scroll through the full result matrix.
 3. Optional one-liner: `./scripts/scf-benchmark.sh` exists for reviewers to re-run.
 
-**Say:**
+**Optional narration (skip this when using caption cards):**
 > Deliverable 1 is verifiable differentiation, not marketing slides. We maintain a live Soroswap quote benchmark and a public Broker router-contract comparison — including CLMM coverage Broker’s open router lacks. Reviewers can re-run the benchmark script; results are dated in the repo.
 
 ---
@@ -121,7 +147,7 @@ jq '.success, .data.unsigned_tx_xdr[:60]' docs/evidence/d2-integrator-smoke/buil
 curl -sS 'https://api.lumagg.xyz/api/v1/stats?format=csv' | head -5
 ```
 
-**Say:**
+**Optional narration (skip this when using caption cards):**
 > Deliverable 4 is the production indexer v0: mainnet aggregator invocations, daily volume and tx counts, function breakdown, and per-DEX leg attribution. Dashboard UI polish continues in a later tranche; the data pipeline and /stats export are live now.
 
 ---
@@ -167,7 +193,7 @@ Evidence folder: docs/evidence/d2-integrator-smoke/
 
 ## Recording tips
 
-- Loom or unlisted YouTube; 1080p 16:9; mic close, quiet room.
+- Use macOS `⌘⇧5` at the display's normal resolution; keep the microphone off.
 - Cursor highlight / zoom on JSON keys (`is_split`, `unsigned_tx_xdr`).
 - Don’t open private keys, `.env`, or Telegram bot tokens.
-- One rehearsal take, then one real take — don’t over-edit.
+- One rehearsal take, then one real take. A clear screen recording is enough.

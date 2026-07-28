@@ -24,10 +24,13 @@ and the comparison document cites the public Stellar Broker adapter coverage.
 **2. Integrator-ready API.** We published an OpenAPI specification and a
 docs-only integrator guide covering `/quote`, `/build_tx`, `/tokens`, balances,
 health, partner API keys, and rate limits. The live `/quote` endpoint supports
-`prefer_soroban=1`. An external tester followed the documentation and completed
-the full quote-to-unsigned-XDR flow; the captured quote is a split Soroswap plus
-Aquarius CLMM route and the `build_tx` response contains a valid unsigned
-transaction XDR.
+`prefer_soroban=1`. A non-founder external tester used their own funded public
+G-address and ran the documented one-command smoke test
+(`OUT=./output USER_G=G... ./scripts/integrator-smoke.sh`). The script completed
+the health, quote, and unsigned transaction-build flow and saved the request and
+responses. The captured quote is a split Soroswap plus Aquarius CLMM route, and
+the `build_tx` response contains a valid unsigned transaction XDR. No secret key,
+signature, or on-chain submission was required.
 
 **3. Completed swap UI.** The production UI now provides token metadata and
 self-hosted logos with deterministic fallbacks, connected-wallet spendable
@@ -139,10 +142,11 @@ audit. No blocker currently prevents continued development.
 
 ## Pre-submit Checklist
 
-- [ ] Add one sentence of external tester feedback and an anonymized role/name
-  to `docs/evidence/d2-integrator-smoke/README.txt`.
-- [ ] Commit and push `docs/evidence/d2-integrator-smoke/`, the updated grant
-  checklist, and this draft/evidence documentation.
+- [x] Capture the external non-founder smoke run, command, public G-address, and
+  quote/build artifacts in `docs/evidence/d2-integrator-smoke/`.
+- [x] Commit and push `docs/evidence/d2-integrator-smoke/` to the public
+  repository.
+- [ ] Commit and push the final form and video evidence documentation.
 - [ ] Open every GitHub and production link in a private browser window.
 - [ ] Record a video no longer than five minutes and add its URL above.
 - [ ] Confirm the video sharing setting is public or unlisted.

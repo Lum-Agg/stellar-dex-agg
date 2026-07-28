@@ -17,7 +17,7 @@ LumAgg delivers a production Stellar DEX aggregator with split routing across So
 | # | Deliverable | Evidence | Status |
 |---|-------------|----------|--------|
 | D1 | Benchmark matrix | [scf-benchmark-results.md](./scf-benchmark-results.md) | ✅ |
-| D2 | Integrator guide + OpenAPI | [integrator-guide.md](./integrator-guide.md), [openapi.yaml](./openapi.yaml) | ✅ code · ☐ external pilot |
+| D2 | Integrator guide + OpenAPI | [integrator-guide.md](./integrator-guide.md), [openapi.yaml](./openapi.yaml), [external smoke evidence](./evidence/d2-integrator-smoke/) | ✅ code · ✅ external tester |
 | D3 | Swap UI | https://lumagg.xyz | ✅ |
 | D4 | Analytics indexer v0 | [analytics-indexer.md](./analytics-indexer.md), [sample-indexer-export.json](./sample-indexer-export.json) | ✅ |
 | D5 | npm SDK | [packages/sdk](../packages/sdk), npm: [`@lumagg/sdk`](https://www.npmjs.com/package/@lumagg/sdk) `0.1.0` | ✅ |
