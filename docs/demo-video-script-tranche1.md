@@ -2,6 +2,8 @@
 
 Upload as **unlisted** YouTube / Loom / Drive. Paste the URL into **Deliverable Verification - Video**.
 
+**No voiceover needed.** Caption cards: [evidence/LumAgg-Tranche1-Demo-Captions.pptx](./evidence/LumAgg-Tranche1-Demo-Captions.pptx) — open in Keynote (`File → Open`), then fullscreen between screen-record segments.
+
 Audience: SCF reviewers verifying D1–D4. Do **not** spend time on arb vault / npm SDK (those are T2/T3).
 
 ---

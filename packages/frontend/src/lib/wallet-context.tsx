@@ -45,10 +45,27 @@ function ensureKit() {
   kitInitialized = true;
 }
 
-async function readStoredAddress(): Promise<string | null> {
+/** True when kit still has a persisted connected session (not explicitly disconnected). */
+async function hasStoredSession(): Promise<boolean> {
   try {
     ensureKit();
     const { address } = await StellarWalletsKit.getAddress();
+    return Boolean(address);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Prefer the wallet's current active account over the kit's persisted address.
+ * `getAddress()` only reads kit memory/localStorage; `fetchAddress()` asks the
+ * extension (e.g. Freighter) and updates kit state.
+ */
+async function syncAddressFromWallet(): Promise<string | null> {
+  try {
+    ensureKit();
+    if (!(await hasStoredSession())) return null;
+    const { address } = await StellarWalletsKit.fetchAddress();
     return address || null;
   } catch {
     return null;
@@ -59,13 +76,13 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [address, setAddress] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
 
-  // Restore kit session after full page loads (kit already persists address in localStorage).
+  // Restore session from the wallet's live active account (not stale localStorage).
   useEffect(() => {
     let cancelled = false;
 
     void (async () => {
-      const stored = await readStoredAddress();
-      if (!cancelled && stored) setAddress(stored);
+      const live = await syncAddressFromWallet();
+      if (!cancelled) setAddress(live);
     })();
 
     ensureKit();
@@ -76,10 +93,24 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setAddress(null);
     });
 
+    // If the user switches accounts in the extension while this tab is open,
+    // re-sync when they come back to the page.
+    const resync = () => {
+      if (document.visibilityState === 'hidden') return;
+      void (async () => {
+        const live = await syncAddressFromWallet();
+        if (!cancelled) setAddress(live);
+      })();
+    };
+    window.addEventListener('focus', resync);
+    document.addEventListener('visibilitychange', resync);
+
     return () => {
       cancelled = true;
       offState();
       offDisconnect();
+      window.removeEventListener('focus', resync);
+      document.removeEventListener('visibilitychange', resync);
     };
   }, []);
 
@@ -108,9 +139,20 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const signTx = useCallback(
     async (xdr: string, opts?: SignTxOptions): Promise<string> => {
       ensureKit();
+      // Re-sync right before signing so we never sign for a stale stored address.
+      let signer = address;
+      try {
+        const live = await StellarWalletsKit.fetchAddress();
+        if (live.address) {
+          signer = live.address;
+          setAddress(live.address);
+        }
+      } catch {
+        // Fall back to React state if the wallet is temporarily unavailable.
+      }
       const { signedTxXdr } = await StellarWalletsKit.signTransaction(xdr, {
         networkPassphrase: opts?.networkPassphrase ?? Networks.PUBLIC,
-        address: address ?? undefined,
+        address: signer ?? undefined,
       });
       return signedTxXdr;
     },

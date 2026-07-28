@@ -51,6 +51,22 @@ pub async fn run(config: IndexerConfig) -> Result<()> {
             }
             Err(e) => {
                 warn!(error = %e, cursor, end, "ingest batch failed");
+                // RPC retention can move forward after restarts; reclamp so we
+                // do not retry forever below oldestLedger.
+                if let Ok((oldest, _)) = rpc
+                    .get_events_ledger_bounds(&config.aggregator_contract)
+                    .await
+                {
+                    if cursor < oldest {
+                        info!(
+                            requested = cursor,
+                            oldest_available = oldest,
+                            "reclamping indexer cursor after ingest failure"
+                        );
+                        store.set_cursor_ledger(oldest)?;
+                        cursor = oldest;
+                    }
+                }
             }
         }
 
@@ -114,36 +130,53 @@ async fn ingest_range(
     }
 
     if config.envelope_fallback {
+        // Soft-fail: never block event-based cursor advance on getTransactions.
+        // A hard error here previously left the cursor stuck while events were
+        // already persisted for the same range.
         let filters = vec![TransactionFilterSpec {
             contract_ids: Some(vec![config.aggregator_contract.clone()]),
         }];
-        let txs = rpc
+        match rpc
             .get_contract_transactions(start_ledger, Some(end_ledger), &filters, config.page_limit)
             .await
-            .with_context(|| format!("getTransactions [{start_ledger}, {end_ledger})"))?;
-
-        for tx in txs {
-            let parsed = match parse_envelope(&tx.envelope_xdr, &config.aggregator_contract, tx.result_xdr.as_deref()) {
-                Ok(Some(p)) => p,
-                Ok(None) => continue,
-                Err(e) => {
-                    warn!(tx = %tx.tx_hash, error = %e, "failed to parse envelope");
-                    continue;
+        {
+            Ok(txs) => {
+                for tx in txs {
+                    let parsed = match parse_envelope(
+                        &tx.envelope_xdr,
+                        &config.aggregator_contract,
+                        tx.result_xdr.as_deref(),
+                    ) {
+                        Ok(Some(p)) => p,
+                        Ok(None) => continue,
+                        Err(e) => {
+                            warn!(tx = %tx.tx_hash, error = %e, "failed to parse envelope");
+                            continue;
+                        }
+                    };
+                    let record = StoredInvocation {
+                        tx_hash: tx.tx_hash.clone(),
+                        ledger: tx.ledger,
+                        created_at: tx.created_at,
+                        status: tx.status.clone(),
+                        parsed,
+                    };
+                    // Enrich event-derived actual leg amounts with envelope token
+                    // and path metadata.
+                    if store.insert_invocation(&record)? {
+                        ingested += 1;
+                    } else {
+                        let _ = store.replace_invocation_legs(&record.tx_hash, &record.parsed)?;
+                    }
                 }
-            };
-            let record = StoredInvocation {
-                tx_hash: tx.tx_hash.clone(),
-                ledger: tx.ledger,
-                created_at: tx.created_at,
-                status: tx.status.clone(),
-                parsed,
-            };
-            // Enrich event-derived actual leg amounts with envelope token and
-            // path metadata.
-            if store.insert_invocation(&record)? {
-                ingested += 1;
-            } else {
-                let _ = store.replace_invocation_legs(&record.tx_hash, &record.parsed)?;
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    start_ledger,
+                    end_ledger,
+                    "getTransactions envelope fallback failed; continuing with events"
+                );
             }
         }
     }
