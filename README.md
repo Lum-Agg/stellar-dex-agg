@@ -172,7 +172,7 @@ Active pools typically refresh within **~0.1–2s** after a swap / add / remove 
 
 ## Arbitrage & vault
 
-Operator-facing atomic round-trip stack (not a retail product). Trading principal sits in a **vault**; hot wallets only pay Soroban fees. Full playbook: [`docs/arb-operator.md`](docs/arb-operator.md). Contract detail: [`contracts/vault/README.md`](contracts/vault/README.md).
+Operator-facing atomic round-trip stack (not a retail product). Trading principal can sit in a **vault** so hot wallets only pay Soroban fees. Public deployment guide: [`docs/arbitrage-deployment.md`](docs/arbitrage-deployment.md). Contract detail: [`contracts/vault/README.md`](contracts/vault/README.md).
 
 ### Operator architecture
 
@@ -232,11 +232,9 @@ bridges × base
 
 ### Deploy arb
 
-```bash
-# Vault once: deploy / deposit / add_caller — see contracts/vault/README.md
-./deploy_arb.sh                 # rsync, build arb-scanner, restart lumagg-arb
-# Live submit: ARB_SUBMIT_TX=1 in deploy/arb.env on the server
-```
+Build and install `arb-scanner` as a separate native service. Follow the
+[public deployment guide](docs/arbitrage-deployment.md), which starts in
+quote-only mode and requires an explicit staged rollout before live submission.
 
 | Unit | Role |
 |------|------|
@@ -290,12 +288,12 @@ This aggregator targets **Soroban DEXes** where each hop is a deterministic cont
 │   └── sdk/                    # Client SDK
 ├── docs/
 │   ├── pool-state-architecture.md
-│   ├── arb-operator.md         # Vault + arb deploy / rollout playbook
+│   ├── aggregator-deployment.md
+│   ├── arbitrage-deployment.md
 │   └── analytics-indexer.md
+├── packaging/                 # Public systemd and environment templates
 ├── thirdparty/                 # Optional local upstream clones (not tracked; see README there)
-├── deploy/                     # systemd units (lumagg-api@, lumagg-worker, lumagg-arb)
-├── deploy_server.sh            # API + worker
-├── deploy_arb.sh               # Arb scanner
+├── deploy/                     # LumAgg-operated infrastructure (not public templates)
 └── frontend/                   # SvelteKit demo UI
 ```
 
@@ -355,22 +353,17 @@ DUMP_DIR=./ledger-events-dump DUMP_LEDGERS=5 \
 
 ## Deployment
 
-```bash
-./deploy_server.sh          # api-server (4 instances) + worker
-./deploy_server.sh api      # api-server only
-./deploy_server.sh worker   # market-data-worker only
-./deploy_arb.sh             # arb-scanner (needs vault + quote APIs)
-```
+Choose the topology by workload:
 
-Systemd units live in `deploy/`:
+| Workload | Guide |
+|----------|-------|
+| Private quote API or integration testing | [`docs/lumagg-swap-api.md`](docs/lumagg-swap-api.md) |
+| Public, scalable Aggregator | [`docs/aggregator-deployment.md`](docs/aggregator-deployment.md) |
+| Independent arbitrage operator | [`docs/arbitrage-deployment.md`](docs/arbitrage-deployment.md) |
 
-| Unit | Role |
-|------|------|
-| `lumagg-worker.service` | Single writer — discovery, ledger watcher, Redis publish |
-| `lumagg-api@.service` | Stateless API instances (ports 3100–3103) |
-| `lumagg-arb.service` | Round-trip arb bot (`ARB_SUBMIT_TX` via `deploy/arb.env`) |
-
-Worker defaults include `LEDGER_POLL_SECS=0.1`, `FETCH_PIPELINE_ENABLED=true`, `DISCOVERY_INTERVAL_SECS=600`.
+Public native systemd and environment templates live in `packaging/`. Files in
+`deploy/` and the root deployment scripts describe LumAgg-operated
+infrastructure and are not portable installation interfaces.
 
 ## Configuration
 
@@ -426,7 +419,7 @@ Worker defaults include `LEDGER_POLL_SECS=0.1`, `FETCH_PIPELINE_ENABLED=true`, `
 | `COMET_FACTORY` | Blend mainnet factory | Comet factory contract |
 | `COMET_EXTRA_POOLS` | — | Comma-separated extra Comet pool IDs |
 
-### Arbitrage bot (see also `docs/arb-operator.md`)
+### Arbitrage bot (see also `docs/arbitrage-deployment.md`)
 
 | Variable | Default / notes | Meaning |
 |----------|-----------------|---------|
@@ -468,9 +461,10 @@ Brent tolerance defaults to `0.0001` (0.01%) with up to 18 iterations — simila
 | [`docs/openapi.yaml`](docs/openapi.yaml) | OpenAPI 3 spec for `/quote`, `/build_tx`, `/tokens`, `/health` |
 | [`docs/analytics-indexer.md`](docs/analytics-indexer.md) | On-chain analytics indexer v0 — attribution spec, env, export |
 | [`docs/pool-state-architecture.md`](docs/pool-state-architecture.md) | Pool state design, env tables, code pointers |
+| [`docs/aggregator-deployment.md`](docs/aggregator-deployment.md) | Native worker + Redis + API production deployment |
+| [`docs/arbitrage-deployment.md`](docs/arbitrage-deployment.md) | Native arb-scanner install and staged rollout |
 | [`docs/scf-venue-comparison.md`](docs/scf-venue-comparison.md) | LumAgg vs Soroswap / Stellar Broker — venue coverage & SCF differentiation evidence |
 | [`docs/scf-resubmission-budget.md`](docs/scf-resubmission-budget.md) | SCF #44 resubmission — $80k tranche deliverables (copy-paste) |
-| [`docs/arb-operator.md`](docs/arb-operator.md) | Vault + arb-scanner deploy, rollout, monitoring |
 | [`docs/lumagg-swap-api.md`](docs/lumagg-swap-api.md) | Native all-in-one Swap API download and operation |
 | [`contracts/vault/README.md`](contracts/vault/README.md) | Vault API, fund flow, Soroban auth notes |
 | [`docs/arb-executor.md`](docs/arb-executor.md) | Historical naming → vault + `round_trip_swap` |

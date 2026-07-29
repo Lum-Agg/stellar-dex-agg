@@ -1,0 +1,27 @@
+[Unit]
+Description=LumAgg arbitrage scanner
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=lumagg
+Group=lumagg
+EnvironmentFile=/etc/lumagg/arbitrage.env
+WorkingDirectory=/var/lib/lumagg
+StateDirectory=lumagg
+ExecStart=/usr/local/bin/arb-scanner
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
