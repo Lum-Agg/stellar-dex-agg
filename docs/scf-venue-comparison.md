@@ -4,7 +4,7 @@
 
 **Live product:** [lumagg.xyz](https://lumagg.xyz) · API: [api.lumagg.xyz](https://api.lumagg.xyz) · Repo: [github.com/Lum-Agg/stellar-dex-agg](https://github.com/Lum-Agg/stellar-dex-agg)
 
-**中文摘要:** [README.zh-CN.md](../README.zh-CN.md) · 本文对比 LumAgg 与 Soroswap / Stellar Broker 的 **venue 覆盖** 与 **产品形态**；Broker 因需 API 申请无法在截止前 live 测试，故采用 **开源合约 adapter 清单** 作为证据。
+**中文摘要:** [README.zh-CN.md](../README.zh-CN.md) · 本文对比 LumAgg 与 Soroswap / Stellar Broker 的 **venue 覆盖** 与 **产品形态**；Broker hosted API 需要提交表单并经过人工审核，LumAgg 未申请该访问权限，因此本文仅采用其 **开源合约 adapter 清单** 作为 Broker 对比证据，不包含 Broker live quote benchmark。
 
 ---
 
@@ -22,13 +22,13 @@
 | **Sushi V3 CLMM** | **Yes** | **No** (not in public adapters) | Varies |
 | **Multi-path split routing** | Yes (Brent optimizer + atomic `split_swap`) | Router accepts `Vec<Route>`; **CLMM pools not in adapter set** | Single optimal route / distribution focus; LumAgg split differs — see [Soroswap comparison](#vs-soroswap-execution-quality) |
 | **Atomic round-trip arb** | Yes (`round_trip_swap` + arb-only [vault](../contracts/vault/README.md)) | Not a documented operator feature | Not a documented operator feature |
-| **Evidence type** | Live mainnet API + repo | **Source code** (no API key before deadline) | Live API quotes (recommended benchmark) |
+| **Evidence type** | Live mainnet API + repo | **Public router source code** (hosted API not tested) | Live API quotes (key obtained) |
 
 ---
 
 ## vs Stellar Broker — source-code venue coverage
 
-Live Stellar Broker **hosted API** testing was **not performed** before resubmission: access requires an **application/approval** and we did not receive credentials before the SCF #44 revision deadline. Comparison below uses the **public open-source router contract** only (`broker/router-contract`) — adapter coverage and on-chain fee model — not a live quote benchmark vs Broker’s hosted service.
+Live Stellar Broker **hosted API** testing was not performed. Access requires a form submission and manual approval, and LumAgg did not apply for hosted API access. The comparison below therefore uses the **public open-source router contract** only (`broker/router-contract`) — adapter coverage and on-chain fee model — and does not claim a live quote comparison against Broker's hosted service.
 
 ### Stellar Broker router contract
 

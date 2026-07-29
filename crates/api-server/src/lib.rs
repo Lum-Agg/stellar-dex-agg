@@ -43,6 +43,7 @@ fn build_router(app_state: AppState, rate_limit: RateLimitState, logo_dir: PathB
         .route("/api/v1/submit_tx", post(handlers::submit_tx))
         .route("/api/v1/tx_status", get(handlers::get_tx_status))
         .route("/api/v1/health", get(handlers::health_check))
+        .route("/api/v1/ready", get(handlers::readiness_check))
         .route("/api/v1/stats", get(stats::get_stats))
         .route("/api/v1/arbitrage", get(arbitrage::get_arbitrage))
         .route("/api/v1/swaps", get(swaps::get_swaps))

@@ -35,10 +35,11 @@ signature, or on-chain submission was required.
 **3. Completed swap UI.** The production UI now provides token metadata and
 self-hosted logos with deterministic fallbacks, connected-wallet spendable
 balances, 25% / 50% / 75% / 100% quick amount controls with an XLM reserve,
-configurable slippage, and a Stellar Expert transaction link after submission.
-The live token API currently returns metadata/logo coverage for more than 50
-routable tokens, and the responsive quote-to-build-to-sign flow remains live on
-mainnet.
+configurable slippage, Max hops and Max splits routing controls, and a Stellar
+Expert transaction link after submission. Max hops limits route length, while
+Max splits limits the number of parallel routes considered. The live token API
+currently returns metadata/logo coverage for more than 50 routable tokens, and
+the responsive quote-to-build-to-sign flow remains live on mainnet.
 
 **4. On-chain analytics indexer v0.** A production indexer ingests LumAgg
 Aggregator contract events from Stellar mainnet and stores daily time-series
@@ -121,7 +122,7 @@ audit. No blocker currently prevents continued development.
 
 - Connect Freighter or use a prepared connected session.
 - Show token logos, spendable balance, and 25% / 50% / 75% / 100% controls.
-- Open swap settings and show slippage.
+- Open swap settings and show slippage, Max hops, and Max splits.
 - Request a small XLM-to-USDC quote and show split-route percentages if the
   current market returns a split.
 - Show an existing successful transaction's Stellar Expert link if you do not

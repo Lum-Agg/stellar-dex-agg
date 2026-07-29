@@ -25,6 +25,7 @@ pub async fn api_root() -> impl IntoResponse {
         "status": "ok",
         "endpoints": {
             "health": "/api/v1/health",
+            "ready": "/api/v1/ready",
             "quote": "/api/v1/quote",
             "build_tx": "/api/v1/build_tx",
             "tokens": "/api/v1/tokens",
@@ -1518,6 +1519,78 @@ pub async fn health_check(State(_state): State<AppState>) -> impl IntoResponse {
         status: "ok".to_string(),
         adapters: vec![],
     })
+}
+
+#[derive(Serialize)]
+pub struct ReadinessResponse {
+    pub status: String,
+    pub ready: bool,
+    pub tokens: usize,
+    pub pools: usize,
+}
+
+async fn routing_graph_status(engine: &router_engine::QuoteEngine) -> (usize, usize, bool) {
+    let tokens = engine.get_all_tokens().await.len();
+    let pools = engine.cached_pool_edges().await.len();
+    (tokens, pools, tokens > 1 && pools > 0)
+}
+
+/// Readiness is separate from liveness: a newly started embedded instance can
+/// accept HTTP connections before its first market snapshot is available.
+pub async fn readiness_check(State(state): State<AppState>) -> impl IntoResponse {
+    let engine = state.engine.read().await.clone();
+    let (tokens, pools, ready) = routing_graph_status(&engine).await;
+    let status = if ready {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+
+    (
+        status,
+        Json(ReadinessResponse {
+            status: if ready { "ready" } else { "warming_up" }.to_string(),
+            ready,
+            tokens,
+            pools,
+        }),
+    )
+}
+
+#[cfg(test)]
+mod readiness_tests {
+    use {
+        super::routing_graph_status,
+        router_engine::{
+            path_finder::PathFinderConfig,
+            split_optimizer::SplitConfig,
+            types::{TokenId, TradingPair},
+            QuoteEngine,
+        },
+    };
+
+    #[tokio::test]
+    async fn readiness_requires_a_populated_routing_graph() {
+        let engine = QuoteEngine::new(PathFinderConfig::default(), SplitConfig::default());
+        assert_eq!(routing_graph_status(&engine).await, (0, 0, false));
+
+        engine
+            .update_pairs_from_cache(
+                "soroswap",
+                &[TradingPair {
+                    token_a: TokenId::from_str_auto("TOKEN_A"),
+                    token_b: TokenId::from_str_auto("TOKEN_B"),
+                    source: "soroswap".into(),
+                    pool_address: "POOL".into(),
+                    fee_bps: 30,
+                    reserve_a: Some(1_000_000),
+                    reserve_b: Some(1_000_000),
+                }],
+            )
+            .await;
+
+        assert_eq!(routing_graph_status(&engine).await, (2, 1, true));
+    }
 }
 
 // ============================================================

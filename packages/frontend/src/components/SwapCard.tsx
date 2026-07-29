@@ -24,6 +24,7 @@ import {
 import { SubmitViaToggle } from '@/components/SubmitViaToggle';
 import { SwapSettingsModal } from '@/components/SwapSettingsModal';
 import { subRoutesForBuild } from '@/lib/routeDisplay';
+import { resolveTokenSelection } from '@/lib/swap-selection';
 import {
   DEFAULT_SWAP_SETTINGS,
   formatSlippageLabel,
@@ -162,6 +163,35 @@ export function SwapCard() {
     setQuote(null);
     setAmountIn('');
   };
+
+  const handleTokenInSelect = useCallback(
+    (next: Token) => {
+      const resolved = resolveTokenSelection({
+        current: tokenIn,
+        other: tokenOut,
+        next,
+      });
+      setTokenIn(resolved.current);
+      setTokenOut(resolved.other);
+      setQuote(null);
+      setAmountIn('');
+    },
+    [tokenIn, tokenOut],
+  );
+
+  const handleTokenOutSelect = useCallback(
+    (next: Token) => {
+      const resolved = resolveTokenSelection({
+        current: tokenOut,
+        other: tokenIn,
+        next,
+      });
+      setTokenOut(resolved.current);
+      setTokenIn(resolved.other);
+      setQuote(null);
+    },
+    [tokenIn, tokenOut],
+  );
 
   const formatOutput = (stroops: string) => {
     const val = parseInt(stroops) / 10 ** tokenOut.decimals;
@@ -535,12 +565,9 @@ export function SwapCard() {
             />
             <TokenSelector
               selected={tokenIn}
-              onSelect={(t) => {
-                setTokenIn(t);
-                setQuote(null);
-                setAmountIn('');
-              }}
+              onSelect={handleTokenInSelect}
               exclude={tokenOut.id}
+              onSelectExcluded={handleTokenInSelect}
             />
           </div>
           {walletAddress &&
@@ -600,11 +627,9 @@ export function SwapCard() {
             </div>
             <TokenSelector
               selected={tokenOut}
-              onSelect={(t) => {
-                setTokenOut(t);
-                setQuote(null);
-              }}
+              onSelect={handleTokenOutSelect}
               exclude={tokenIn.id}
+              onSelectExcluded={handleTokenOutSelect}
             />
           </div>
         </div>

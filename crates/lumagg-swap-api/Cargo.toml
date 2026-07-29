@@ -1,0 +1,16 @@
+[package]
+name = "lumagg-swap-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "lumagg-swap-api"
+path = "src/main.rs"
+
+[dependencies]
+api-server = { path = "../api-server" }
+
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

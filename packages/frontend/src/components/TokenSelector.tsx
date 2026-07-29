@@ -155,11 +155,13 @@ export function TokenSelector({
   selected,
   onSelect,
   exclude,
+  onSelectExcluded,
   tokens: tokensOverride,
 }: {
   selected: Token;
   onSelect: (token: Token) => void;
   exclude?: string;
+  onSelectExcluded?: (token: Token) => void;
   /** When set, skip mainnet token list (e.g. testnet Limit panel). */
   tokens?: Token[];
 }) {
@@ -174,7 +176,6 @@ export function TokenSelector({
 
   const filtered = useMemo(() => {
     const matched = tokens.filter((t) => {
-      if (t.id === exclude) return false;
       const matchesBasic =
         t.symbol.toLowerCase().includes(qLower) ||
         t.name.toLowerCase().includes(qLower) ||
@@ -299,18 +300,23 @@ export function TokenSelector({
               <div className="max-h-[400px] overflow-y-auto px-2 pb-4">
                 {filtered.slice(0, 50).map((token) => {
                   const bal = balancesReady ? getBalance(token.id) : null;
+                  const isExcluded = token.id === exclude;
                   return (
                     <button
                       key={token.id}
                       onClick={() => {
-                        onSelect(token);
+                        if (isExcluded && onSelectExcluded) {
+                          onSelectExcluded(token);
+                        } else {
+                          onSelect(token);
+                        }
                         setOpen(false);
                         setSearch('');
                       }}
-                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/[0.03] transition-colors ${
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-colors ${
                         token.id === selected.id
                           ? 'bg-white/[0.03] border border-[var(--border)]'
-                          : ''
+                          : 'hover:bg-white/[0.03]'
                       }`}
                     >
                       <TokenIcon token={token} size={36} />

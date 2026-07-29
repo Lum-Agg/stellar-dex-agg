@@ -40,6 +40,24 @@ paths:
                   status:
                     type: string
                     example: ok
+  /api/v1/ready:
+    get:
+      tags: [health]
+      summary: Market-data readiness
+      description: Returns 503 while the routing graph is still warming up.
+      responses:
+        '200':
+          description: Routing graph is ready to serve quotes
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+        '503':
+          description: Market data is not ready yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
   /api/v1/tokens:
     get:
       tags: [tokens]
@@ -310,7 +328,7 @@ paths:
               $ref: '#/components/schemas/BuildCreateOrderRequest'
       responses:
         '200':
-          description: Unsigned transaction (or `success: false` with build error in body)
+          description: "Unsigned transaction (or `success: false` with build error in body)"
           content:
             application/json:
               schema:
@@ -336,7 +354,7 @@ paths:
               $ref: '#/components/schemas/BuildCancelOrderRequest'
       responses:
         '200':
-          description: Unsigned transaction (or `success: false` with build error in body)
+          description: "Unsigned transaction (or `success: false` with build error in body)"
           content:
             application/json:
               schema:
@@ -591,6 +609,21 @@ components:
         type: string
       description: Input amount in stroops (7 decimals for most SAC tokens)
   schemas:
+    ReadinessResponse:
+      type: object
+      required: [status, ready, tokens, pools]
+      properties:
+        status:
+          type: string
+          enum: [ready, warming_up]
+        ready:
+          type: boolean
+        tokens:
+          type: integer
+          minimum: 0
+        pools:
+          type: integer
+          minimum: 0
     Token:
       type: object
       properties:

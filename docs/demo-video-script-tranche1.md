@@ -2,23 +2,28 @@
 
 Upload as **unlisted** YouTube / Loom / Drive. Paste the URL into **Deliverable Verification - Video**.
 
-**No voiceover needed.** Caption cards: [evidence/LumAgg-Tranche1-Demo-Captions.pptx](./evidence/LumAgg-Tranche1-Demo-Captions.pptx) — open in Keynote (`File → Open`), then fullscreen between screen-record segments.
+**Voice-over recommended.** Read [tranche-1-voiceover-script.md](./tranche-1-voiceover-script.md) while recording the browser. The caption-card deck remains an optional silent fallback: [evidence/LumAgg-Tranche1-Demo-Captions.pptx](./evidence/LumAgg-Tranche1-Demo-Captions.pptx).
+
+For a simple spoken version, read [tranche-1-voiceover-script.md](./tranche-1-voiceover-script.md). It uses short sentences and follows the same screen order.
 
 Audience: SCF reviewers verifying D1–D4. Do **not** spend time on arb vault / npm SDK (those are T2/T3).
 
 ---
 
-## 最简单的录制方法（无口播、无需剪辑）
+## 最简单的录制方法（带口播）
 
-1. 用 Keynote 打开字幕 PPT，选择 `Play → In Window`，不要全屏播放。
-2. 打开浏览器并按下面顺序准备标签页：Swap、Docs、GitHub evidence、Benchmark、Stats。
-3. 在 macOS 按 `⌘⇧5`，选择 **Record Entire Screen**；在 `Options` 中将
-   `Microphone` 设为 **None**，保存位置选 Desktop，然后点击 `Record`。
-4. 从字幕 PPT 第 1 页开始。每张字幕卡停留 5–10 秒，然后用 `⌘Tab` 切换到浏览器，
-   按对应章节操作。演示完成后再 `⌘Tab` 回 Keynote，按右方向键进入下一张字幕卡。
-5. 全程不要讲话。鼠标移动慢一点，在关键内容上停留 2–3 秒，让审阅者看清楚。
-6. 最后一张卡停留 10 秒后，点击菜单栏录制图标停止。得到的 `.mov` 可以直接上传，
-   不需要加音乐、转场或摄像头画面。
+1. 打开浏览器并按下面顺序准备标签页：Swap、Docs、GitHub evidence、Benchmark、Stats。
+2. 在 macOS 按 `⌘⇧5`，选择 **Record Entire Screen**。
+3. 点击 `Options`，将 `Microphone` 设为 **MacBook Pro Microphone**，保存位置选
+   Desktop；不要选择 `None`、iPhone Microphone 或 ZoomAudioDevice。
+4. 先录 10 秒测试：读两句话后停止，打开 `.mov` 确认能听到声音。确认后再正式录制。
+5. 正式录制时按 [口播稿](./tranche-1-voiceover-script.md) 朗读并操作浏览器。鼠标移动慢一点，
+   在关键内容上停留 2–3 秒。
+6. 录制结束后点击菜单栏停止图标。视频不需要音乐、转场或摄像头画面。
+
+如果 `Options` 中没有麦克风或试录仍然无声：打开
+`System Settings → Privacy & Security → Microphone`，允许 Screenshot 或你使用的
+录制应用访问麦克风，然后退出并重新打开录制应用。
 
 建议只录一条连续视频；操作失误时停两秒再继续即可，不必追求专业剪辑。目标是让审阅者
 确认 D1–D4 的证据，不是制作宣传片。
@@ -81,14 +86,16 @@ Text on screen:
 **Do / point:**
 1. Token logos visible in the picker / pair row.
 2. Connect wallet (or already connected) → **spendable balance** on input token.
-3. Click **25% / 50% / 75% / 100%** chips; note XLM keeps reserve.
-4. Hit quote → if split, highlight **two legs / percentages / DEX names**.
-5. Optional: sign a tiny swap and open the **explorer link**. If not signing,
+3. Click **25% / 50% / 75% / 100%** chips.
+4. Open settings and show **slippage**, **Max hops**, and **Max splits**. Explain
+   that they control price protection, route length, and parallel route count.
+5. Hit quote → if split, highlight **two legs / percentages / DEX names**.
+6. Optional: sign a tiny swap and open the **explorer link**. If not signing,
    leave the quote visible for 3 seconds; the D2 section separately proves the
    `build_tx` path.
 
 **Optional narration (skip this when using caption cards):**
-> Deliverable 3 closes retail UX gaps: logos from the tokens API, wallet balance, quick amounts, and explorer link after submit. Routing still goes through the public quote and build_tx APIs.
+> Deliverable 3 closes retail UX gaps: logos from the tokens API, wallet balance, quick amounts, configurable slippage, maximum hops and splits, and an explorer link after submit. Routing still goes through the public quote and build_tx APIs.
 
 ---
 
@@ -193,7 +200,7 @@ Evidence folder: docs/evidence/d2-integrator-smoke/
 
 ## Recording tips
 
-- Use macOS `⌘⇧5` at the display's normal resolution; keep the microphone off.
+- Use macOS `⌘⇧5` at the display's normal resolution and select `MacBook Pro Microphone`.
 - Cursor highlight / zoom on JSON keys (`is_split`, `unsigned_tx_xdr`).
 - Don’t open private keys, `.env`, or Telegram bot tokens.
 - One rehearsal take, then one real take. A clear screen recording is enough.

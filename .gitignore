@@ -29,4 +29,3 @@ todo.org
 # Optional upstream clones (see thirdparty/README.md)
 thirdparty/*
 !thirdparty/README.md
-

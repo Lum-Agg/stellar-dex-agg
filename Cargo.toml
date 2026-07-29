@@ -5,6 +5,7 @@ members = [
     "crates/router-engine",
     "crates/dex-adapters",
     "crates/api-server",
+    "crates/lumagg-swap-api",
     "crates/arbitrage",
     "crates/analytics-indexer",
     "crates/lumagg-alerts",

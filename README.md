@@ -322,6 +322,9 @@ RPC_URL=https://mainnet.sorobanrpc.com \
 LISTEN_ADDR=127.0.0.1:3100 \
 cargo run -p api-server
 
+# Public self-host distribution (same embedded architecture)
+RPC_URL=https://mainnet.sorobanrpc.com cargo run -p lumagg-swap-api
+
 # Local Redis-backed stack (production-style)
 redis-server --port 6380 --save "" --appendonly no
 
@@ -468,6 +471,7 @@ Brent tolerance defaults to `0.0001` (0.01%) with up to 18 iterations — simila
 | [`docs/scf-venue-comparison.md`](docs/scf-venue-comparison.md) | LumAgg vs Soroswap / Stellar Broker — venue coverage & SCF differentiation evidence |
 | [`docs/scf-resubmission-budget.md`](docs/scf-resubmission-budget.md) | SCF #44 resubmission — $80k tranche deliverables (copy-paste) |
 | [`docs/arb-operator.md`](docs/arb-operator.md) | Vault + arb-scanner deploy, rollout, monitoring |
+| [`docs/lumagg-swap-api.md`](docs/lumagg-swap-api.md) | Native all-in-one Swap API download and operation |
 | [`contracts/vault/README.md`](contracts/vault/README.md) | Vault API, fund flow, Soroban auth notes |
 | [`docs/arb-executor.md`](docs/arb-executor.md) | Historical naming → vault + `round_trip_swap` |
 
