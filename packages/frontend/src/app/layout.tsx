@@ -5,7 +5,7 @@ import './globals.css';
 import { Providers } from './providers';
 import { HeaderWallet } from '@/components/HeaderWallet';
 import { HeaderNav } from '@/components/HeaderNav';
-import { GITHUB_REPO_URL } from '@/lib/site';
+import { DOCUMENTATION_URL, GITHUB_REPO_URL } from '@/lib/site';
 
 const dmSans = DM_Sans({
   subsets: ['latin'],
@@ -85,15 +85,25 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <span className="max-w-xl leading-relaxed">
                   Aggregated routing across Stellar DEXs · Best-effort quotes
                 </span>
-                <a
-                  href={GITHUB_REPO_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-[14px] sm:text-[15px] hover:text-[var(--text-primary)] transition-colors shrink-0"
-                >
-                  <GitHubIcon className="w-4 h-4" />
-                  Open source
-                </a>
+                <div className="flex items-center gap-4 shrink-0">
+                  <a
+                    href={DOCUMENTATION_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[14px] sm:text-[15px] hover:text-[var(--text-primary)] transition-colors"
+                  >
+                    Documentation
+                  </a>
+                  <a
+                    href={GITHUB_REPO_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-[14px] sm:text-[15px] hover:text-[var(--text-primary)] transition-colors"
+                  >
+                    <GitHubIcon className="w-4 h-4" />
+                    Open source
+                  </a>
+                </div>
               </div>
             </footer>
           </div>

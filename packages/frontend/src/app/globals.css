@@ -212,6 +212,38 @@ body {
   color: var(--text-secondary);
 }
 
+.docs-guide-callout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 1.25rem 0;
+  padding: 1rem 1.125rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg-1));
+}
+
+.docs-guide-callout div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.docs-guide-callout strong {
+  color: var(--text-primary);
+}
+
+.docs-guide-callout span {
+  color: var(--text-secondary);
+}
+
+@media (max-width: 639px) {
+  .docs-guide-callout {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
 .docs-meta {
   margin: 0 0 1.25rem;
   font-size: 0.875rem;

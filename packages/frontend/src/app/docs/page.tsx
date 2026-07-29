@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { GITHUB_REPO_URL } from '@/lib/site';
+import { DOCUMENTATION_URL, GITHUB_REPO_URL } from '@/lib/site';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
 
@@ -40,6 +40,23 @@ export default function DocsOverviewPage() {
           Integrate LumAgg swap routing on Stellar — quote, build unsigned XDR, and sign in your
           wallet or bot.
         </p>
+        <aside className="docs-guide-callout">
+          <div>
+            <strong>Looking for the complete LumAgg documentation?</strong>
+            <span>
+              Visit the documentation site for integration, deployment, arbitrage, and contract
+              guides.
+            </span>
+          </div>
+          <a
+            href={DOCUMENTATION_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="docs-btn docs-btn--inline"
+          >
+            Visit documentation
+          </a>
+        </aside>
         <dl className="docs-ref">
           <div className="docs-ref-row">
             <dt>Base URL</dt>
