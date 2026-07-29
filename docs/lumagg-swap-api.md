@@ -43,8 +43,32 @@ curl -fsS http://127.0.0.1:3100/api/v1/health
 curl -fsS http://127.0.0.1:3100/api/v1/tokens | jq
 ```
 
-See [`lumagg-swap-api.env.example`](../scripts/lumagg-swap-api.env.example) for
-the common settings and [`openapi.yaml`](./openapi.yaml) for the API contract.
+The release archive includes `lumagg-swap-api.env.example` with the common
+settings. The complete API contract is in
+[`docs/openapi.yaml`](https://github.com/Lum-Agg/stellar-dex-agg/blob/main/docs/openapi.yaml).
+
+## Run with systemd
+
+The release archive includes a hardened `lumagg-swap-api.service` template:
+
+```bash
+sudo useradd --system --home /var/lib/lumagg --shell /usr/sbin/nologin lumagg
+sudo install -m 0755 lumagg-swap-api /usr/local/bin/lumagg-swap-api
+sudo install -d -m 0750 /etc/lumagg
+sudo install -m 0640 lumagg-swap-api.env.example /etc/lumagg/lumagg-swap-api.env
+sudo install -m 0644 lumagg-swap-api.service /etc/systemd/system/lumagg-swap-api.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now lumagg-swap-api
+```
+
+Edit `/etc/lumagg/lumagg-swap-api.env` before starting the service. Check
+startup and readiness with:
+
+```bash
+systemctl status lumagg-swap-api
+journalctl -u lumagg-swap-api -f
+curl -i http://127.0.0.1:3100/api/v1/ready
+```
 
 ## Build from source
 
@@ -75,6 +99,8 @@ high-throughput mainnet operator, use the production aggregator topology above.
 
 - Market state is held in memory and is rebuilt after every restart.
 - `/api/v1/health` is process liveness; `/api/v1/ready` is routing readiness.
+- The embedded worker restarts with bounded exponential backoff after an RPC
+  startup failure; readiness remains false until a snapshot is published.
 - RPC capacity directly limits discovery, refresh, quote preparation, and
   transaction simulation throughput.
 - Keep the API and on-chain Aggregator contract versions compatible when

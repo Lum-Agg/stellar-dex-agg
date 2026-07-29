@@ -1,0 +1,23 @@
+[Unit]
+Description=LumAgg Swap API (all-in-one)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=lumagg
+Group=lumagg
+EnvironmentFile=-/etc/lumagg/lumagg-swap-api.env
+Environment=TOKEN_LOGO_DIR=/var/lib/lumagg/logos
+WorkingDirectory=/var/lib/lumagg
+StateDirectory=lumagg
+ExecStart=/usr/local/bin/lumagg-swap-api
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

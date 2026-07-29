@@ -217,8 +217,18 @@ async fn new_embedded(config: AppConfig) -> Result<AppState> {
     worker_cfg.pool_store = pool_state_store.clone();
 
     tokio::spawn(async move {
-        if let Err(error) = market_data_worker::worker::run(worker_cfg).await {
-            tracing::error!("embedded market-data-worker exited: {:#}", error);
+        let mut retry_secs = 1u64;
+        loop {
+            match market_data_worker::worker::run(worker_cfg.clone()).await {
+                Ok(()) => warn!("embedded market-data-worker stopped unexpectedly"),
+                Err(error) => warn!(
+                    error = %error,
+                    retry_secs,
+                    "embedded market-data-worker exited; restarting"
+                ),
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(retry_secs)).await;
+            retry_secs = (retry_secs * 2).min(30);
         }
     });
 
