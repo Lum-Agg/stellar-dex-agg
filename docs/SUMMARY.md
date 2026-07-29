@@ -18,6 +18,7 @@
 
 ## On-chain Products
 
+- [Deploy Smart Contracts](contracts-deployment.md)
 - [Round-trip Arbitrage](round-trip-arb.md)
 - [Limit Orders on Testnet](limit-orders-testnet.md)
 

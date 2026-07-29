@@ -27,6 +27,9 @@ the final rollout stage signs and broadcasts transactions.
 - One or more funded caller accounts for fees and transaction submission.
 - Optionally, a deployed and funded LumAgg Vault with every caller allowlisted.
 
+See [Smart Contract Deployment](contracts-deployment.md) for Aggregator and
+Vault deployment, upgrades, and external TTL maintenance.
+
 Without `ARB_VAULT_CONTRACT`, caller accounts must also hold the trading
 principal. With a vault, principal remains in the vault and callers normally
 hold only enough native XLM for fees.

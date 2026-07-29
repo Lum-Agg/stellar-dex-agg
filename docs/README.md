@@ -24,6 +24,8 @@ the recommended production deployment model.
   need shared market state, API replicas, or failure isolation.
 - Use [Arbitrage Deployment](arbitrage-deployment.md) to operate the scanner
   independently from the Aggregator services.
+- Use [Smart Contract Deployment](contracts-deployment.md) to deploy and
+  maintain the Aggregator and optional Arbitrage Vault.
 - Read the [Integrator Guide](integrator-guide.md) and
   [OpenAPI specification](openapi.yaml) to integrate `/quote` and `/build_tx`.
 

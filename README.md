@@ -463,6 +463,8 @@ Brent tolerance defaults to `0.0001` (0.01%) with up to 18 iterations — simila
 | [`docs/pool-state-architecture.md`](docs/pool-state-architecture.md) | Pool state design, env tables, code pointers |
 | [`docs/aggregator-deployment.md`](docs/aggregator-deployment.md) | Native worker + Redis + API production deployment |
 | [`docs/arbitrage-deployment.md`](docs/arbitrage-deployment.md) | Native arb-scanner install and staged rollout |
+| [`docs/contracts-deployment.md`](docs/contracts-deployment.md) | Aggregator and Vault deployment, upgrade, and external TTL maintenance |
+| [`docs/gitbook-deployment.md`](docs/gitbook-deployment.md) | Maintainer runbook for Git Sync, publishing, and custom domain setup |
 | [`docs/scf-venue-comparison.md`](docs/scf-venue-comparison.md) | LumAgg vs Soroswap / Stellar Broker — venue coverage & SCF differentiation evidence |
 | [`docs/scf-resubmission-budget.md`](docs/scf-resubmission-budget.md) | SCF #44 resubmission — $80k tranche deliverables (copy-paste) |
 | [`docs/lumagg-swap-api.md`](docs/lumagg-swap-api.md) | Native all-in-one Swap API download and operation |

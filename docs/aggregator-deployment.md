@@ -82,6 +82,9 @@ Edit `/etc/lumagg/aggregator.env` and replace at least:
 - `AGGREGATOR_CONTRACT` with the deployed LumAgg Aggregator contract. Remove
   this variable if the service should only quote and never build transactions.
 
+See [Smart Contract Deployment](contracts-deployment.md) when operating your
+own Aggregator contract.
+
 Keep `SNAPSHOT_REDIS_CHANNEL` identical across the worker and all API replicas.
 The example values for routing and concurrency are starting points, not
 capacity guarantees.
