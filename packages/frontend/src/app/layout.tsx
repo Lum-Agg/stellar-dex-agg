@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Image from 'next/image';
 import Link from 'next/link';
 import { DM_Sans, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
@@ -23,8 +24,8 @@ export const metadata: Metadata = {
   title: 'LumAgg — Stellar DEX Aggregator',
   description: 'Best swap rates across Stellar DEXes. Split orders for optimal execution.',
   icons: {
-    icon: '/favicon.ico',
-    shortcut: '/favicon.ico',
+    icon: '/icon.svg',
+    shortcut: '/icon.svg',
   },
 };
 
@@ -40,12 +41,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <div className="w-full px-6 sm:px-8 lg:px-14 h-[5rem] flex items-center justify-between gap-6">
                 <div className="flex items-center gap-6 md:gap-9 min-w-0">
                   <Link href="/" className="flex items-center gap-2.5 group shrink-0">
-                    <div
-                      className="w-8 h-8 rounded-lg bg-[var(--accent)] text-[var(--accent-contrast)] flex items-center justify-center text-sm font-bold tracking-tight"
-                      aria-hidden
-                    >
-                      L
-                    </div>
+                    <Image
+                      src="/lumagg-mark.svg"
+                      alt="LumAgg"
+                      width={36}
+                      height={36}
+                      priority
+                      className="h-9 w-9 transition-transform duration-200 group-hover:scale-[1.04]"
+                    />
                     <span className="text-[18px] sm:text-[19px] font-semibold tracking-tight text-[var(--text-primary)]">
                       LumAgg
                     </span>
