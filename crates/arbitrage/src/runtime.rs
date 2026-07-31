@@ -4,7 +4,7 @@ use {
     crate::{
         callers::CallerPool, config::ArbConfig, context::ArbContext, dedup::SubmittedPathCache,
         prepare::LatestLedgerCache, profit::ProfitBook, quote_client::QuoteApiClient, stats::ArbStats,
-        vault::VaultBalanceCache,
+        vault::VaultBalanceCache, xlm_price::XlmUsdcPrice,
     },
     anyhow::Result,
     std::sync::Arc,
@@ -21,6 +21,7 @@ pub struct ArbRuntime {
     pub latest_ledger: Arc<LatestLedgerCache>,
     pub vault_balances: Arc<VaultBalanceCache>,
     pub quote_client: QuoteApiClient,
+    pub xlm_usdc_price: Arc<XlmUsdcPrice>,
 }
 
 impl ArbRuntime {
@@ -31,6 +32,7 @@ impl ArbRuntime {
 
         let dedup_secs = config.submit_dedup_secs;
         let quote_client = QuoteApiClient::from_config(&config);
+        let xlm_usdc_price = Arc::new(XlmUsdcPrice::new(config.xlm_usdc_price_e7));
         Ok(Self {
             config,
             stats: Arc::new(ArbStats::default()),
@@ -42,6 +44,7 @@ impl ArbRuntime {
             latest_ledger: Arc::new(LatestLedgerCache::new()),
             vault_balances: Arc::new(VaultBalanceCache::new()),
             quote_client,
+            xlm_usdc_price,
         })
     }
 
@@ -51,6 +54,7 @@ impl ArbRuntime {
             self.latest_ledger.clone(),
             self.vault_balances.clone(),
             self.quote_client.clone(),
+            self.xlm_usdc_price.clone(),
         )
         .await
     }
@@ -83,6 +87,8 @@ impl ArbRuntime {
             vault = ?self.config.vault_contract,
             bridges = self.config.bridge_tokens.len(),
             min_profit = self.config.min_profit,
+            xlm_usdc_price_e7_fallback = self.config.xlm_usdc_price_e7,
+            xlm_usdc_price_refresh_secs = self.config.xlm_usdc_price_refresh_secs,
             "arb runtime ready"
         );
         if self.config.build_tx && self.config.aggregator_contract.is_none() {

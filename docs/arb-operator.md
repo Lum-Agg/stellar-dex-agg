@@ -72,7 +72,8 @@ Copy [scripts/arb.env.example](../scripts/arb.env.example) → `deploy/arb.env` 
 | `ARB_DRY_RUN`                              | `1` = log opportunities without chain tx     |
 | `ARB_MIN_PROFIT`                           | Default post-fee net floor (base units, 7dp) |
 | `ARB_MIN_PROFIT_XLM` / `ARB_MIN_PROFIT_USDC` | Optional per-base floors                     |
-| `ARB_XLM_USDC_PRICE_E7`                    | USDC units per 1.0 XLM (fee conversion for USDC gates; default `3000000`) |
+| `ARB_XLM_USDC_PRICE_E7` | Fallback USDC units per 1.0 XLM when live quote fails (default `1800000`) |
+| `ARB_XLM_USDC_PRICE_REFRESH_SECS` | Refresh live XLM→USDC mark from quote-api (default `60`; `0` = fallback only) |
 | `ARB_MAX_AMOUNT_IN`                        | Soft ceiling; also capped by vault base SAC balance when vault is set |
 | `ARB_OPTIMIZE_AMOUNT`                      | `1` (default) = always log-space size search (even if probe is flat) |
 | `ARB_ON_CHAIN_VALIDATE`                    | `0` (default) = off. `1` = quote-api hop validate (slow; diagnostics only) |

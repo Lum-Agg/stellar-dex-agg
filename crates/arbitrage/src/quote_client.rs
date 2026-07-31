@@ -156,6 +156,44 @@ impl QuoteApiClient {
         }
         Ok(leg)
     }
+
+    /// Lightweight expected-out quote (no hop metadata required by callers).
+    pub async fn quote_expected_output(
+        &self,
+        token_in: &str,
+        token_out: &str,
+        amount_in: u128,
+    ) -> Result<u128> {
+        if amount_in == 0 {
+            return Err(anyhow!("amount_in must be positive"));
+        }
+        let base_url = self.next_base_url();
+        let url = format!(
+            "{base_url}/api/v1/quote?token_in={token_in}&token_out={token_out}&amount_in={amount_in}&slippage=0.5&prefer_soroban=1&max_hops=3&max_splits=1"
+        );
+        let resp = self
+            .http
+            .get(&url)
+            .timeout(QUOTE_REQUEST_TIMEOUT)
+            .send()
+            .await
+            .with_context(|| format!("GET {url}"))?;
+        let status = resp.status();
+        let body: QuoteApiResponse = resp
+            .json()
+            .await
+            .with_context(|| format!("parse quote-api JSON (HTTP {status})"))?;
+        if !body.success {
+            return Err(anyhow!(
+                "quote-api error for {token_in} -> {token_out}: {}",
+                body.error.unwrap_or_else(|| "unknown".into())
+            ));
+        }
+        let data = body
+            .data
+            .ok_or_else(|| anyhow!("quote-api returned success without data"))?;
+        parse_u128_field("expected_output", &data.expected_output)
+    }
 }
 
 fn parse_u128_field(name: &str, raw: &str) -> Result<u128> {

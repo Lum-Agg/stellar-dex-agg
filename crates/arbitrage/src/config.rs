@@ -36,9 +36,12 @@ pub struct ArbConfig {
     pub min_profit_xlm: Option<u128>,
     /// Optional USDC-base floor (`ARB_MIN_PROFIT_USDC`); else `min_profit`.
     pub min_profit_usdc: Option<u128>,
-    /// USDC units (7 decimals) per 1.0 XLM — converts Soroban XLM fees for USDC
-    /// profit gates (`ARB_XLM_USDC_PRICE_E7`, default 3_000_000 = $0.30).
+    /// Fallback USDC units (7 decimals) per 1.0 XLM when live quote is unavailable
+    /// (`ARB_XLM_USDC_PRICE_E7`, default 1_800_000 ≈ $0.18).
     pub xlm_usdc_price_e7: u128,
+    /// How often to refresh the live XLM→USDC mark (`ARB_XLM_USDC_PRICE_REFRESH_SECS`,
+    /// default 60). Set `0` to disable live refresh (always use fallback).
+    pub xlm_usdc_price_refresh_secs: u64,
     pub slippage_bps: u32,
     pub max_hops: usize,
     pub max_splits: usize,
@@ -126,11 +129,16 @@ impl ArbConfig {
             .ok()
             .and_then(|v| v.parse().ok());
 
-        // ~$0.30 / XLM; override when spot drifts far from this.
+        // Fallback only — live mark is refreshed from quote-api when enabled.
         let xlm_usdc_price_e7 = std::env::var("ARB_XLM_USDC_PRICE_E7")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(3_000_000);
+            .unwrap_or(1_800_000);
+
+        let xlm_usdc_price_refresh_secs = std::env::var("ARB_XLM_USDC_PRICE_REFRESH_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(60);
 
         let slippage_bps = std::env::var("ARB_SLIPPAGE_BPS")
             .ok()
@@ -235,6 +243,7 @@ impl ArbConfig {
             min_profit_xlm,
             min_profit_usdc,
             xlm_usdc_price_e7,
+            xlm_usdc_price_refresh_secs,
             slippage_bps,
             max_hops,
             max_splits,

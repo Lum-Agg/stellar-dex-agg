@@ -260,7 +260,7 @@ pub async fn prepare_opportunity_tx(
     if simulated {
         let sim_profit = simulated_amount_out.saturating_sub(quote.amount_in);
         let base = quote.base.canonical();
-        let fee_base = ctx.config.fee_in_base(estimated_fee_stroops, &base);
+        let fee_base = ctx.fee_in_base(estimated_fee_stroops, &base);
         let min_profit = ctx.config.min_profit_for(&base);
         // Gas covered by fee_base (XLM fee converted when base is USDC);
         // ARB_MIN_PROFIT_* is a post-fee race/slippage buffer in base units.
@@ -292,7 +292,7 @@ pub async fn prepare_opportunity_tx(
     let profit_bps = crate::scanner::compute_profit_bps(quote.amount_in, simulated_amount_out);
     let simulated_profit = simulated_amount_out.saturating_sub(quote.amount_in);
     let base = quote.base.canonical();
-    let fee_base = ctx.config.fee_in_base(estimated_fee_stroops, &base);
+    let fee_base = ctx.fee_in_base(estimated_fee_stroops, &base);
     let min_profit = ctx.config.min_profit_for(&base);
     let net_profit = simulated_profit.saturating_sub(fee_base);
     let min_amount_out = min_amount_out_break_even(quote.amount_in);

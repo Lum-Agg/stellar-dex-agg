@@ -21,6 +21,7 @@ pub mod stats;
 pub mod submit;
 pub mod telegram;
 pub mod vault;
+pub mod xlm_price;
 
 pub use {
     bridge::RoundTripQuote,
@@ -33,4 +34,5 @@ pub use {
     runtime::{ArbRuntime, SharedRuntime},
     scanner::{evaluate_bridge_pair, scan_once, ArbOpportunity},
     stats::{ArbStats, ArbStatsSnapshot, QuietWindowAlert, QuietWindowTracker},
+    xlm_price::XlmUsdcPrice,
 };

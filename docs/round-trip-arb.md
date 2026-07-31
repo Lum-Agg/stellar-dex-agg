@@ -37,7 +37,8 @@ ARB_SAMPLE_COUNT=8
 ARB_MIN_PROFIT=80000                      # default post-fee floor (base units, 7dp)
 ARB_MIN_PROFIT_XLM=80000                  # optional per-base floors
 ARB_MIN_PROFIT_USDC=30000
-ARB_XLM_USDC_PRICE_E7=3000000             # fee conversion when base is USDC
+ARB_XLM_USDC_PRICE_E7=1800000             # fallback USDC/XLM for fee conversion
+ARB_XLM_USDC_PRICE_REFRESH_SECS=60        # live quote refresh; 0 = fallback only
 
 ARB_BUILD_TX=1
 ARB_SUBMIT_TX=1
