@@ -79,7 +79,7 @@ export interface OrderRecord {
 
 export interface ListOrdersParams {
   user: string;
-  status?: 'open' | 'all';
+  status?: "open" | "all";
 }
 
 export interface BuildCreateOrderParams {
@@ -94,6 +94,35 @@ export interface BuildCreateOrderParams {
 export interface BuildCancelOrderParams {
   user: string;
   orderId: number;
+}
+
+export interface DcaOrderRecord {
+  orderId: number;
+  owner: string;
+  tokenIn: string;
+  tokenOut: string;
+  amountInInitial: string;
+  amountInRemaining: string;
+  chunkAmount: string;
+  intervalLedgers: number;
+  nextExecutableLedger: number;
+  minOutPerInE7: string;
+  expiresLedger: number;
+  status: string;
+  updatedLedger: number;
+  updatedAt: number;
+}
+
+export interface BuildCreateDcaParams {
+  user: string;
+  tokenIn: string;
+  tokenOut: string;
+  amountIn: string;
+  chunkAmount: string;
+  intervalLedgers: number;
+  startLedger: number;
+  minOutPerInE7?: string;
+  expiresLedger: number;
 }
 
 export interface DailyStats {
@@ -120,7 +149,7 @@ export interface StatsParams {
   /** UTC day YYYY-MM-DD; omit for full rollup. */
   day?: string;
   /** When `csv`, returns raw CSV string instead of parsed JSON. */
-  format?: 'json' | 'csv';
+  format?: "json" | "csv";
 }
 
 export interface SwapRecord {
@@ -206,7 +235,7 @@ export interface TokenInfo {
   name: string;
   logo?: string;
   /** `"official"` for SEP-42 icons, `"fallback"` for generated letter avatars. */
-  logoKind?: 'official' | 'fallback';
+  logoKind?: "official" | "fallback";
 }
 
 export class LumAggClient {
@@ -214,29 +243,33 @@ export class LumAggClient {
   private apiKey?: string;
 
   constructor(options: ClientOptions) {
-    this.baseUrl = options.apiUrl.replace(/\/$/, '');
+    this.baseUrl = options.apiUrl.replace(/\/$/, "");
     this.apiKey = options.apiKey;
   }
 
   private headers(json = false): Record<string, string> {
-    const h: Record<string, string> = { Accept: 'application/json' };
-    if (json) h['Content-Type'] = 'application/json';
-    if (this.apiKey) h['X-API-Key'] = this.apiKey;
+    const h: Record<string, string> = { Accept: "application/json" };
+    if (json) h["Content-Type"] = "application/json";
+    if (this.apiKey) h["X-API-Key"] = this.apiKey;
     return h;
   }
 
   async isHealthy(): Promise<boolean> {
     try {
-      const resp = await fetch(`${this.baseUrl}/api/v1/health`, { headers: this.headers() });
+      const resp = await fetch(`${this.baseUrl}/api/v1/health`, {
+        headers: this.headers(),
+      });
       const json = await resp.json();
-      return json.status === 'ok';
+      return json.status === "ok";
     } catch {
       return false;
     }
   }
 
   async listTokens(): Promise<TokenInfo[]> {
-    const resp = await fetch(`${this.baseUrl}/api/v1/tokens`, { headers: this.headers() });
+    const resp = await fetch(`${this.baseUrl}/api/v1/tokens`, {
+      headers: this.headers(),
+    });
     const json = await resp.json();
     const rows = json.data ?? json.tokens ?? [];
     return rows.map((t: Record<string, string>) => ({
@@ -244,7 +277,10 @@ export class LumAggClient {
       symbol: t.symbol,
       name: t.name,
       logo: t.logo,
-      logoKind: t.logo_kind === 'official' || t.logo_kind === 'fallback' ? t.logo_kind : undefined,
+      logoKind:
+        t.logo_kind === "official" || t.logo_kind === "fallback"
+          ? t.logo_kind
+          : undefined,
     }));
   }
 
@@ -259,12 +295,15 @@ export class LumAggClient {
       token_out: params.tokenOut,
       amount_in: params.amountIn,
     });
-    if (params.slippage !== undefined) search.set('slippage', String(params.slippage));
-    if (params.preferSoroban) search.set('prefer_soroban', '1');
+    if (params.slippage !== undefined)
+      search.set("slippage", String(params.slippage));
+    if (params.preferSoroban) search.set("prefer_soroban", "1");
 
-    const resp = await fetch(`${this.baseUrl}/api/v1/quote?${search}`, { headers: this.headers() });
+    const resp = await fetch(`${this.baseUrl}/api/v1/quote?${search}`, {
+      headers: this.headers(),
+    });
     const json = await resp.json();
-    if (!json.success) throw new Error(json.error || 'Quote failed');
+    if (!json.success) throw new Error(json.error || "Quote failed");
 
     const d = json.data;
     return {
@@ -295,7 +334,7 @@ export class LumAggClient {
       sub_routes: params.subRoutes.map((sr) => ({
         amount_in: sr.amountIn,
         steps: sr.poolAddresses.map((pool, i) => ({
-          dex_type: sr.dexTypes[i] ?? 'aquarius',
+          dex_type: sr.dexTypes[i] ?? "aquarius",
           pool_address: pool,
           token_in: sr.path[i] ?? params.tokenIn,
           token_out: sr.path[i + 1] ?? params.tokenOut,
@@ -306,19 +345,19 @@ export class LumAggClient {
     };
 
     const resp = await fetch(`${this.baseUrl}/api/v1/build_tx`, {
-      method: 'POST',
+      method: "POST",
       headers: this.headers(true),
       body: JSON.stringify(body),
     });
     const json = await resp.json();
-    if (!json.success) throw new Error(json.error || 'build_tx failed');
+    if (!json.success) throw new Error(json.error || "build_tx failed");
 
     return mapBuildTxResult(json.data);
   }
 
   /** Quote then build_tx in one call. */
   async quoteAndBuild(
-    quoteParams: QuoteParams & { userPublicKey: string }
+    quoteParams: QuoteParams & { userPublicKey: string },
   ): Promise<{ quote: QuoteResult; tx: BuildTxResult }> {
     const quote = await this.quote(quoteParams);
     const tx = await this.buildTx({
@@ -334,30 +373,34 @@ export class LumAggClient {
 
   async listOrders(params: ListOrdersParams): Promise<OrderRecord[]> {
     const search = new URLSearchParams({ user: params.user });
-    if (params.status !== undefined) search.set('status', params.status);
+    if (params.status !== undefined) search.set("status", params.status);
     const resp = await fetch(`${this.baseUrl}/api/v1/orders?${search}`, {
       headers: this.headers(),
     });
     const json = await resp.json();
-    if (!json.success) throw new Error(json.error || 'listOrders failed');
+    if (!json.success) throw new Error(json.error || "listOrders failed");
     return (json.data?.orders || []).map((r: Record<string, unknown>) => ({
       orderId: Number(r.order_id ?? 0),
-      owner: String(r.owner ?? ''),
-      tokenIn: String(r.token_in ?? ''),
-      tokenOut: String(r.token_out ?? ''),
-      amountInInitial: r.amount_in_initial != null ? String(r.amount_in_initial) : undefined,
-      amountInRemaining: String(r.amount_in_remaining ?? '0'),
-      limitOutPerInE7: String(r.limit_out_per_in_e7 ?? '0'),
+      owner: String(r.owner ?? ""),
+      tokenIn: String(r.token_in ?? ""),
+      tokenOut: String(r.token_out ?? ""),
+      amountInInitial:
+        r.amount_in_initial != null ? String(r.amount_in_initial) : undefined,
+      amountInRemaining: String(r.amount_in_remaining ?? "0"),
+      limitOutPerInE7: String(r.limit_out_per_in_e7 ?? "0"),
       expiresLedger: Number(r.expires_ledger ?? 0),
-      status: String(r.status ?? ''),
-      createdLedger: r.created_ledger != null ? Number(r.created_ledger) : undefined,
+      status: String(r.status ?? ""),
+      createdLedger:
+        r.created_ledger != null ? Number(r.created_ledger) : undefined,
       updatedLedger: Number(r.updated_ledger ?? 0),
       createdAt: r.created_at != null ? Number(r.created_at) : undefined,
       updatedAt: Number(r.updated_at ?? 0),
     }));
   }
 
-  async buildCreateOrder(params: BuildCreateOrderParams): Promise<BuildOrderTxResult> {
+  async buildCreateOrder(
+    params: BuildCreateOrderParams,
+  ): Promise<BuildOrderTxResult> {
     const body = {
       user: params.user,
       token_in: params.tokenIn,
@@ -368,54 +411,120 @@ export class LumAggClient {
     };
 
     const resp = await fetch(`${this.baseUrl}/api/v1/orders/build_create`, {
-      method: 'POST',
+      method: "POST",
       headers: this.headers(true),
       body: JSON.stringify(body),
     });
     const json = await resp.json();
-    if (!json.success) throw new Error(json.error || 'buildCreateOrder failed');
+    if (!json.success) throw new Error(json.error || "buildCreateOrder failed");
 
     return mapBuildOrderTxResult(json.data);
   }
 
-  async buildCancelOrder(params: BuildCancelOrderParams): Promise<BuildOrderTxResult> {
+  async buildCancelOrder(
+    params: BuildCancelOrderParams,
+  ): Promise<BuildOrderTxResult> {
     const body = {
       user: params.user,
       order_id: params.orderId,
     };
 
     const resp = await fetch(`${this.baseUrl}/api/v1/orders/build_cancel`, {
-      method: 'POST',
+      method: "POST",
       headers: this.headers(true),
       body: JSON.stringify(body),
     });
     const json = await resp.json();
-    if (!json.success) throw new Error(json.error || 'buildCancelOrder failed');
+    if (!json.success) throw new Error(json.error || "buildCancelOrder failed");
 
+    return mapBuildOrderTxResult(json.data);
+  }
+
+  async listDcaOrders(params: ListOrdersParams): Promise<DcaOrderRecord[]> {
+    const search = new URLSearchParams({ user: params.user });
+    if (params.status) search.set("status", params.status);
+    const resp = await fetch(`${this.baseUrl}/api/v1/dca?${search}`, {
+      headers: this.headers(),
+    });
+    const json = await resp.json();
+    if (!json.success) throw new Error(json.error || "listDcaOrders failed");
+    return (json.data?.orders || []).map((r: Record<string, unknown>) => ({
+      orderId: Number(r.order_id),
+      owner: String(r.owner),
+      tokenIn: String(r.token_in),
+      tokenOut: String(r.token_out),
+      amountInInitial: String(r.amount_in_initial),
+      amountInRemaining: String(r.amount_in_remaining),
+      chunkAmount: String(r.chunk_amount),
+      intervalLedgers: Number(r.interval_ledgers),
+      nextExecutableLedger: Number(r.next_executable_ledger),
+      minOutPerInE7: String(r.min_out_per_in_e7),
+      expiresLedger: Number(r.expires_ledger),
+      status: String(r.status),
+      updatedLedger: Number(r.updated_ledger),
+      updatedAt: Number(r.updated_at),
+    }));
+  }
+
+  async buildCreateDca(
+    params: BuildCreateDcaParams,
+  ): Promise<BuildOrderTxResult> {
+    const resp = await fetch(`${this.baseUrl}/api/v1/dca/build_create`, {
+      method: "POST",
+      headers: this.headers(true),
+      body: JSON.stringify({
+        user: params.user,
+        token_in: params.tokenIn,
+        token_out: params.tokenOut,
+        amount_in: params.amountIn,
+        chunk_amount: params.chunkAmount,
+        interval_ledgers: params.intervalLedgers,
+        start_ledger: params.startLedger,
+        min_out_per_in_e7: params.minOutPerInE7 ?? "0",
+        expires_ledger: params.expiresLedger,
+      }),
+    });
+    const json = await resp.json();
+    if (!json.success) throw new Error(json.error || "buildCreateDca failed");
+    return mapBuildOrderTxResult(json.data);
+  }
+
+  async buildCancelDca(
+    params: BuildCancelOrderParams,
+  ): Promise<BuildOrderTxResult> {
+    const resp = await fetch(`${this.baseUrl}/api/v1/dca/build_cancel`, {
+      method: "POST",
+      headers: this.headers(true),
+      body: JSON.stringify({ user: params.user, order_id: params.orderId }),
+    });
+    const json = await resp.json();
+    if (!json.success) throw new Error(json.error || "buildCancelDca failed");
     return mapBuildOrderTxResult(json.data);
   }
 
   async listSwaps(params: ListSwapsParams): Promise<ListSwapsResult> {
     const search = new URLSearchParams({ user: params.user });
-    if (params.limit !== undefined) search.set('limit', String(params.limit));
-    if (params.cursor) search.set('cursor', params.cursor);
+    if (params.limit !== undefined) search.set("limit", String(params.limit));
+    if (params.cursor) search.set("cursor", params.cursor);
     const resp = await fetch(`${this.baseUrl}/api/v1/swaps?${search}`, {
       headers: this.headers(),
     });
     const json = await resp.json();
-    if (!json.success) throw new Error(json.error || 'listSwaps failed');
-    const swaps = (json.data?.swaps || []).map((r: Record<string, unknown>) => ({
-      txHash: String(r.tx_hash ?? ''),
-      ledger: Number(r.ledger ?? 0),
-      createdAt: Number(r.created_at ?? 0),
-      status: String(r.status ?? ''),
-      functionName: String(r.function_name ?? ''),
-      tokenIn: r.token_in != null ? String(r.token_in) : undefined,
-      tokenOut: r.token_out != null ? String(r.token_out) : undefined,
-      amountIn: String(r.amount_in ?? '0'),
-      amountOut: r.amount_out != null ? String(r.amount_out) : undefined,
-      isSplit: Boolean(r.is_split),
-    }));
+    if (!json.success) throw new Error(json.error || "listSwaps failed");
+    const swaps = (json.data?.swaps || []).map(
+      (r: Record<string, unknown>) => ({
+        txHash: String(r.tx_hash ?? ""),
+        ledger: Number(r.ledger ?? 0),
+        createdAt: Number(r.created_at ?? 0),
+        status: String(r.status ?? ""),
+        functionName: String(r.function_name ?? ""),
+        tokenIn: r.token_in != null ? String(r.token_in) : undefined,
+        tokenOut: r.token_out != null ? String(r.token_out) : undefined,
+        amountIn: String(r.amount_in ?? "0"),
+        amountOut: r.amount_out != null ? String(r.amount_out) : undefined,
+        isSplit: Boolean(r.is_split),
+      }),
+    );
     const nextCursor =
       json.data?.next_cursor != null && String(json.data.next_cursor).length > 0
         ? String(json.data.next_cursor)
@@ -424,34 +533,43 @@ export class LumAggClient {
   }
 
   async getPrices(ids: string[]): Promise<PriceQuote[]> {
-    const search = new URLSearchParams({ ids: ids.join(',') });
+    const search = new URLSearchParams({ ids: ids.join(",") });
     const resp = await fetch(`${this.baseUrl}/api/v1/prices?${search}`, {
       headers: this.headers(),
     });
     const json = await resp.json();
-    if (!json.success) throw new Error(json.error || 'getPrices failed');
+    if (!json.success) throw new Error(json.error || "getPrices failed");
     return (json.data?.prices || []).map((r: Record<string, unknown>) => ({
-      id: String(r.id ?? ''),
+      id: String(r.id ?? ""),
       priceUsdc: Number(r.price_usdc ?? 0),
       ts: Number(r.ts ?? 0),
-      via: String(r.via ?? ''),
+      via: String(r.via ?? ""),
     }));
   }
 
-  async getPriceHistory(id: string, range: '24h' | '7d' = '24h'): Promise<PricePoint[]> {
+  async getPriceHistory(
+    id: string,
+    range: "24h" | "7d" = "24h",
+  ): Promise<PricePoint[]> {
     const search = new URLSearchParams({ id, range });
-    const resp = await fetch(`${this.baseUrl}/api/v1/prices/history?${search}`, {
-      headers: this.headers(),
-    });
+    const resp = await fetch(
+      `${this.baseUrl}/api/v1/prices/history?${search}`,
+      {
+        headers: this.headers(),
+      },
+    );
     const json = await resp.json();
-    if (!json.success) throw new Error(json.error || 'getPriceHistory failed');
+    if (!json.success) throw new Error(json.error || "getPriceHistory failed");
     return (json.data?.points || []).map((r: Record<string, unknown>) => ({
       ts: Number(r.ts ?? 0),
       priceUsdc: Number(r.price_usdc ?? 0),
     }));
   }
 
-  async getBalance(params: { account: string; token: string }): Promise<BalanceResult> {
+  async getBalance(params: {
+    account: string;
+    token: string;
+  }): Promise<BalanceResult> {
     const search = new URLSearchParams({
       account: params.account,
       token: params.token,
@@ -460,10 +578,13 @@ export class LumAggClient {
       headers: this.headers(),
     });
     const json = await resp.json();
-    if (!json.success) throw new Error(json.error || 'getBalance failed');
+    if (!json.success) throw new Error(json.error || "getBalance failed");
     return {
       balance: json.balance != null ? String(json.balance) : undefined,
-      hasTrustline: typeof json.has_trustline === 'boolean' ? json.has_trustline : undefined,
+      hasTrustline:
+        typeof json.has_trustline === "boolean"
+          ? json.has_trustline
+          : undefined,
     };
   }
 
@@ -473,10 +594,10 @@ export class LumAggClient {
       headers: this.headers(),
     });
     const json = await resp.json();
-    if (!json.success) throw new Error(json.error || 'getBalances failed');
+    if (!json.success) throw new Error(json.error || "getBalances failed");
     return {
       account: String(json.account ?? params.account),
-      scope: String(json.scope ?? 'common'),
+      scope: String(json.scope ?? "common"),
       tokensQueried: Array.isArray(json.tokens_queried)
         ? json.tokens_queried.map((t: unknown) => String(t))
         : [],
@@ -492,18 +613,20 @@ export class LumAggClient {
       headers: this.headers(),
     });
     const json = await resp.json();
-    if (!json.success) throw new Error(json.error || 'getAccount failed');
-    if (json.sequence == null) throw new Error('getAccount: missing sequence');
+    if (!json.success) throw new Error(json.error || "getAccount failed");
+    if (json.sequence == null) throw new Error("getAccount: missing sequence");
     return { sequence: String(json.sequence) };
   }
 
-  async getClassicAsset(params: { contract: string }): Promise<ClassicAssetResult> {
+  async getClassicAsset(params: {
+    contract: string;
+  }): Promise<ClassicAssetResult> {
     const search = new URLSearchParams({ contract: params.contract });
     const resp = await fetch(`${this.baseUrl}/api/v1/classic_asset?${search}`, {
       headers: this.headers(),
     });
     const json = await resp.json();
-    if (!json.success) throw new Error(json.error || 'getClassicAsset failed');
+    if (!json.success) throw new Error(json.error || "getClassicAsset failed");
     return {
       code: json.code != null ? String(json.code) : undefined,
       issuer: json.issuer != null ? String(json.issuer) : undefined,
@@ -515,20 +638,20 @@ export class LumAggClient {
       headers: this.headers(),
     });
     const json = await resp.json();
-    if (!json.success) throw new Error(json.error || 'getLatestLedger failed');
+    if (!json.success) throw new Error(json.error || "getLatestLedger failed");
     return { sequence: Number(json.sequence ?? 0) };
   }
 
   async submitTx(params: { signedTxXdr: string }): Promise<SubmitTxResult> {
     const resp = await fetch(`${this.baseUrl}/api/v1/submit_tx`, {
-      method: 'POST',
+      method: "POST",
       headers: this.headers(true),
       body: JSON.stringify({ signed_tx_xdr: params.signedTxXdr }),
     });
     const json = await resp.json();
-    if (!json.success) throw new Error(json.error || 'submitTx failed');
-    const hash = String(json.hash ?? '');
-    if (!hash) throw new Error('submitTx: missing hash');
+    if (!json.success) throw new Error(json.error || "submitTx failed");
+    const hash = String(json.hash ?? "");
+    if (!hash) throw new Error("submitTx: missing hash");
     return {
       hash,
       status: json.status != null ? String(json.status) : undefined,
@@ -558,7 +681,10 @@ export class LumAggClient {
   }
 
   /** Poll `/tx_status` until SUCCESS, FAILED, or timeout. */
-  async waitForTx(hash: string, opts: WaitForTxOptions = {}): Promise<TxStatusResult> {
+  async waitForTx(
+    hash: string,
+    opts: WaitForTxOptions = {},
+  ): Promise<TxStatusResult> {
     const timeoutMs = opts.timeoutMs ?? 60_000;
     const intervalMs = opts.intervalMs ?? 1_000;
     const start = Date.now();
@@ -566,7 +692,7 @@ export class LumAggClient {
     while (Date.now() - start < timeoutMs) {
       try {
         const st = await this.getTxStatus({ hash });
-        if (st.confirmed || st.status === 'FAILED') return st;
+        if (st.confirmed || st.status === "FAILED") return st;
         if (!st.confirmed && st.error) lastError = st.error;
       } catch (err) {
         lastError = err;
@@ -576,31 +702,31 @@ export class LumAggClient {
     const detail =
       lastError instanceof Error
         ? lastError.message
-        : typeof lastError === 'string'
+        : typeof lastError === "string"
           ? lastError
           : undefined;
     throw new Error(
-      `waitForTx timeout after ${timeoutMs}ms (hash=${hash})${detail ? `; last error: ${detail}` : ''}`,
+      `waitForTx timeout after ${timeoutMs}ms (hash=${hash})${detail ? `; last error: ${detail}` : ""}`,
     );
   }
 
   /** Public on-chain stats from analytics-indexer (Tranche 3). */
   async getStats(params: StatsParams = {}): Promise<StatsResult | string> {
     const search = new URLSearchParams();
-    if (params.day) search.set('day', params.day);
-    if (params.format === 'csv') search.set('format', 'csv');
+    if (params.day) search.set("day", params.day);
+    if (params.format === "csv") search.set("format", "csv");
 
     const qs = search.toString();
-    const url = `${this.baseUrl}/api/v1/stats${qs ? `?${qs}` : ''}`;
+    const url = `${this.baseUrl}/api/v1/stats${qs ? `?${qs}` : ""}`;
     const resp = await fetch(url, { headers: this.headers() });
 
-    if (params.format === 'csv') {
+    if (params.format === "csv") {
       if (!resp.ok) throw new Error(`stats csv: HTTP ${resp.status}`);
       return resp.text();
     }
 
     const json = await resp.json();
-    if (!json.success) throw new Error(json.error || 'stats failed');
+    if (!json.success) throw new Error(json.error || "stats failed");
     const d = json.data;
     return {
       dbPath: d.db_path,
@@ -614,28 +740,30 @@ export class LumAggClient {
 
 function mapBuildTxResult(raw: Record<string, unknown>): BuildTxResult {
   return {
-    unsignedTxXdr: String(raw.unsigned_tx_xdr ?? ''),
-    fee: String(raw.fee ?? ''),
-    execution: String(raw.execution ?? ''),
+    unsignedTxXdr: String(raw.unsigned_tx_xdr ?? ""),
+    fee: String(raw.fee ?? ""),
+    execution: String(raw.execution ?? ""),
     numOperations: Number(raw.num_operations ?? 0),
     contract: raw.contract != null ? String(raw.contract) : undefined,
   };
 }
 
-function mapBuildOrderTxResult(raw: Record<string, unknown>): BuildOrderTxResult {
+function mapBuildOrderTxResult(
+  raw: Record<string, unknown>,
+): BuildOrderTxResult {
   const base = mapBuildTxResult(raw);
   return {
     ...base,
-    contract: String(raw.contract ?? base.contract ?? ''),
+    contract: String(raw.contract ?? base.contract ?? ""),
   };
 }
 
 function mapDailyStats(raw: Record<string, unknown>): DailyStats {
   return {
-    day: String(raw.day ?? ''),
+    day: String(raw.day ?? ""),
     txCount: Number(raw.tx_count ?? 0),
     uniqueUsers: Number(raw.unique_users ?? 0),
-    totalAmountIn: String(raw.total_amount_in ?? '0'),
+    totalAmountIn: String(raw.total_amount_in ?? "0"),
     splitSwapCount: Number(raw.split_swap_count ?? 0),
     successCount: Number(raw.success_count ?? 0),
     failedCount: Number(raw.failed_count ?? 0),
@@ -654,14 +782,14 @@ function mapSubRoute(raw: Record<string, unknown>): QuoteSubRoute {
     return a;
   };
   return {
-    source: String(raw.source ?? ''),
+    source: String(raw.source ?? ""),
     path: (raw.path as string[]) ?? [],
     poolAddresses,
-    dexTypes: pad(raw.dex_types as string[] | undefined, 'aquarius'),
+    dexTypes: pad(raw.dex_types as string[] | undefined, "aquarius"),
     inIndices: pad(raw.in_indices as number[] | undefined, 0),
     outIndices: pad(raw.out_indices as number[] | undefined, 1),
-    amountIn: String(raw.amount_in ?? '0'),
-    amountOut: String(raw.amount_out ?? '0'),
+    amountIn: String(raw.amount_in ?? "0"),
+    amountOut: String(raw.amount_out ?? "0"),
     percentage: Number(raw.percentage ?? 0),
   };
 }

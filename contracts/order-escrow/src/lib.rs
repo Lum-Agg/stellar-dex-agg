@@ -26,7 +26,9 @@ pub enum DataKey {
     Admin,
     Aggregator,
     NextOrderId,
+    NextDcaOrderId,
     Order(u64),
+    DcaOrder(u64),
 }
 
 const LEDGERS_PER_DAY: u32 = 17_280;
@@ -53,6 +55,22 @@ pub struct LimitOrder {
     pub status: OrderStatus,
 }
 
+#[contracttype]
+#[derive(Clone)]
+pub struct DcaOrder {
+    pub owner: Address,
+    pub token_in: Address,
+    pub token_out: Address,
+    pub amount_in_remaining: i128,
+    pub chunk_amount: i128,
+    pub interval_ledgers: u32,
+    pub next_executable_ledger: u32,
+    /// Optional per-chunk rate floor. Zero means market execution.
+    pub min_out_per_in_e7: i128,
+    pub expires_ledger: u32,
+    pub status: OrderStatus,
+}
+
 #[contract]
 pub struct OrderEscrowContract;
 
@@ -63,8 +81,8 @@ fn required_min_out(amount_in: i128, limit_out_per_in_e7: i128) -> i128 {
     assert!(limit_out_per_in_e7 > 0, "limit must be positive");
     amount_in
         .checked_mul(limit_out_per_in_e7)
-        .expect("amount and limit multiplication overflow") /
-        RATE_SCALE_E7
+        .expect("amount and limit multiplication overflow")
+        / RATE_SCALE_E7
 }
 
 fn authorize_swap_as_current_contract(
@@ -122,6 +140,7 @@ impl OrderEscrowContract {
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Aggregator, &aggregator);
         env.storage().instance().set(&DataKey::NextOrderId, &0u64);
+        env.storage().instance().set(&DataKey::NextDcaOrderId, &0u64);
     }
 
     pub fn create_limit(
@@ -276,6 +295,192 @@ impl OrderEscrowContract {
         amount_out
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_dca(
+        env: Env,
+        owner: Address,
+        token_in: Address,
+        token_out: Address,
+        amount_in: i128,
+        chunk_amount: i128,
+        interval_ledgers: u32,
+        start_ledger: u32,
+        min_out_per_in_e7: i128,
+        expires_ledger: u32,
+    ) -> u64 {
+        owner.require_auth();
+        let current = env.ledger().sequence();
+        assert!(amount_in > 0, "amount_in must be positive");
+        assert!(chunk_amount > 0 && chunk_amount <= amount_in, "invalid chunk amount");
+        assert!(interval_ledgers > 0, "interval must be positive");
+        assert!(start_ledger >= current, "start ledger is in the past");
+        assert!(min_out_per_in_e7 >= 0, "minimum rate must not be negative");
+        assert!(token_in != token_out, "tokens must differ");
+        assert!(expires_ledger > start_ledger, "expiration must follow start");
+        assert!(
+            expires_ledger <= current.saturating_add(MAX_ORDER_LIFETIME),
+            "expiration exceeds maximum order lifetime"
+        );
+
+        let order_id: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::NextDcaOrderId)
+            .expect("Not initialized");
+        let escrow = env.current_contract_address();
+        token::Client::new(&env, &token_in).transfer(&owner, &escrow, &amount_in);
+
+        let order = DcaOrder {
+            owner,
+            token_in,
+            token_out,
+            amount_in_remaining: amount_in,
+            chunk_amount,
+            interval_ledgers,
+            next_executable_ledger: start_ledger,
+            min_out_per_in_e7,
+            expires_ledger,
+            status: OrderStatus::Open,
+        };
+        env.storage().persistent().set(&DataKey::DcaOrder(order_id), &order);
+        env.storage().instance().set(
+            &DataKey::NextDcaOrderId,
+            &order_id.checked_add(1).expect("DCA order id overflow"),
+        );
+        env.events().publish(
+            (Symbol::new(&env, "dca_created"), order_id),
+            (
+                order.owner.clone(),
+                order.token_in.clone(),
+                order.token_out.clone(),
+                amount_in,
+                chunk_amount,
+                interval_ledgers,
+                start_ledger,
+                min_out_per_in_e7,
+                expires_ledger,
+            ),
+        );
+        order_id
+    }
+
+    pub fn fill_dca(env: Env, order_id: u64, sub_routes: Vec<SubRoute>, min_amount_out: i128) -> i128 {
+        let key = DataKey::DcaOrder(order_id);
+        let mut order: DcaOrder = env.storage().persistent().get(&key).expect("DCA order not found");
+        let current = env.ledger().sequence();
+        assert!(order.status == OrderStatus::Open, "DCA order is not open");
+        assert!(current < order.expires_ledger, "DCA order is expired");
+        assert!(current >= order.next_executable_ledger, "DCA chunk is not due");
+
+        let amount_in = if order.amount_in_remaining < order.chunk_amount {
+            order.amount_in_remaining
+        } else {
+            order.chunk_amount
+        };
+        let mut routed_amount = 0i128;
+        for route in sub_routes.iter() {
+            routed_amount = routed_amount
+                .checked_add(route.amount_in)
+                .expect("sub-route amount overflow");
+        }
+        assert!(routed_amount == amount_in, "sub-route amounts must equal chunk amount");
+        if order.min_out_per_in_e7 > 0 {
+            assert!(
+                min_amount_out >= required_min_out(amount_in, order.min_out_per_in_e7),
+                "min_amount_out below DCA floor"
+            );
+        } else {
+            assert!(min_amount_out > 0, "min_amount_out must be positive");
+        }
+
+        let aggregator: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Aggregator)
+            .expect("Not initialized");
+        let escrow = env.current_contract_address();
+        authorize_swap_as_current_contract(
+            &env,
+            &aggregator,
+            &escrow,
+            &order.token_in,
+            &order.token_out,
+            &sub_routes,
+            min_amount_out,
+            amount_in,
+        );
+        let amount_out = AggregatorContractClient::new(&env, &aggregator).swap(
+            &escrow,
+            &order.token_in,
+            &order.token_out,
+            &sub_routes,
+            &min_amount_out,
+        );
+        token::Client::new(&env, &order.token_out).transfer(&escrow, &order.owner, &amount_out);
+
+        order.amount_in_remaining -= amount_in;
+        if order.amount_in_remaining == 0 {
+            order.status = OrderStatus::Filled;
+        } else {
+            order.next_executable_ledger = current.saturating_add(order.interval_ledgers);
+        }
+        env.storage().persistent().set(&key, &order);
+        env.events().publish(
+            (Symbol::new(&env, "dca_filled"), order_id),
+            (
+                order.owner,
+                amount_in,
+                amount_out,
+                order.amount_in_remaining,
+                order.next_executable_ledger,
+            ),
+        );
+        amount_out
+    }
+
+    pub fn cancel_dca(env: Env, order_id: u64) {
+        let key = DataKey::DcaOrder(order_id);
+        let mut order: DcaOrder = env.storage().persistent().get(&key).expect("DCA order not found");
+        order.owner.require_auth();
+        assert!(order.status == OrderStatus::Open, "DCA order is not open");
+        let refunded_amount = order.amount_in_remaining;
+        token::Client::new(&env, &order.token_in).transfer(
+            &env.current_contract_address(),
+            &order.owner,
+            &refunded_amount,
+        );
+        order.amount_in_remaining = 0;
+        order.status = OrderStatus::Cancelled;
+        env.storage().persistent().set(&key, &order);
+        env.events().publish(
+            (Symbol::new(&env, "dca_cancelled"), order_id),
+            (order.owner, refunded_amount),
+        );
+    }
+
+    pub fn reclaim_expired_dca(env: Env, order_id: u64) {
+        let key = DataKey::DcaOrder(order_id);
+        let mut order: DcaOrder = env.storage().persistent().get(&key).expect("DCA order not found");
+        assert!(order.status == OrderStatus::Open, "DCA order is not open");
+        assert!(
+            env.ledger().sequence() > order.expires_ledger,
+            "DCA order has not expired"
+        );
+        let refunded_amount = order.amount_in_remaining;
+        token::Client::new(&env, &order.token_in).transfer(
+            &env.current_contract_address(),
+            &order.owner,
+            &refunded_amount,
+        );
+        order.amount_in_remaining = 0;
+        order.status = OrderStatus::Expired;
+        env.storage().persistent().set(&key, &order);
+        env.events().publish(
+            (Symbol::new(&env, "dca_expired"), order_id),
+            (order.owner, refunded_amount),
+        );
+    }
+
     /// Temporary auth probe for Task 1. Limit-order ABI follows in Task 2.
     pub fn spike_swap_as_self(
         env: Env,
@@ -316,8 +521,8 @@ impl OrderEscrowContract {
 mod tests {
     use {
         super::{
-            required_min_out, DataKey, LimitOrder, OrderEscrowContract, OrderEscrowContractClient, OrderStatus,
-            MAX_ORDER_LIFETIME,
+            required_min_out, DataKey, DcaOrder, LimitOrder, OrderEscrowContract, OrderEscrowContractClient,
+            OrderStatus, MAX_ORDER_LIFETIME,
         },
         aggregator_contract::AggregatorContract,
         lumagg_contract_types::{DexType, SubRoute, SwapStep},
@@ -517,14 +722,23 @@ mod tests {
         })
     }
 
+    fn dca_order(env: &Env, escrow: &Address, order_id: u64) -> DcaOrder {
+        env.as_contract(escrow, || {
+            env.storage()
+                .persistent()
+                .get::<_, DcaOrder>(&DataKey::DcaOrder(order_id))
+                .unwrap()
+        })
+    }
+
     fn has_lifecycle_event(env: &Env, escrow_id: &Address, topic_name: &str, order_id: u64) -> bool {
         let expected_topic = Symbol::new(env, topic_name);
         env.events().all().iter().any(|(contract, topics, _data)| {
             if contract != *escrow_id || topics.len() < 2 {
                 return false;
             }
-            Symbol::try_from_val(env, &topics.get(0).unwrap()) == Ok(expected_topic.clone()) &&
-                u64::try_from_val(env, &topics.get(1).unwrap()) == Ok(order_id)
+            Symbol::try_from_val(env, &topics.get(0).unwrap()) == Ok(expected_topic.clone())
+                && u64::try_from_val(env, &topics.get(1).unwrap()) == Ok(order_id)
         })
     }
 
@@ -838,5 +1052,58 @@ mod tests {
             5_000
         );
         assert_eq!(token::Client::new(&env, &token_out).balance(&owner), 5_000);
+    }
+
+    #[test]
+    fn dca_executes_one_chunk_per_interval_and_handles_final_remainder() {
+        let env = test_env();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (owner, escrow, token_in, token_out, _, pool_id) = setup_fill(&env);
+        let escrow_id = escrow.address.clone();
+        let order_id = escrow.create_dca(&owner, &token_in, &token_out, &5_000, &2_000, &10, &10, &0, &100);
+        assert_eq!(token::Client::new(&env, &token_in).balance(&escrow_id), 5_000);
+
+        let early = escrow.try_fill_dca(&order_id, &route(&env, &pool_id, &token_in, &token_out, 2_000), &1_900);
+        assert!(matches!(early, Ok(Err(_)) | Err(_)), "{early:?}");
+
+        env.ledger().set_sequence_number(10);
+        assert_eq!(
+            escrow.fill_dca(&order_id, &route(&env, &pool_id, &token_in, &token_out, 2_000), &1_900),
+            2_000
+        );
+        let after_first = dca_order(&env, &escrow_id, order_id);
+        assert_eq!(after_first.amount_in_remaining, 3_000);
+        assert_eq!(after_first.next_executable_ledger, 20);
+
+        let duplicate = escrow.try_fill_dca(&order_id, &route(&env, &pool_id, &token_in, &token_out, 2_000), &1_900);
+        assert!(matches!(duplicate, Ok(Err(_)) | Err(_)), "{duplicate:?}");
+
+        env.ledger().set_sequence_number(20);
+        escrow.fill_dca(&order_id, &route(&env, &pool_id, &token_in, &token_out, 2_000), &1_900);
+        env.ledger().set_sequence_number(30);
+        escrow.fill_dca(&order_id, &route(&env, &pool_id, &token_in, &token_out, 1_000), &900);
+
+        let completed = dca_order(&env, &escrow_id, order_id);
+        assert_eq!(completed.amount_in_remaining, 0);
+        assert!(completed.status == OrderStatus::Filled);
+        assert_eq!(token::Client::new(&env, &token_out).balance(&owner), 5_000);
+    }
+
+    #[test]
+    fn dca_cancel_refunds_unspent_principal() {
+        let env = test_env();
+        env.mock_all_auths();
+        let owner = gen_addr(&env);
+        let (escrow_id, escrow) = setup_escrow(&env);
+        let (token_in, token_in_sac) = create_token(&env);
+        let (token_out, _) = create_token(&env);
+        token_in_sac.mint(&owner, &5_000);
+
+        let order_id = escrow.create_dca(&owner, &token_in, &token_out, &5_000, &1_000, &10, &10, &0, &100);
+        escrow.cancel_dca(&order_id);
+
+        assert_eq!(token::Client::new(&env, &token_in).balance(&owner), 5_000);
+        assert_eq!(token::Client::new(&env, &token_in).balance(&escrow_id), 0);
+        assert!(dca_order(&env, &escrow_id, order_id).status == OrderStatus::Cancelled);
     }
 }

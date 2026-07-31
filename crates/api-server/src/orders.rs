@@ -72,6 +72,42 @@ pub struct BuildCancelRequest {
     pub order_id: u64,
 }
 
+#[derive(Debug, Serialize)]
+pub struct DcaOrdersData {
+    pub orders: Vec<DcaOrderItem>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DcaOrderItem {
+    pub order_id: i64,
+    pub owner: String,
+    pub token_in: String,
+    pub token_out: String,
+    pub amount_in_initial: String,
+    pub amount_in_remaining: String,
+    pub chunk_amount: String,
+    pub interval_ledgers: u32,
+    pub next_executable_ledger: u32,
+    pub min_out_per_in_e7: String,
+    pub expires_ledger: u32,
+    pub status: String,
+    pub updated_ledger: u32,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BuildCreateDcaRequest {
+    pub user: String,
+    pub token_in: String,
+    pub token_out: String,
+    pub amount_in: String,
+    pub chunk_amount: String,
+    pub interval_ledgers: u32,
+    pub start_ledger: u32,
+    pub min_out_per_in_e7: String,
+    pub expires_ledger: u32,
+}
+
 fn indexer_db_path() -> Option<String> {
     std::env::var("INDEXER_DB_PATH")
         .ok()
@@ -188,6 +224,86 @@ pub async fn get_orders(Query(params): Query<OrdersQuery>) -> Response {
     }
 }
 
+pub async fn get_dca_orders(Query(params): Query<OrdersQuery>) -> Response {
+    let Some(user) = params.user.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(OrdersResponse {
+                success: false,
+                data: None,
+                error: Some("missing required query param: user".into()),
+            }),
+        )
+            .into_response();
+    };
+    if PublicKey::from_string(user).is_err() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(OrdersResponse {
+                success: false,
+                data: None,
+                error: Some("user must be a Stellar G... address".into()),
+            }),
+        )
+            .into_response();
+    }
+    let include_all = matches!(params.status.as_deref(), Some("all"));
+    if !matches!(params.status.as_deref(), None | Some("open") | Some("all")) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(OrdersResponse {
+                success: false,
+                data: None,
+                error: Some("status must be open or all".into()),
+            }),
+        )
+            .into_response();
+    }
+    let Some(db_path) = indexer_db_path() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(OrdersResponse {
+                success: false,
+                data: None,
+                error: Some("Analytics DB not configured (set INDEXER_DB_PATH on api-server)".into()),
+            }),
+        )
+            .into_response();
+    };
+    let store = match IndexStore::open(&db_path) {
+        Ok(store) => store,
+        Err(error) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(OrdersResponse {
+                    success: false,
+                    data: None,
+                    error: Some(error.to_string()),
+                }),
+            )
+                .into_response()
+        }
+    };
+    match store.list_dca_by_owner(user, include_all) {
+        Ok(rows) => Json(
+            serde_json::json!({ "success": true, "data": { "orders": rows.into_iter().map(|r| DcaOrderItem {
+            order_id: r.order_id, owner: r.owner, token_in: r.token_in, token_out: r.token_out,
+            amount_in_initial: r.amount_in_initial, amount_in_remaining: r.amount_in_remaining,
+            chunk_amount: r.chunk_amount, interval_ledgers: r.interval_ledgers,
+            next_executable_ledger: r.next_executable_ledger, min_out_per_in_e7: r.min_out_per_in_e7,
+            expires_ledger: r.expires_ledger, status: r.status, updated_ledger: r.updated_ledger,
+            updated_at: r.updated_at,
+        }).collect::<Vec<_>>() } }),
+        )
+        .into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "success": false, "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 fn require_escrow_contract(value: Option<String>) -> Result<String, String> {
     let contract = value
         .map(|value| value.trim().to_string())
@@ -215,6 +331,17 @@ fn parse_positive_i128(value: &str, field: &str) -> Result<i128, String> {
         .map_err(|_| format!("{field} must be a positive integer"))?;
     if value <= 0 {
         return Err(format!("{field} must be greater than zero"));
+    }
+    Ok(value)
+}
+
+fn parse_nonnegative_i128(value: &str, field: &str) -> Result<i128, String> {
+    let value: i128 = value
+        .trim()
+        .parse()
+        .map_err(|_| format!("{field} must be a non-negative integer"))?;
+    if value < 0 {
+        return Err(format!("{field} must not be negative"));
     }
     Ok(value)
 }
@@ -299,6 +426,47 @@ fn build_create_operation(contract: &str, request: &BuildCreateRequest) -> Resul
 fn build_cancel_operation(contract: &str, request: &BuildCancelRequest) -> Result<xdr::Operation, String> {
     validate_cancel_request(request)?;
     contract_operation(contract, "cancel", vec![xdr::ScVal::U64(request.order_id)])
+}
+
+fn build_create_dca_operation(contract: &str, request: &BuildCreateDcaRequest) -> Result<xdr::Operation, String> {
+    let user = parse_user(&request.user)?;
+    let token_in = parse_contract(&request.token_in, "token_in")?;
+    let token_out = parse_contract(&request.token_out, "token_out")?;
+    if token_in == token_out {
+        return Err("token_in and token_out must differ".into());
+    }
+    let amount_in = parse_positive_i128(&request.amount_in, "amount_in")?;
+    let chunk = parse_positive_i128(&request.chunk_amount, "chunk_amount")?;
+    if chunk > amount_in {
+        return Err("chunk_amount must not exceed amount_in".into());
+    }
+    if request.interval_ledgers == 0 {
+        return Err("interval_ledgers must be positive".into());
+    }
+    if request.expires_ledger <= request.start_ledger {
+        return Err("expires_ledger must follow start_ledger".into());
+    }
+    let min_rate = parse_nonnegative_i128(&request.min_out_per_in_e7, "min_out_per_in_e7")?;
+    contract_operation(
+        contract,
+        "create_dca",
+        vec![
+            account_scval(&user),
+            contract_scval(token_in),
+            contract_scval(token_out),
+            i128_scval(amount_in),
+            i128_scval(chunk),
+            xdr::ScVal::U32(request.interval_ledgers),
+            xdr::ScVal::U32(request.start_ledger),
+            i128_scval(min_rate),
+            xdr::ScVal::U32(request.expires_ledger),
+        ],
+    )
+}
+
+fn build_cancel_dca_operation(contract: &str, request: &BuildCancelRequest) -> Result<xdr::Operation, String> {
+    validate_cancel_request(request)?;
+    contract_operation(contract, "cancel_dca", vec![xdr::ScVal::U64(request.order_id)])
 }
 
 async fn prepare_order_transaction(
@@ -420,6 +588,60 @@ pub async fn build_cancel(
         )
             .into_response(),
         Err(error) => order_build_failure(format!("Order build failed: {error}")),
+    }
+}
+
+pub async fn build_create_dca(
+    State(state): State<AppState>,
+    request: Result<Json<BuildCreateDcaRequest>, JsonRejection>,
+) -> Response {
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(error) => return order_error(StatusCode::BAD_REQUEST, error.body_text()),
+    };
+    let contract = match require_escrow_contract(std::env::var("ESCROW_CONTRACT").ok()) {
+        Ok(contract) => contract,
+        Err(error) => return order_error(StatusCode::SERVICE_UNAVAILABLE, error),
+    };
+    let operation = match build_create_dca_operation(&contract, &request) {
+        Ok(operation) => operation,
+        Err(error) => return order_error(StatusCode::BAD_REQUEST, error),
+    };
+    match prepare_order_transaction(&state.rpc, &request.user, contract, operation).await {
+        Ok(data) => Json(BuildTxResponse {
+            success: true,
+            data: Some(data),
+            error: None,
+        })
+        .into_response(),
+        Err(error) => order_build_failure(error),
+    }
+}
+
+pub async fn build_cancel_dca(
+    State(state): State<AppState>,
+    request: Result<Json<BuildCancelRequest>, JsonRejection>,
+) -> Response {
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(error) => return order_error(StatusCode::BAD_REQUEST, error.body_text()),
+    };
+    let contract = match require_escrow_contract(std::env::var("ESCROW_CONTRACT").ok()) {
+        Ok(contract) => contract,
+        Err(error) => return order_error(StatusCode::SERVICE_UNAVAILABLE, error),
+    };
+    let operation = match build_cancel_dca_operation(&contract, &request) {
+        Ok(operation) => operation,
+        Err(error) => return order_error(StatusCode::BAD_REQUEST, error),
+    };
+    match prepare_order_transaction(&state.rpc, &request.user, contract, operation).await {
+        Ok(data) => Json(BuildTxResponse {
+            success: true,
+            data: Some(data),
+            error: None,
+        })
+        .into_response(),
+        Err(error) => order_build_failure(error),
     }
 }
 

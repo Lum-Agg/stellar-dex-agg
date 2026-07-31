@@ -10,7 +10,7 @@ const ORDER_TYPES: {
 }[] = [
   { id: 'instant', label: 'Instant', enabled: true },
   { id: 'limit', label: 'Limit', enabled: true },
-  { id: 'dca', label: 'DCA', hint: 'Soon', enabled: false },
+  { id: 'dca', label: 'DCA', enabled: true },
 ];
 
 export function OrderTypeRail({
@@ -18,7 +18,7 @@ export function OrderTypeRail({
   onSelect,
 }: {
   active?: OrderTypeId;
-  onSelect?: (id: 'instant' | 'limit') => void;
+  onSelect?: (id: OrderTypeId) => void;
 }) {
   return (
     <aside className="w-full sm:w-[148px] shrink-0">
@@ -52,9 +52,7 @@ export function OrderTypeRail({
               key={item.id}
               type="button"
               onClick={() => {
-                if ((item.id === 'instant' || item.id === 'limit') && onSelect) {
-                  onSelect(item.id);
-                }
+                onSelect?.(item.id);
               }}
               className={`relative flex items-center rounded-xl px-3 py-2.5 text-[15px] font-medium whitespace-nowrap text-left w-full transition-colors ${
                 isActive

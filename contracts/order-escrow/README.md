@@ -81,9 +81,15 @@ ADMIN=admin ADMIN_G=G... ./scripts/deploy-limit-testnet.sh
 
 Smoke checklist: [docs/limit-orders-testnet.md](../../docs/limit-orders-testnet.md).
 
-## DCA and off-chain services
+## DCA orders
 
-DCA is out of scope for this contract slice. It will reuse escrow custody with
-schedule fields and chunked fills in a later phase. Off-chain pieces:
-limit-keeper, analytics-indexer (`ESCROW_CONTRACT`), and API `build_create` /
-`build_cancel` — see the testnet doc above. UI is a later phase.
+`create_dca` locks a total input amount and stores a chunk size, interval,
+next executable ledger, optional E7 price floor, and expiry. A zero price floor
+means market execution. `fill_dca` is permissionless and executes at most one
+chunk after the due ledger; the final fill uses the remaining amount when it is
+smaller than the configured chunk.
+
+After a fill, the next due ledger is `current + interval`, preventing repeated
+catch-up fills in one ledger. `cancel_dca` requires owner authorization and
+refunds unspent input; `reclaim_expired_dca` is permissionless but always sends
+the refund to the owner. DCA orders share the 30-day lifetime ceiling.

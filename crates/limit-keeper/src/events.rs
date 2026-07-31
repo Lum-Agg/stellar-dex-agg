@@ -1,7 +1,7 @@
 //! Parse order-escrow lifecycle events into order-book updates.
 
 use {
-    crate::book::{OpenOrder, OrderEvent},
+    crate::book::{OpenOrder, OrderEvent, OrderKind},
     anyhow::{anyhow, Context, Result},
     base64::{engine::general_purpose::STANDARD as BASE64, Engine as _},
     dex_adapters::rpc::events::ContractEvent,
@@ -22,6 +22,7 @@ pub fn parse_escrow_event(event: &ContractEvent) -> Result<Option<OrderEvent>> {
         "order_created" => {
             require_fields(&fields, 6, &kind)?;
             Ok(Some(OrderEvent::Created(OpenOrder {
+                kind: OrderKind::Limit,
                 order_id,
                 owner: scval_address(&fields[0])?,
                 token_in: scval_address(&fields[1])?,
@@ -29,23 +30,65 @@ pub fn parse_escrow_event(event: &ContractEvent) -> Result<Option<OrderEvent>> {
                 amount_in_remaining: scval_i128(&fields[3])?,
                 limit_out_per_in_e7: scval_i128(&fields[4])?,
                 expires_ledger: scval_u32(&fields[5])?,
+                chunk_amount: None,
+                next_executable_ledger: None,
             })))
         }
         "order_filled" => {
             require_fields(&fields, 4, &kind)?;
             Ok(Some(OrderEvent::Filled {
+                kind: OrderKind::Limit,
                 order_id,
                 amount_in_remaining: scval_i128(&fields[3])?,
+                next_executable_ledger: None,
             }))
         }
         "order_cancelled" => {
             require_fields(&fields, 2, &kind)?;
-            Ok(Some(OrderEvent::Cancelled { order_id }))
+            Ok(Some(OrderEvent::Cancelled {
+                kind: OrderKind::Limit,
+                order_id,
+            }))
         }
         "order_expired" => {
             require_fields(&fields, 2, &kind)?;
-            Ok(Some(OrderEvent::Expired { order_id }))
+            Ok(Some(OrderEvent::Expired {
+                kind: OrderKind::Limit,
+                order_id,
+            }))
         }
+        "dca_created" => {
+            require_fields(&fields, 9, &kind)?;
+            Ok(Some(OrderEvent::Created(OpenOrder {
+                kind: OrderKind::Dca,
+                order_id,
+                owner: scval_address(&fields[0])?,
+                token_in: scval_address(&fields[1])?,
+                token_out: scval_address(&fields[2])?,
+                amount_in_remaining: scval_i128(&fields[3])?,
+                chunk_amount: Some(scval_i128(&fields[4])?),
+                next_executable_ledger: Some(scval_u32(&fields[6])?),
+                limit_out_per_in_e7: scval_i128(&fields[7])?,
+                expires_ledger: scval_u32(&fields[8])?,
+            })))
+        }
+        "dca_filled" => {
+            require_fields(&fields, 5, &kind)?;
+            Ok(Some(OrderEvent::Filled {
+                kind: OrderKind::Dca,
+                order_id,
+                amount_in_remaining: scval_i128(&fields[3])?,
+                next_executable_ledger: Some(scval_u32(&fields[4])?),
+            }))
+        }
+        "dca_cancelled" => Ok(Some(OrderEvent::Cancelled {
+            kind: OrderKind::Dca,
+            order_id,
+        })),
+        "dca_expired" => Ok(Some(OrderEvent::Expired {
+            kind: OrderKind::Dca,
+            order_id,
+        })),
         _ => Ok(None),
     }
 }
@@ -127,7 +170,7 @@ fn scval_u32(value: &xdr::ScVal) -> Result<u32> {
 mod tests {
     use {
         super::parse_escrow_event,
-        crate::book::OpenOrderBook,
+        crate::book::{OpenOrderBook, OrderKind},
         base64::{engine::general_purpose::STANDARD as BASE64, Engine as _},
         dex_adapters::rpc::events::ContractEvent,
         stellar_xdr::curr::{self as xdr, Limits, WriteXdr},
@@ -190,10 +233,10 @@ mod tests {
 
         let mut book = OpenOrderBook::default();
         book.apply(parse_escrow_event(&created).unwrap().unwrap());
-        assert_eq!(book.get(7).unwrap().amount_in_remaining, 500);
+        assert_eq!(book.get(OrderKind::Limit, 7).unwrap().amount_in_remaining, 500);
         book.apply(parse_escrow_event(&filled).unwrap().unwrap());
-        assert_eq!(book.get(7).unwrap().amount_in_remaining, 300);
+        assert_eq!(book.get(OrderKind::Limit, 7).unwrap().amount_in_remaining, 300);
         book.apply(parse_escrow_event(&cancelled).unwrap().unwrap());
-        assert!(book.get(7).is_none());
+        assert!(book.get(OrderKind::Limit, 7).is_none());
     }
 }

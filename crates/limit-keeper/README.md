@@ -4,7 +4,8 @@ Self-hosted operator binary that discovers open limit orders on the LumAgg
 `order-escrow` contract via Soroban `getEvents`, quotes through the LumAgg API,
 and permissionlessly submits `fill` when the on-chain limit price is met.
 
-Scope: limit orders only (no DCA, no retail order API/UI).
+The keeper also executes due DCA chunks. Limit and DCA IDs use separate
+namespaces and are tracked as `(order_kind, order_id)` to avoid collisions.
 
 ## Environment
 
@@ -45,7 +46,7 @@ cargo run -p limit-keeper
 ```
 
 With dry-run enabled, the keeper polls escrow events, maintains an in-memory open
-order book, fetches quotes for executable candidates, and logs lines like
+order book, fetches quotes for executable Limit and due DCA candidates, and logs lines like
 `dry-run: would fill escrow order` instead of calling `execute_fill`.
 
 ## Live operation

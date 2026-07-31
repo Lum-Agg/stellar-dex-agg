@@ -1955,9 +1955,9 @@ pub async fn build_tx(State(state): State<AppState>, Json(body): Json<BuildTxReq
             // Simulate failed — do NOT return a broken raw XDR.
             // A Soroban tx without sorobanData cannot be signed by any wallet.
             // Categorize the error for a better UX message.
-            let user_msg = if e.contains("Output below minimum") ||
-                e.contains("below minimum") ||
-                (e.contains("UnreachableCodeReached") && e.contains("swap"))
+            let user_msg = if e.contains("Output below minimum")
+                || e.contains("below minimum")
+                || (e.contains("UnreachableCodeReached") && e.contains("swap"))
             {
                 "Swap failed: on-chain output was below your minimum (quote vs execution drift, \
                  common on split routes). Refresh the quote, increase slippage, or retry with a single-path route."
@@ -1970,15 +1970,15 @@ pub async fn build_tx(State(state): State<AppState>, Json(body): Json<BuildTxReq
                 "Swap failed: one of the pools has insufficient liquidity. \
                  Please try a smaller amount."
                     .to_string()
-            } else if e.contains("resulting balance is not within the allowed range") ||
-                (e.contains("transfer") && e.contains("Error(Contract, #10)"))
+            } else if e.contains("resulting balance is not within the allowed range")
+                || (e.contains("transfer") && e.contains("Error(Contract, #10)"))
             {
                 "Insufficient balance: your wallet does not hold enough of the input token \
                  for this swap amount. Lower the amount and refresh the quote."
                     .to_string()
-            } else if e.contains("trustline entry is missing") ||
-                e.contains("trustline is missing") ||
-                (e.contains("Error(Contract, #13)") && e.contains("trustline"))
+            } else if e.contains("trustline entry is missing")
+                || e.contains("trustline is missing")
+                || (e.contains("Error(Contract, #13)") && e.contains("trustline"))
             {
                 "Missing trustline: your wallet cannot receive the output token yet. \
                  Add a trustline for the buy asset in your wallet (e.g. USDC), then retry. \
@@ -1988,11 +1988,11 @@ pub async fn build_tx(State(state): State<AppState>, Json(body): Json<BuildTxReq
                 "Swap failed: Comet pool token approval was rejected by simulation. \
                  The on-chain aggregator may need an upgrade; try refreshing the quote or a route without Comet."
                     .to_string()
-            } else if e.contains("account not found") ||
-                e.contains("No sequence") ||
-                e.contains("Horizon") ||
-                e.contains("rate limit") ||
-                e.contains("Rate Limit")
+            } else if e.contains("account not found")
+                || e.contains("No sequence")
+                || e.contains("Horizon")
+                || e.contains("rate limit")
+                || e.contains("Rate Limit")
             {
                 // Sequence lookup failed before SimulateTransaction — don't label as sim
                 // failure.

@@ -59,6 +59,7 @@ Use **testnet** token contract ids and a user account that exists on testnet for
 | 4 | Sign + submit on testnet | `order_created` on escrow |
 | 5 | Wait for indexer poll → `GET /api/v1/orders?user=G…` | Open order listed |
 | 6 | Optional: `POST .../build_cancel` or keeper dry-run | Cancel XDR / dry-run fill log |
+| 7 | Create DCA and run keeper after its due ledger | One chunk fills and next ledger advances |
 
 **Fill / live keeper:** testnet DEX liquidity may be thin. Create/cancel/list is enough to validate custody + API; a successful market fill is best-effort.
 
@@ -69,7 +70,10 @@ Use **testnet** token contract ids and a user account that exists on testnet for
 
 ## Frontend (Phase 3d)
 
-On `/`, switch Order rail to **Limit**.
+On `/`, switch Order rail to **Limit** or **DCA**. DCA supports a total amount,
+fixed chunk, hourly/6-hour/daily frequency, and an optional minimum execution
+price. Its API surface is `/api/v1/dca`, `/dca/build_create`, and
+`/dca/build_cancel` under the same `/api/v1` prefix.
 
 | Piece | Value |
 |-------|--------|

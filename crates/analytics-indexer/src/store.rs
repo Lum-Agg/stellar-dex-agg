@@ -34,6 +34,24 @@ pub struct LimitOrderRow {
 }
 
 #[derive(Debug, Clone)]
+pub struct DcaOrderRow {
+    pub order_id: i64,
+    pub owner: String,
+    pub token_in: String,
+    pub token_out: String,
+    pub amount_in_initial: String,
+    pub amount_in_remaining: String,
+    pub chunk_amount: String,
+    pub interval_ledgers: u32,
+    pub next_executable_ledger: u32,
+    pub min_out_per_in_e7: String,
+    pub expires_ledger: u32,
+    pub status: String,
+    pub updated_ledger: u32,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone)]
 pub struct UserSwapRow {
     pub tx_hash: String,
     pub ledger: u32,
@@ -82,6 +100,25 @@ fn map_limit_order_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LimitOrderRo
         updated_ledger: row.get::<_, i64>(10)? as u32,
         created_at: row.get(11)?,
         updated_at: row.get(12)?,
+    })
+}
+
+fn map_dca_order_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DcaOrderRow> {
+    Ok(DcaOrderRow {
+        order_id: row.get(0)?,
+        owner: row.get(1)?,
+        token_in: row.get(2)?,
+        token_out: row.get(3)?,
+        amount_in_initial: row.get(4)?,
+        amount_in_remaining: row.get(5)?,
+        chunk_amount: row.get(6)?,
+        interval_ledgers: row.get::<_, i64>(7)? as u32,
+        next_executable_ledger: row.get::<_, i64>(8)? as u32,
+        min_out_per_in_e7: row.get(9)?,
+        expires_ledger: row.get::<_, i64>(10)? as u32,
+        status: row.get(11)?,
+        updated_ledger: row.get::<_, i64>(12)? as u32,
+        updated_at: row.get(13)?,
     })
 }
 
@@ -154,6 +191,25 @@ impl IndexStore {
             );
 
             CREATE INDEX IF NOT EXISTS idx_limit_orders_owner ON limit_orders(owner, status);
+
+            CREATE TABLE IF NOT EXISTS dca_orders (
+              order_id INTEGER PRIMARY KEY,
+              owner TEXT NOT NULL,
+              token_in TEXT NOT NULL,
+              token_out TEXT NOT NULL,
+              amount_in_initial TEXT NOT NULL,
+              amount_in_remaining TEXT NOT NULL,
+              chunk_amount TEXT NOT NULL,
+              interval_ledgers INTEGER NOT NULL,
+              next_executable_ledger INTEGER NOT NULL,
+              min_out_per_in_e7 TEXT NOT NULL,
+              expires_ledger INTEGER NOT NULL,
+              status TEXT NOT NULL,
+              updated_ledger INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_dca_orders_owner ON dca_orders(owner, status);
             ",
         )?;
         // Older production DBs were created before bridge_token / amount_is_actual
@@ -165,11 +221,7 @@ impl IndexStore {
         self.ensure_column("swap_legs", "amount_out", "TEXT")?;
         // Legacy rows predate the actual-vs-envelope distinction; treat them as
         // actual so historical routed volume does not collapse to zero.
-        self.ensure_column(
-            "swap_legs",
-            "amount_is_actual",
-            "INTEGER NOT NULL DEFAULT 1",
-        )?;
+        self.ensure_column("swap_legs", "amount_is_actual", "INTEGER NOT NULL DEFAULT 1")?;
         Ok(())
     }
 
@@ -193,10 +245,7 @@ impl IndexStore {
             return Ok(());
         }
         self.conn
-            .execute(
-                &format!("ALTER TABLE {table} ADD COLUMN {column} {ddl_type}"),
-                [],
-            )
+            .execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {ddl_type}"), [])
             .with_context(|| format!("add column {table}.{column}"))?;
         Ok(())
     }
@@ -426,11 +475,7 @@ impl IndexStore {
     ///
     /// When `before` is `Some((created_at, tx_hash))`, returns rows strictly
     /// older than that cursor (`ORDER BY created_at DESC, tx_hash DESC`).
-    pub fn list_recent_round_trips(
-        &self,
-        limit: u32,
-        before: Option<(i64, &str)>,
-    ) -> Result<Vec<RoundTripRow>> {
+    pub fn list_recent_round_trips(&self, limit: u32, before: Option<(i64, &str)>) -> Result<Vec<RoundTripRow>> {
         let limit = limit.clamp(1, 50);
         let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<RoundTripRow> {
             Ok(RoundTripRow {
@@ -582,6 +627,93 @@ impl IndexStore {
             out.push(r?);
         }
         Ok(out)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn upsert_dca_created(
+        &self,
+        order_id: i64,
+        owner: &str,
+        token_in: &str,
+        token_out: &str,
+        amount_in: &str,
+        chunk_amount: &str,
+        interval_ledgers: u32,
+        next_executable_ledger: u32,
+        min_out_per_in_e7: &str,
+        expires_ledger: u32,
+        updated_ledger: u32,
+        updated_at: i64,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO dca_orders (
+              order_id, owner, token_in, token_out, amount_in_initial, amount_in_remaining,
+              chunk_amount, interval_ledgers, next_executable_ledger, min_out_per_in_e7,
+              expires_ledger, status, updated_ledger, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?7, ?8, ?9, ?10, 'open', ?11, ?12)",
+            params![
+                order_id,
+                owner,
+                token_in,
+                token_out,
+                amount_in,
+                chunk_amount,
+                interval_ledgers,
+                next_executable_ledger,
+                min_out_per_in_e7,
+                expires_ledger,
+                updated_ledger,
+                updated_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn apply_dca_filled(
+        &self,
+        order_id: i64,
+        amount_in_remaining: &str,
+        next_executable_ledger: u32,
+        updated_ledger: u32,
+        updated_at: i64,
+    ) -> Result<bool> {
+        let status = if amount_in_remaining == "0" { "filled" } else { "open" };
+        Ok(self.conn.execute(
+            "UPDATE dca_orders SET amount_in_remaining=?1, next_executable_ledger=?2,
+             status=?3, updated_ledger=?4, updated_at=?5 WHERE order_id=?6 AND status='open'",
+            params![
+                amount_in_remaining,
+                next_executable_ledger,
+                status,
+                updated_ledger,
+                updated_at,
+                order_id
+            ],
+        )? > 0)
+    }
+
+    pub fn apply_dca_closed(&self, order_id: i64, status: &str, updated_ledger: u32, updated_at: i64) -> Result<bool> {
+        anyhow::ensure!(status == "cancelled" || status == "expired", "invalid DCA status");
+        Ok(self.conn.execute(
+            "UPDATE dca_orders SET amount_in_remaining='0', status=?1, updated_ledger=?2,
+             updated_at=?3 WHERE order_id=?4 AND status='open'",
+            params![status, updated_ledger, updated_at, order_id],
+        )? > 0)
+    }
+
+    pub fn list_dca_by_owner(&self, owner: &str, include_all: bool) -> Result<Vec<DcaOrderRow>> {
+        let sql = if include_all {
+            "SELECT order_id,owner,token_in,token_out,amount_in_initial,amount_in_remaining,
+             chunk_amount,interval_ledgers,next_executable_ledger,min_out_per_in_e7,expires_ledger,
+             status,updated_ledger,updated_at FROM dca_orders WHERE owner=?1 ORDER BY updated_at DESC"
+        } else {
+            "SELECT order_id,owner,token_in,token_out,amount_in_initial,amount_in_remaining,
+             chunk_amount,interval_ledgers,next_executable_ledger,min_out_per_in_e7,expires_ledger,
+             status,updated_ledger,updated_at FROM dca_orders WHERE owner=?1 AND status='open' ORDER BY updated_at DESC"
+        };
+        let mut stmt = self.conn.prepare(sql)?;
+        let rows = stmt.query_map(params![owner], map_dca_order_row)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
 
     pub(crate) fn conn(&self) -> &Connection {

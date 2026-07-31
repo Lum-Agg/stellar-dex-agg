@@ -61,6 +61,21 @@ export interface BuildOrderTxResult {
   contract?: string;
 }
 
+export interface DcaOrder {
+  orderId: number;
+  owner: string;
+  tokenIn: string;
+  tokenOut: string;
+  amountInInitial: string;
+  amountInRemaining: string;
+  chunkAmount: string;
+  intervalLedgers: number;
+  nextExecutableLedger: number;
+  minOutPerInE7: string;
+  expiresLedger: number;
+  status: string;
+}
+
 /** OUT per 1 whole IN → e7 fixed-point string (adjusts for decimal mismatch). */
 export function priceHumanToE7(
   priceHuman: string,
@@ -80,11 +95,7 @@ export function priceHumanToE7(
   return String(e7);
 }
 
-export function e7ToPriceHuman(
-  e7: string,
-  decimalsIn: number,
-  decimalsOut: number,
-): string {
+export function e7ToPriceHuman(e7: string, decimalsIn: number, decimalsOut: number): string {
   const raw = Number(e7);
   if (!Number.isFinite(raw) || raw <= 0) return '—';
   const scale = 10 ** (decimalsOut - decimalsIn);
@@ -202,6 +213,71 @@ export async function buildCancelOrder(params: {
     unsignedTxXdr: String(json.data.unsigned_tx_xdr ?? ''),
     contract: json.data.contract != null ? String(json.data.contract) : undefined,
   };
+}
+
+export async function listDcaOrders(user: string): Promise<DcaOrder[]> {
+  const resp = await fetch(`${LIMIT_API_URL}/api/v1/dca?${new URLSearchParams({ user })}`);
+  const json = await resp.json();
+  if (!json.success) throw new Error(json.error || 'Failed to list DCA orders');
+  return (json.data?.orders || []).map((r: Record<string, unknown>) => ({
+    orderId: Number(r.order_id),
+    owner: String(r.owner),
+    tokenIn: String(r.token_in),
+    tokenOut: String(r.token_out),
+    amountInInitial: String(r.amount_in_initial),
+    amountInRemaining: String(r.amount_in_remaining),
+    chunkAmount: String(r.chunk_amount),
+    intervalLedgers: Number(r.interval_ledgers),
+    nextExecutableLedger: Number(r.next_executable_ledger),
+    minOutPerInE7: String(r.min_out_per_in_e7),
+    expiresLedger: Number(r.expires_ledger),
+    status: String(r.status),
+  }));
+}
+
+export async function buildCreateDca(params: {
+  user: string;
+  tokenIn: string;
+  tokenOut: string;
+  amountIn: string;
+  chunkAmount: string;
+  intervalLedgers: number;
+  startLedger: number;
+  minOutPerInE7: string;
+  expiresLedger: number;
+}): Promise<BuildOrderTxResult> {
+  const resp = await fetch(`${LIMIT_API_URL}/api/v1/dca/build_create`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      user: params.user,
+      token_in: params.tokenIn,
+      token_out: params.tokenOut,
+      amount_in: params.amountIn,
+      chunk_amount: params.chunkAmount,
+      interval_ledgers: params.intervalLedgers,
+      start_ledger: params.startLedger,
+      min_out_per_in_e7: params.minOutPerInE7,
+      expires_ledger: params.expiresLedger,
+    }),
+  });
+  const json = await resp.json();
+  if (!json.success || !json.data) throw new Error(json.error || 'build_create DCA failed');
+  return { unsignedTxXdr: String(json.data.unsigned_tx_xdr), contract: json.data.contract };
+}
+
+export async function buildCancelDca(params: {
+  user: string;
+  orderId: number;
+}): Promise<BuildOrderTxResult> {
+  const resp = await fetch(`${LIMIT_API_URL}/api/v1/dca/build_cancel`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user: params.user, order_id: params.orderId }),
+  });
+  const json = await resp.json();
+  if (!json.success || !json.data) throw new Error(json.error || 'build_cancel DCA failed');
+  return { unsignedTxXdr: String(json.data.unsigned_tx_xdr), contract: json.data.contract };
 }
 
 /** Submit signed XDR through limit api-server (or official testnet RPC if Advanced). */

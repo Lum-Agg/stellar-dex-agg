@@ -39,6 +39,37 @@ pub enum ParsedOrderEvent {
         ledger: u32,
         updated_at: i64,
     },
+    DcaCreated {
+        order_id: u64,
+        owner: String,
+        token_in: String,
+        token_out: String,
+        amount_in: String,
+        chunk_amount: String,
+        interval_ledgers: u32,
+        next_executable_ledger: u32,
+        min_out_per_in_e7: String,
+        expires_ledger: u32,
+        ledger: u32,
+        updated_at: i64,
+    },
+    DcaFilled {
+        order_id: u64,
+        amount_in_remaining: String,
+        next_executable_ledger: u32,
+        ledger: u32,
+        updated_at: i64,
+    },
+    DcaCancelled {
+        order_id: u64,
+        ledger: u32,
+        updated_at: i64,
+    },
+    DcaExpired {
+        order_id: u64,
+        ledger: u32,
+        updated_at: i64,
+    },
 }
 
 pub fn parse_escrow_order_event(event: &ContractEvent) -> Result<Option<ParsedOrderEvent>> {
@@ -91,6 +122,43 @@ pub fn parse_escrow_order_event(event: &ContractEvent) -> Result<Option<ParsedOr
                 updated_at,
             }))
         }
+        "dca_created" => {
+            require_fields(&fields, 9, &kind)?;
+            Ok(Some(ParsedOrderEvent::DcaCreated {
+                order_id,
+                owner: scval_address(&fields[0])?,
+                token_in: scval_address(&fields[1])?,
+                token_out: scval_address(&fields[2])?,
+                amount_in: amount_to_string(scval_i128(&fields[3])?),
+                chunk_amount: amount_to_string(scval_i128(&fields[4])?),
+                interval_ledgers: scval_u32(&fields[5])?,
+                next_executable_ledger: scval_u32(&fields[6])?,
+                min_out_per_in_e7: amount_to_string(scval_i128(&fields[7])?),
+                expires_ledger: scval_u32(&fields[8])?,
+                ledger: event.ledger,
+                updated_at,
+            }))
+        }
+        "dca_filled" => {
+            require_fields(&fields, 5, &kind)?;
+            Ok(Some(ParsedOrderEvent::DcaFilled {
+                order_id,
+                amount_in_remaining: amount_to_string(scval_i128(&fields[3])?),
+                next_executable_ledger: scval_u32(&fields[4])?,
+                ledger: event.ledger,
+                updated_at,
+            }))
+        }
+        "dca_cancelled" => Ok(Some(ParsedOrderEvent::DcaCancelled {
+            order_id,
+            ledger: event.ledger,
+            updated_at,
+        })),
+        "dca_expired" => Ok(Some(ParsedOrderEvent::DcaExpired {
+            order_id,
+            ledger: event.ledger,
+            updated_at,
+        })),
         _ => Ok(None),
     }
 }
@@ -142,15 +210,72 @@ pub fn apply_parsed_order_event(store: &IndexStore, event: &ParsedOrderEvent) ->
             ledger,
             updated_at,
         } => store.apply_closed(*order_id as i64, "expired", *ledger, *updated_at),
+        ParsedOrderEvent::DcaCreated {
+            order_id,
+            owner,
+            token_in,
+            token_out,
+            amount_in,
+            chunk_amount,
+            interval_ledgers,
+            next_executable_ledger,
+            min_out_per_in_e7,
+            expires_ledger,
+            ledger,
+            updated_at,
+        } => {
+            store.upsert_dca_created(
+                *order_id as i64,
+                owner,
+                token_in,
+                token_out,
+                amount_in,
+                chunk_amount,
+                *interval_ledgers,
+                *next_executable_ledger,
+                min_out_per_in_e7,
+                *expires_ledger,
+                *ledger,
+                *updated_at,
+            )?;
+            Ok(true)
+        }
+        ParsedOrderEvent::DcaFilled {
+            order_id,
+            amount_in_remaining,
+            next_executable_ledger,
+            ledger,
+            updated_at,
+        } => store.apply_dca_filled(
+            *order_id as i64,
+            amount_in_remaining,
+            *next_executable_ledger,
+            *ledger,
+            *updated_at,
+        ),
+        ParsedOrderEvent::DcaCancelled {
+            order_id,
+            ledger,
+            updated_at,
+        } => store.apply_dca_closed(*order_id as i64, "cancelled", *ledger, *updated_at),
+        ParsedOrderEvent::DcaExpired {
+            order_id,
+            ledger,
+            updated_at,
+        } => store.apply_dca_closed(*order_id as i64, "expired", *ledger, *updated_at),
     }
 }
 
 fn order_event_id(event: &ParsedOrderEvent) -> u64 {
     match event {
-        ParsedOrderEvent::Created { order_id, .. } |
-        ParsedOrderEvent::Filled { order_id, .. } |
-        ParsedOrderEvent::Cancelled { order_id, .. } |
-        ParsedOrderEvent::Expired { order_id, .. } => *order_id,
+        ParsedOrderEvent::Created { order_id, .. }
+        | ParsedOrderEvent::Filled { order_id, .. }
+        | ParsedOrderEvent::Cancelled { order_id, .. }
+        | ParsedOrderEvent::Expired { order_id, .. } => *order_id,
+        ParsedOrderEvent::DcaCreated { order_id, .. }
+        | ParsedOrderEvent::DcaFilled { order_id, .. }
+        | ParsedOrderEvent::DcaCancelled { order_id, .. }
+        | ParsedOrderEvent::DcaExpired { order_id, .. } => *order_id,
     }
 }
 
@@ -160,6 +285,10 @@ fn order_event_kind(event: &ParsedOrderEvent) -> &'static str {
         ParsedOrderEvent::Filled { .. } => "order_filled",
         ParsedOrderEvent::Cancelled { .. } => "order_cancelled",
         ParsedOrderEvent::Expired { .. } => "order_expired",
+        ParsedOrderEvent::DcaCreated { .. } => "dca_created",
+        ParsedOrderEvent::DcaFilled { .. } => "dca_filled",
+        ParsedOrderEvent::DcaCancelled { .. } => "dca_cancelled",
+        ParsedOrderEvent::DcaExpired { .. } => "dca_expired",
     }
 }
 

@@ -35,7 +35,7 @@ Evidence: [scf-venue-comparison.md](scf-venue-comparison.md) · [scf-benchmark-r
 | Aggregator mainnet production | External audit (**aggregator + vault**) |
 | Swap frontend MVP | OpenAPI, API keys, `prefer_soroban` |
 | Comet / extended DEX hydration | Token metadata, logos, balance UX |
-| Internal “hardening” of worker/API | npm SDK publish + ≥2 integrator pilots |
+| Internal “hardening” of worker/API | npm SDK publish + ≥2 integration validation paths |
 
 We reduced **$10k** (not 25–40%) because the **original line items for shipped MVP are now $0 pre-award**, while **new deliverables** (analytics, post-submission arb+vault, dual-contract audit, integrator SDK/pilots) were added. No large “removed vs added” dollar reallocation — only a clearer scope split and a modest total trim.
 
@@ -124,7 +124,7 @@ We reduced **$10k** (not 25–40%) because the **original line items for shipped
 
 ---
 
-**Note for reviewers:** Tranche 2 funds **npm SDK release**, **first production-ready atomic arbitrage operator stack** (code written **post-submission, Jun 2026** — not in original application), and **≥2 integrator pilots**. Does **not** fund rebuilding swap frontend or pre-submission router/worker.
+**Note for reviewers:** Tranche 2 funds **npm SDK release**, **first production-ready atomic arbitrage operator stack** (code written **post-submission, Jun 2026** — not in original application), and **integrator integration validation across ≥2 paths**. Does **not** fund rebuilding swap frontend or pre-submission router/worker.
 
 ---
 
@@ -165,16 +165,22 @@ We reduced **$10k** (not 25–40%) because the **original line items for shipped
 
 ---
 
-**[DELIVERABLE 7: INTEGRATOR PILOTS (≥2)]**
+**[DELIVERABLE 7: INTEGRATOR INTEGRATION VALIDATION (≥2 PATHS)]**
 
 **Budget:** $8,000 (Engineering support + documentation)
 
-**Brief description:** Onboard **≥2** external integrators (wallet, swap UI, or trading bot) using LumAgg REST API or npm SDK. Pilot A may be reference self-integration; Pilot B external partner with demo or testimonial.
+**Brief description:** Validate **≥2 integrator adoption paths** for the open-source stack. Integrators may use the self-hosted API or the public API with the npm SDK; hosted API use is not required.
+
+- **Path A:** In-repo reference client (LumAgg swap UI or SDK demo app) completes `quote → build_tx` end to end.
+- **Path B:** External developer, reviewer, or community integrator completes the same flow using the published docs; feedback or anonymized confirmation is documented.
+
+The output is reproducible integration evidence, not guaranteed SaaS onboarding.
 
 **How to measure completion:**
-- Two pilots identified (name, category, or anonymized role)
-- Each: quote + build_tx integrated OR public demo / PR link
-- Feedback incorporated into SDK and integrator guide
+- Two paths documented with reproducible steps; Path B may use an anonymized role
+- Each path completes `quote → build_tx` through the SDK or REST API
+- Self-host quickstart and an under-30-minute walkthrough documented
+- Path B feedback incorporated into the SDK or integrator guide
 
 **Estimated date of completion:** August 31, 2026
 
@@ -319,7 +325,7 @@ Grant-funded deliverables complete by **Oct 15, 2026**; remaining time is buffer
 - Atomic arb operator stack: `aggregator.round_trip_swap`, `contracts/vault` (`execute_round_trip`), `crates/arbitrage`
 - On-chain analytics (indexer v0 + public dashboard)
 - Dual-contract external audit (aggregator + vault)
-- OpenAPI / integrator API + API keys; npm SDK; ≥2 integrator pilots
+- OpenAPI / integrator API + API keys; npm SDK; ≥2 integration validation paths
 - Swap UI completion (token logos, wallet balance %, quick amounts)
 
 **Why total is only $10k lower ($100k → $90k):** We reclassified shipped MVP as **$0 pre-award** (addressing “do not fund hardening existing components”), **and** added the net-new ecosystem work above that did not exist when we first applied. A larger cut would underfund analytics, arb/vault mainnet, and the two-contract audit; **$90k** reflects panel feedback while still funding genuinely new deliverables.

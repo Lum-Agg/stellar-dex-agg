@@ -72,24 +72,22 @@ fn enrich_row_with_usd(row: &mut DailyStats, xlm_px: Option<f64>) {
             continue;
         };
         let amount_out = surplus.amount_in.saturating_add(surplus.gross_surplus);
-        rt_routed_usd +=
-            ((surplus.amount_in as f64 + amount_out as f64) / TOKEN_DECIMALS) * usd_per_token;
+        rt_routed_usd += ((surplus.amount_in as f64 + amount_out as f64) / TOKEN_DECIMALS) * usd_per_token;
         rt_priced_any = true;
     }
 
-    let (routed_usd, routed_priced_any, routed_priced_leg_count) =
-        if let Some(hop) = hop_routed_usd {
-            (hop, true, hop_legs)
-        } else if rt_priced_any {
-            let rt_legs = row
-                .round_trip_by_token
-                .iter()
-                .map(|s| s.tx_count.saturating_mul(2))
-                .sum::<u64>();
-            (rt_routed_usd, true, rt_legs)
-        } else {
-            (0.0, false, 0)
-        };
+    let (routed_usd, routed_priced_any, routed_priced_leg_count) = if let Some(hop) = hop_routed_usd {
+        (hop, true, hop_legs)
+    } else if rt_priced_any {
+        let rt_legs = row
+            .round_trip_by_token
+            .iter()
+            .map(|s| s.tx_count.saturating_mul(2))
+            .sum::<u64>();
+        (rt_routed_usd, true, rt_legs)
+    } else {
+        (0.0, false, 0)
+    };
 
     if notional_priced_any {
         row.total_amount_in_usd = Some(notional_usd);
@@ -101,8 +99,7 @@ fn enrich_row_with_usd(row: &mut DailyStats, xlm_px: Option<f64>) {
     if hop_legs > 0 {
         row.routed_pricing_coverage = Some(1.0);
     } else if row.routed_leg_count > 0 {
-        row.routed_pricing_coverage =
-            Some(routed_priced_leg_count as f64 / row.routed_leg_count as f64);
+        row.routed_pricing_coverage = Some(routed_priced_leg_count as f64 / row.routed_leg_count as f64);
     } else if rt_priced_any {
         row.routed_pricing_coverage = Some(1.0);
     }

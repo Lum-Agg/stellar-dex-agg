@@ -145,8 +145,7 @@ pub async fn get_arbitrage(Query(params): Query<ArbitrageQuery>) -> Response {
     };
 
     let next_cursor = if rows.len() as u32 >= limit {
-        rows.last()
-            .map(|r| encode_cursor(r.created_at, &r.tx_hash))
+        rows.last().map(|r| encode_cursor(r.created_at, &r.tx_hash))
     } else {
         None
     };
@@ -187,10 +186,7 @@ mod tests {
 
     #[test]
     fn surplus_is_out_minus_in() {
-        assert_eq!(
-            gross_surplus("10000000", Some("10005000")).as_deref(),
-            Some("5000")
-        );
+        assert_eq!(gross_surplus("10000000", Some("10005000")).as_deref(), Some("5000"));
         assert_eq!(gross_surplus("100", None), None);
         assert_eq!(gross_surplus("bad", Some("1")), None);
     }

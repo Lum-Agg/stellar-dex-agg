@@ -16,7 +16,7 @@ Living checklist — tick as evidence lands in repo or production.
 - [x] D5 `npm publish @lumagg/sdk` — https://www.npmjs.com/package/@lumagg/sdk (`0.1.0`)
 - [x] D6 Vault + arb mainnet ([arb-operator.md](./arb-operator.md))
 - [x] D6 Evidence: [arb-evidence-snapshot.md](./arb-evidence-snapshot.md) (26 SUCCESS since Jul 13)
-- [ ] D7 ≥2 integrator pilots ([integrator-pilots.md](./integrator-pilots.md))
+- [ ] D7 ≥2 integration validation paths: in-repo reference + one external tester ([integrator-pilots.md](./integrator-pilots.md))
 
 ## Tranche 3 · Oct 15, 2026
 

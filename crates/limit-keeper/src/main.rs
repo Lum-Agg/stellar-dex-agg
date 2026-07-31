@@ -76,7 +76,7 @@ async fn main() -> Result<()> {
         }
 
         for order in book.iter().cloned().collect::<Vec<_>>() {
-            if latest > order.expires_ledger {
+            if latest >= order.expires_ledger {
                 if config.reclaim {
                     // Reclaim is intentionally not submitted in this MVP. It is
                     // safe to enable only after a dedicated reclaim transaction
@@ -88,10 +88,14 @@ async fn main() -> Result<()> {
                 }
                 continue;
             }
+            if order.next_executable_ledger.is_some_and(|due| latest < due) {
+                continue;
+            }
             let amount_in = fill_amount(&order, config.max_fill);
             if amount_in <= 0 {
                 warn!(
                     order_id = order.order_id,
+                    kind = ?order.kind,
                     "skipping order with non-positive fill amount"
                 );
                 continue;
@@ -131,8 +135,8 @@ async fn main() -> Result<()> {
             )
             .await
             {
-                Ok(hash) => info!(order_id = order.order_id, %hash, "submitted escrow fill"),
-                Err(error) => warn!(order_id = order.order_id, %error, "escrow fill failed"),
+                Ok(hash) => info!(order_id = order.order_id, kind = ?order.kind, %hash, "submitted escrow fill"),
+                Err(error) => warn!(order_id = order.order_id, kind = ?order.kind, %error, "escrow fill failed"),
             }
         }
         tokio::time::sleep(std::time::Duration::from_secs(config.poll_secs)).await;

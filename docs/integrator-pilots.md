@@ -1,34 +1,48 @@
-# Integrator pilot checklist (Tranche 2 Deliverable 7)
+# Integrator integration validation (Tranche 2 Deliverable 7)
 
-Track **≥2** external integrations (wallet, swap UI, or trading bot) using LumAgg REST API or npm SDK.
+Validate the two adoption paths approved in the SCF submission. This deliverable
+requires one in-repo reference path and one external validation path; it does not
+require onboarding two external partners.
 
-## Pilot template
+## Validation template
 
-| Field | Pilot A | Pilot B |
-|-------|---------|---------|
-| Name / category | e.g. internal reference app | e.g. wallet partner |
-| Integration surface | REST / SDK | |
+| Field | Path A: reference client | Path B: external validation |
+|-------|--------------------------|-----------------------------|
+| Name / category | LumAgg UI or SDK demo | Developer, reviewer, or community integrator |
+| Integration surface | REST or SDK | REST or SDK |
 | Quote + build_tx | ☐ | ☐ |
-| Demo link or PR | | |
-| Feedback captured | | |
+| Reproducible evidence | | |
+| Feedback incorporated | n/a | |
 
 ## Minimum acceptance
 
-1. Partner identified (name or anonymized role).
-2. Completed **quote → build_tx** using [integrator-guide.md](./integrator-guide.md) only.
-3. One line of feedback incorporated into SDK or docs.
+1. Path A documents the existing UI or SDK demo completing **quote → build_tx**.
+2. Path B identifies an external tester by name or anonymized role and documents
+   the same flow using the published docs, public API, or self-hosted API.
+3. Both paths have reproducible steps and evidence.
+4. At least one Path B feedback item is incorporated into the SDK or integrator guide.
+5. The self-host quickstart and an under-30-minute walkthrough remain published.
 
-## Reference self-integration (Pilot A)
+## Path A: reference integration
 
 ```bash
 npx tsx packages/sdk/examples/quote-build.ts
 ```
 
+The production swap UI at <https://lumagg.xyz> is also a valid in-repo reference
+path because it completes the same quote and unsigned-XDR build flow.
+
+## Path B: external validation
+
+The external tester may use either `@lumagg/sdk` or the REST smoke script. A
+public partnership, production integration, signed transaction, or SaaS
+onboarding commitment is not required.
+
 ## Evidence to attach
 
 - Screenshot or curl log of successful `build_tx` `unsigned_tx_xdr` prefix.
-- Or folder from `OUT=./evidence/pilot-b USER_G=G... ./scripts/integrator-smoke.sh`
-- GitHub issue / email quote from external developer (Pilot B).
+- Or folder from `OUT=./evidence/path-b USER_G=G... ./scripts/integrator-smoke.sh`.
+- One feedback sentence from the external tester and the resulting docs or SDK change.
 
 ## Message template (send to friend)
 

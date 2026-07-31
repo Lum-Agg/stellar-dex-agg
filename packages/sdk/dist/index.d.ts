@@ -72,7 +72,7 @@ export interface OrderRecord {
 }
 export interface ListOrdersParams {
     user: string;
-    status?: 'open' | 'all';
+    status?: "open" | "all";
 }
 export interface BuildCreateOrderParams {
     user: string;
@@ -85,6 +85,33 @@ export interface BuildCreateOrderParams {
 export interface BuildCancelOrderParams {
     user: string;
     orderId: number;
+}
+export interface DcaOrderRecord {
+    orderId: number;
+    owner: string;
+    tokenIn: string;
+    tokenOut: string;
+    amountInInitial: string;
+    amountInRemaining: string;
+    chunkAmount: string;
+    intervalLedgers: number;
+    nextExecutableLedger: number;
+    minOutPerInE7: string;
+    expiresLedger: number;
+    status: string;
+    updatedLedger: number;
+    updatedAt: number;
+}
+export interface BuildCreateDcaParams {
+    user: string;
+    tokenIn: string;
+    tokenOut: string;
+    amountIn: string;
+    chunkAmount: string;
+    intervalLedgers: number;
+    startLedger: number;
+    minOutPerInE7?: string;
+    expiresLedger: number;
 }
 export interface DailyStats {
     day: string;
@@ -108,7 +135,7 @@ export interface StatsParams {
     /** UTC day YYYY-MM-DD; omit for full rollup. */
     day?: string;
     /** When `csv`, returns raw CSV string instead of parsed JSON. */
-    format?: 'json' | 'csv';
+    format?: "json" | "csv";
 }
 export interface SwapRecord {
     txHash: string;
@@ -181,7 +208,7 @@ export interface TokenInfo {
     name: string;
     logo?: string;
     /** `"official"` for SEP-42 icons, `"fallback"` for generated letter avatars. */
-    logoKind?: 'official' | 'fallback';
+    logoKind?: "official" | "fallback";
 }
 export declare class LumAggClient {
     private baseUrl;
@@ -206,9 +233,12 @@ export declare class LumAggClient {
     listOrders(params: ListOrdersParams): Promise<OrderRecord[]>;
     buildCreateOrder(params: BuildCreateOrderParams): Promise<BuildOrderTxResult>;
     buildCancelOrder(params: BuildCancelOrderParams): Promise<BuildOrderTxResult>;
+    listDcaOrders(params: ListOrdersParams): Promise<DcaOrderRecord[]>;
+    buildCreateDca(params: BuildCreateDcaParams): Promise<BuildOrderTxResult>;
+    buildCancelDca(params: BuildCancelOrderParams): Promise<BuildOrderTxResult>;
     listSwaps(params: ListSwapsParams): Promise<ListSwapsResult>;
     getPrices(ids: string[]): Promise<PriceQuote[]>;
-    getPriceHistory(id: string, range?: '24h' | '7d'): Promise<PricePoint[]>;
+    getPriceHistory(id: string, range?: "24h" | "7d"): Promise<PricePoint[]>;
     getBalance(params: {
         account: string;
         token: string;

@@ -146,15 +146,19 @@ pub fn is_fillable(order: &OpenOrder, expected_out: i128) -> bool {
 }
 
 pub fn is_fillable_for(order: &OpenOrder, amount_in: i128, expected_out: i128) -> bool {
-    expected_out >= required_min_out(amount_in, order.limit_out_per_in_e7)
+    order.limit_out_per_in_e7 == 0 || expected_out >= required_min_out(amount_in, order.limit_out_per_in_e7)
 }
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::book::OpenOrder};
+    use {
+        super::*,
+        crate::book::{OpenOrder, OrderKind},
+    };
 
     fn order() -> OpenOrder {
         OpenOrder {
+            kind: OrderKind::Limit,
             order_id: 7,
             owner: "owner".into(),
             token_in: "token-in".into(),
@@ -162,6 +166,8 @@ mod tests {
             amount_in_remaining: 500,
             limit_out_per_in_e7: 20_000_000,
             expires_ledger: 999,
+            chunk_amount: None,
+            next_executable_ledger: None,
         }
     }
 

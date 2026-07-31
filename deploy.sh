@@ -31,7 +31,7 @@ Type=simple
 User=root
 WorkingDirectory=/opt/stellar-dex-aggregator
 Environment=RPC_URL=http://127.0.0.1:8003
-Environment=HORIZON_URL=http://127.0.0.1:8000
+Environment=HORIZON_URL=http://144.76.79.46:8000
 Environment=LISTEN_ADDR=0.0.0.0:3100
 Environment=REFRESH_INTERVAL_SECS=5
 Environment=RUST_LOG=info

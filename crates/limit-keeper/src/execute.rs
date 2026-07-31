@@ -1,6 +1,6 @@
 use {
     crate::{
-        book::OpenOrder,
+        book::{OpenOrder, OrderKind},
         limit::required_min_out,
         quote::{steps_from_api_sub_route, Quote, QuoteStep, QuoteSubRoute},
     },
@@ -20,13 +20,19 @@ use {
 const BASE_FEE: u32 = 100_000;
 
 pub fn fill_amount(order: &OpenOrder, max_fill: Option<i128>) -> i128 {
+    let requested = order.chunk_amount.unwrap_or(order.amount_in_remaining);
     max_fill
         .filter(|cap| *cap > 0)
-        .map_or(order.amount_in_remaining, |cap| order.amount_in_remaining.min(cap))
+        .map_or(requested, |cap| requested.min(cap))
+        .min(order.amount_in_remaining)
 }
 
 pub fn fill_min_amount_out(order: &OpenOrder, amount_in: i128, quote: &Quote) -> i128 {
-    required_min_out(amount_in, order.limit_out_per_in_e7).max(quote.minimum_output)
+    if order.limit_out_per_in_e7 > 0 {
+        required_min_out(amount_in, order.limit_out_per_in_e7).max(quote.minimum_output)
+    } else {
+        quote.minimum_output
+    }
 }
 
 /// Simulate, sign, submit, and wait briefly for an escrow `fill`.
@@ -47,6 +53,7 @@ pub async fn execute_fill(
     }
     let operation = build_fill_operation(
         escrow_contract,
+        order.kind,
         order.order_id,
         amount_in,
         &quote.sub_routes,
@@ -78,6 +85,7 @@ pub fn build_reclaim_operation(escrow_contract: &str, order_id: u64) -> Result<x
 
 fn build_fill_operation(
     escrow_contract: &str,
+    kind: OrderKind,
     order_id: u64,
     amount_in: i128,
     sub_routes: &[QuoteSubRoute],
@@ -98,16 +106,24 @@ fn build_fill_operation(
             "quote route amount {routed} does not equal fill amount {amount_in}"
         ));
     }
-    contract_operation(
-        escrow_contract,
-        "fill",
-        vec![
-            xdr::ScVal::U64(order_id),
-            i128_scval(amount_in),
-            xdr::ScVal::Vec(Some(routes.try_into().map_err(|_| anyhow!("too many sub-routes"))?)),
-            i128_scval(min_amount_out),
-        ],
-    )
+    let routes = xdr::ScVal::Vec(Some(routes.try_into().map_err(|_| anyhow!("too many sub-routes"))?));
+    match kind {
+        OrderKind::Limit => contract_operation(
+            escrow_contract,
+            "fill",
+            vec![
+                xdr::ScVal::U64(order_id),
+                i128_scval(amount_in),
+                routes,
+                i128_scval(min_amount_out),
+            ],
+        ),
+        OrderKind::Dca => contract_operation(
+            escrow_contract,
+            "fill_dca",
+            vec![xdr::ScVal::U64(order_id), routes, i128_scval(min_amount_out)],
+        ),
+    }
 }
 
 fn quote_sub_route_scval(route: &QuoteSubRoute) -> Result<xdr::ScVal> {
@@ -315,13 +331,14 @@ async fn poll_transaction(rpc_url: &str, hash: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        book::OpenOrder,
+        book::{OpenOrder, OrderKind},
         execute::{fill_amount, fill_min_amount_out},
         quote::Quote,
     };
 
     fn order() -> OpenOrder {
         OpenOrder {
+            kind: OrderKind::Limit,
             order_id: 7,
             owner: "owner".into(),
             token_in: "in".into(),
@@ -329,6 +346,8 @@ mod tests {
             amount_in_remaining: 500,
             limit_out_per_in_e7: 20_000_000,
             expires_ledger: 999,
+            chunk_amount: None,
+            next_executable_ledger: None,
         }
     }
 

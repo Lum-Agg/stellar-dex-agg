@@ -1,7 +1,14 @@
 use std::collections::BTreeMap;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum OrderKind {
+    Limit,
+    Dca,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenOrder {
+    pub kind: OrderKind,
     pub order_id: u64,
     pub owner: String,
     pub token_in: String,
@@ -9,56 +16,80 @@ pub struct OpenOrder {
     pub amount_in_remaining: i128,
     pub limit_out_per_in_e7: i128,
     pub expires_ledger: u32,
+    pub chunk_amount: Option<i128>,
+    pub next_executable_ledger: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OrderEvent {
     Created(OpenOrder),
-    Filled { order_id: u64, amount_in_remaining: i128 },
-    Cancelled { order_id: u64 },
-    Expired { order_id: u64 },
+    Filled {
+        kind: OrderKind,
+        order_id: u64,
+        amount_in_remaining: i128,
+        next_executable_ledger: Option<u32>,
+    },
+    Cancelled {
+        kind: OrderKind,
+        order_id: u64,
+    },
+    Expired {
+        kind: OrderKind,
+        order_id: u64,
+    },
 }
 
 #[derive(Debug, Default)]
 pub struct OpenOrderBook {
-    orders: BTreeMap<u64, OpenOrder>,
+    orders: BTreeMap<(OrderKind, u64), OpenOrder>,
 }
 
 impl OpenOrderBook {
-    pub fn get(&self, order_id: u64) -> Option<&OpenOrder> {
-        self.orders.get(&order_id)
+    pub fn get(&self, kind: OrderKind, order_id: u64) -> Option<&OpenOrder> {
+        self.orders.get(&(kind, order_id))
     }
 
     pub fn apply(&mut self, event: OrderEvent) {
         match event {
             OrderEvent::Created(order) => self.apply_created(order),
             OrderEvent::Filled {
+                kind,
                 order_id,
                 amount_in_remaining,
-            } => self.apply_filled(order_id, amount_in_remaining),
-            OrderEvent::Cancelled { order_id } => self.apply_cancelled(order_id),
-            OrderEvent::Expired { order_id } => self.apply_expired(order_id),
+                next_executable_ledger,
+            } => self.apply_filled(kind, order_id, amount_in_remaining, next_executable_ledger),
+            OrderEvent::Cancelled { kind, order_id } => self.apply_cancelled(kind, order_id),
+            OrderEvent::Expired { kind, order_id } => self.apply_expired(kind, order_id),
         }
     }
 
     pub fn apply_created(&mut self, order: OpenOrder) {
-        self.orders.insert(order.order_id, order);
+        self.orders.insert((order.kind, order.order_id), order);
     }
 
-    pub fn apply_filled(&mut self, order_id: u64, amount_in_remaining: i128) {
+    pub fn apply_filled(
+        &mut self,
+        kind: OrderKind,
+        order_id: u64,
+        amount_in_remaining: i128,
+        next_executable_ledger: Option<u32>,
+    ) {
         if amount_in_remaining == 0 {
-            self.orders.remove(&order_id);
-        } else if let Some(order) = self.orders.get_mut(&order_id) {
+            self.orders.remove(&(kind, order_id));
+        } else if let Some(order) = self.orders.get_mut(&(kind, order_id)) {
             order.amount_in_remaining = amount_in_remaining;
+            if next_executable_ledger.is_some() {
+                order.next_executable_ledger = next_executable_ledger;
+            }
         }
     }
 
-    pub fn apply_cancelled(&mut self, order_id: u64) {
-        self.orders.remove(&order_id);
+    pub fn apply_cancelled(&mut self, kind: OrderKind, order_id: u64) {
+        self.orders.remove(&(kind, order_id));
     }
 
-    pub fn apply_expired(&mut self, order_id: u64) {
-        self.orders.remove(&order_id);
+    pub fn apply_expired(&mut self, kind: OrderKind, order_id: u64) {
+        self.orders.remove(&(kind, order_id));
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &OpenOrder> {
@@ -72,6 +103,7 @@ mod tests {
 
     fn order(order_id: u64) -> OpenOrder {
         OpenOrder {
+            kind: OrderKind::Limit,
             order_id,
             owner: "owner".into(),
             token_in: "in".into(),
@@ -79,6 +111,8 @@ mod tests {
             amount_in_remaining: 500,
             limit_out_per_in_e7: 20_000_000,
             expires_ledger: 999,
+            chunk_amount: None,
+            next_executable_ledger: None,
         }
     }
 
@@ -86,22 +120,22 @@ mod tests {
     fn lifecycle_updates_open_orders() {
         let mut book = OpenOrderBook::default();
         book.apply_created(order(7));
-        book.apply_filled(7, 300);
-        assert_eq!(book.get(7).unwrap().amount_in_remaining, 300);
+        book.apply_filled(OrderKind::Limit, 7, 300, None);
+        assert_eq!(book.get(OrderKind::Limit, 7).unwrap().amount_in_remaining, 300);
 
-        book.apply_cancelled(7);
-        assert!(book.get(7).is_none());
+        book.apply_cancelled(OrderKind::Limit, 7);
+        assert!(book.get(OrderKind::Limit, 7).is_none());
     }
 
     #[test]
     fn filled_or_expired_orders_are_removed() {
         let mut book = OpenOrderBook::default();
         book.apply_created(order(7));
-        book.apply_filled(7, 0);
-        assert!(book.get(7).is_none());
+        book.apply_filled(OrderKind::Limit, 7, 0, None);
+        assert!(book.get(OrderKind::Limit, 7).is_none());
 
         book.apply_created(order(8));
-        book.apply_expired(8);
-        assert!(book.get(8).is_none());
+        book.apply_expired(OrderKind::Limit, 8);
+        assert!(book.get(OrderKind::Limit, 8).is_none());
     }
 }

@@ -7,9 +7,10 @@ import { LimitCard } from '@/components/LimitCard';
 import { DisclaimerBanner } from '@/components/DisclaimerBanner';
 import { SwapHistory } from '@/components/SwapHistory';
 import { OrderTypeRail } from '@/components/OrderTypeRail';
+import { DcaCard } from '@/components/DcaCard';
 
 export default function Home() {
-  const [orderType, setOrderType] = useState<'instant' | 'limit'>('instant');
+  const [orderType, setOrderType] = useState<'instant' | 'limit' | 'dca'>('instant');
 
   return (
     <div className="w-full">
@@ -25,8 +26,10 @@ export default function Home() {
                 <SwapHistory />
               </div>
             </>
-          ) : (
+          ) : orderType === 'limit' ? (
             <LimitCard />
+          ) : (
+            <DcaCard />
           )}
           <Link
             href="/portfolio"
