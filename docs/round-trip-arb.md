@@ -26,6 +26,7 @@ ARB_BRIDGE_TOKENS=C...ETH...,C...BTC...   # intermediate tokens you configure
 ARB_BASE_TOKENS=XLM,USDC                  # optional, defaults XLM+USDC
 
 ARB_AGGREGATOR_CONTRACT=C...              # deployed aggregator
+ARB_VAULT_CONTRACT=C...                   # optional vault for execute_round_trip
 ARB_MNEMONIC_PATH=... ARB_CALLER_INDICES=0,1
 # or ARB_SECRET_KEY / ARB_CALLER_SECRETS_FILE
 
@@ -33,7 +34,10 @@ ARB_MIN_AMOUNT_IN=100000000               # 10 XLM
 ARB_MAX_AMOUNT_IN=180000000000            # 1800 XLM
 ARB_OPTIMIZE_AMOUNT=1                     # max(out-in) over sample_count inputs
 ARB_SAMPLE_COUNT=8
-ARB_MIN_PROFIT_BPS=15
+ARB_MIN_PROFIT=80000                      # default post-fee floor (base units, 7dp)
+ARB_MIN_PROFIT_XLM=80000                  # optional per-base floors
+ARB_MIN_PROFIT_USDC=30000
+ARB_XLM_USDC_PRICE_E7=3000000             # fee conversion when base is USDC
 
 ARB_BUILD_TX=1
 ARB_SUBMIT_TX=1
@@ -41,6 +45,8 @@ ARB_DRY_RUN=1
 
 cargo run -p arbitrage --bin arb-scanner
 ```
+
+Operator runbook (env, monitoring, checklist): [arb-operator.md](./arb-operator.md).
 
 ## Flow
 

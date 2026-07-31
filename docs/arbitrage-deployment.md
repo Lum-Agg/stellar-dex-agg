@@ -116,11 +116,12 @@ journalctl -u lumagg-arbitrage -f
 ## Profit and Failure Policy
 
 Before submission, the scanner gates an opportunity using the simulated return
-minus the estimated transaction fee and `ARB_MIN_PROFIT`. The transaction's
-on-chain `min_amount_out` is intentionally only greater than the input amount,
-instead of encoding the entire simulated profit target. This reduces avoidable
-post-submission failures and fee loss when execution changes slightly, while
-still requiring a positive round-trip token return.
+minus the estimated transaction fee and the configured min profit
+(`ARB_MIN_PROFIT`, or per-base `ARB_MIN_PROFIT_XLM` / `ARB_MIN_PROFIT_USDC`).
+The transaction's on-chain `min_amount_out` is intentionally only greater than
+the input amount, instead of encoding the entire simulated profit target. This
+reduces avoidable post-submission failures and fee loss when execution changes
+slightly, while still requiring a positive round-trip token return.
 
 This policy does not guarantee fiat profit and does not remove latency,
 liquidity, RPC, contract, or fee risk. The operator controls account funding,
