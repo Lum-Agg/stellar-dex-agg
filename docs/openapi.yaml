@@ -365,6 +365,94 @@ paths:
           description: ESCROW_CONTRACT not configured
         '429':
           description: Rate limit exceeded
+  /api/v1/dca:
+    get:
+      tags: [orders]
+      summary: Wallet DCA orders (indexer DB)
+      description: |
+        Open and historical DCA orders for a Stellar account from escrow lifecycle events.
+        Requires `INDEXER_DB_PATH` on the API server. Default `status=open` returns only
+        open orders; `status=all` also includes filled, cancelled, and expired orders.
+      parameters:
+        - name: user
+          in: query
+          required: true
+          schema:
+            type: string
+            example: "GABCDEFGHIJKLMNOPQRSTUVWXYZ234567ABCDEFGHIJKLMNOPQRSTUVW"
+          description: Stellar account public key (`G...`, 56 chars)
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [open, all]
+            default: open
+          description: Filter by DCA order status (default `open`)
+      responses:
+        '200':
+          description: DCA orders for the wallet (may be empty)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DcaOrdersResponse'
+        '400':
+          description: Missing or invalid `user` / `status`
+        '503':
+          description: INDEXER_DB_PATH not configured
+  /api/v1/dca/build_create:
+    post:
+      tags: [orders]
+      summary: Build unsigned create-DCA transaction
+      description: |
+        Simulates and prepares wallet-ready XDR invoking `order-escrow.create_dca`.
+        Requires `ESCROW_CONTRACT` on the API server. Set `min_out_per_in_e7` to
+        `0` for market execution or a positive value for a per-chunk rate floor.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BuildCreateDcaRequest'
+      responses:
+        '200':
+          description: "Unsigned transaction (or `success: false` with build error in body)"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderBuildTxResponse'
+        '400':
+          description: Invalid body
+        '503':
+          description: ESCROW_CONTRACT not configured
+        '429':
+          description: Rate limit exceeded
+  /api/v1/dca/build_cancel:
+    post:
+      tags: [orders]
+      summary: Build unsigned cancel-DCA transaction
+      description: |
+        Simulates and prepares wallet-ready XDR invoking `order-escrow.cancel_dca`.
+        Requires `ESCROW_CONTRACT` on the API server.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BuildCancelOrderRequest'
+      responses:
+        '200':
+          description: "Unsigned transaction (or `success: false` with build error in body)"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderBuildTxResponse'
+        '400':
+          description: Invalid body
+        '503':
+          description: ESCROW_CONTRACT not configured
+        '429':
+          description: Rate limit exceeded
   /api/v1/prices:
     get:
       tags: [prices]
@@ -1052,6 +1140,104 @@ components:
           type: integer
           format: int64
           description: Escrow order id to cancel
+    DcaOrdersResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            orders:
+              type: array
+              items:
+                $ref: '#/components/schemas/DcaOrderItem'
+        error:
+          type: string
+    DcaOrderItem:
+      type: object
+      properties:
+        order_id:
+          type: integer
+          format: int64
+        owner:
+          type: string
+        token_in:
+          type: string
+        token_out:
+          type: string
+        amount_in_initial:
+          type: string
+        amount_in_remaining:
+          type: string
+        chunk_amount:
+          type: string
+        interval_ledgers:
+          type: integer
+          format: int32
+        next_executable_ledger:
+          type: integer
+          format: int32
+        min_out_per_in_e7:
+          type: string
+          description: Per-chunk minimum output per 1e7 input units; `0` means market execution
+        expires_ledger:
+          type: integer
+          format: int32
+        status:
+          type: string
+          example: open
+        updated_ledger:
+          type: integer
+          format: int32
+        updated_at:
+          type: integer
+          description: Unix timestamp (seconds)
+    BuildCreateDcaRequest:
+      type: object
+      required:
+        - user
+        - token_in
+        - token_out
+        - amount_in
+        - chunk_amount
+        - interval_ledgers
+        - start_ledger
+        - min_out_per_in_e7
+        - expires_ledger
+      properties:
+        user:
+          type: string
+          description: Stellar G-address (DCA owner / signer)
+        token_in:
+          type: string
+          description: Input token contract id (C...)
+        token_out:
+          type: string
+          description: Output token contract id (C...)
+        amount_in:
+          type: string
+          description: Total input amount in token atomic units
+        chunk_amount:
+          type: string
+          description: Maximum input amount executed in each interval
+        interval_ledgers:
+          type: integer
+          format: int32
+          minimum: 1
+          description: Minimum ledger distance between executions
+        start_ledger:
+          type: integer
+          format: int32
+          description: First executable ledger; cannot be in the past
+        min_out_per_in_e7:
+          type: string
+          description: Per-chunk minimum output per 1e7 input units; use `0` for market execution
+          default: "0"
+        expires_ledger:
+          type: integer
+          format: int32
+          description: Must follow start_ledger and be within the contract's 30-day maximum lifetime
     OrderBuildTxResponse:
       type: object
       properties:

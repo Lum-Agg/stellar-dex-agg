@@ -1,0 +1,19 @@
+[Unit]
+Description=LumAgg Analytics Indexer (testnet order-escrow)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/stellar-dex-aggregator
+EnvironmentFile=/opt/stellar-dex-aggregator/deploy/.env.limit-testnet.local
+Environment=INDEXER_MODE=events
+Environment=INDEXER_ENVELOPE_FALLBACK=0
+Environment=INDEXER_POLL_SECS=15
+Environment=RUST_LOG=info
+ExecStart=/opt/stellar-dex-aggregator/target/release/analytics-indexer run
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

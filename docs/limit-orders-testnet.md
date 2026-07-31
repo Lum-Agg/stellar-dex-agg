@@ -49,6 +49,32 @@ set -a && source deploy/.env.limit-testnet.local && set +a
 
 Use **testnet** token contract ids and a user account that exists on testnet for builds.
 
+On the server, copy the generated env to
+`/opt/stellar-dex-aggregator/deploy/.env.limit-testnet.local`, then install and
+start the API and indexer units. The keeper starts in dry-run mode by default:
+
+```bash
+sudo install -m 644 deploy/lumagg-api-testnet.service /etc/systemd/system/
+sudo install -m 644 deploy/lumagg-indexer-testnet.service /etc/systemd/system/
+sudo install -m 644 deploy/lumagg-limit-keeper-testnet.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now lumagg-api-testnet lumagg-indexer-testnet
+sudo systemctl enable --now lumagg-limit-keeper-testnet
+```
+
+For live fills, place the funded keeper seed only on the server:
+
+```bash
+sudo install -d -m 700 /etc/lumagg
+sudo sh -c 'umask 077; printf "%s\n" \
+  "KEEPER_SECRET=S..." \
+  "KEEPER_DRY_RUN=0" \
+  > /etc/lumagg/limit-keeper-testnet.env'
+sudo systemctl restart lumagg-limit-keeper-testnet
+```
+
+Never add `KEEPER_SECRET` to the generated shared env or repository.
+
 ## Smoke checklist
 
 | # | Step | Expect |
@@ -79,8 +105,8 @@ price. Its API surface is `/api/v1/dca`, `/dca/build_create`, and
 |-------|--------|
 | Frontend env | `NEXT_PUBLIC_LIMIT_API_URL=https://api.lumagg.xyz/limit-testnet` |
 | Nginx | `api.lumagg.xyz/limit-testnet/` → `127.0.0.1:3200` |
-| systemd | `lumagg-api-testnet`, `lumagg-indexer-testnet` |
-| Escrow | `CAQUTWXDHMSZK62NRE6XA3PSBRYEQZNBEGEEK3T2XWQVYJ5TBXEXEUHY` |
+| systemd | `lumagg-api-testnet`, `lumagg-indexer-testnet`, `lumagg-limit-keeper-testnet` |
+| Escrow | Read from `deploy/.env.limit-testnet.local` after each deployment |
 
 Wallet must be on **Testnet** when signing create/cancel. Instant still uses `NEXT_PUBLIC_API_URL` (mainnet).
 

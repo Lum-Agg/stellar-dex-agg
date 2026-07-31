@@ -52,11 +52,21 @@ const { unsignedTxXdr } = await client.buildTx({
 | `getAccount()` | `GET /account` | Sequence number |
 | `getClassicAsset()` | `GET /classic_asset` | SAC → code/issuer |
 | `getLatestLedger()` | `GET /ledger/latest` | Latest ledger sequence |
+| `listOrders()` | `GET /orders` | Indexed Limit orders for a wallet |
+| `buildCreateOrder()` | `POST /orders/build_create` | Unsigned Limit creation XDR |
+| `buildCancelOrder()` | `POST /orders/build_cancel` | Unsigned Limit cancellation XDR |
+| `listDcaOrders()` | `GET /dca` | Indexed DCA orders for a wallet |
+| `buildCreateDca()` | `POST /dca/build_create` | Unsigned DCA creation XDR |
+| `buildCancelDca()` | `POST /dca/build_cancel` | Unsigned DCA cancellation XDR |
 | `submitTx()` | `POST /submit_tx` | Fast enqueue signed XDR |
 | `getTxStatus()` | `GET /tx_status` | One-shot status |
 | `waitForTx()` | polls `/tx_status` | Until SUCCESS / FAILED / timeout |
 | `getStats()` | `GET /stats` | On-chain indexer rollup; optional CSV |
 | `listSwaps()` / orders / prices | see OpenAPI | |
+
+Order build methods return unsigned XDR for the configured Order Escrow
+contract. For DCA, `minOutPerInE7` is optional and defaults to `"0"` (market
+execution). All token amounts and rate fields are integer strings.
 
 Partner rate limit: pass `apiKey` in constructor → `X-API-Key` header (60 req/s).
 

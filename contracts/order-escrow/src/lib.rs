@@ -480,41 +480,6 @@ impl OrderEscrowContract {
             (order.owner, refunded_amount),
         );
     }
-
-    /// Temporary auth probe for Task 1. Limit-order ABI follows in Task 2.
-    pub fn spike_swap_as_self(
-        env: Env,
-        aggregator: Address,
-        token_in: Address,
-        token_out: Address,
-        sub_routes: Vec<SubRoute>,
-        min_amount_out: i128,
-    ) -> i128 {
-        let escrow = env.current_contract_address();
-        let mut amount_in = 0i128;
-        for route in sub_routes.iter() {
-            amount_in += route.amount_in;
-        }
-
-        authorize_swap_as_current_contract(
-            &env,
-            &aggregator,
-            &escrow,
-            &token_in,
-            &token_out,
-            &sub_routes,
-            min_amount_out,
-            amount_in,
-        );
-
-        AggregatorContractClient::new(&env, &aggregator).swap(
-            &escrow,
-            &token_in,
-            &token_out,
-            &sub_routes,
-            &min_amount_out,
-        )
-    }
 }
 
 #[cfg(test)]
@@ -598,52 +563,6 @@ mod tests {
         ) -> i128 {
             OrderEscrowContractClient::new(&env, &escrow).fill(&order_id, &amount_in, &sub_routes, &min_amount_out)
         }
-    }
-
-    #[test]
-    fn spike_escrow_can_be_aggregator_user() {
-        let env = Env::new_with_config(EnvTestConfig {
-            capture_snapshot_at_drop: false,
-        });
-        env.mock_all_auths_allowing_non_root_auth();
-
-        let aggregator_id = env.register_contract(None, AggregatorContract);
-        let aggregator = aggregator_contract::AggregatorContractClient::new(&env, &aggregator_id);
-        aggregator.initialize(&gen_addr(&env));
-
-        let escrow_id = env.register_contract(None, OrderEscrowContract);
-        let escrow = OrderEscrowContractClient::new(&env, &escrow_id);
-        escrow.initialize(&gen_addr(&env), &aggregator_id);
-        let (token_in, token_in_sac) = create_token(&env);
-        let (token_out, token_out_sac) = create_token(&env);
-        token_in_sac.mint(&escrow_id, &5_000);
-
-        let pool_id = env.register_contract(None, aq_mock::AqPool);
-        aq_mock::AqPoolClient::new(&env, &pool_id).init(&token_in, &token_out);
-        token_out_sac.mint(&pool_id, &5_000);
-
-        let routes = vec![
-            &env,
-            SubRoute {
-                amount_in: 5_000,
-                steps: vec![
-                    &env,
-                    SwapStep {
-                        dex_id: pool_id,
-                        dex_type: DexType::Aquarius,
-                        token_in: token_in.clone(),
-                        token_out: token_out.clone(),
-                        in_idx: 0,
-                        out_idx: 1,
-                    },
-                ],
-            },
-        ];
-
-        let out = escrow.spike_swap_as_self(&aggregator_id, &token_in, &token_out, &routes, &5_000);
-        assert_eq!(out, 5_000);
-        assert_eq!(token::Client::new(&env, &token_in).balance(&escrow_id), 0);
-        assert_eq!(token::Client::new(&env, &token_out).balance(&escrow_id), 5_000);
     }
 
     #[test]

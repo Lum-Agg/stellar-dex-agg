@@ -20,6 +20,11 @@ scripts/.env.limit-testnet.local
 PROJECT_STATUS.md
 agent/
 deploy/
+!deploy/
+deploy/*
+!deploy/lumagg-api-testnet.service
+!deploy/lumagg-indexer-testnet.service
+!deploy/lumagg-limit-keeper-testnet.service
 !scripts/scf-quote-regression.sh
 .DS_Store
 broker/
