@@ -211,22 +211,18 @@ Manual oneshot: `systemctl start lumagg-quote-sim-probe.service`
 
 
 
-## 6. Evidence for grant review
+## 6. Operator checklist
 
-
-| Criterion                   | Artifact                                                            |
-| --------------------------- | ------------------------------------------------------------------- |
-| Mainnet vault id            | `contracts/vault/README.md` + deploy tx                             |
-| ≥10 DRY_RUN / simulated txs | `journalctl` excerpts                                               |
-| ≥1 on-chain round-trip      | tx hash in logs + [analytics indexer](../docs/analytics-indexer.md) |
-| Operator doc                | this file                                                           |
-
-
-
+| Item | Where to verify |
+| --- | --- |
+| Mainnet vault id | `contracts/vault/README.md` + deploy tx |
+| Dry-run / simulated txs | `journalctl` for the arb service |
+| On-chain round-trip | tx hash in logs + [analytics indexer](./analytics-indexer.md) |
+| This runbook | keep env and risk limits current |
 
 ## 7. Related docs
 
 - [integrator-guide.md](./integrator-guide.md) — quote API for integrators
 - [analytics-indexer.md](./analytics-indexer.md) — on-chain stats pipeline
-- [scf-benchmark-results.md](./scf-benchmark-results.md) — differentiation vs Soroswap
+- [round-trip-arb.md](./round-trip-arb.md) — vault + `round_trip_swap` overview
 

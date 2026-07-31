@@ -5,16 +5,16 @@
 - [Welcome](README.md)
 - [Architecture](pool-state-architecture.md)
 
+## Integrate
+
+- [Integrator Guide](integrator-guide.md)
+- [API Reference](api-reference.md)
+
 ## Deploy
 
 - [LumAgg Swap API](lumagg-swap-api.md)
 - [Production Aggregator](aggregator-deployment.md)
 - [Arbitrage](arbitrage-deployment.md)
-
-## Integrate
-
-- [Integrator Guide](integrator-guide.md)
-- [API Reference](api-reference.md)
 
 ## On-chain Products
 

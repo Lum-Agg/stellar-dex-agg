@@ -3,8 +3,8 @@
 本指南面向希望接入 LumAgg 公共 REST API 的钱包、DApp 和交易机器人。
 
 **线上 API：** https://api.lumagg.xyz  
-**OpenAPI：** [openapi.yaml](./openapi.yaml) · **在线文档：** https://lumagg.xyz/docs  
-**基准测试：** [scf-benchmark-results.md](./scf-benchmark-results.md) · [scf-venue-comparison.md](./scf-venue-comparison.md)
+**OpenAPI：** [openapi.yaml](./openapi.yaml) · **文档：** https://lumagg.gitbook.io/  
+**API 参考：** [api-reference.md](./api-reference.md)
 
 ## 1. 获取报价 → 构建交易 → 签名
 
@@ -28,39 +28,40 @@ curl -sG "$API/api/v1/quote" \
   --data-urlencode "amount_in=10000000" \
   --data-urlencode "prefer_soroban=1"
 
-# 3）构建未签名 XDR
-# 将报价中的 sub_routes 放入 POST /api/v1/build_tx 请求体，详情见 OpenAPI。
+# 3）构建未签名 XDR — 将报价中的 sub_routes 放入 POST /api/v1/build_tx
+curl -sX POST "$API/api/v1/build_tx" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "user": "G你的已激活主网地址",
+    "token_in": "'"$XLM"'",
+    "token_out": "'"$USDC"'",
+    "amount_in": "10000000",
+    "slippage": 0.5,
+    "sub_routes": []
+  }'
 ```
+
+将 `sub_routes` 替换为 `/quote` 返回的数组。完整 schema 见 [OpenAPI](./openapi.yaml)。
 
 完整流程：
 
-**`GET /quote`** → 将 `sub_routes` 传给 **`POST /build_tx`** → 钱包签署 XDR → 通过 **`POST /api/v1/submit_tx`**（由 LumAgg 代理自有 Soroban RPC）或任意同网络 Soroban RPC 提交。
+**`GET /quote`** → 将 `sub_routes` 传给 **`POST /build_tx`** → 钱包签署 XDR → 通过 **`POST /api/v1/submit_tx`**（由 LumAgg 代理 Soroban RPC）或任意同网络 Soroban RPC 提交。
 
-### 外部集成者一键测试（推荐）
+### 一键冒烟测试
 
 先克隆仓库并进入项目目录，然后执行：
 
 ```bash
 chmod +x scripts/integrator-smoke.sh
 USER_G=G你的已激活主网地址 ./scripts/integrator-smoke.sh
+
+# 可选：将 JSON 输出保存备查
+OUT=./tmp/smoke USER_G=G... ./scripts/integrator-smoke.sh
 ```
 
 `USER_G` 必须是一个已经存在于 Stellar 主网、拥有 sequence number 的 G 地址；账户中有少量 XLM 即可。脚本只会构建**未签名交易**，不会要求私钥，也不会提交交易。成功时会输出 `unsigned_tx_xdr` 的前缀。
 
 换入经典资产 SAC（如 USDC/EURC）时，账户需**已有**对应 trustline，否则 simulate 会失败。请先在 Freighter 等钱包中添加 trustline（约 0.5 XLM 准备金）。可通过 `/api/v1/balance` 与 `/api/v1/balances` 返回的 `has_trustline` 字段检测（与余额查询共用 SAC simulate，不额外请求 Horizon）。
-
-如需保存测试结果作为 grant 验收证据：
-
-```bash
-OUT=./evidence/pilot-friend USER_G=G... ./scripts/integrator-smoke.sh
-```
-
-请将以下内容反馈给 LumAgg 团队：
-
-- 测试是否成功；
-- 使用的操作系统和大致环境；
-- 文档中是否有不清楚或缺失的步骤；
-- `evidence/pilot-friend` 目录中的输出（请勿发送私钥或助记词）。
 
 也可以使用 SDK 示例：
 
@@ -99,7 +100,7 @@ Soroswap API 可设置 `protocols: ["soroswap","phoenix","aqua"]`，即省略 `"
 
 请求超过限制时返回 HTTP `429`。服务端配置了合作伙伴 Key 后，无效的 `X-API-Key` 会返回 `401`。
 
-**合作伙伴 Key 申请方式：** 通过 GitHub Issue 或 grant 联系方式联系 LumAgg 团队。服务端使用以下环境变量配置 Key：
+**合作伙伴 Key 申请方式：** 通过 [GitHub Issue](https://github.com/Lum-Agg/stellar-dex-agg/issues) 或联系 LumAgg 团队。服务端使用以下环境变量配置 Key：
 
 ```bash
 LUMAGG_PARTNER_API_KEYS=key_one,key_two
@@ -145,16 +146,16 @@ https://api.lumagg.xyz/logos/
 - **Classic：** 当报价仅使用 SDEX 时，返回 `execution: "classic"`，交易使用 `PathPaymentStrictSend`。
 - **不支持混合执行：** Classic 和 Soroban 路径不能合并到同一笔 Stellar 交易中。
 
-## 6. 差异化能力证据
+## 6. 复现报价基准测试
 
-在本地重新运行报价基准测试：
+当你想对比路由质量（例如仅 Soroban vs 多 venue）时再跑这些脚本；日常集成不需要。
 
 ```bash
 ./scripts/scf-benchmark.sh
 LUMAGG_PREFER_SOROBAN=1 SOROSWAP_API_KEY=sk_... ./scripts/scf-benchmark.sh
 ```
 
-关于 LumAgg 与 Stellar Broker 的流动性源覆盖矩阵和拆单路由说明，请参阅 [scf-venue-comparison.md](./scf-venue-comparison.md)。
+Venue 覆盖说明：[Performance / venue comparison](./scf-venue-comparison.md)。生产集成若需要仅 Soroban 范围，一般在 `/quote` 上设 `prefer_soroban=1` 即可。
 
 ## 7. npm SDK
 

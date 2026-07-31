@@ -1,39 +1,30 @@
-# LumAgg Documentation
+# LumAgg
 
-LumAgg is a liquidity aggregator for Stellar. It discovers and quotes routes
-across Soroban DEXes, supports multi-hop and split routing, and can build an
-unsigned transaction for atomic execution through the LumAgg Aggregator
-contract.
+LumAgg is a liquidity aggregator for Stellar. It quotes routes across Soroban
+DEXes (multi-hop and split when useful) and builds unsigned transactions for
+atomic execution through the LumAgg Aggregator contract.
 
-## Products
+**Production API:** `https://api.lumagg.xyz`
 
-| Product | Intended use | Deployment |
+## Integrators start here
+
+1. [Integrator Guide](integrator-guide.md) — `GET /quote` → `POST /build_tx` → sign → submit
+2. [API Reference](api-reference.md) and [OpenAPI](openapi.yaml)
+3. npm SDK: [`@lumagg/sdk`](https://www.npmjs.com/package/@lumagg/sdk)
+
+## Self-host / operators
+
+| Product | When to use | Guide |
 | --- | --- | --- |
-| LumAgg Swap API | Local development, integration testing, and a private quote service | One native binary with API and market data in one process |
-| Production Aggregator | Public or high-throughput quote infrastructure | Separate market-data worker, Redis, and horizontally scalable API servers |
-| LumAgg Arbitrage | Operator-run atomic round-trip arbitrage | Separate native scanner connected to a quote service and Soroban RPC |
+| LumAgg Swap API | Local or private quote service in one process | [LumAgg Swap API](lumagg-swap-api.md) |
+| Production Aggregator | Shared market state, API replicas, isolation | [Production Aggregator](aggregator-deployment.md) |
+| LumAgg Arbitrage | Operator-run atomic round-trip arb | [Arbitrage Deployment](arbitrage-deployment.md) |
+| Smart contracts | Aggregator + optional vault / escrow | [Contracts](contracts-deployment.md) |
 
-Docker images are useful for evaluation, but native binaries and systemd are
-the recommended production deployment model.
+## Supported liquidity
 
-## Start Here
+Soroswap, Aquarius (including CLMM), Phoenix, Sushi V3, and Comet. Classic
+Stellar DEX routing is available for comparison and Classic-only execution; it
+is not combined with Soroban legs in one transaction.
 
-- Use [LumAgg Swap API](lumagg-swap-api.md) for the shortest path to a
-  self-hosted quote API.
-- Use [Production Aggregator Deployment](aggregator-deployment.md) when you
-  need shared market state, API replicas, or failure isolation.
-- Use [Arbitrage Deployment](arbitrage-deployment.md) to operate the scanner
-  independently from the Aggregator services.
-- Use [Smart Contract Deployment](contracts-deployment.md) to deploy and
-  maintain the Aggregator and optional Arbitrage Vault.
-- Read the [Integrator Guide](integrator-guide.md) and
-  [OpenAPI specification](openapi.yaml) to integrate `/quote` and `/build_tx`.
-
-## Supported Liquidity
-
-LumAgg currently routes across Soroswap, Aquarius pools including CLMM,
-Phoenix, Sushi V3, and Comet. Classic Stellar DEX routing is available as an
-optional comparison, not as a Soroban execution leg.
-
-The source code and issue tracker are available in the
-[LumAgg monorepo](https://github.com/Lum-Agg/stellar-dex-agg).
+Source and issues: [LumAgg monorepo](https://github.com/Lum-Agg/stellar-dex-agg).

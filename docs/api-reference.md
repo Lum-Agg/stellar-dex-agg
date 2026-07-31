@@ -41,6 +41,10 @@ the user's wallet signs and submits it. See the [Integrator Guide](integrator-gu
 for request examples, amount units, slippage, maximum hops, maximum splits,
 errors, and partner API keys.
 
+Interactive OpenAPI browsing is also available in the published docs:
+https://lumagg.gitbook.io/lumagg/integrate/api-reference
+
+
 ## Limit And DCA
 
 Limit and DCA endpoints prepare unsigned transactions against the configured
