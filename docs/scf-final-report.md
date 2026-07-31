@@ -22,7 +22,7 @@ LumAgg delivers a production Stellar DEX aggregator with split routing across So
 | D4 | Analytics indexer v0 | [analytics-indexer.md](./analytics-indexer.md), [sample-indexer-export.json](./sample-indexer-export.json) | ✅ |
 | D5 | npm SDK | [packages/sdk](../packages/sdk), npm: [`@lumagg/sdk`](https://www.npmjs.com/package/@lumagg/sdk) `0.2.0` | ✅ |
 | D6 | Vault + arb mainnet | [arb-operator.md](./arb-operator.md), [arb-evidence-snapshot.md](./arb-evidence-snapshot.md) | ✅ |
-| D7 | ≥2 integrator pilots | [integrator-pilots.md](./integrator-pilots.md) | ☐ |
+| D7 | ≥2 integrator pilots | [integrator-pilots.md](./integrator-pilots.md) | ✅ |
 | D8 | Public stats API | https://lumagg.xyz/stats, `/api/v1/stats` | ✅ · ☐ 30d data |
 | D9 | Third-party audit | [audit-scope.md](./audit-scope.md), report PDF | ☐ |
 | D10 | Close-out kit | [maintenance-plan.md](./maintenance-plan.md), [docker-compose.selfhost.yml](../docker-compose.selfhost.yml), demo video | partial |

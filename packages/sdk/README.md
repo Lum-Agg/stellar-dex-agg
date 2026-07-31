@@ -74,7 +74,7 @@ Partner rate limit: pass `apiKey` in constructor → `X-API-Key` header (60 req/
 
 ```bash
 npx tsx packages/sdk/examples/basic-usage.ts
-npx tsx packages/sdk/examples/quote-build.ts
+USER_G=G... npx tsx packages/sdk/examples/quote-build.ts
 npx tsx packages/sdk/examples/stats.ts
 
 # Freighter browser demo (sign + optional submit):

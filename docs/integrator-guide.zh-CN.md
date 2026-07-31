@@ -170,7 +170,7 @@ Venue 覆盖说明：[Performance / venue comparison](./scf-venue-comparison.md)
 | `listTokens` / `getStats` / `listSwaps` / orders / prices | 见 OpenAPI |
 
 ```bash
-npx tsx packages/sdk/examples/quote-build.ts
+USER_G=G... npx tsx packages/sdk/examples/quote-build.ts
 npx tsx packages/sdk/examples/basic-usage.ts
 # Freighter 端到端：
 cd packages/sdk/examples/browser-swap && npm run dev
