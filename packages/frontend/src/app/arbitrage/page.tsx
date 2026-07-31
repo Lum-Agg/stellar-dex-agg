@@ -6,9 +6,12 @@ import { NATIVE_CONTRACT } from '@/lib/tokenDisplay';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
 
+const XLM_SAC = NATIVE_CONTRACT;
+const USDC_SAC = 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75';
+
 const KNOWN_TOKENS: Record<string, string> = {
-  [NATIVE_CONTRACT]: 'XLM',
-  CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75: 'USDC',
+  [XLM_SAC]: 'XLM',
+  [USDC_SAC]: 'USDC',
   CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV: 'EURC',
   CAUIKL3IYGMERDRUN6YSCLWVAKIFG5Q4YJHUKM4S4NJZQIA3BAS6OJPK: 'AQUA',
 };
@@ -103,6 +106,27 @@ function formatWhen(ts: number): string {
   });
 }
 
+function toRawBigInt(raw: string | number): bigint | null {
+  try {
+    if (typeof raw === 'number') {
+      if (!Number.isFinite(raw)) return null;
+      return BigInt(Math.trunc(raw));
+    }
+    if (!/^-?\d+$/.test(raw)) return null;
+    return BigInt(raw);
+  } catch {
+    return null;
+  }
+}
+
+function formatSurplusSigned(raw: string | number | bigint, symbol: string): string {
+  const asString = typeof raw === 'bigint' ? raw.toString() : String(raw);
+  const formatted = formatAmount(asString);
+  if (formatted === '—') return '—';
+  const neg = asString.startsWith('-');
+  return `${neg ? '' : '+'}${formatted} ${symbol}`;
+}
+
 export default function ArbitragePage() {
   const [stats, setStats] = useState<StatsPayload | null>(null);
   const [trips, setTrips] = useState<RoundTripItem[]>([]);
@@ -148,6 +172,28 @@ export default function ArbitragePage() {
     let weekUsd = 0;
     let weekUsdCovered = 0;
 
+    let xlmSurplus = BigInt(0);
+    let usdcSurplus = BigInt(0);
+    let xlmTx = 0;
+    let usdcTx = 0;
+    let daySpan = 0;
+
+    for (const d of stats.daily) {
+      const hasRoundTrip = (d.round_trip_count ?? 0) > 0 || (d.round_trip_by_token?.length ?? 0) > 0;
+      if (hasRoundTrip) daySpan += 1;
+      for (const row of d.round_trip_by_token ?? []) {
+        const surplus = toRawBigInt(row.gross_surplus);
+        if (surplus == null) continue;
+        if (row.base_token === XLM_SAC) {
+          xlmSurplus += surplus;
+          xlmTx += row.tx_count;
+        } else if (row.base_token === USDC_SAC) {
+          usdcSurplus += surplus;
+          usdcTx += row.tx_count;
+        }
+      }
+    }
+
     for (const d of days) {
       const count = d.round_trip_count ?? 0;
       weekCount += count;
@@ -169,6 +215,11 @@ export default function ArbitragePage() {
       todayUsd,
       weekCount,
       weekUsd: weekUsdCovered > 0 ? weekUsd : null,
+      xlmSurplus,
+      usdcSurplus,
+      xlmTx,
+      usdcTx,
+      daySpan,
     };
   }, [stats]);
 
@@ -212,13 +263,23 @@ export default function ArbitragePage() {
       </div>
 
       {loading && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div
-              key={i}
-              className="h-[88px] rounded-xl border border-[var(--border)] bg-[var(--surface)]/60 animate-pulse"
-            />
-          ))}
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div
+                key={i}
+                className="h-[88px] rounded-xl border border-[var(--border)] bg-[var(--surface)]/60 animate-pulse"
+              />
+            ))}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {Array.from({ length: 2 }).map((_, i) => (
+              <div
+                key={i}
+                className="h-[88px] rounded-xl border border-[var(--border)] bg-[var(--surface)]/60 animate-pulse"
+              />
+            ))}
+          </div>
         </div>
       )}
 
@@ -229,32 +290,48 @@ export default function ArbitragePage() {
       )}
 
       {summary && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <KpiCard
-            label="Today"
-            value={summary.todayCount.toLocaleString()}
-            hint="successful round trips (UTC)"
-            accent
-            delay={0}
-          />
-          <KpiCard
-            label="Today surplus"
-            value={summary.todayUsd != null ? formatUsd(summary.todayUsd) : '—'}
-            hint="gross, USD-priced"
-            delay={60}
-          />
-          <KpiCard
-            label="Last 7 days"
-            value={summary.weekCount.toLocaleString()}
-            hint="successful round trips"
-            delay={120}
-          />
-          <KpiCard
-            label="7d surplus"
-            value={summary.weekUsd != null ? formatUsd(summary.weekUsd) : '—'}
-            hint="gross, USD-priced"
-            delay={180}
-          />
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <KpiCard
+              label="Today"
+              value={summary.todayCount.toLocaleString()}
+              hint="successful round trips (UTC)"
+              accent
+              delay={0}
+            />
+            <KpiCard
+              label="Today surplus"
+              value={summary.todayUsd != null ? formatUsd(summary.todayUsd) : '—'}
+              hint="gross, USD-priced"
+              delay={60}
+            />
+            <KpiCard
+              label="Last 7 days"
+              value={summary.weekCount.toLocaleString()}
+              hint="successful round trips"
+              delay={120}
+            />
+            <KpiCard
+              label="7d surplus"
+              value={summary.weekUsd != null ? formatUsd(summary.weekUsd) : '—'}
+              hint="gross, USD-priced"
+              delay={180}
+            />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <KpiCard
+              label="All-time XLM surplus"
+              value={formatSurplusSigned(summary.xlmSurplus, 'XLM')}
+              hint={`${summary.xlmTx.toLocaleString()} round trips · ${summary.daySpan} indexed days · gross`}
+              delay={220}
+            />
+            <KpiCard
+              label="All-time USDC surplus"
+              value={formatSurplusSigned(summary.usdcSurplus, 'USDC')}
+              hint={`${summary.usdcTx.toLocaleString()} round trips · ${summary.daySpan} indexed days · gross`}
+              delay={260}
+            />
+          </div>
         </div>
       )}
 
