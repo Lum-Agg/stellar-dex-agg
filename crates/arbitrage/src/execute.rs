@@ -46,7 +46,8 @@ async fn quote_for_execute<'a>(ctx: &ArbContext, opp: &'a ArbOpportunity) -> Opt
     if opp.quote.amount_in < ctx.config.min_amount_in || opp.quote.amount_in > max_in {
         return None;
     }
-    if opp.quote.profit() < ctx.config.min_profit {
+    let min_profit = ctx.config.min_profit_for(&opp.quote.base.canonical());
+    if opp.quote.profit() < min_profit {
         return None;
     }
     Some(&opp.quote)
@@ -180,7 +181,7 @@ pub async fn prepare_opportunity_tx(
                         );
                         tried_probe_fallback = true;
                         match quote_round_trip(ctx, &quote.base, &quote.bridge, ctx.config.min_amount_in).await {
-                            Ok(probe) if probe.profit() >= ctx.config.min_profit => {
+                            Ok(probe) if probe.profit() >= ctx.config.min_profit_for(&quote.base.canonical()) => {
                                 quote = probe;
                                 continue;
                             }
@@ -258,10 +259,13 @@ pub async fn prepare_opportunity_tx(
 
     if simulated {
         let sim_profit = simulated_amount_out.saturating_sub(quote.amount_in);
-        // Gas covered by estimated_fee; ARB_MIN_PROFIT is a post-fee race/slippage
-        // buffer.
-        let net_profit = sim_profit.saturating_sub(estimated_fee_stroops);
-        if net_profit < ctx.config.min_profit {
+        let base = quote.base.canonical();
+        let fee_base = ctx.config.fee_in_base(estimated_fee_stroops, &base);
+        let min_profit = ctx.config.min_profit_for(&base);
+        // Gas covered by fee_base (XLM fee converted when base is USDC);
+        // ARB_MIN_PROFIT_* is a post-fee race/slippage buffer in base units.
+        let net_profit = sim_profit.saturating_sub(fee_base);
+        if net_profit < min_profit {
             warn!(
                 route = %quote.route_label(),
                 caller = %caller_public_key,
@@ -270,8 +274,9 @@ pub async fn prepare_opportunity_tx(
                 simulated_amount_out,
                 simulated_profit = sim_profit,
                 estimated_fee_stroops,
+                fee_in_base = fee_base,
                 net_profit,
-                min_profit = ctx.config.min_profit,
+                min_profit,
                 "simulated net profit below min_profit after fees — discard"
             );
             stats
@@ -286,7 +291,10 @@ pub async fn prepare_opportunity_tx(
 
     let profit_bps = crate::scanner::compute_profit_bps(quote.amount_in, simulated_amount_out);
     let simulated_profit = simulated_amount_out.saturating_sub(quote.amount_in);
-    let net_profit = simulated_profit.saturating_sub(estimated_fee_stroops);
+    let base = quote.base.canonical();
+    let fee_base = ctx.config.fee_in_base(estimated_fee_stroops, &base);
+    let min_profit = ctx.config.min_profit_for(&base);
+    let net_profit = simulated_profit.saturating_sub(fee_base);
     let min_amount_out = min_amount_out_break_even(quote.amount_in);
 
     let tx_kind = if ctx.config.vault_contract.is_some() {
@@ -303,10 +311,11 @@ pub async fn prepare_opportunity_tx(
         simulated_amount_out,
         simulated_profit,
         estimated_fee_stroops,
+        fee_in_base = fee_base,
         net_profit,
         profit_bps,
         simulated,
-        min_profit = ctx.config.min_profit,
+        min_profit,
         min_amount_out,
         leg_out_splits = quote.leg_out.route.sub_orders.len(),
         leg_back_splits = quote.leg_back.route.sub_orders.len(),

@@ -25,6 +25,7 @@ deploy/*
 !deploy/lumagg-api-testnet.service
 !deploy/lumagg-indexer-testnet.service
 !deploy/lumagg-limit-keeper-testnet.service
+!deploy/lumagg-worker-testnet.service
 !scripts/scf-quote-regression.sh
 .DS_Store
 broker/

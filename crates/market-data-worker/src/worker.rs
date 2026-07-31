@@ -202,6 +202,30 @@ async fn collect_sources_from_discovery(adapters: &[Arc<dyn DexAdapter>]) -> Vec
     futures::future::join_all(tasks).await.into_iter().flatten().collect()
 }
 
+fn enabled_dex_sources() -> Option<std::collections::HashSet<String>> {
+    std::env::var("ENABLED_DEX_SOURCES").ok().map(|value| {
+        value
+            .split(',')
+            .map(str::trim)
+            .filter(|source| !source.is_empty())
+            .map(str::to_ascii_lowercase)
+            .collect()
+    })
+}
+
+fn filter_enabled_adapters(
+    adapters: Vec<Arc<dyn DexAdapter>>,
+    enabled: Option<&std::collections::HashSet<String>>,
+) -> Vec<Arc<dyn DexAdapter>> {
+    match enabled {
+        Some(enabled) => adapters
+            .into_iter()
+            .filter(|adapter| enabled.contains(adapter.id()))
+            .collect(),
+        None => adapters,
+    }
+}
+
 fn build_topology_snapshot(
     sources: Vec<SourceSnapshot>,
     clmm_pool_refs: Vec<market_snapshot::ClmmPoolRefSnapshot>,
@@ -606,15 +630,21 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
     let comet = Arc::new(CometAdapter::new(rpc.clone()));
     let classic = Arc::new(ClassicDexAdapter::new(None));
     let aquarius_clmm = Arc::new(AquariusClmmAdapter::new(rpc.clone()));
-    let adapters: Vec<Arc<dyn DexAdapter>> = vec![
-        soroswap.clone(),
-        aquarius.clone(),
-        phoenix.clone(),
-        sushi.clone(),
-        comet.clone(),
-        classic.clone(),
-        aquarius_clmm.clone(),
-    ];
+    let adapters: Vec<Arc<dyn DexAdapter>> = filter_enabled_adapters(
+        vec![
+            soroswap.clone(),
+            aquarius.clone(),
+            phoenix.clone(),
+            sushi.clone(),
+            comet.clone(),
+            classic.clone(),
+            aquarius_clmm.clone(),
+        ],
+        enabled_dex_sources().as_ref(),
+    );
+    if adapters.is_empty() {
+        return Err(anyhow::anyhow!("ENABLED_DEX_SOURCES did not match any adapter"));
+    }
 
     let mut discovery_interval = tokio::time::interval(std::time::Duration::from_secs(config.discovery_interval_secs));
     discovery_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);

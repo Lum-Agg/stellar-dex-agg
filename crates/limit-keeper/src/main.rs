@@ -9,7 +9,7 @@ use {
         config::KeeperConfig,
         events::parse_escrow_event,
         execute::{execute_fill, fill_amount, fill_min_amount_out},
-        ledger::{load_cursor, save_cursor},
+        ledger::{load_checkpoint, save_checkpoint, KeeperCheckpoint},
         quote::{is_fillable_for, QuoteApiClient},
     },
     tracing::{info, warn},
@@ -30,12 +30,18 @@ async fn main() -> Result<()> {
         .await
         .context("get latest ledger at keeper startup")?
         .sequence;
-    let mut cursor =
-        load_cursor(&config.cursor_path)?.unwrap_or_else(|| latest.saturating_sub(MAX_LEDGER_SCAN_PER_REQUEST).max(1));
-    let mut book = OpenOrderBook::default();
+    let (mut cursor, mut book) = load_checkpoint(&config.cursor_path)?
+        .map(KeeperCheckpoint::into_parts)
+        .unwrap_or_else(|| {
+            (
+                latest.saturating_sub(MAX_LEDGER_SCAN_PER_REQUEST).max(1),
+                OpenOrderBook::default(),
+            )
+        });
     info!(
         dry_run = config.dry_run,
         cursor,
+        open_orders = book.iter().count(),
         escrow = %config.escrow_contract,
         aggregator = %config.aggregator_contract,
         "limit keeper started"
@@ -70,8 +76,8 @@ async fn main() -> Result<()> {
                     Err(error) => warn!(%error, event_id = %event.id, "skipping malformed escrow event"),
                 }
             }
-            save_cursor(&config.cursor_path, end)?;
             cursor = end;
+            save_checkpoint(&config.cursor_path, &KeeperCheckpoint::capture(cursor, &book))?;
             info!(cursor, open_orders = book.iter().count(), "processed escrow events");
         }
 

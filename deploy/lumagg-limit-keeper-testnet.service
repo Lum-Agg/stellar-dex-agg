@@ -1,7 +1,7 @@
 [Unit]
 Description=LumAgg Limit and DCA Keeper (testnet)
-After=network.target lumagg-api-testnet.service
-Wants=lumagg-api-testnet.service
+After=network.target lumagg-api-testnet.service lumagg-worker-testnet.service
+Wants=lumagg-api-testnet.service lumagg-worker-testnet.service
 
 [Service]
 Type=simple
@@ -10,7 +10,7 @@ WorkingDirectory=/opt/stellar-dex-aggregator
 EnvironmentFile=/opt/stellar-dex-aggregator/deploy/.env.limit-testnet.local
 EnvironmentFile=-/etc/lumagg/limit-keeper-testnet.env
 Environment=RUST_LOG=info
-ExecStart=/opt/stellar-dex-aggregator/target/release/limit-keeper
+ExecStart=/opt/stellar-dex-aggregator/target/release/limit-keeper-testnet
 Restart=on-failure
 RestartSec=10
 

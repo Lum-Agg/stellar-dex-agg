@@ -18,12 +18,18 @@ namespaces and are tracked as `(order_kind, order_id)` to avoid collisions.
 | `AGGREGATOR_CONTRACT` | yes | — | LumAgg aggregator contract ID (`C…`) |
 | `QUOTE_API_URL` | yes | — | LumAgg quote API base URL (e.g. `https://api.lumagg.xyz`) |
 | `KEEPER_POLL_SECS` | no | `10` | Seconds between poll loops |
-| `KEEPER_CURSOR_PATH` | no | `keeper.cursor` | File storing last processed ledger |
+| `KEEPER_CURSOR_PATH` | no | `keeper.cursor` | Atomic checkpoint containing the ledger cursor and open orders |
 | `KEEPER_DRY_RUN` | no | off | Set to `1` to quote and log only; never sign or submit |
 | `KEEPER_MAX_FILL` | no | — | Optional cap per fill (stroops) |
 | `KEEPER_RECLAIM` | no | off | **MVP skip:** when `1`, expired orders are logged but reclaim txs are not submitted |
 
 \* `KEEPER_SECRET` is optional when `KEEPER_DRY_RUN=1` (dry-run never signs).
+
+The checkpoint format is JSON and includes both the cursor and every open
+order. A legacy cursor-only file is rejected instead of silently starting with
+an empty order book. Remove/rebuild the old checkpoint only after confirming
+there are no open orders, or replay escrow events from before the oldest open
+order.
 
 Deploy escrow + aggregator on **testnet**: [docs/limit-orders-testnet.md](../../docs/limit-orders-testnet.md)
 (`scripts/deploy-limit-testnet.sh`). Do not use those scripts on mainnet.
@@ -45,9 +51,10 @@ export KEEPER_POLL_SECS=15
 cargo run -p limit-keeper
 ```
 
-With dry-run enabled, the keeper polls escrow events, maintains an in-memory open
-order book, fetches quotes for executable Limit and due DCA candidates, and logs lines like
-`dry-run: would fill escrow order` instead of calling `execute_fill`.
+With dry-run enabled, the keeper polls escrow events, maintains an open order
+book backed by the atomic checkpoint, fetches quotes for executable Limit and
+due DCA candidates, and logs lines like `dry-run: would fill escrow order`
+instead of calling `execute_fill`.
 
 ## Live operation
 

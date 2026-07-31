@@ -72,7 +72,7 @@ pub async fn evaluate_bridge_pair(
 
     let profit = quote.profit();
     let profit_bps = compute_profit_bps(quote.amount_in, quote.amount_out);
-    if profit < ctx.config.min_profit {
+    if profit < ctx.config.min_profit_for(&base.canonical()) {
         return Ok(None);
     }
 

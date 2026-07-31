@@ -59,16 +59,17 @@ the user's rate across partial fills.
 
 ## Aggregator authorization decision
 
-The escrow contract is passed as `user` to `aggregator.swap`. Before the call,
-it uses `env.authorize_as_current_contract` to authorize the exact nested call
-tree:
+The escrow contract is passed as `user` to `aggregator.swap`. A direct contract
+call made by the current contract is already authorized by Soroban, so
+`env.authorize_as_current_contract` must authorize only the deeper call made by
+the aggregator:
 
-1. `aggregator.swap(user = escrow, ...)`
-2. the aggregator's `token_in.transfer(escrow, aggregator, total_input)`
+`token_in.transfer(escrow, aggregator, total_input)`
 
-The authorization spike executes a 1:1 mock Aquarius route and verifies that
-the aggregator can pull input from escrow and return output to it. Therefore,
-the aggregator does not need a special `swap_from` entrypoint or other change.
+Do not wrap this transfer under an `aggregator.swap` authorization entry. That
+shape is rejected on-chain because `swap` is already in the invocation stack.
+The fill tests clear all external auth mocks before execution so this contract
+authorization cannot be hidden by permissive test helpers.
 
 ## Testnet deploy
 

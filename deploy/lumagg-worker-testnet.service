@@ -1,5 +1,5 @@
 [Unit]
-Description=LumAgg DEX Aggregator API (testnet Limit orders)
+Description=LumAgg Market Data Worker (testnet Soroswap)
 After=network.target redis-server.service
 Requires=redis-server.service
 
@@ -9,12 +9,8 @@ User=root
 WorkingDirectory=/opt/stellar-dex-aggregator
 EnvironmentFile=/opt/stellar-dex-aggregator/deploy/.env.limit-testnet.local
 EnvironmentFile=/etc/lumagg/testnet-redis.env
-Environment=LISTEN_ADDR=0.0.0.0:3200
-Environment=HORIZON_URL=https://horizon-testnet.stellar.org
 Environment=RUST_LOG=info
-Environment=QUOTE_RPC_HYDRATE_ENABLED=false
-Environment=MAX_SPLITS=1
-ExecStart=/opt/stellar-dex-aggregator/target/release/api-server-testnet
+ExecStart=/opt/stellar-dex-aggregator/target/release/market-data-worker-testnet
 Restart=on-failure
 RestartSec=5
 

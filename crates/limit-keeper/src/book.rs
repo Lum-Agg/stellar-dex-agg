@@ -1,12 +1,15 @@
-use std::collections::BTreeMap;
+use {
+    serde::{Deserialize, Serialize},
+    std::collections::BTreeMap,
+};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
 pub enum OrderKind {
     Limit,
     Dca,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct OpenOrder {
     pub kind: OrderKind,
     pub order_id: u64,
@@ -45,6 +48,14 @@ pub struct OpenOrderBook {
 }
 
 impl OpenOrderBook {
+    pub fn from_orders(orders: impl IntoIterator<Item = OpenOrder>) -> Self {
+        let mut book = Self::default();
+        for order in orders {
+            book.apply_created(order);
+        }
+        book
+    }
+
     pub fn get(&self, kind: OrderKind, order_id: u64) -> Option<&OpenOrder> {
         self.orders.get(&(kind, order_id))
     }

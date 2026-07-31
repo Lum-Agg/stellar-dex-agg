@@ -54,11 +54,31 @@ On the server, copy the generated env to
 start the API and indexer units. The keeper starts in dry-run mode by default:
 
 ```bash
+RESET_TESTNET_DB=1 ./deploy_limit_testnet_server.sh
+```
+
+The deployment uses separate `*-testnet` binary names, a Soroswap testnet
+worker, and Redis DB 15. It does not replace the running mainnet API, worker, or
+indexer binaries. Before the first deployment, create the server-only Redis
+configuration:
+
+```bash
+sudo install -d -m 700 /etc/lumagg
+sudo sh -c 'umask 077; printf "%s\n" \
+  "SNAPSHOT_REDIS_URL=redis://default:PASSWORD@127.0.0.1:6379/15" \
+  > /etc/lumagg/testnet-redis.env'
+```
+
+`RESET_TESTNET_DB=1` backs up the old testnet database and keeper cursor before
+starting from the newly deployed Escrow. For manual installation:
+
+```bash
 sudo install -m 644 deploy/lumagg-api-testnet.service /etc/systemd/system/
 sudo install -m 644 deploy/lumagg-indexer-testnet.service /etc/systemd/system/
 sudo install -m 644 deploy/lumagg-limit-keeper-testnet.service /etc/systemd/system/
+sudo install -m 644 deploy/lumagg-worker-testnet.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now lumagg-api-testnet lumagg-indexer-testnet
+sudo systemctl enable --now lumagg-worker-testnet lumagg-api-testnet lumagg-indexer-testnet
 sudo systemctl enable --now lumagg-limit-keeper-testnet
 ```
 
@@ -87,7 +107,18 @@ Never add `KEEPER_SECRET` to the generated shared env or repository.
 | 6 | Optional: `POST .../build_cancel` or keeper dry-run | Cancel XDR / dry-run fill log |
 | 7 | Create DCA and run keeper after its due ledger | One chunk fills and next ledger advances |
 
-**Fill / live keeper:** testnet DEX liquidity may be thin. Create/cancel/list is enough to validate custody + API; a successful market fill is best-effort.
+**Verified live fill (2026-07-31):**
+
+- Escrow: `CDCNJOKHKC7HG5A46RKG7QSNBIU3ES2A5PFOYPORJTUQKP4WXMX4OFD6`
+- Aggregator: `CDJI26DXFQ4MD7VICA3Q6NEGWF53A3Z6IK7WTNMQ6UZUHL5XGQMEKJRE`
+- DCA fill transaction:
+  [`64f23f734397e88c17fc57dee91dcfdec7636c9a1a00f5a363ef6aa7657b689c`](https://stellar.expert/explorer/testnet/tx/64f23f734397e88c17fc57dee91dcfdec7636c9a1a00f5a363ef6aa7657b689c)
+- Route: XLM → XTAR → test-USDC across two Soroswap pairs
+- Result: `500000` input, `326666` output, `500000` remaining; the remainder was
+  cancelled and refunded in transaction
+  [`ac487d9f416f19c34a449cf6e8114eeb6e3a98ac1fa080b66e76492a37ef93eb`](https://stellar.expert/explorer/testnet/tx/ac487d9f416f19c34a449cf6e8114eeb6e3a98ac1fa080b66e76492a37ef93eb).
+- Post-test balances: Escrow XLM/test-USDC = `0`/`0`; Aggregator
+  XLM/test-USDC = `0`/`0`.
 
 ## Out of scope
 
@@ -105,7 +136,7 @@ price. Its API surface is `/api/v1/dca`, `/dca/build_create`, and
 |-------|--------|
 | Frontend env | `NEXT_PUBLIC_LIMIT_API_URL=https://api.lumagg.xyz/limit-testnet` |
 | Nginx | `api.lumagg.xyz/limit-testnet/` → `127.0.0.1:3200` |
-| systemd | `lumagg-api-testnet`, `lumagg-indexer-testnet`, `lumagg-limit-keeper-testnet` |
+| systemd | `lumagg-worker-testnet`, `lumagg-api-testnet`, `lumagg-indexer-testnet`, `lumagg-limit-keeper-testnet` |
 | Escrow | Read from `deploy/.env.limit-testnet.local` after each deployment |
 
 Wallet must be on **Testnet** when signing create/cancel. Instant still uses `NEXT_PUBLIC_API_URL` (mainnet).

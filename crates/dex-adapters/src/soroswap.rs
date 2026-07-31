@@ -32,13 +32,21 @@ const BATCH_DELAY_MS: u64 = 100;
 
 pub struct SoroswapAdapter {
     rpc: Arc<SorobanRpc>,
+    factory_contract: String,
     pairs: RwLock<Vec<AdapterTradingPair>>,
 }
 
 impl SoroswapAdapter {
     pub fn new(rpc: Arc<SorobanRpc>) -> Self {
+        let factory_contract =
+            std::env::var("SOROSWAP_FACTORY_CONTRACT").unwrap_or_else(|_| SOROSWAP_FACTORY.to_string());
+        Self::with_factory(rpc, factory_contract)
+    }
+
+    pub fn with_factory(rpc: Arc<SorobanRpc>, factory_contract: impl Into<String>) -> Self {
         Self {
             rpc,
+            factory_contract: factory_contract.into(),
             pairs: RwLock::new(Vec::new()),
         }
     }
@@ -126,7 +134,10 @@ impl SoroswapAdapter {
     /// calls).
     async fn fetch_pairs_from_factory(&self) -> Result<Vec<AdapterTradingPair>> {
         // 1. Get total pair count
-        let length_val = self.rpc.call_no_args(SOROSWAP_FACTORY, "all_pairs_length").await?;
+        let length_val = self
+            .rpc
+            .call_no_args(&self.factory_contract, "all_pairs_length")
+            .await?;
         let total_pairs = scval_to_u32(&length_val)?;
         info!("Soroswap: total pairs = {}", total_pairs);
 
@@ -170,7 +181,7 @@ impl SoroswapAdapter {
         // Get pair contract address
         let pair_addr_val = self
             .rpc
-            .simulate_call(SOROSWAP_FACTORY, "all_pairs", vec![index_val])
+            .simulate_call(&self.factory_contract, "all_pairs", vec![index_val])
             .await?;
         let pair_address = scval_to_address(&pair_addr_val)?;
 
@@ -310,7 +321,7 @@ impl DexAdapter for SoroswapAdapter {
 
     async fn health_check(&self) -> bool {
         self.rpc
-            .call_no_args(SOROSWAP_FACTORY, "all_pairs_length")
+            .call_no_args(&self.factory_contract, "all_pairs_length")
             .await
             .is_ok()
     }

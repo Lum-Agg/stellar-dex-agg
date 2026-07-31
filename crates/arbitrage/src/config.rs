@@ -29,8 +29,16 @@ pub struct ArbConfig {
     pub base_tokens: Vec<TokenId>,
     pub bridge_tokens: Vec<TokenId>,
     pub probe_amount_in: u128,
-    /// Minimum round-trip profit in base-token stroops (7 decimals for XLM).
+    /// Default minimum round-trip **net** profit in base-token units (7 decimals).
+    /// Overridden per base via `min_profit_xlm` / `min_profit_usdc` when set.
     pub min_profit: u128,
+    /// Optional XLM-base floor (`ARB_MIN_PROFIT_XLM`); else `min_profit`.
+    pub min_profit_xlm: Option<u128>,
+    /// Optional USDC-base floor (`ARB_MIN_PROFIT_USDC`); else `min_profit`.
+    pub min_profit_usdc: Option<u128>,
+    /// USDC units (7 decimals) per 1.0 XLM — converts Soroban XLM fees for USDC
+    /// profit gates (`ARB_XLM_USDC_PRICE_E7`, default 3_000_000 = $0.30).
+    pub xlm_usdc_price_e7: u128,
     pub slippage_bps: u32,
     pub max_hops: usize,
     pub max_splits: usize,
@@ -108,7 +116,21 @@ impl ArbConfig {
         let min_profit = std::env::var("ARB_MIN_PROFIT")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(80_000); // 0.008 XLM net after estimated fees (race buffer)
+            .unwrap_or(80_000); // 0.008 XLM default race buffer
+
+        let min_profit_xlm = std::env::var("ARB_MIN_PROFIT_XLM")
+            .ok()
+            .and_then(|v| v.parse().ok());
+
+        let min_profit_usdc = std::env::var("ARB_MIN_PROFIT_USDC")
+            .ok()
+            .and_then(|v| v.parse().ok());
+
+        // ~$0.30 / XLM; override when spot drifts far from this.
+        let xlm_usdc_price_e7 = std::env::var("ARB_XLM_USDC_PRICE_E7")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3_000_000);
 
         let slippage_bps = std::env::var("ARB_SLIPPAGE_BPS")
             .ok()
@@ -210,6 +232,9 @@ impl ArbConfig {
             bridge_tokens,
             probe_amount_in,
             min_profit,
+            min_profit_xlm,
+            min_profit_usdc,
+            xlm_usdc_price_e7,
             slippage_bps,
             max_hops,
             max_splits,
@@ -227,6 +252,21 @@ impl ArbConfig {
             poll_tx,
             submit_dedup_secs,
         })
+    }
+
+    /// Post-fee net profit floor for `base_token` (base units).
+    pub fn min_profit_for(&self, base_token: &str) -> u128 {
+        crate::economics::min_profit_for_base(
+            base_token,
+            self.min_profit,
+            self.min_profit_xlm,
+            self.min_profit_usdc,
+        )
+    }
+
+    /// Convert XLM resource-fee stroops into base-token units for the fee gate.
+    pub fn fee_in_base(&self, fee_xlm_stroops: u128, base_token: &str) -> u128 {
+        crate::economics::fee_in_base_units(fee_xlm_stroops, base_token, self.xlm_usdc_price_e7)
     }
 }
 
