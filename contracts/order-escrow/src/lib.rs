@@ -81,8 +81,8 @@ fn required_min_out(amount_in: i128, limit_out_per_in_e7: i128) -> i128 {
     assert!(limit_out_per_in_e7 > 0, "limit must be positive");
     amount_in
         .checked_mul(limit_out_per_in_e7)
-        .expect("amount and limit multiplication overflow")
-        / RATE_SCALE_E7
+        .expect("amount and limit multiplication overflow") /
+        RATE_SCALE_E7
 }
 
 fn authorize_swap_as_current_contract(
@@ -737,8 +737,8 @@ mod tests {
             if contract != *escrow_id || topics.len() < 2 {
                 return false;
             }
-            Symbol::try_from_val(env, &topics.get(0).unwrap()) == Ok(expected_topic.clone())
-                && u64::try_from_val(env, &topics.get(1).unwrap()) == Ok(order_id)
+            Symbol::try_from_val(env, &topics.get(0).unwrap()) == Ok(expected_topic.clone()) &&
+                u64::try_from_val(env, &topics.get(1).unwrap()) == Ok(order_id)
         })
     }
 

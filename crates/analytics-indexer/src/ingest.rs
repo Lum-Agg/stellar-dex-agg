@@ -53,10 +53,7 @@ pub async fn run(config: IndexerConfig) -> Result<()> {
                 warn!(error = %e, cursor, end, "ingest batch failed");
                 // RPC retention can move forward after restarts; reclamp so we
                 // do not retry forever below oldestLedger.
-                if let Ok((oldest, _)) = rpc
-                    .get_events_ledger_bounds(&config.aggregator_contract)
-                    .await
-                {
+                if let Ok((oldest, _)) = rpc.get_events_ledger_bounds(&config.aggregator_contract).await {
                     if cursor < oldest {
                         info!(
                             requested = cursor,
@@ -142,18 +139,15 @@ async fn ingest_range(
         {
             Ok(txs) => {
                 for tx in txs {
-                    let parsed = match parse_envelope(
-                        &tx.envelope_xdr,
-                        &config.aggregator_contract,
-                        tx.result_xdr.as_deref(),
-                    ) {
-                        Ok(Some(p)) => p,
-                        Ok(None) => continue,
-                        Err(e) => {
-                            warn!(tx = %tx.tx_hash, error = %e, "failed to parse envelope");
-                            continue;
-                        }
-                    };
+                    let parsed =
+                        match parse_envelope(&tx.envelope_xdr, &config.aggregator_contract, tx.result_xdr.as_deref()) {
+                            Ok(Some(p)) => p,
+                            Ok(None) => continue,
+                            Err(e) => {
+                                warn!(tx = %tx.tx_hash, error = %e, "failed to parse envelope");
+                                continue;
+                            }
+                        };
                     let record = StoredInvocation {
                         tx_hash: tx.tx_hash.clone(),
                         ledger: tx.ledger,

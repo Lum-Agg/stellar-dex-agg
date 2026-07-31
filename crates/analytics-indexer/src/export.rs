@@ -14,7 +14,8 @@ pub struct TokenVolume {
     pub token: String,
     /// Sum of entry `amount_in` (native token smallest units).
     pub amount_in: i128,
-    /// Actual routed amount for this entry token, retained for API compatibility.
+    /// Actual routed amount for this entry token, retained for API
+    /// compatibility.
     pub routed_volume: i128,
     /// Executed legs whose input matches this entry token.
     pub routed_leg_count: u64,

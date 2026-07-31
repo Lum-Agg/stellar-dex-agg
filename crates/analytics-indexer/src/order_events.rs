@@ -268,14 +268,14 @@ pub fn apply_parsed_order_event(store: &IndexStore, event: &ParsedOrderEvent) ->
 
 fn order_event_id(event: &ParsedOrderEvent) -> u64 {
     match event {
-        ParsedOrderEvent::Created { order_id, .. }
-        | ParsedOrderEvent::Filled { order_id, .. }
-        | ParsedOrderEvent::Cancelled { order_id, .. }
-        | ParsedOrderEvent::Expired { order_id, .. } => *order_id,
-        ParsedOrderEvent::DcaCreated { order_id, .. }
-        | ParsedOrderEvent::DcaFilled { order_id, .. }
-        | ParsedOrderEvent::DcaCancelled { order_id, .. }
-        | ParsedOrderEvent::DcaExpired { order_id, .. } => *order_id,
+        ParsedOrderEvent::Created { order_id, .. } |
+        ParsedOrderEvent::Filled { order_id, .. } |
+        ParsedOrderEvent::Cancelled { order_id, .. } |
+        ParsedOrderEvent::Expired { order_id, .. } => *order_id,
+        ParsedOrderEvent::DcaCreated { order_id, .. } |
+        ParsedOrderEvent::DcaFilled { order_id, .. } |
+        ParsedOrderEvent::DcaCancelled { order_id, .. } |
+        ParsedOrderEvent::DcaExpired { order_id, .. } => *order_id,
     }
 }
 
