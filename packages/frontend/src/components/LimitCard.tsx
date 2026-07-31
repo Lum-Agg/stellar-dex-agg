@@ -128,7 +128,7 @@ export function LimitCard() {
           <h2 className="text-[17px] sm:text-[18px] font-semibold tracking-tight text-[var(--text-primary)]">
             Limit
           </h2>
-          <span className="text-[11px] uppercase tracking-[0.06em] text-[var(--accent)] border border-[var(--accent)]/35 rounded-lg px-2 py-1">
+          <span className="text-[11px] uppercase tracking-[0.06em] text-red-400 border border-red-400/50 rounded-lg px-2 py-1">
             Testnet
           </span>
         </div>
