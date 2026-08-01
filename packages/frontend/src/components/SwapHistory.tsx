@@ -58,9 +58,9 @@ export function SwapHistory({ variant = 'compact' }: SwapHistoryProps) {
       <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)]/60 px-4 py-3.5">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h2 className="text-[15px] font-medium text-[var(--text-secondary)]">Activity</h2>
+            <h2 className="text-[15px] font-medium text-[var(--text-secondary)]">LumAgg swaps</h2>
             <p className="mt-0.5 text-[13px] text-[var(--text-muted)]">
-              Connect to see recent swaps
+              Aggregator contract only · connect to view
             </p>
           </div>
           <button
@@ -79,6 +79,11 @@ export function SwapHistory({ variant = 'compact' }: SwapHistoryProps) {
   if (variant === 'profile') {
     return (
       <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)]/60">
+        <div className="border-b border-[var(--border)] px-4 py-3 sm:px-5">
+          <p className="text-[13px] text-[var(--text-muted)]">
+            Swaps executed through the LumAgg aggregator contract (not other DEX UIs).
+          </p>
+        </div>
         {loading && swaps.length === 0 ? (
           <div className="grid gap-2 p-4">
             {Array.from({ length: 4 }).map((_, index) => (
@@ -88,7 +93,9 @@ export function SwapHistory({ variant = 'compact' }: SwapHistoryProps) {
         ) : unavailable ? (
           <p className="px-4 py-6 text-[14px] text-[var(--text-muted)]">History unavailable</p>
         ) : swaps.length === 0 ? (
-          <p className="px-4 py-6 text-[14px] text-[var(--text-muted)]">No swaps yet</p>
+          <p className="px-4 py-6 text-[14px] text-[var(--text-muted)]">
+            No LumAgg swaps yet. Only trades through the aggregator contract are listed.
+          </p>
         ) : (
           <>
             {refetchError && (
@@ -176,15 +183,22 @@ export function SwapHistory({ variant = 'compact' }: SwapHistoryProps) {
 
   return (
     <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)]/60 overflow-hidden max-h-64 overflow-y-auto">
-      <div className="sticky top-0 flex items-center justify-between px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface)]/95 backdrop-blur-sm">
-        <h2 className="text-[15px] font-medium text-[var(--text-secondary)]">Activity</h2>
-        {loading && <span className="text-[13px] text-[var(--text-muted)]">Loading…</span>}
+      <div className="sticky top-0 flex items-center justify-between gap-3 px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface)]/95 backdrop-blur-sm">
+        <div className="min-w-0">
+          <h2 className="text-[15px] font-medium text-[var(--text-secondary)]">LumAgg swaps</h2>
+          <p className="text-[12px] text-[var(--text-muted)] truncate">
+            Aggregator contract only
+          </p>
+        </div>
+        {loading && <span className="shrink-0 text-[13px] text-[var(--text-muted)]">Loading…</span>}
       </div>
 
       {unavailable ? (
         <p className="px-4 py-3 text-[13px] text-[var(--text-muted)]">History unavailable</p>
       ) : swaps.length === 0 && !loading ? (
-        <p className="px-4 py-3 text-[13px] text-[var(--text-muted)]">No swaps yet</p>
+        <p className="px-4 py-3 text-[13px] text-[var(--text-muted)]">
+          No LumAgg swaps yet
+        </p>
       ) : (
         <>
           {refetchError && (

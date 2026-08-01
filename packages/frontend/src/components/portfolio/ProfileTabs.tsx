@@ -11,7 +11,7 @@ const TABS: Array<{
   soon?: boolean;
 }> = [
   { id: 'holdings', label: 'Holdings', enabled: true },
-  { id: 'history', label: 'Swap history', enabled: true },
+  { id: 'history', label: 'LumAgg swaps', enabled: true },
   { id: 'limits', label: 'Limit orders', enabled: false, soon: true },
   { id: 'dca', label: 'DCA', enabled: false, soon: true },
 ];

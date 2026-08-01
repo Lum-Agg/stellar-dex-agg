@@ -131,7 +131,7 @@ export default function PortfolioPage() {
             Your portfolio
           </h1>
           <p className="mx-auto mt-2 max-w-sm text-[13px] leading-relaxed text-[var(--text-muted)]">
-            Connect your wallet to view holdings and swap history.
+            Connect your wallet to view holdings and LumAgg swap history.
           </p>
           <button
             type="button"
