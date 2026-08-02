@@ -23,7 +23,7 @@ jobs:
 
       - name: Build release binaries
         run: |
-          cargo build --locked --release -p lumagg-swap-api -p api-server -p market-data-worker
+          cargo build --locked --release -p lumagg-swap-api -p api-server -p market-data-worker -p analytics-indexer
           cargo build --locked --release -p arbitrage --bin lumagg-arbitrage-bot
 
       - name: Verify tag and binary version
@@ -48,9 +48,11 @@ jobs:
 
           install -m 0755 target/release/lumagg-api-server "$cluster_dir/lumagg-api-server"
           install -m 0755 target/release/lumagg-market-data-worker "$cluster_dir/lumagg-market-data-worker"
+          install -m 0755 target/release/analytics-indexer "$cluster_dir/analytics-indexer"
           install -m 0644 LICENSE "$cluster_dir/LICENSE"
           install -m 0644 docs/aggregator-deployment.md "$cluster_dir/README.md"
           install -m 0644 docs/aggregator-configuration.md "$cluster_dir/aggregator-configuration.md"
+          install -m 0644 docs/analytics-indexer.md "$cluster_dir/analytics-indexer.md"
           install -m 0644 packaging/lumagg-aggregator.toml "$cluster_dir/lumagg-aggregator.toml"
           install -m 0644 packaging/lumagg-market-data-worker.service "$cluster_dir/systemd/"
           install -m 0644 packaging/lumagg-api@.service "$cluster_dir/systemd/"
