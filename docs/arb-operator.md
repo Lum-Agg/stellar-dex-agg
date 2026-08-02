@@ -7,7 +7,7 @@ Tranche 2 deliverable: self-deploy **aggregator + vault + arb scanner** on mainn
 ## Architecture
 
 ```text
-quote-api (×N) ──► arb-scanner ──► vault.execute_round_trip ──► aggregator.round_trip_swap ──► DEX pools
+quote-api (×N) ──► lumagg-arbitrage-bot ──► vault.execute_round_trip ──► aggregator.round_trip_swap ──► DEX pools
                       ▲                    │
                  Redis pool state          └── principal + profit back to vault
 ```
@@ -226,4 +226,3 @@ Manual oneshot: `systemctl start lumagg-quote-sim-probe.service`
 - [integrator-guide.md](./integrator-guide.md) — quote API for integrators
 - [analytics-indexer.md](./analytics-indexer.md) — on-chain stats pipeline
 - [round-trip-arb.md](./round-trip-arb.md) — vault + `round_trip_swap` overview
-

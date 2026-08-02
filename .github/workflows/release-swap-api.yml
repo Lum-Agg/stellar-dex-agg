@@ -1,4 +1,4 @@
-name: Release LumAgg Swap API
+name: Release LumAgg Binaries
 
 on:
   push:
@@ -21,8 +21,10 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
 
-      - name: Build release binary
-        run: cargo build --locked --release -p lumagg-swap-api
+      - name: Build release binaries
+        run: |
+          cargo build --locked --release -p lumagg-swap-api -p api-server -p market-data-worker
+          cargo build --locked --release -p arbitrage --bin lumagg-arbitrage-bot
 
       - name: Verify tag and binary version
         run: |
@@ -31,17 +33,38 @@ jobs:
           test "$tag_version" = "$binary_version"
 
       - name: Package release
-        env:
-          ARCHIVE_DIR: lumagg-swap-api-linux-x86_64
         run: |
-          mkdir "$ARCHIVE_DIR"
-          install -m 0755 target/release/lumagg-swap-api "$ARCHIVE_DIR/lumagg-swap-api"
-          install -m 0644 LICENSE "$ARCHIVE_DIR/LICENSE"
-          install -m 0644 docs/lumagg-swap-api.md "$ARCHIVE_DIR/README.md"
-          install -m 0644 scripts/lumagg-swap-api.env.example "$ARCHIVE_DIR/lumagg-swap-api.env.example"
-          install -m 0644 packaging/lumagg-swap-api.service "$ARCHIVE_DIR/lumagg-swap-api.service"
-          tar -czf "$ARCHIVE_DIR.tar.gz" "$ARCHIVE_DIR"
-          sha256sum "$ARCHIVE_DIR.tar.gz" > SHA256SUMS
+          swap_dir=lumagg-swap-api-linux-x86_64
+          cluster_dir=lumagg-aggregator-linux-x86_64
+          arb_dir=lumagg-arbitrage-bot-linux-x86_64
+
+          mkdir "$swap_dir" "$cluster_dir" "$cluster_dir/systemd" "$arb_dir"
+
+          install -m 0755 target/release/lumagg-swap-api "$swap_dir/lumagg-swap-api"
+          install -m 0644 LICENSE "$swap_dir/LICENSE"
+          install -m 0644 docs/lumagg-swap-api.md "$swap_dir/README.md"
+          install -m 0644 scripts/lumagg-swap-api.env.example "$swap_dir/lumagg-swap-api.env.example"
+          install -m 0644 packaging/lumagg-swap-api.service "$swap_dir/lumagg-swap-api.service"
+
+          install -m 0755 target/release/lumagg-api-server "$cluster_dir/lumagg-api-server"
+          install -m 0755 target/release/lumagg-market-data-worker "$cluster_dir/lumagg-market-data-worker"
+          install -m 0644 LICENSE "$cluster_dir/LICENSE"
+          install -m 0644 docs/aggregator-deployment.md "$cluster_dir/README.md"
+          install -m 0644 docs/aggregator-configuration.md "$cluster_dir/aggregator-configuration.md"
+          install -m 0644 packaging/aggregator.env.example "$cluster_dir/aggregator.env.example"
+          install -m 0644 packaging/lumagg-market-data-worker.service "$cluster_dir/systemd/"
+          install -m 0644 packaging/lumagg-api@.service "$cluster_dir/systemd/"
+
+          install -m 0755 target/release/lumagg-arbitrage-bot "$arb_dir/lumagg-arbitrage-bot"
+          install -m 0644 LICENSE "$arb_dir/LICENSE"
+          install -m 0644 docs/arbitrage-deployment.md "$arb_dir/README.md"
+          install -m 0644 packaging/arbitrage.env.example "$arb_dir/arbitrage.env.example"
+          install -m 0644 packaging/lumagg-arbitrage.service "$arb_dir/lumagg-arbitrage.service"
+
+          tar -czf "$swap_dir.tar.gz" "$swap_dir"
+          tar -czf "$cluster_dir.tar.gz" "$cluster_dir"
+          tar -czf "$arb_dir.tar.gz" "$arb_dir"
+          sha256sum "$swap_dir.tar.gz" "$cluster_dir.tar.gz" "$arb_dir.tar.gz" > SHA256SUMS
 
       - name: Publish GitHub release
         env:
@@ -50,5 +73,8 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --verify-tag \
             --generate-notes \
-            --title "LumAgg Swap API ${GITHUB_REF_NAME#swap-api-v}" \
-            lumagg-swap-api-linux-x86_64.tar.gz SHA256SUMS
+            --title "LumAgg ${GITHUB_REF_NAME#swap-api-v}" \
+            lumagg-swap-api-linux-x86_64.tar.gz \
+            lumagg-aggregator-linux-x86_64.tar.gz \
+            lumagg-arbitrage-bot-linux-x86_64.tar.gz \
+            SHA256SUMS

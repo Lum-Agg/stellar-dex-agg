@@ -14,6 +14,7 @@
 
 - [LumAgg Swap API](lumagg-swap-api.md)
 - [Production Aggregator](aggregator-deployment.md)
+  - [Configuration Reference](aggregator-configuration.md)
 - [Arbitrage](arbitrage-deployment.md)
 
 ## On-chain Products

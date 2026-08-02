@@ -10,7 +10,7 @@ WorkingDirectory=/opt/stellar-dex-aggregator
 EnvironmentFile=/opt/stellar-dex-aggregator/deploy/.env.limit-testnet.local
 EnvironmentFile=/etc/lumagg/testnet-redis.env
 Environment=RUST_LOG=info
-ExecStart=/opt/stellar-dex-aggregator/target/release/market-data-worker-testnet
+ExecStart=/opt/stellar-dex-aggregator/target/release/lumagg-market-data-worker-testnet
 Restart=on-failure
 RestartSec=5
 

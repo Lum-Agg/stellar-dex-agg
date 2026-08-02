@@ -40,18 +40,14 @@ impl XlmUsdcPrice {
 
     /// Quote 1.0 XLM → USDC and update the cached mark.
     pub async fn refresh(&self, client: &QuoteApiClient) -> Result<u128> {
-        let out = client
-            .quote_expected_output(XLM_SAC, USDC_SAC, UNIT_E7)
-            .await?;
+        let out = client.quote_expected_output(XLM_SAC, USDC_SAC, UNIT_E7).await?;
         if !(MIN_PRICE_E7..=MAX_PRICE_E7).contains(&out) {
             warn!(
                 quoted_e7 = out,
                 previous_e7 = self.get(),
                 "XLM/USDC quote outside sanity band — keeping previous mark"
             );
-            return Err(anyhow!(
-                "XLM/USDC mark {out} outside [{MIN_PRICE_E7}, {MAX_PRICE_E7}]"
-            ));
+            return Err(anyhow!("XLM/USDC mark {out} outside [{MIN_PRICE_E7}, {MAX_PRICE_E7}]"));
         }
         let prev = self.get();
         self.price_e7.store(clamp_u64(out), Ordering::Relaxed);

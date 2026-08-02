@@ -6,7 +6,7 @@ license.workspace = true
 description = "Round-trip arbitrage scanner via aggregator.round_trip_swap"
 
 [[bin]]
-name = "arb-scanner"
+name = "lumagg-arbitrage-bot"
 path = "src/main.rs"
 
 [[bin]]

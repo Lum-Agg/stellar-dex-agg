@@ -20,8 +20,8 @@ esac
 SERVER="root@88.198.16.144"
 REMOTE_SRC="/opt/stellar-dex-aggregator-src"
 REMOTE_APP_DIR="/opt/stellar-dex-aggregator"
-REMOTE_API_BIN="${REMOTE_APP_DIR}/target/release/api-server"
-REMOTE_WORKER_BIN="${REMOTE_APP_DIR}/target/release/market-data-worker"
+REMOTE_API_BIN="${REMOTE_APP_DIR}/target/release/lumagg-api-server"
+REMOTE_WORKER_BIN="${REMOTE_APP_DIR}/target/release/lumagg-market-data-worker"
 API_PORTS=(3100 3101 3102 3103)
 API_PORTS_STR="${API_PORTS[*]}"
 PRIMARY_PORT="${PRIMARY_PORT:-3100}"
@@ -79,7 +79,7 @@ systemctl disable --now lumagg-api >/dev/null 2>&1 || true
 deploy_worker() {
   # Unlink first — overwriting a running/mapped ELF hits "Text file busy".
   rm -f "${REMOTE_WORKER_BIN}"
-  cp "${REMOTE_SRC}/target/release/market-data-worker" "${REMOTE_WORKER_BIN}"
+  cp "${REMOTE_SRC}/target/release/lumagg-market-data-worker" "${REMOTE_WORKER_BIN}"
   systemctl enable lumagg-worker
   systemctl restart lumagg-worker
 }
@@ -87,7 +87,7 @@ deploy_worker() {
 deploy_api() {
   # Unlink first — overwriting a running/mapped ELF hits "Text file busy".
   rm -f "${REMOTE_API_BIN}"
-  cp "${REMOTE_SRC}/target/release/api-server" "${REMOTE_API_BIN}"
+  cp "${REMOTE_SRC}/target/release/lumagg-api-server" "${REMOTE_API_BIN}"
   for port in ${API_PORTS_STR}; do
     systemctl enable "lumagg-api@${port}"
     systemctl restart "lumagg-api@${port}"

@@ -158,12 +158,7 @@ impl QuoteApiClient {
     }
 
     /// Lightweight expected-out quote (no hop metadata required by callers).
-    pub async fn quote_expected_output(
-        &self,
-        token_in: &str,
-        token_out: &str,
-        amount_in: u128,
-    ) -> Result<u128> {
+    pub async fn quote_expected_output(&self, token_in: &str, token_out: &str, amount_in: u128) -> Result<u128> {
         if amount_in == 0 {
             return Err(anyhow!("amount_in must be positive"));
         }

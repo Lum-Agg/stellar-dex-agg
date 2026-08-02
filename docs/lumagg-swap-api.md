@@ -18,7 +18,7 @@ Linux x86_64 binaries are published from the monorepo under tags named
 Download the archive and `SHA256SUMS`, then verify and extract it:
 
 ```bash
-sha256sum --check SHA256SUMS
+grep 'lumagg-swap-api-linux-x86_64.tar.gz$' SHA256SUMS | sha256sum --check
 tar -xzf lumagg-swap-api-linux-x86_64.tar.gz
 cd lumagg-swap-api-linux-x86_64
 ```
@@ -82,16 +82,16 @@ cargo build --locked --release -p lumagg-swap-api
 LumAgg's production deployment keeps components separate:
 
 ```text
-market-data-worker -> Redis -> api-server x N
+lumagg-market-data-worker -> Redis -> lumagg-api-server x N
 ```
 
-Run the existing `market-data-worker` and `api-server` binaries independently
+Run `lumagg-market-data-worker` and `lumagg-api-server` independently
 when API horizontal scaling, failure isolation, or shared market state is
 required. The all-in-one binary does not replace this topology.
 
 ## Arbitrage boundary
 
-`lumagg-swap-api` does not execute arbitrage. Run `lumagg-arbitrage` separately
+`lumagg-swap-api` does not execute arbitrage. Run `lumagg-arbitrage-bot` separately
 and point `ARB_QUOTE_API_URL` or `ARB_QUOTE_API_URLS` at this service. For a
 high-throughput mainnet operator, use the production aggregator topology above.
 

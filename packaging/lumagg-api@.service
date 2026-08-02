@@ -12,7 +12,7 @@ Environment=LISTEN_ADDR=127.0.0.1:%i
 Environment=TOKEN_LOGO_DIR=/var/lib/lumagg/logos
 WorkingDirectory=/var/lib/lumagg
 StateDirectory=lumagg
-ExecStart=/usr/local/bin/api-server
+ExecStart=/usr/local/bin/lumagg-api-server
 Restart=on-failure
 RestartSec=5
 UMask=0027

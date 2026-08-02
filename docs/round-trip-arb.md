@@ -44,7 +44,7 @@ ARB_BUILD_TX=1
 ARB_SUBMIT_TX=1
 ARB_DRY_RUN=1
 
-cargo run -p arbitrage --bin arb-scanner
+cargo run -p arbitrage --bin lumagg-arbitrage-bot
 ```
 
 Operator runbook (env, monitoring, checklist): [arb-operator.md](./arb-operator.md).

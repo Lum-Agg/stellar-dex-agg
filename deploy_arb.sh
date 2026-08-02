@@ -1,5 +1,5 @@
 #!/bin/bash
-# Deploy LumAgg arb-scanner (vault mode) to production server.
+# Deploy LumAgg arbitrage bot (vault mode) to production server.
 #
 # Prerequisites on server:
 #   - stellar-rpc + redis + lumagg-worker (snapshot publisher)
@@ -28,10 +28,10 @@ esac
 SERVER="root@88.198.16.144"
 REMOTE_SRC="/opt/stellar-dex-aggregator-src"
 REMOTE_APP_DIR="/opt/stellar-dex-aggregator"
-REMOTE_ARB_BIN="${REMOTE_APP_DIR}/target/release/arb-scanner"
+REMOTE_ARB_BIN="${REMOTE_APP_DIR}/target/release/lumagg-arbitrage-bot"
 START="${START:-1}"
 
-echo "=== LumAgg arb-scanner deploy (mode=${MODE}, start=${START}) ==="
+echo "=== LumAgg arbitrage bot deploy (mode=${MODE}, start=${START}) ==="
 
 echo "=== Syncing source code ==="
 rsync -az --delete \
@@ -45,9 +45,9 @@ rsync -az --delete \
   "$(dirname "$0")/" \
   "${SERVER}:${REMOTE_SRC}/"
 
-echo "=== Building arb-scanner + quote-sim-probe on server ==="
+echo "=== Building lumagg-arbitrage-bot + quote-sim-probe on server ==="
 ssh -o StrictHostKeyChecking=no "$SERVER" \
-  "source ~/.cargo/env && cd ${REMOTE_SRC} && cargo build --release -p arbitrage --bin arb-scanner --bin quote-sim-probe --bin diag_simulate 2>&1 | tail -20"
+  "source ~/.cargo/env && cd ${REMOTE_SRC} && cargo build --release -p arbitrage --bin lumagg-arbitrage-bot --bin quote-sim-probe --bin diag_simulate 2>&1 | tail -20"
 
 echo "=== Arb env (server-only) ==="
 ARB_ENV_FILE="$(dirname "$0")/scripts/arb.env.local"
@@ -67,7 +67,7 @@ set -euo pipefail
 mkdir -p "${REMOTE_APP_DIR}/target/release" "${REMOTE_APP_DIR}/deploy" "${REMOTE_APP_DIR}/scripts" "${REMOTE_APP_DIR}/logs"
 deploy_arb() {
   systemctl stop lumagg-arb >/dev/null 2>&1 || true
-  cp "${REMOTE_SRC}/target/release/arb-scanner" "${REMOTE_ARB_BIN}"
+  cp "${REMOTE_SRC}/target/release/lumagg-arbitrage-bot" "${REMOTE_ARB_BIN}"
   cp "${REMOTE_SRC}/target/release/quote-sim-probe" "${REMOTE_APP_DIR}/target/release/quote-sim-probe"
   chmod +x "${REMOTE_APP_DIR}/target/release/quote-sim-probe"
   cp "${REMOTE_SRC}/scripts/run-quote-sim-probe-scheduled.sh" "${REMOTE_APP_DIR}/scripts/run-quote-sim-probe-scheduled.sh"

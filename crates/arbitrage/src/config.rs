@@ -29,18 +29,20 @@ pub struct ArbConfig {
     pub base_tokens: Vec<TokenId>,
     pub bridge_tokens: Vec<TokenId>,
     pub probe_amount_in: u128,
-    /// Default minimum round-trip **net** profit in base-token units (7 decimals).
-    /// Overridden per base via `min_profit_xlm` / `min_profit_usdc` when set.
+    /// Default minimum round-trip **net** profit in base-token units (7
+    /// decimals). Overridden per base via `min_profit_xlm` /
+    /// `min_profit_usdc` when set.
     pub min_profit: u128,
     /// Optional XLM-base floor (`ARB_MIN_PROFIT_XLM`); else `min_profit`.
     pub min_profit_xlm: Option<u128>,
     /// Optional USDC-base floor (`ARB_MIN_PROFIT_USDC`); else `min_profit`.
     pub min_profit_usdc: Option<u128>,
-    /// Fallback USDC units (7 decimals) per 1.0 XLM when live quote is unavailable
-    /// (`ARB_XLM_USDC_PRICE_E7`, default 1_800_000 ≈ $0.18).
+    /// Fallback USDC units (7 decimals) per 1.0 XLM when live quote is
+    /// unavailable (`ARB_XLM_USDC_PRICE_E7`, default 1_800_000 ≈ $0.18).
     pub xlm_usdc_price_e7: u128,
-    /// How often to refresh the live XLM→USDC mark (`ARB_XLM_USDC_PRICE_REFRESH_SECS`,
-    /// default 60). Set `0` to disable live refresh (always use fallback).
+    /// How often to refresh the live XLM→USDC mark
+    /// (`ARB_XLM_USDC_PRICE_REFRESH_SECS`, default 60). Set `0` to disable
+    /// live refresh (always use fallback).
     pub xlm_usdc_price_refresh_secs: u64,
     pub slippage_bps: u32,
     pub max_hops: usize,
@@ -121,13 +123,9 @@ impl ArbConfig {
             .and_then(|v| v.parse().ok())
             .unwrap_or(80_000); // 0.008 XLM default race buffer
 
-        let min_profit_xlm = std::env::var("ARB_MIN_PROFIT_XLM")
-            .ok()
-            .and_then(|v| v.parse().ok());
+        let min_profit_xlm = std::env::var("ARB_MIN_PROFIT_XLM").ok().and_then(|v| v.parse().ok());
 
-        let min_profit_usdc = std::env::var("ARB_MIN_PROFIT_USDC")
-            .ok()
-            .and_then(|v| v.parse().ok());
+        let min_profit_usdc = std::env::var("ARB_MIN_PROFIT_USDC").ok().and_then(|v| v.parse().ok());
 
         // Fallback only — live mark is refreshed from quote-api when enabled.
         let xlm_usdc_price_e7 = std::env::var("ARB_XLM_USDC_PRICE_E7")
@@ -265,12 +263,7 @@ impl ArbConfig {
 
     /// Post-fee net profit floor for `base_token` (base units).
     pub fn min_profit_for(&self, base_token: &str) -> u128 {
-        crate::economics::min_profit_for_base(
-            base_token,
-            self.min_profit,
-            self.min_profit_xlm,
-            self.min_profit_usdc,
-        )
+        crate::economics::min_profit_for_base(base_token, self.min_profit, self.min_profit_xlm, self.min_profit_usdc)
     }
 
     /// Convert XLM resource-fee stroops into base-token units for the fee gate.

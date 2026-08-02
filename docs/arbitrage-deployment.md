@@ -10,7 +10,7 @@ For high-throughput mainnet operation, connect it to the
 ## Architecture
 
 ```text
-quote API -> arb-scanner -> simulateTransaction -> optional transaction submit
+quote API -> lumagg-arbitrage-bot -> simulateTransaction -> optional transaction submit
                          -> vault -> Aggregator -> DEXes
 ```
 
@@ -34,40 +34,78 @@ Without `ARB_VAULT_CONTRACT`, caller accounts must also hold the trading
 principal. With a vault, principal remains in the vault and callers normally
 hold only enough native XLM for fees.
 
-## Build and Install
+## Download
 
-Build from a tagged revision of the monorepo:
+Linux x86_64 releases include a standalone arbitrage archive:
+
+<https://github.com/Lum-Agg/stellar-dex-agg/releases>
+
+```bash
+grep 'lumagg-arbitrage-bot-linux-x86_64.tar.gz$' SHA256SUMS | sha256sum --check
+tar -xzf lumagg-arbitrage-bot-linux-x86_64.tar.gz
+cd lumagg-arbitrage-bot-linux-x86_64
+```
+
+Create a private config and caller-secret file from the archive contents:
+
+```bash
+cp arbitrage.env.example arbitrage.env
+chmod 600 arbitrage.env
+touch arbitrage-callers
+chmod 600 arbitrage-callers
+```
+
+Set `ARB_CALLER_SECRETS_FILE` in `arbitrage.env` to the absolute path of
+`arbitrage-callers`, then put one Stellar `S...` secret per line in that file.
+Never commit either private file. Mnemonic-based callers are also supported
+through `ARB_MNEMONIC_PATH` and `ARB_CALLER_INDICES`.
+
+To build the same executable from a tagged source revision instead:
 
 ```bash
 git clone https://github.com/Lum-Agg/stellar-dex-agg.git
 cd stellar-dex-agg
 git checkout <release-tag-or-commit>
-cargo build --locked --release -p arbitrage --bin arb-scanner
+cargo build --locked --release -p arbitrage --bin lumagg-arbitrage-bot
 ```
 
-Install the executable and public service files:
+## Configure and run
+
+Edit `arbitrage.env` and set the quote URLs, RPC, contract IDs, and bridge
+tokens. Start with conservative trade limits. Amounts are integer token units;
+XLM uses seven decimal places.
+
+The binary is not tied to systemd. Load the config and run it under any process
+manager:
+
+```bash
+set -a
+. ./arbitrage.env
+set +a
+./lumagg-arbitrage-bot
+```
+
+The remaining rollout stages apply regardless of the process manager.
+
+## Optional systemd example
+
+The release archive also includes a systemd unit. Install it only if systemd is
+your chosen process manager:
 
 ```bash
 sudo useradd --system --home /var/lib/lumagg --shell /usr/sbin/nologin lumagg
 sudo install -d -o lumagg -g lumagg -m 0750 /var/lib/lumagg
 sudo install -d -o root -g lumagg -m 0750 /etc/lumagg
-sudo install -m 0755 target/release/arb-scanner /usr/local/bin/
+sudo install -m 0755 lumagg-arbitrage-bot /usr/local/bin/
 sudo install -m 0600 -o lumagg -g lumagg /dev/null \
   /etc/lumagg/arbitrage-callers
-sudo install -m 0640 -o root -g lumagg \
-  packaging/arbitrage.env.example /etc/lumagg/arbitrage.env
-sudo install -m 0644 packaging/lumagg-arbitrage.service \
+sudo install -m 0640 -o root -g lumagg arbitrage.env /etc/lumagg/arbitrage.env
+sudo install -m 0644 lumagg-arbitrage.service \
   /etc/systemd/system/
 ```
 
-Skip `useradd` when the service account already exists. Put one Stellar `S...`
-secret per line in `/etc/lumagg/arbitrage-callers`; never commit that file.
-Mnemonic-based callers are also supported through `ARB_MNEMONIC_PATH` and
-`ARB_CALLER_INDICES`.
-
-Edit `/etc/lumagg/arbitrage.env` and set the quote URLs, RPC, contract IDs, and
-bridge tokens. Start with conservative trade limits. The amounts are integer
-token units; XLM uses seven decimal places.
+Skip `useradd` when the service account already exists. Set
+`ARB_CALLER_SECRETS_FILE=/etc/lumagg/arbitrage-callers` in the installed config.
 
 ## Safe Rollout
 

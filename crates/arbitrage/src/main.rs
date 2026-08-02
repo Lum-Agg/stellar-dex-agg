@@ -3,7 +3,8 @@
 //! Burberry pipeline: BridgeCollector → parallel workers → async TxExecutor.
 //!
 //!   ARB_BRIDGE_TOKENS=... ARB_AGGREGATOR_CONTRACT=C... ARB_QUOTE_API_URL=http://127.0.0.1:8080 \
-//!   ARB_BUILD_TX=1 ARB_SUBMIT_TX=1 cargo run -p arbitrage --bin arb-scanner
+//!   ARB_BUILD_TX=1 ARB_SUBMIT_TX=1 cargo run -p arbitrage --bin
+//! lumagg-arbitrage-bot
 
 use {
     anyhow::Result,
@@ -25,7 +26,7 @@ async fn main() -> Result<()> {
 
     if let Some(alerter) = lumagg_alerts::TelegramAlerter::from_env().map(Arc::new) {
         info!("Telegram profit reports + quiet-window alerts enabled");
-        let _ = alerter.send("🚀 LumAgg arb-scanner started (burberry pipeline)").await;
+        let _ = alerter.send("LumAgg arbitrage bot started (burberry pipeline)").await;
         telegram::spawn_hourly_profit_report(runtime.clone(), alerter.clone());
         telegram::spawn_quiet_window_monitor(runtime.clone(), alerter);
     } else {

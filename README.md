@@ -32,7 +32,7 @@ LumAgg routes swaps across **Soroswap**, **Aquarius** (xy=k, stable, CLMM), **Ph
 | Principle | Implementation |
 |-----------|----------------|
 | **Topology vs state** | Routing graph (pairs, pool IDs, fees) is separate from live reserves / ticks |
-| **Single writer** | `market-data-worker` owns all Redis writes; `api-server` is stateless |
+| **Single writer** | `lumagg-market-data-worker` owns all Redis writes; `lumagg-api-server` is stateless |
 | **Event-driven freshness** | Ledger events refresh *touched* pools; no periodic full-market sweep |
 | **Cold pools stay valid** | Pools with no on-chain activity keep their last Redis value until overwritten |
 
@@ -42,7 +42,7 @@ Pool state updates use three channels: **bootstrap** (worker start), **ledger wa
 
 Two paths share one Redis store.
 
-**1 — Pool state writes (`market-data-worker`)**
+**1 — Pool state writes (`lumagg-market-data-worker`)**
 
 ```mermaid
 flowchart LR
@@ -54,7 +54,7 @@ flowchart LR
     SNAP --> POOL --> PUB
   end
 
-  subgraph worker ["market-data-worker — single writer"]
+  subgraph worker ["lumagg-market-data-worker — single writer"]
     direction TB
     BD["Bootstrap + discovery<br/>~600s reconcile"]
     LW["Ledger watcher<br/>poll 0.1s · per-ledger getEvents"]
@@ -76,11 +76,11 @@ flowchart LR
   FP -->|refresh| POOL
 ```
 
-**2 — Quote reads (`api-server`)**
+**2 — Quote reads (`lumagg-api-server`)**
 
 ```mermaid
 flowchart LR
-  FE[Frontend / SDK] -->|REST /quote /build_tx| API[api-server]
+  FE[Frontend / SDK] -->|REST /quote /build_tx| API[lumagg-api-server]
 
   subgraph RE [router-engine]
     PF[PathFinder<br/>BFS multi-hop]
@@ -178,8 +178,8 @@ Operator-facing atomic round-trip stack (not a retail product). Trading principa
 
 ```mermaid
 flowchart LR
-  W[market-data-worker] -->|Redis pool state| Q[api-server ×N]
-  Q -->|GET /quote prefer_soroban| S[arb-scanner]
+  W[lumagg-market-data-worker] -->|Redis pool state| Q[lumagg-api-server ×N]
+  Q -->|GET /quote prefer_soroban| S[lumagg-arbitrage-bot]
   S -->|simulate + sign| V[vault.execute_round_trip]
   V -->|CPI| A[aggregator.round_trip_swap]
   A --> D[DEX pools]
@@ -232,7 +232,7 @@ bridges × base
 
 ### Deploy arb
 
-Build and install `arb-scanner` as a separate native service. Follow the
+Build and install `lumagg-arbitrage-bot` as a separate native service. Follow the
 [public deployment guide](docs/arbitrage-deployment.md), which starts in
 quote-only mode and requires an explicit staged rollout before live submission.
 
@@ -258,10 +258,10 @@ quote-only mode and requires an explicit staged rollout before live submission.
 - **Multi-hop routing** — BFS through intermediate tokens (configurable max hops)
 - **Split orders** — Brent optimizer across paths when impact or competitiveness warrants it
 - **Event-driven pool state** — ledger watcher + discovery; no periodic full sweep
-- **Horizontally scalable API** — stateless `api-server` instances behind a load balancer
+- **Horizontally scalable API** — stateless `lumagg-api-server` instances behind a load balancer
 - **Sub-2s hot pool freshness** — 0.1s ledger poll + fetch pipeline for touched pools
 - **Atomic on-chain execution** — optional aggregator contract (`split_swap`, `round_trip_swap`)
-- **Atomic arb operator stack** — vault-pooled capital + `arb-scanner` round-trips (see [Arbitrage & vault](#arbitrage--vault))
+- **Atomic arb operator stack** — vault-pooled capital + `lumagg-arbitrage-bot` round-trips (see [Arbitrage & vault](#arbitrage--vault))
 - **Classic benchmark** — Horizon PathPayment per quote without polluting the Soroban graph
 
 ## Why not Classic DEX routing?
@@ -462,7 +462,7 @@ Brent tolerance defaults to `0.0001` (0.01%) with up to 18 iterations — simila
 | [`docs/analytics-indexer.md`](docs/analytics-indexer.md) | On-chain analytics indexer v0 — attribution spec, env, export |
 | [`docs/pool-state-architecture.md`](docs/pool-state-architecture.md) | Pool state design, env tables, code pointers |
 | [`docs/aggregator-deployment.md`](docs/aggregator-deployment.md) | Native worker + Redis + API production deployment |
-| [`docs/arbitrage-deployment.md`](docs/arbitrage-deployment.md) | Native arb-scanner install and staged rollout |
+| [`docs/arbitrage-deployment.md`](docs/arbitrage-deployment.md) | Native arbitrage bot install and staged rollout |
 | [`docs/contracts-deployment.md`](docs/contracts-deployment.md) | Aggregator and Vault deployment, upgrade, and external TTL maintenance |
 | [`docs/gitbook-deployment.md`](docs/gitbook-deployment.md) | Maintainer runbook for Git Sync, publishing, and custom domain setup |
 | [`docs/scf-venue-comparison.md`](docs/scf-venue-comparison.md) | LumAgg vs Soroswap / Stellar Broker — venue coverage & SCF differentiation evidence |

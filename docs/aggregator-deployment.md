@@ -1,30 +1,45 @@
 # Production Aggregator Deployment
 
-This guide deploys the scalable LumAgg topology as separate native processes:
+The scalable LumAgg topology runs two native binaries as separate processes:
 
 ```text
-market-data-worker -> Redis -> api-server x N
+lumagg-market-data-worker -> Redis -> lumagg-api-server x N
 ```
 
-Use this topology for a public API, high request volume, shared market state, or
-an arbitrage operator. For a small private service without Redis, use
-[LumAgg Swap API](lumagg-swap-api.md) instead.
+Use it for a public API, high request volume, shared market state, or an
+arbitrage operator. For a small private service without Redis, use
+[LumAgg Swap API](lumagg-swap-api.md).
 
-## Deployment Rules
+## Deployment rules
 
-- Run exactly one `market-data-worker` for each Redis namespace. The worker is
-  the single writer and does not implement leader election.
-- Run one or more stateless `api-server` instances against the same Redis.
-- Keep Redis private. Do not expose port 6379 to the internet.
+- Run exactly one `lumagg-market-data-worker` for each Redis namespace. The
+  worker is the single writer and does not implement leader election.
+- Run one or more stateless `lumagg-api-server` processes against that Redis.
+- Keep Redis private and do not expose port 6379 to the internet.
 - Use a low-latency, capacity-controlled Soroban RPC. Public rate-limited RPCs
   are suitable for evaluation, not a reliable production data plane.
-- Run the services as an unprivileged user and expose API instances through a
-  reverse proxy or load balancer.
+- Run both binaries as an unprivileged user. Put TLS and public traffic handling
+  in a reverse proxy or load balancer.
 
-## Build
+## Download
 
-Install Rust and the native build dependencies required by the workspace, then
-build from a tagged revision:
+Linux x86_64 binaries are published in the monorepo releases:
+
+<https://github.com/Lum-Agg/stellar-dex-agg/releases>
+
+Download `lumagg-aggregator-linux-x86_64.tar.gz` and `SHA256SUMS`, then verify
+and extract them:
+
+```bash
+grep 'lumagg-aggregator-linux-x86_64.tar.gz$' SHA256SUMS | sha256sum --check
+tar -xzf lumagg-aggregator-linux-x86_64.tar.gz
+cd lumagg-aggregator-linux-x86_64
+```
+
+The archive contains both binaries, a complete `aggregator.env.example`, the
+configuration reference, and optional systemd units.
+
+To build the same binaries from source instead:
 
 ```bash
 git clone https://github.com/Lum-Agg/stellar-dex-agg.git
@@ -33,28 +48,17 @@ git checkout <release-tag-or-commit>
 cargo build --locked --release -p market-data-worker -p api-server
 ```
 
-Create the service account and install the binaries:
-
-```bash
-sudo useradd --system --home /var/lib/lumagg --shell /usr/sbin/nologin lumagg
-sudo install -d -o lumagg -g lumagg -m 0750 /var/lib/lumagg/logos
-sudo install -d -o root -g lumagg -m 0750 /etc/lumagg
-sudo install -m 0755 target/release/market-data-worker /usr/local/bin/
-sudo install -m 0755 target/release/api-server /usr/local/bin/
-sudo cp -R data/logos/. /var/lib/lumagg/logos/
-sudo chown -R lumagg:lumagg /var/lib/lumagg/logos
-```
-
-If the `lumagg` account already exists, `useradd` can be skipped.
+The Cargo package names remain `market-data-worker` and `api-server`; their
+release binaries are `target/release/lumagg-market-data-worker` and
+`target/release/lumagg-api-server`.
 
 ## Configure Redis
 
 Install Redis on the same private network as the services. Bind it to localhost
-or a private interface, enable authentication, and configure persistence and
-memory policy for your operational requirements.
+or a private interface, enable authentication, and choose persistence and
+memory policies appropriate for your operation.
 
-Before starting LumAgg, verify connectivity using the same URL that will be in
-the environment file:
+Verify connectivity using the URL that will be in the LumAgg configuration:
 
 ```bash
 redis-cli -u 'redis://:YOUR_PASSWORD@127.0.0.1:6379/' PING
@@ -64,56 +68,59 @@ The password must be URL-encoded when it contains reserved URL characters.
 
 ## Configure LumAgg
 
-Install the public environment and systemd templates:
+Create a private runtime configuration from the complete example:
 
 ```bash
-sudo install -m 0640 -o root -g lumagg \
-  packaging/aggregator.env.example /etc/lumagg/aggregator.env
-sudo install -m 0644 packaging/lumagg-market-data-worker.service \
-  /etc/systemd/system/
-sudo install -m 0644 packaging/lumagg-api@.service \
-  /etc/systemd/system/
+cp aggregator.env.example aggregator.env
+chmod 600 aggregator.env
 ```
 
-Edit `/etc/lumagg/aggregator.env` and replace at least:
+Replace at least:
 
 - `RPC_URL` with the production Soroban RPC.
 - `SNAPSHOT_REDIS_URL` with the private Redis URL.
-- `AGGREGATOR_CONTRACT` with the deployed LumAgg Aggregator contract. Remove
-  this variable if the service should only quote and never build transactions.
+- `AGGREGATOR_CONTRACT` with the deployed LumAgg Aggregator contract. Omit it
+  only when the API should quote but never build transactions.
 
-See [Smart Contract Deployment](contracts-deployment.md) when operating your
-own Aggregator contract.
+Keep the network and every `SNAPSHOT_*` setting identical across the worker and
+all API replicas. See [Configuration Reference](aggregator-configuration.md)
+for every supported parameter, its default, and the process that uses it.
 
-Keep `SNAPSHOT_REDIS_CHANNEL` identical across the worker and all API replicas.
-The example values for routing and concurrency are starting points, not
-capacity guarantees.
+## Run without a service manager
 
-## Start
-
-Start Redis first, then the single worker, then API instances:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now lumagg-market-data-worker
-sudo journalctl -u lumagg-market-data-worker -f
-```
-
-Initial discovery can take time. After the worker has published a snapshot,
-start one or more API ports:
+The binaries read environment variables, so they are independent of systemd,
+Docker, Kubernetes, or any other process manager. Load the config in each
+process environment:
 
 ```bash
-sudo systemctl enable --now lumagg-api@3100 lumagg-api@3101
+set -a
+. ./aggregator.env
+set +a
+./lumagg-market-data-worker
 ```
 
-The template binds each instance to `127.0.0.1:<port>`. Put TLS and public
-traffic handling in a reverse proxy rather than changing the processes to run
-as root.
+After the worker publishes its first snapshot, start the API in another shell:
+
+```bash
+set -a
+. ./aggregator.env
+set +a
+LISTEN_ADDR=127.0.0.1:3100 ./lumagg-api-server
+```
+
+Additional API replicas use the same config and a different `LISTEN_ADDR`:
+
+```bash
+LISTEN_ADDR=127.0.0.1:3101 ./lumagg-api-server
+```
+
+In production, translate the same environment file into your chosen service
+manager and configure restart, resource, logging, and secret policies there.
 
 ## Verify
 
-Liveness only confirms that the process is running. Readiness confirms that a
-routing graph has loaded:
+Liveness confirms the process is running. Readiness confirms that a routing
+graph has loaded:
 
 ```bash
 curl -fsS http://127.0.0.1:3100/api/v1/health
@@ -126,25 +133,33 @@ Use the [Integrator Guide](integrator-guide.md) to test `/quote` and
 `/build_tx`. A load balancer should route traffic only to instances whose
 `/api/v1/ready` endpoint succeeds.
 
-## Scale and Upgrade
+## Optional systemd example
 
-API capacity scales horizontally by adding `lumagg-api@<port>` instances or
-hosts connected to the same private Redis. Do not add a second worker to the
-same namespace unless an external active/passive mechanism guarantees that
-only one is running.
-
-For an upgrade, build the exact target revision with `--locked`, retain the
-previous binaries for rollback, replace the installed binaries, and restart
-the worker followed by API instances. Check worker publication and every API
-readiness endpoint before returning all replicas to the load balancer.
-
-Useful logs:
+The release archive includes units under `systemd/`. They are examples, not a
+required deployment model. Install the binaries and config at the paths used by
+those units:
 
 ```bash
-journalctl -u lumagg-market-data-worker -f
-journalctl -u 'lumagg-api@*' -f
+sudo useradd --system --home /var/lib/lumagg --shell /usr/sbin/nologin lumagg
+sudo install -d -o root -g lumagg -m 0750 /etc/lumagg
+sudo install -m 0755 lumagg-market-data-worker lumagg-api-server /usr/local/bin/
+sudo install -m 0640 -o root -g lumagg aggregator.env /etc/lumagg/aggregator.env
+sudo install -m 0644 systemd/*.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now lumagg-market-data-worker
+sudo systemctl enable --now lumagg-api@3100 lumagg-api@3101
 ```
 
-Common readiness failures are an unreachable RPC, Redis authentication errors,
-or an API configured with a different Redis URL or event channel than the
-worker.
+Inspect startup with `journalctl -u lumagg-market-data-worker -f` and
+`journalctl -u 'lumagg-api@*' -f`.
+
+## Scale and upgrade
+
+API capacity scales horizontally by adding `lumagg-api-server` processes or
+hosts connected to the same private Redis. Do not add a second worker to the
+same namespace unless an external active/passive mechanism guarantees only one
+is running.
+
+For upgrades, retain the previous binaries for rollback, replace both binaries,
+then restart the worker followed by API replicas. Confirm worker publication
+and every API readiness endpoint before returning traffic to all replicas.

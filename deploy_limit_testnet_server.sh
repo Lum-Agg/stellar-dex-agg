@@ -79,14 +79,14 @@ if [[ "$RESET_TESTNET_DB" == "1" ]]; then
   [[ ! -f "$cursor" ]] || mv "$cursor" "${cursor}.bak.${stamp}"
 fi
 
-install -m 755 "$REMOTE_SRC/target/release/api-server" \
-  "$REMOTE_APP_DIR/target/release/api-server-testnet"
+install -m 755 "$REMOTE_SRC/target/release/lumagg-api-server" \
+  "$REMOTE_APP_DIR/target/release/lumagg-api-server-testnet"
 install -m 755 "$REMOTE_SRC/target/release/analytics-indexer" \
   "$REMOTE_APP_DIR/target/release/analytics-indexer-testnet"
 install -m 755 "$REMOTE_SRC/target/release/limit-keeper" \
   "$REMOTE_APP_DIR/target/release/limit-keeper-testnet"
-install -m 755 "$REMOTE_SRC/target/release/market-data-worker" \
-  "$REMOTE_APP_DIR/target/release/market-data-worker-testnet"
+install -m 755 "$REMOTE_SRC/target/release/lumagg-market-data-worker" \
+  "$REMOTE_APP_DIR/target/release/lumagg-market-data-worker-testnet"
 
 install -m 644 "$REMOTE_SRC/deploy/lumagg-api-testnet.service" /etc/systemd/system/
 install -m 644 "$REMOTE_SRC/deploy/lumagg-indexer-testnet.service" /etc/systemd/system/

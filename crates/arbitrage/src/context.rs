@@ -42,8 +42,7 @@ impl ArbContext {
     ) -> Result<Self> {
         let quote_client = QuoteApiClient::from_config(&config);
         let xlm_usdc_price = Arc::new(XlmUsdcPrice::new(config.xlm_usdc_price_e7));
-        Self::connect_with_resources(config, latest_ledger, vault_balances, quote_client, xlm_usdc_price)
-            .await
+        Self::connect_with_resources(config, latest_ledger, vault_balances, quote_client, xlm_usdc_price).await
     }
 
     pub async fn connect_with_resources(
@@ -62,7 +61,8 @@ impl ArbContext {
         })
     }
 
-    /// Convert XLM resource-fee stroops into base-token units using the live mark.
+    /// Convert XLM resource-fee stroops into base-token units using the live
+    /// mark.
     pub fn fee_in_base(&self, fee_xlm_stroops: u128, base_token: &str) -> u128 {
         economics::fee_in_base_units(fee_xlm_stroops, base_token, self.xlm_usdc_price.get())
     }

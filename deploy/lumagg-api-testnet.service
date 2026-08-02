@@ -14,7 +14,7 @@ Environment=HORIZON_URL=https://horizon-testnet.stellar.org
 Environment=RUST_LOG=info
 Environment=QUOTE_RPC_HYDRATE_ENABLED=false
 Environment=MAX_SPLITS=1
-ExecStart=/opt/stellar-dex-aggregator/target/release/api-server-testnet
+ExecStart=/opt/stellar-dex-aggregator/target/release/lumagg-api-server-testnet
 Restart=on-failure
 RestartSec=5
 

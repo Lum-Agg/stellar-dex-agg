@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "market-data-worker"
+name = "lumagg-market-data-worker"
 path = "src/main.rs"
 
 [dependencies]

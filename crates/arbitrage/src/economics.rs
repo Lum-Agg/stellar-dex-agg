@@ -12,7 +12,8 @@ pub const UNIT_E7: u128 = 10_000_000;
 /// profit gate.
 ///
 /// - XLM base: fee stays in stroops.
-/// - USDC base: `fee_xlm * xlm_usdc_price_e7 / 1e7` (price = USDC units per 1 XLM).
+/// - USDC base: `fee_xlm * xlm_usdc_price_e7 / 1e7` (price = USDC units per 1
+///   XLM).
 /// - Other bases: treat fee as XLM stroops (conservative / legacy).
 pub fn fee_in_base_units(fee_xlm_stroops: u128, base_token: &str, xlm_usdc_price_e7: u128) -> u128 {
     if base_token == XLM_SAC || base_token.is_empty() {
@@ -25,8 +26,8 @@ pub fn fee_in_base_units(fee_xlm_stroops: u128, base_token: &str, xlm_usdc_price
         // Round up so we never understate gas in USDC terms.
         return fee_xlm_stroops
             .saturating_mul(xlm_usdc_price_e7)
-            .saturating_add(UNIT_E7 - 1)
-            / UNIT_E7;
+            .saturating_add(UNIT_E7 - 1) /
+            UNIT_E7;
     }
     fee_xlm_stroops
 }
@@ -80,7 +81,10 @@ mod tests {
     #[test]
     fn min_profit_overrides() {
         assert_eq!(min_profit_for_base(XLM_SAC, 80_000, Some(90_000), Some(30_000)), 90_000);
-        assert_eq!(min_profit_for_base(USDC_SAC, 80_000, Some(90_000), Some(30_000)), 30_000);
+        assert_eq!(
+            min_profit_for_base(USDC_SAC, 80_000, Some(90_000), Some(30_000)),
+            30_000
+        );
         assert_eq!(min_profit_for_base(USDC_SAC, 80_000, None, None), 80_000);
         assert_eq!(min_profit_for_base("COTHER", 80_000, Some(1), Some(2)), 80_000);
     }
