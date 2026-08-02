@@ -41,9 +41,15 @@ impl Strategy<Event, Action> for BridgeStrategy {
             anyhow::bail!("BridgeStrategy already synced");
         }
 
-        // Backpressure keeps slow quote APIs from creating an unbounded queue
-        // of stale market scans.
-        let queue_capacity = self.worker_count.saturating_mul(2).max(1);
+        // Buffer at most one scan cycle. Pairs repeat every cycle, so allowing
+        // duplicates to accumulate would only delay the next useful scan.
+        let queue_capacity = self
+            .runtime
+            .config
+            .base_tokens
+            .len()
+            .saturating_mul(self.runtime.config.bridge_tokens.len())
+            .clamp(1, 100);
         let (tx, rx) = async_channel::bounded(queue_capacity);
         self.item_sender = Some(tx.clone());
 
@@ -61,8 +67,11 @@ impl Strategy<Event, Action> for BridgeStrategy {
     async fn process_event(&mut self, event: Event, _submitter: Arc<dyn ActionSubmitter<Action>>) {
         let Event::BridgeScan(item) = event;
         if let Some(sender) = &self.item_sender {
-            if let Err(e) = sender.send(item).await {
-                error!("bridge scan channel send failed: {e}");
+            match sender.try_send(item) {
+                Ok(()) | Err(async_channel::TrySendError::Full(_)) => {}
+                Err(async_channel::TrySendError::Closed(_)) => {
+                    error!("bridge scan channel closed");
+                }
             }
         }
     }
