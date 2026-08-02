@@ -73,7 +73,10 @@ mod tests {
     #[test]
     fn indexer_config_is_optional_but_required_for_indexer_validation() {
         let embedded: AggregatorConfig = toml::from_str(EMBEDDED).unwrap();
-        assert_eq!(embedded.validate_indexer().unwrap_err().to_string(), "api.aggregator_contract is required for the indexer");
+        assert_eq!(
+            embedded.validate_indexer().unwrap_err().to_string(),
+            "api.aggregator_contract is required for the indexer"
+        );
 
         let indexer: AggregatorConfig = toml::from_str(INDEXER).unwrap();
         assert!(indexer.validate_indexer().is_ok());
@@ -84,6 +87,9 @@ mod tests {
     fn indexer_mode_is_validated() {
         let source = format!("{INDEXER}\nmode = \"invalid\"\n");
         let config: AggregatorConfig = toml::from_str(&source).unwrap();
-        assert_eq!(config.validate_indexer().unwrap_err().to_string(), "indexer.mode must be events, envelope, or both");
+        assert_eq!(
+            config.validate_indexer().unwrap_err().to_string(),
+            "indexer.mode must be events, envelope, or both"
+        );
     }
 }
