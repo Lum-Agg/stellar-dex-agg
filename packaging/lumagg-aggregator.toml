@@ -1,0 +1,87 @@
+[network]
+rpc_url = "https://your-stellar-rpc.example.com"
+passphrase = "Public Global Stellar Network ; September 2015"
+
+[redis]
+url = "redis://:CHANGE_ME@127.0.0.1:6379/"
+channel = "lumagg:snapshot:events"
+keep_latest = 10
+poll_interval_ms = 1000
+pool_state_ttl_secs = 86400
+
+[worker]
+enabled_dex_sources = [
+  "aquarius",
+  "aquarius_clmm",
+  "soroswap",
+  "phoenix",
+  "sushi",
+  "comet",
+  "classic_dex",
+]
+discovery_interval_secs = 600
+refresh_interval_secs = 30
+pool_publish_interval_secs = 2
+pool_state_refresh_concurrency = 8
+ledger_watcher_enabled = true
+ledger_poll_secs = 0.1
+ledger_max_catchup = 32
+ledger_max_touched_refresh = 64
+fetch_pipeline_enabled = true
+fetch_worker_count = 8
+fetch_high_queue_capacity = 512
+fetch_stats_interval_secs = 60
+
+[api]
+listen_addr = "127.0.0.1:3100"
+aggregator_contract = "CHANGE_ME"
+token_logo_dir = "data/logos"
+token_logo_base_url = "https://api.lumagg.xyz/logos"
+# token_logo_list_urls = ["https://example.com/token-list.json"]
+instruction_leeway = 100000000
+quote_on_chain_validate = false
+
+[routing]
+split_threshold_bps = 5
+split_competitive_delta_bps = 50
+min_split_fraction_bps = 5
+max_splits = 3
+max_hops = 3
+max_multi_hop_paths = 50
+max_direct_paths = 0
+quote_rpc_hydrate_enabled = false
+quote_hydrate_max_pools = 12
+
+[dex]
+aquarius_hydrate_concurrency = 16
+horizon_url = "https://horizon.stellar.org"
+comet_factory_events_ledger_window = 50000
+# soroswap_factory_contract = "C..."
+# comet_factory = "C..."
+# comet_extra_pools = ["C..."]
+# sushi_discovery_rpc = "https://your-sushi-discovery-rpc.example.com"
+
+[access]
+partner_api_keys = []
+rate_limit_bypass_ips = []
+
+[features]
+# escrow_contract = "C..."
+# indexer_db_path = "/var/lib/lumagg/indexer.sqlite"
+# price_db_path = "/var/lib/lumagg/prices.sqlite"
+price_sampler_enabled = true
+price_sample_secs = 600
+price_sample_token_limit = 30
+# price_retention_days = 90
+
+[monitoring]
+log_filter = "info"
+telegram_enabled = false
+# telegram_bot_token = ""
+# telegram_chat_id = ""
+telegram_primary_api_port = 3100
+telegram_heartbeat_interval_secs = 600
+api_health_url = "http://127.0.0.1:3100/api/v1/health"
+quote_redis_miss_alert_min = 12
+quote_redis_miss_alert_ratio_bps = 3000
+# mainnet_rpc_ref_url = "https://soroban-rpc.mainnet.stellar.gateway.fm"

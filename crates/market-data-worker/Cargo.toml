@@ -12,6 +12,7 @@ path = "src/main.rs"
 market-snapshot = { path = "../market-snapshot" }
 dex-adapters = { path = "../dex-adapters" }
 lumagg-alerts = { path = "../lumagg-alerts" }
+lumagg-config = { path = "../lumagg-config" }
 
 tokio.workspace = true
 reqwest.workspace = true

@@ -1,55 +1,84 @@
-use std::process::ExitCode;
+use {
+    anyhow::{bail, Context, Result},
+    lumagg_config::aggregator::AggregatorConfig,
+    std::{path::PathBuf, process::ExitCode},
+};
+
+struct Args {
+    config: Option<PathBuf>,
+    listen_addr: Option<String>,
+    check_config: bool,
+}
 
 fn print_help() {
     println!(
         "lumagg-swap-api {}\n\n\
-         Self-hosted LumAgg quote and transaction-build API.\n\
-         The market-data worker runs in the same process; Redis is not required.\n\n\
-         Usage:\n  lumagg-swap-api\n  lumagg-swap-api --help\n  lumagg-swap-api --version\n\n\
-         Required configuration:\n  RPC_URL=<Stellar Soroban RPC URL>\n\n\
-         Common optional configuration:\n  LISTEN_ADDR=0.0.0.0:3100\n  AGGREGATOR_CONTRACT=<C... contract id>\n  RUST_LOG=info\n",
+         Self-hosted LumAgg API with an embedded market-data worker.\n\n\
+         Usage: lumagg-swap-api --config <FILE> [--listen-addr <ADDR>] [--check-config]\n\n\
+         Options:\n  --config <FILE>       LumAgg TOML configuration\n  \
+         --listen-addr <ADDR> Override api.listen_addr\n  --check-config       Validate and exit\n  \
+         -h, --help           Show help\n  -V, --version        Show version",
         env!("CARGO_PKG_VERSION")
     );
 }
 
-fn parse_args() -> Result<bool, String> {
+fn parse_args() -> Result<Option<Args>> {
     let mut args = std::env::args().skip(1);
-    let Some(arg) = args.next() else {
-        return Ok(true);
+    let mut parsed = Args {
+        config: None,
+        listen_addr: None,
+        check_config: false,
     };
-    if args.next().is_some() {
-        return Err("lumagg-swap-api does not accept positional arguments".into());
-    }
-    match arg.as_str() {
-        "-h" | "--help" => {
-            print_help();
-            Ok(false)
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--config" => parsed.config = Some(args.next().context("--config requires a file path")?.into()),
+            "--listen-addr" => parsed.listen_addr = Some(args.next().context("--listen-addr requires a value")?),
+            "--check-config" => parsed.check_config = true,
+            "-h" | "--help" => {
+                print_help();
+                return Ok(None);
+            }
+            "-V" | "--version" => {
+                println!("lumagg-swap-api {}", env!("CARGO_PKG_VERSION"));
+                return Ok(None);
+            }
+            _ => bail!("unknown argument: {arg}"),
         }
-        "-V" | "--version" => {
-            println!("lumagg-swap-api {}", env!("CARGO_PKG_VERSION"));
-            Ok(false)
-        }
-        _ => Err(format!("unknown argument: {arg}")),
     }
+    Ok(Some(parsed))
 }
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let should_run = match parse_args() {
-        Ok(should_run) => should_run,
+    match run().await {
+        Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("error: {error}\n\nRun 'lumagg-swap-api --help' for usage.");
-            return ExitCode::from(2);
+            eprintln!("error: {error:#}");
+            ExitCode::FAILURE
         }
+    }
+}
+
+async fn run() -> Result<()> {
+    let Some(args) = parse_args()? else {
+        return Ok(());
     };
-    if !should_run {
-        return ExitCode::SUCCESS;
+    if let Some(path) = args.config {
+        let config: AggregatorConfig = lumagg_config::load(&path)?;
+        config.validate_embedded()?;
+        config.apply();
+    } else if args.check_config {
+        bail!("--check-config requires --config <FILE>");
+    }
+    if let Some(addr) = args.listen_addr {
+        std::env::set_var("LISTEN_ADDR", addr);
+    }
+    if args.check_config {
+        println!("configuration is valid");
+        return Ok(());
     }
 
-    // This distribution is intentionally all-in-one. Production cluster
-    // deployments continue to run api-server and market-data-worker separately.
     std::env::set_var("LUMAGG_MODE", "embedded");
-
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
@@ -58,13 +87,6 @@ async fn main() -> ExitCode {
             }),
         )
         .init();
-
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "starting LumAgg Swap API");
-    match api_server::run_server().await {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            tracing::error!(error = %error, "LumAgg Swap API exited");
-            ExitCode::FAILURE
-        }
-    }
+    api_server::run_server().await
 }

@@ -26,6 +26,7 @@ market-snapshot = { path = "../market-snapshot" }
 router-engine = { path = "../router-engine" }
 dex-adapters = { path = "../dex-adapters" }
 lumagg-alerts = { path = "../lumagg-alerts" }
+lumagg-config = { path = "../lumagg-config" }
 
 tokio.workspace = true
 anyhow.workspace = true

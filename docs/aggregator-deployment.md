@@ -36,7 +36,7 @@ tar -xzf lumagg-aggregator-linux-x86_64.tar.gz
 cd lumagg-aggregator-linux-x86_64
 ```
 
-The archive contains both binaries, a complete `aggregator.env.example`, the
+The archive contains both binaries, a complete `lumagg-aggregator.toml`, the
 configuration reference, and optional systemd units.
 
 To build the same binaries from source instead:
@@ -71,47 +71,47 @@ The password must be URL-encoded when it contains reserved URL characters.
 Create a private runtime configuration from the complete example:
 
 ```bash
-cp aggregator.env.example aggregator.env
-chmod 600 aggregator.env
+cp lumagg-aggregator.toml aggregator.toml
+chmod 600 aggregator.toml
 ```
 
 Replace at least:
 
-- `RPC_URL` with the production Soroban RPC.
-- `SNAPSHOT_REDIS_URL` with the private Redis URL.
-- `AGGREGATOR_CONTRACT` with the deployed LumAgg Aggregator contract. Omit it
+- `network.rpc_url` with the production Soroban RPC.
+- `redis.url` with the private Redis URL.
+- `api.aggregator_contract` with the deployed LumAgg Aggregator contract. Omit it
   only when the API should quote but never build transactions.
 
-Keep the network and every `SNAPSHOT_*` setting identical across the worker and
-all API replicas. See [Configuration Reference](aggregator-configuration.md)
+Both processes read the same file, so the network and Redis settings cannot
+silently diverge. Validate the file before starting either process:
+
+```bash
+./lumagg-market-data-worker --config ./aggregator.toml --check-config
+./lumagg-api-server --config ./aggregator.toml --check-config
+```
+
+See [Configuration Reference](aggregator-configuration.md)
 for every supported parameter, its default, and the process that uses it.
 
 ## Run without a service manager
 
-The binaries read environment variables, so they are independent of systemd,
-Docker, Kubernetes, or any other process manager. Load the config in each
-process environment:
+The binaries read the TOML file directly, so they are independent of systemd,
+Docker, Kubernetes, or any other process manager:
 
 ```bash
-set -a
-. ./aggregator.env
-set +a
-./lumagg-market-data-worker
+./lumagg-market-data-worker --config ./aggregator.toml
 ```
 
 After the worker publishes its first snapshot, start the API in another shell:
 
 ```bash
-set -a
-. ./aggregator.env
-set +a
-LISTEN_ADDR=127.0.0.1:3100 ./lumagg-api-server
+./lumagg-api-server --config ./aggregator.toml
 ```
 
 Additional API replicas use the same config and a different `LISTEN_ADDR`:
 
 ```bash
-LISTEN_ADDR=127.0.0.1:3101 ./lumagg-api-server
+./lumagg-api-server --config ./aggregator.toml --listen-addr 127.0.0.1:3101
 ```
 
 In production, translate the same environment file into your chosen service
@@ -143,7 +143,7 @@ those units:
 sudo useradd --system --home /var/lib/lumagg --shell /usr/sbin/nologin lumagg
 sudo install -d -o root -g lumagg -m 0750 /etc/lumagg
 sudo install -m 0755 lumagg-market-data-worker lumagg-api-server /usr/local/bin/
-sudo install -m 0640 -o root -g lumagg aggregator.env /etc/lumagg/aggregator.env
+sudo install -m 0640 -o root -g lumagg aggregator.toml /etc/lumagg/aggregator.toml
 sudo install -m 0644 systemd/*.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now lumagg-market-data-worker

@@ -1,0 +1,58 @@
+[network]
+rpc_url = "https://your-stellar-rpc.example.com"
+quote_api_urls = [
+  "http://127.0.0.1:3100",
+  "http://127.0.0.1:3101",
+]
+
+[contracts]
+aggregator = "CHANGE_ME"
+# vault = "C..."
+
+[accounts]
+caller_secrets_file = "/etc/lumagg/arbitrage-callers"
+# mnemonic_path = "/etc/lumagg/mnemonic"
+caller_indices = [0]
+
+[assets]
+# Defaults to XLM and USDC when omitted.
+# base_tokens = ["C...", "C..."]
+bridge_tokens = ["CHANGE_ME"]
+
+[scanner]
+probe_amount_in = 100000000
+min_profit = 80000
+# min_profit_xlm = 80000
+# min_profit_usdc = 30000
+xlm_usdc_price_e7 = 1800000
+xlm_usdc_price_refresh_secs = 60
+slippage_bps = 0
+max_hops = 2
+max_splits = 1
+on_chain_validate = false
+scan_interval_ms = 500
+item_gap_ms = 10
+worker_count = 8
+optimize_amount = true
+# min_amount_in = 100000000
+max_amount_in = 5000000000
+sample_count = 10
+
+[execution]
+build_tx = false
+submit_tx = false
+dry_run = true
+poll_tx = true
+submit_dedup_secs = 6
+caller_cooldown_ms = 1000
+
+[monitoring]
+log_filter = "info"
+telegram_enabled = false
+# telegram_bot_token = ""
+# telegram_chat_id = ""
+telegram_interval_secs = 3600
+quiet_alert_tick_secs = 300
+quiet_alert_cooldown_secs = 3600
+quiet_alert_windows = 3
+quiet_alert_min_opportunities = 1

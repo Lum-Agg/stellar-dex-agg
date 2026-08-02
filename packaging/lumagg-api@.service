@@ -7,12 +7,9 @@ After=network-online.target
 Type=simple
 User=lumagg
 Group=lumagg
-EnvironmentFile=/etc/lumagg/aggregator.env
-Environment=LISTEN_ADDR=127.0.0.1:%i
-Environment=TOKEN_LOGO_DIR=/var/lib/lumagg/logos
 WorkingDirectory=/var/lib/lumagg
 StateDirectory=lumagg
-ExecStart=/usr/local/bin/lumagg-api-server
+ExecStart=/usr/local/bin/lumagg-api-server --config /etc/lumagg/aggregator.toml --listen-addr 127.0.0.1:%i
 Restart=on-failure
 RestartSec=5
 UMask=0027

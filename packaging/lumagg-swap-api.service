@@ -7,11 +7,9 @@ After=network-online.target
 Type=simple
 User=lumagg
 Group=lumagg
-EnvironmentFile=-/etc/lumagg/lumagg-swap-api.env
-Environment=TOKEN_LOGO_DIR=/var/lib/lumagg/logos
 WorkingDirectory=/var/lib/lumagg
 StateDirectory=lumagg
-ExecStart=/usr/local/bin/lumagg-swap-api
+ExecStart=/usr/local/bin/lumagg-swap-api --config /etc/lumagg/swap-api.toml
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

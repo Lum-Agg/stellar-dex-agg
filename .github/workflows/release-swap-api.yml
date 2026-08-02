@@ -43,7 +43,7 @@ jobs:
           install -m 0755 target/release/lumagg-swap-api "$swap_dir/lumagg-swap-api"
           install -m 0644 LICENSE "$swap_dir/LICENSE"
           install -m 0644 docs/lumagg-swap-api.md "$swap_dir/README.md"
-          install -m 0644 scripts/lumagg-swap-api.env.example "$swap_dir/lumagg-swap-api.env.example"
+          install -m 0644 packaging/lumagg-swap-api.toml "$swap_dir/lumagg-swap-api.toml"
           install -m 0644 packaging/lumagg-swap-api.service "$swap_dir/lumagg-swap-api.service"
 
           install -m 0755 target/release/lumagg-api-server "$cluster_dir/lumagg-api-server"
@@ -51,14 +51,14 @@ jobs:
           install -m 0644 LICENSE "$cluster_dir/LICENSE"
           install -m 0644 docs/aggregator-deployment.md "$cluster_dir/README.md"
           install -m 0644 docs/aggregator-configuration.md "$cluster_dir/aggregator-configuration.md"
-          install -m 0644 packaging/aggregator.env.example "$cluster_dir/aggregator.env.example"
+          install -m 0644 packaging/lumagg-aggregator.toml "$cluster_dir/lumagg-aggregator.toml"
           install -m 0644 packaging/lumagg-market-data-worker.service "$cluster_dir/systemd/"
           install -m 0644 packaging/lumagg-api@.service "$cluster_dir/systemd/"
 
           install -m 0755 target/release/lumagg-arbitrage-bot "$arb_dir/lumagg-arbitrage-bot"
           install -m 0644 LICENSE "$arb_dir/LICENSE"
           install -m 0644 docs/arbitrage-deployment.md "$arb_dir/README.md"
-          install -m 0644 packaging/arbitrage.env.example "$arb_dir/arbitrage.env.example"
+          install -m 0644 packaging/lumagg-arbitrage.toml "$arb_dir/lumagg-arbitrage.toml"
           install -m 0644 packaging/lumagg-arbitrage.service "$arb_dir/lumagg-arbitrage.service"
 
           tar -czf "$swap_dir.tar.gz" "$swap_dir"

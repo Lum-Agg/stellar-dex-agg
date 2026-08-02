@@ -30,7 +30,7 @@ the final rollout stage signs and broadcasts transactions.
 See [Smart Contract Deployment](contracts-deployment.md) for Aggregator and
 Vault deployment, upgrades, and external TTL maintenance.
 
-Without `ARB_VAULT_CONTRACT`, caller accounts must also hold the trading
+Without `contracts.vault`, caller accounts must also hold the trading
 principal. With a vault, principal remains in the vault and callers normally
 hold only enough native XLM for fees.
 
@@ -49,16 +49,16 @@ cd lumagg-arbitrage-bot-linux-x86_64
 Create a private config and caller-secret file from the archive contents:
 
 ```bash
-cp arbitrage.env.example arbitrage.env
-chmod 600 arbitrage.env
+cp lumagg-arbitrage.toml arbitrage.toml
+chmod 600 arbitrage.toml
 touch arbitrage-callers
 chmod 600 arbitrage-callers
 ```
 
-Set `ARB_CALLER_SECRETS_FILE` in `arbitrage.env` to the absolute path of
+Set `accounts.caller_secrets_file` in `arbitrage.toml` to the absolute path of
 `arbitrage-callers`, then put one Stellar `S...` secret per line in that file.
 Never commit either private file. Mnemonic-based callers are also supported
-through `ARB_MNEMONIC_PATH` and `ARB_CALLER_INDICES`.
+through `accounts.mnemonic_path` and `accounts.caller_indices`.
 
 To build the same executable from a tagged source revision instead:
 
@@ -71,7 +71,7 @@ cargo build --locked --release -p arbitrage --bin lumagg-arbitrage-bot
 
 ## Configure and run
 
-Edit `arbitrage.env` and set the quote URLs, RPC, contract IDs, and bridge
+Edit `arbitrage.toml` and set the quote URLs, RPC, contract IDs, and bridge
 tokens. Start with conservative trade limits. Amounts are integer token units;
 XLM uses seven decimal places.
 
@@ -79,10 +79,8 @@ The binary is not tied to systemd. Load the config and run it under any process
 manager:
 
 ```bash
-set -a
-. ./arbitrage.env
-set +a
-./lumagg-arbitrage-bot
+./lumagg-arbitrage-bot --config ./arbitrage.toml --check-config
+./lumagg-arbitrage-bot --config ./arbitrage.toml
 ```
 
 The remaining rollout stages apply regardless of the process manager.
@@ -99,13 +97,13 @@ sudo install -d -o root -g lumagg -m 0750 /etc/lumagg
 sudo install -m 0755 lumagg-arbitrage-bot /usr/local/bin/
 sudo install -m 0600 -o lumagg -g lumagg /dev/null \
   /etc/lumagg/arbitrage-callers
-sudo install -m 0640 -o root -g lumagg arbitrage.env /etc/lumagg/arbitrage.env
+sudo install -m 0640 -o root -g lumagg arbitrage.toml /etc/lumagg/arbitrage.toml
 sudo install -m 0644 lumagg-arbitrage.service \
   /etc/systemd/system/
 ```
 
 Skip `useradd` when the service account already exists. Set
-`ARB_CALLER_SECRETS_FILE=/etc/lumagg/arbitrage-callers` in the installed config.
+`accounts.caller_secrets_file = "/etc/lumagg/arbitrage-callers"` in the installed config.
 
 ## Safe Rollout
 
@@ -113,10 +111,11 @@ Do not move directly from installation to live submission. Use these stages.
 
 ### 1. Quote-only scan
 
-```ini
-ARB_BUILD_TX=0
-ARB_SUBMIT_TX=0
-ARB_DRY_RUN=1
+```toml
+[execution]
+build_tx = false
+submit_tx = false
+dry_run = true
 ```
 
 This validates quote connectivity, route discovery, concurrency, and sizing
@@ -124,10 +123,11 @@ without building or simulating transactions.
 
 ### 2. Build and simulate
 
-```ini
-ARB_BUILD_TX=1
-ARB_SUBMIT_TX=0
-ARB_DRY_RUN=1
+```toml
+[execution]
+build_tx = true
+submit_tx = false
+dry_run = true
 ```
 
 This requires valid contracts and caller accounts. Confirm simulation success,
@@ -136,10 +136,11 @@ continuing.
 
 ### 3. Live submission
 
-```ini
-ARB_BUILD_TX=1
-ARB_SUBMIT_TX=1
-ARB_DRY_RUN=0
+```toml
+[execution]
+build_tx = true
+submit_tx = true
+dry_run = false
 ```
 
 Enable this only after reviewing sustained simulation logs and funding limits.
@@ -155,7 +156,8 @@ journalctl -u lumagg-arbitrage -f
 
 Before submission, the scanner gates an opportunity using the simulated return
 minus the estimated transaction fee and the configured min profit
-(`ARB_MIN_PROFIT`, or per-base `ARB_MIN_PROFIT_XLM` / `ARB_MIN_PROFIT_USDC`).
+(`scanner.min_profit`, or the per-base `scanner.min_profit_xlm` /
+`scanner.min_profit_usdc`).
 The transaction's on-chain `min_amount_out` is intentionally only greater than
 the input amount, instead of encoding the entire simulated profit target. This
 reduces avoidable post-submission failures and fee loss when execution changes
@@ -169,13 +171,13 @@ vault exposure, token selection, and submission settings.
 
 - Keep the quote API and RPC close to the scanner; latency directly affects
   opportunity validity.
-- Keep `ARB_MAX_SPLITS=1` initially. More splits increase route complexity and
+- Keep `scanner.max_splits = 1` initially. More splits increase route complexity and
   Soroban resource use.
 - Use several callers only after confirming sequence management and fee
   funding for one caller.
 - Monitor simulation failure rate, estimated fees, successful transactions,
   realized token deltas, RPC errors, and vault balance independently.
-- To stop new submissions immediately, set `ARB_SUBMIT_TX=0` and restart, or
+- To stop new submissions immediately, set `execution.submit_tx = false` and restart, or
   stop `lumagg-arbitrage.service`.
 
 The deeper contract and fund-flow description remains in

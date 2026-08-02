@@ -1,0 +1,37 @@
+[network]
+rpc_url = "https://your-stellar-rpc.example.com"
+passphrase = "Public Global Stellar Network ; September 2015"
+
+[worker]
+enabled_dex_sources = [
+  "aquarius",
+  "aquarius_clmm",
+  "soroswap",
+  "phoenix",
+  "sushi",
+  "comet",
+  "classic_dex",
+]
+discovery_interval_secs = 600
+refresh_interval_secs = 5
+pool_state_refresh_concurrency = 8
+ledger_watcher_enabled = true
+ledger_poll_secs = 0.1
+fetch_pipeline_enabled = true
+fetch_worker_count = 8
+
+[api]
+listen_addr = "127.0.0.1:3100"
+aggregator_contract = "CHANGE_ME"
+token_logo_dir = "data/logos"
+token_logo_base_url = "http://127.0.0.1:3100/logos"
+
+[routing]
+max_hops = 3
+max_splits = 3
+split_threshold_bps = 5
+quote_rpc_hydrate_enabled = true
+quote_hydrate_max_pools = 12
+
+[monitoring]
+log_filter = "info"

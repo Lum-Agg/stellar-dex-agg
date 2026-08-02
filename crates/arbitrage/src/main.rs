@@ -7,15 +7,64 @@
 //! lumagg-arbitrage-bot
 
 use {
-    anyhow::Result,
+    anyhow::{bail, Context, Result},
     arbitrage::{pipeline::engine, telegram, ArbConfig, ArbRuntime},
-    std::sync::Arc,
+    lumagg_config::arbitrage::ArbitrageConfig,
+    std::{path::PathBuf, sync::Arc},
     tracing::info,
     tracing_subscriber::EnvFilter,
 };
 
+fn print_help() {
+    println!(
+        "lumagg-arbitrage-bot {}\n\n\
+         Usage: lumagg-arbitrage-bot --config <FILE> [--check-config]\n\n\
+         Options:\n  --config <FILE>  LumAgg Arbitrage TOML configuration\n  \
+         --check-config  Validate configuration and exit\n  -h, --help      Show this help\n  \
+         -V, --version   Show version",
+        env!("CARGO_PKG_VERSION")
+    );
+}
+
+fn parse_args() -> Result<Option<(Option<PathBuf>, bool)>> {
+    let mut args = std::env::args().skip(1);
+    let mut config = None;
+    let mut check = false;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--config" => config = Some(args.next().context("--config requires a file path")?.into()),
+            "--check-config" => check = true,
+            "-h" | "--help" => {
+                print_help();
+                return Ok(None);
+            }
+            "-V" | "--version" => {
+                println!("lumagg-arbitrage-bot {}", env!("CARGO_PKG_VERSION"));
+                return Ok(None);
+            }
+            _ => bail!("unknown argument: {arg}"),
+        }
+    }
+    Ok(Some((config, check)))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    let Some((path, check)) = parse_args()? else {
+        return Ok(());
+    };
+    if let Some(path) = path {
+        let config: ArbitrageConfig = lumagg_config::load(&path)?;
+        config.validate()?;
+        config.apply();
+    } else if check {
+        bail!("--check-config requires --config <FILE>");
+    }
+    if check {
+        println!("configuration is valid");
+        return Ok(());
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive("info".parse()?))
         .init();

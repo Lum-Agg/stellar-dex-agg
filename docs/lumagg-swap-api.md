@@ -25,12 +25,14 @@ cd lumagg-swap-api-linux-x86_64
 
 ## Run
 
-At minimum, configure a reachable Stellar Soroban RPC:
+Create a private configuration from the release template and set a reachable
+Stellar Soroban RPC:
 
 ```bash
-export RPC_URL=https://your-stellar-rpc.example.com
-export LISTEN_ADDR=127.0.0.1:3100
-./lumagg-swap-api
+cp lumagg-swap-api.toml swap-api.toml
+chmod 600 swap-api.toml
+./lumagg-swap-api --config ./swap-api.toml --check-config
+./lumagg-swap-api --config ./swap-api.toml
 ```
 
 The process accepts HTTP connections before initial market discovery is
@@ -43,7 +45,7 @@ curl -fsS http://127.0.0.1:3100/api/v1/health
 curl -fsS http://127.0.0.1:3100/api/v1/tokens | jq
 ```
 
-The release archive includes `lumagg-swap-api.env.example` with the common
+The release archive includes `lumagg-swap-api.toml` with the complete
 settings. The complete API contract is in
 [`docs/openapi.yaml`](https://github.com/Lum-Agg/stellar-dex-agg/blob/main/docs/openapi.yaml).
 
@@ -55,13 +57,13 @@ The release archive includes a hardened `lumagg-swap-api.service` template:
 sudo useradd --system --home /var/lib/lumagg --shell /usr/sbin/nologin lumagg
 sudo install -m 0755 lumagg-swap-api /usr/local/bin/lumagg-swap-api
 sudo install -d -m 0750 /etc/lumagg
-sudo install -m 0640 lumagg-swap-api.env.example /etc/lumagg/lumagg-swap-api.env
+sudo install -m 0640 swap-api.toml /etc/lumagg/swap-api.toml
 sudo install -m 0644 lumagg-swap-api.service /etc/systemd/system/lumagg-swap-api.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now lumagg-swap-api
 ```
 
-Edit `/etc/lumagg/lumagg-swap-api.env` before starting the service. Check
+Edit `/etc/lumagg/swap-api.toml` before starting the service. Check
 startup and readiness with:
 
 ```bash
@@ -92,7 +94,7 @@ required. The all-in-one binary does not replace this topology.
 ## Arbitrage boundary
 
 `lumagg-swap-api` does not execute arbitrage. Run `lumagg-arbitrage-bot` separately
-and point `ARB_QUOTE_API_URL` or `ARB_QUOTE_API_URLS` at this service. For a
+and put this service URL in `network.quote_api_urls`. For a
 high-throughput mainnet operator, use the production aggregator topology above.
 
 ## Operational notes
@@ -104,4 +106,4 @@ high-throughput mainnet operator, use the production aggregator topology above.
 - RPC capacity directly limits discovery, refresh, quote preparation, and
   transaction simulation throughput.
 - Keep the API and on-chain Aggregator contract versions compatible when
-  overriding `AGGREGATOR_CONTRACT`.
+  setting `api.aggregator_contract`.

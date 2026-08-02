@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/lumagg-config",
     "crates/market-snapshot",
     "crates/market-data-worker",
     "crates/router-engine",
@@ -45,6 +46,7 @@ tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"
+toml = "0.9"
 
 # Error handling
 anyhow = "1"
