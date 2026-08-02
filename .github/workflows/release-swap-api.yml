@@ -48,7 +48,7 @@ jobs:
 
           install -m 0755 target/release/lumagg-api-server "$cluster_dir/lumagg-api-server"
           install -m 0755 target/release/lumagg-market-data-worker "$cluster_dir/lumagg-market-data-worker"
-          install -m 0755 target/release/analytics-indexer "$cluster_dir/analytics-indexer"
+          install -m 0755 target/release/lumagg-analytics-indexer "$cluster_dir/lumagg-analytics-indexer"
           install -m 0644 LICENSE "$cluster_dir/LICENSE"
           install -m 0644 docs/aggregator-deployment.md "$cluster_dir/README.md"
           install -m 0644 docs/aggregator-configuration.md "$cluster_dir/aggregator-configuration.md"
@@ -56,6 +56,7 @@ jobs:
           install -m 0644 packaging/lumagg-aggregator.toml "$cluster_dir/lumagg-aggregator.toml"
           install -m 0644 packaging/lumagg-market-data-worker.service "$cluster_dir/systemd/"
           install -m 0644 packaging/lumagg-api@.service "$cluster_dir/systemd/"
+          install -m 0644 packaging/lumagg-analytics-indexer.service "$cluster_dir/systemd/"
 
           install -m 0755 target/release/lumagg-arbitrage-bot "$arb_dir/lumagg-arbitrage-bot"
           install -m 0644 LICENSE "$arb_dir/LICENSE"

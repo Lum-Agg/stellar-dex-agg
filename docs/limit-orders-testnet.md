@@ -42,8 +42,8 @@ Passphrase: `Test SDF Network ; September 2015`
 ```bash
 set -a && source deploy/.env.limit-testnet.local && set +a
 
-# analytics-indexer (polls escrow events into INDEXER_DB_PATH)
-# api-server (GET /orders + build_create/build_cancel need INDEXER_DB_PATH + ESCROW_CONTRACT)
+# lumagg-analytics-indexer (polls escrow events into indexer.db_path)
+# api-server (GET /orders + build_create/build_cancel use indexer.db_path + features.escrow_contract)
 # limit-keeper (KEEPER_NETWORK=testnet, ESCROW_CONTRACT, AGGREGATOR_CONTRACT)
 ```
 

@@ -67,12 +67,19 @@ rate_limit_bypass_ips = []
 
 [features]
 # escrow_contract = "C..."
-# indexer_db_path = "/var/lib/lumagg/indexer.sqlite"
 # price_db_path = "/var/lib/lumagg/prices.sqlite"
 price_sampler_enabled = true
 price_sample_secs = 600
 price_sample_token_limit = 30
 # price_retention_days = 90
+
+[indexer]
+db_path = "/var/lib/lumagg/analytics-indexer.db"
+mode = "events"
+envelope_fallback = false
+poll_secs = 30
+page_limit = 10000
+# start_ledger = 63200000
 
 [monitoring]
 log_filter = "info"

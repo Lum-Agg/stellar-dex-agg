@@ -21,6 +21,7 @@ pub struct AggregatorConfig {
     pub access: Access,
     #[serde(default)]
     pub features: Features,
+    pub indexer: Option<Indexer>,
     #[serde(default)]
     pub monitoring: Monitoring,
 }
@@ -114,12 +115,35 @@ pub struct Access {
 #[serde(default, deny_unknown_fields)]
 pub struct Features {
     pub escrow_contract: Option<String>,
-    pub indexer_db_path: Option<String>,
     pub price_db_path: Option<String>,
     pub price_sampler_enabled: Option<bool>,
     pub price_sample_secs: Option<u64>,
     pub price_sample_token_limit: Option<usize>,
     pub price_retention_days: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Indexer {
+    pub db_path: String,
+    pub mode: String,
+    pub envelope_fallback: bool,
+    pub poll_secs: u64,
+    pub page_limit: u32,
+    pub start_ledger: Option<u32>,
+}
+
+impl Default for Indexer {
+    fn default() -> Self {
+        Self {
+            db_path: "./data/analytics-indexer.db".into(),
+            mode: "events".into(),
+            envelope_fallback: false,
+            poll_secs: 30,
+            page_limit: 10_000,
+            start_ledger: None,
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -155,6 +179,30 @@ impl AggregatorConfig {
         }
         if redis.keep_latest == 0 {
             bail!("redis.keep_latest must be greater than zero");
+        }
+        Ok(())
+    }
+
+    pub fn validate_indexer(&self) -> Result<()> {
+        self.validate_embedded()?;
+        let contract = self.api.aggregator_contract.as_deref().unwrap_or_default();
+        if contract.is_empty() || contract == "CHANGE_ME" {
+            bail!("api.aggregator_contract is required for the indexer");
+        }
+        let Some(indexer) = &self.indexer else {
+            bail!("indexer section is required");
+        };
+        if indexer.db_path.trim().is_empty() {
+            bail!("indexer.db_path must not be empty");
+        }
+        if !matches!(indexer.mode.as_str(), "events" | "envelope" | "both") {
+            bail!("indexer.mode must be events, envelope, or both");
+        }
+        if indexer.poll_secs == 0 {
+            bail!("indexer.poll_secs must be greater than zero");
+        }
+        if indexer.page_limit == 0 {
+            bail!("indexer.page_limit must be greater than zero");
         }
         Ok(())
     }
@@ -221,7 +269,9 @@ impl AggregatorConfig {
         set_list("LUMAGG_PARTNER_API_KEYS", &self.access.partner_api_keys);
         set_list("QUOTE_RATE_LIMIT_BYPASS_IPS", &self.access.rate_limit_bypass_ips);
         set_option("ESCROW_CONTRACT", &self.features.escrow_contract);
-        set_option("INDEXER_DB_PATH", &self.features.indexer_db_path);
+        if let Some(indexer) = &self.indexer {
+            set("INDEXER_DB_PATH", &indexer.db_path);
+        }
         set_option("PRICE_DB_PATH", &self.features.price_db_path);
         if let Some(enabled) = self.features.price_sampler_enabled {
             set("PRICE_SAMPLER", if enabled { "1" } else { "0" });

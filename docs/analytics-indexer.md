@@ -8,7 +8,7 @@ The indexer polls Soroban RPC **`getEvents`** for the aggregator contract, group
 
 **Vault path:** When arb uses `vault.execute_round_trip`, the aggregator still emits events via CPI — same indexer path as direct `round_trip_swap`.
 
-**Legacy fallback:** `INDEXER_ENVELOPE_FALLBACK=1` (default with `INDEXER_MODE=events`) also ingests pre-upgrade txs and supplies token/path metadata for historical 4-field `leg` events. New compact `leg` events are self-contained.
+**Legacy fallback:** `indexer.envelope_fallback = true` also ingests pre-upgrade txs and supplies token/path metadata for historical 4-field `leg` events. New compact `leg` events are self-contained.
 
 ## Aggregator events (requires WASM upgrade)
 
@@ -28,7 +28,7 @@ Upgrade: `./contracts/aggregator/upgrade.sh` (see repo README).
 
 ```mermaid
 flowchart LR
-  RPC[Soroban RPC getEvents] --> IDX[analytics-indexer]
+  RPC[Soroban RPC getEvents] --> IDX[lumagg-analytics-indexer]
   ENV[optional envelope fallback] --> IDX
   IDX --> DB[(SQLite)]
   IDX --> EXP[export-daily JSON]
@@ -70,44 +70,48 @@ Failed transactions and bot simulation estimates are excluded.
 
 ## Configuration
 
-| Variable | Default | Description |
+The indexer reads the same `lumagg-aggregator.toml` as the API and worker.
+
+| TOML key | Default | Description |
 |----------|---------|-------------|
-| `INDEXER_MODE` | `events` | `events` \| `envelope` \| `both` |
-| `INDEXER_ENVELOPE_FALLBACK` | `true` when mode=events | Backfill legacy invokes and enrich historical 4-field leg events; optional after deploying compact events |
-| `INDEXER_RPC_URL` / `SOROBAN_RPC_URL` | mainnet gateway.fm | Soroban RPC endpoint |
-| `AGGREGATOR_CONTRACT` | mainnet LumAgg aggregator | Event source contract |
-| `INDEXER_DB_PATH` | `./data/analytics-indexer.db` | SQLite file |
-| `INDEXER_POLL_SECS` | `30` | Poll interval |
-| `INDEXER_START_LEDGER` | — | Initial ledger (else latest − 17,280) |
-| `INDEXER_PAGE_LIMIT` | `10000` | getEvents page size |
+| `network.rpc_url` | required | Soroban RPC endpoint |
+| `network.passphrase` | mainnet | Stellar network passphrase |
+| `api.aggregator_contract` | required | Event source contract |
+| `features.escrow_contract` | unset | Optional Order Escrow event source |
+| `indexer.mode` | `events` | `events` \| `envelope` \| `both` |
+| `indexer.envelope_fallback` | `false` | Ingest legacy envelopes and enrich historical leg events |
+| `indexer.db_path` | `./data/analytics-indexer.db` | Shared SQLite file used by the indexer and API |
+| `indexer.poll_secs` | `30` | Poll interval |
+| `indexer.start_ledger` | unset | Initial ledger when the database has no cursor |
+| `indexer.page_limit` | `10000` | `getEvents` page size |
 
 ## Commands
 
 ```bash
-# Continuous ingest (production)
-cargo run -p analytics-indexer -- run
+CONFIG=./lumagg-aggregator.toml
+
+# Continuous ingest
+./lumagg-analytics-indexer --config "$CONFIG" run
 
 # One-shot backfill from ledger
-INDEXER_START_LEDGER=63200000 cargo run -p analytics-indexer -- backfill
+./lumagg-analytics-indexer --config "$CONFIG" backfill --start-ledger 63200000
 
 # Status
-cargo run -p analytics-indexer -- status
+./lumagg-analytics-indexer --config "$CONFIG" status
 
 # Daily JSON export
-cargo run -p analytics-indexer -- export-daily
-cargo run -p analytics-indexer -- export-daily 2026-06-01
+./lumagg-analytics-indexer --config "$CONFIG" export-daily
+./lumagg-analytics-indexer --config "$CONFIG" export-daily 2026-06-01
 ```
 
 ## Tranche 3 handoff
 
 - `export-daily` maps to planned dashboard cards.
-- **`GET /api/v1/stats`** on api-server when `INDEXER_DB_PATH` is set (same DB file).
+- **`GET /api/v1/stats`** on api-server when `[indexer]` is configured (same DB file).
 - Public UI: https://lumagg.xyz/stats
 - Sample export: [sample-indexer-export.json](./sample-indexer-export.json)
 
 ```bash
-# api-server env (alongside indexer)
-INDEXER_DB_PATH=/opt/stellar-dex-aggregator/data/analytics-indexer.db
 curl -s https://api.lumagg.xyz/api/v1/stats | jq .
 ```
 
@@ -120,8 +124,8 @@ backfill aggregator events.
 For the compact `leg` rollout:
 
 1. Upgrade the Aggregator WASM before disabling envelope fallback.
-2. Backfill pre-upgrade ledgers with `INDEXER_ENVELOPE_FALLBACK=1`.
-3. Run the live indexer with `INDEXER_ENVELOPE_FALLBACK=0`; new events already
+2. Backfill pre-upgrade ledgers with `indexer.envelope_fallback = true`.
+3. Run the live indexer with `indexer.envelope_fallback = false`; new events already
    contain the input token and actual execution input.
 
 ```bash

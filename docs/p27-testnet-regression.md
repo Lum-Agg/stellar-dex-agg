@@ -34,7 +34,7 @@ API=http://127.0.0.1:3100 USER_G=GYourTestnetAccount ./scripts/integrator-smoke.
 | 5 | Soroban simulate assembled XDR | ☐ | No new auth / resource errors |
 | 6 | Optional: submit small swap on testnet | ☐ | Tx hash: __________ |
 | 7 | Split route (if available) | ☐ | `is_split=true` still builds |
-| 8 | Indexer ingests testnet events | ☐ | `analytics-indexer run` cursor advances |
+| 8 | Indexer ingests testnet events | ☐ | `lumagg-analytics-indexer --config indexer-testnet.toml run` cursor advances |
 | 9 | `GET /api/v1/stats` returns rollup | ☐ | After ≥1 indexed tx |
 | 10 | Arb vault `execute_round_trip` simulate | ☐ | Testnet vault + caller only |
 

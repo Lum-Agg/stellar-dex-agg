@@ -38,6 +38,17 @@ mod tests {
         rpc_url = "https://rpc.example.com"
     "#;
 
+    const INDEXER: &str = r#"
+        [network]
+        rpc_url = "https://rpc.example.com"
+
+        [api]
+        aggregator_contract = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+
+        [indexer]
+        db_path = "./data/indexer.db"
+    "#;
+
     #[test]
     fn embedded_config_does_not_require_redis() {
         let config: AggregatorConfig = toml::from_str(EMBEDDED).unwrap();
@@ -57,5 +68,22 @@ mod tests {
     fn unknown_keys_are_rejected() {
         let source = format!("{EMBEDDED}\nunknown = true\n");
         assert!(toml::from_str::<AggregatorConfig>(&source).is_err());
+    }
+
+    #[test]
+    fn indexer_config_is_optional_but_required_for_indexer_validation() {
+        let embedded: AggregatorConfig = toml::from_str(EMBEDDED).unwrap();
+        assert_eq!(embedded.validate_indexer().unwrap_err().to_string(), "api.aggregator_contract is required for the indexer");
+
+        let indexer: AggregatorConfig = toml::from_str(INDEXER).unwrap();
+        assert!(indexer.validate_indexer().is_ok());
+        assert_eq!(indexer.indexer.unwrap().page_limit, 10_000);
+    }
+
+    #[test]
+    fn indexer_mode_is_validated() {
+        let source = format!("{INDEXER}\nmode = \"invalid\"\n");
+        let config: AggregatorConfig = toml::from_str(&source).unwrap();
+        assert_eq!(config.validate_indexer().unwrap_err().to_string(), "indexer.mode must be events, envelope, or both");
     }
 }

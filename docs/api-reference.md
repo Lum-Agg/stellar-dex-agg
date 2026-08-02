@@ -50,7 +50,7 @@ https://lumagg.gitbook.io/lumagg/integrate/api-reference
 Limit and DCA endpoints prepare unsigned transactions against the configured
 Order Escrow contract. The wallet remains responsible for signing and
 submitting the returned XDR. Listing endpoints read lifecycle events indexed in
-`INDEXER_DB_PATH`, so a submitted transaction may take one indexer poll to
+`indexer.db_path`, so a submitted transaction may take one indexer poll to
 appear.
 
 DCA orders divide `amount_in` into `chunk_amount` executions separated by

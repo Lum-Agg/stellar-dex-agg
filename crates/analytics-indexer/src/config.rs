@@ -1,6 +1,9 @@
-use anyhow::{Context, Result};
+use {
+    anyhow::{Context, Result},
+    lumagg_config::aggregator::AggregatorConfig,
+};
 
-/// Default mainnet aggregator contract (same as api-server).
+/// Mainnet contract used by the standalone fixture-fetching utility.
 pub const DEFAULT_AGGREGATOR_CONTRACT: &str = "CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K";
 
 /// Approximate ledgers in one day (~5s close time).
@@ -41,46 +44,31 @@ pub struct IndexerConfig {
 }
 
 impl IndexerConfig {
-    pub fn from_env() -> Result<Self> {
-        let index_mode = match std::env::var("INDEXER_MODE")
-            .unwrap_or_else(|_| "events".into())
-            .to_ascii_lowercase()
-            .as_str()
-        {
+    pub fn from_aggregator(config: &AggregatorConfig) -> Result<Self> {
+        config.validate_indexer()?;
+        let indexer = config.indexer.as_ref().context("indexer section is required")?;
+        let index_mode = match indexer.mode.as_str() {
             "envelope" => IndexMode::Envelope,
             "both" => IndexMode::Both,
-            _ => IndexMode::Events,
+            "events" => IndexMode::Events,
+            mode => anyhow::bail!("unsupported indexer mode: {mode}"),
         };
 
-        let envelope_fallback = std::env::var("INDEXER_ENVELOPE_FALLBACK")
-            .ok()
-            .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
-            .unwrap_or(index_mode != IndexMode::Envelope);
-
         Ok(Self {
-            rpc_url: std::env::var("INDEXER_RPC_URL")
-                .or_else(|_| std::env::var("SOROBAN_RPC_URL"))
-                .unwrap_or_else(|_| "https://soroban-rpc.mainnet.stellar.gateway.fm".into()),
-            network_passphrase: std::env::var("INDEXER_NETWORK_PASSPHRASE")
-                .unwrap_or_else(|_| "Public Global Stellar Network ; September 2015".into()),
-            aggregator_contract: std::env::var("AGGREGATOR_CONTRACT")
-                .unwrap_or_else(|_| DEFAULT_AGGREGATOR_CONTRACT.into()),
-            escrow_contract: std::env::var("ESCROW_CONTRACT")
-                .ok()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty()),
+            rpc_url: config.network.rpc_url.clone(),
+            network_passphrase: config.network.passphrase.clone(),
+            aggregator_contract: config
+                .api
+                .aggregator_contract
+                .clone()
+                .context("api.aggregator_contract is required for the indexer")?,
+            escrow_contract: config.features.escrow_contract.clone(),
             index_mode,
-            envelope_fallback,
-            db_path: std::env::var("INDEXER_DB_PATH").unwrap_or_else(|_| "./data/analytics-indexer.db".into()),
-            poll_secs: std::env::var("INDEXER_POLL_SECS")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(30),
-            page_limit: std::env::var("INDEXER_PAGE_LIMIT")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(dex_adapters::rpc::events::DEFAULT_EVENTS_PAGE_LIMIT),
-            start_ledger: std::env::var("INDEXER_START_LEDGER").ok().and_then(|s| s.parse().ok()),
+            envelope_fallback: indexer.envelope_fallback,
+            db_path: indexer.db_path.clone(),
+            poll_secs: indexer.poll_secs,
+            page_limit: indexer.page_limit,
+            start_ledger: indexer.start_ledger,
         })
     }
 

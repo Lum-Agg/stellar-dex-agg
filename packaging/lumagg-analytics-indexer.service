@@ -1,0 +1,16 @@
+[Unit]
+Description=LumAgg Analytics Indexer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lumagg
+Group=lumagg
+WorkingDirectory=/var/lib/lumagg
+ExecStart=/usr/local/bin/lumagg-analytics-indexer --config /etc/lumagg/lumagg-aggregator.toml run
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

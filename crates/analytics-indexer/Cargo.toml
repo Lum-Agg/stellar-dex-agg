@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "analytics-indexer"
+name = "lumagg-analytics-indexer"
 path = "src/main.rs"
 
 [[bin]]
@@ -14,6 +14,7 @@ path = "src/bin/fetch_fixture.rs"
 
 [dependencies]
 dex-adapters = { path = "../dex-adapters" }
+lumagg-config = { path = "../lumagg-config" }
 stellar-xdr.workspace = true
 stellar-strkey.workspace = true
 

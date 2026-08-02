@@ -196,7 +196,7 @@ curl -s https://api.lumagg.xyz/api/v1/stats | jq .
 curl -s "https://api.lumagg.xyz/api/v1/swaps?user=G...&limit=20" | jq .
 ```
 
-响应中的 `data.swaps[]` 包含 `tx_hash`、Token 数量、`status` 和 `is_split` 等字段。无历史记录时仍返回 `200`，`swaps` 为空数组。服务端需配置 `INDEXER_DB_PATH`，否则返回 `503`。
+响应中的 `data.swaps[]` 包含 `tx_hash`、Token 数量、`status` 和 `is_split` 等字段。无历史记录时仍返回 `200`，`swaps` 为空数组。服务端需配置 TOML 的 `[indexer]` 段，否则返回 `503`。
 
 ### 限价单
 
@@ -221,13 +221,13 @@ curl -sX POST "https://api.lumagg.xyz/api/v1/orders/build_cancel" \
   -d '{"user": "G...", "order_id": 1}' | jq .
 ```
 
-`GET /orders` 与 `/swaps` 共用 indexer SQLite（`INDEXER_DB_PATH`）。build 接口需配置 `ESCROW_CONTRACT`。响应字段与 `build_tx` 一致：`unsigned_tx_xdr`、`fee`、`execution`、`num_operations`、`contract`。SDK 方法：`listOrders`、`buildCreateOrder`、`buildCancelOrder`。
+`GET /orders` 与 `/swaps` 共用 indexer SQLite（`indexer.db_path`）。build 接口需配置 `features.escrow_contract`。响应字段与 `build_tx` 一致：`unsigned_tx_xdr`、`fee`、`execution`、`num_operations`、`contract`。SDK 方法：`listOrders`、`buildCreateOrder`、`buildCancelOrder`。
 
 **限价单环境变量（api-server 运维）：**
 
 | 变量 | 说明 |
 |------|------|
-| `INDEXER_DB_PATH` | 含 `limit_orders` 表的 SQLite（列表接口必需） |
+| `indexer.db_path` | 含 `limit_orders` 表的 SQLite（列表接口必需） |
 | `ESCROW_CONTRACT` | 已部署的 order-escrow 合约 id（build 接口必需） |
 
 ### Token 价格与图表历史

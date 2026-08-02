@@ -1,9 +1,10 @@
 # Production Aggregator Deployment
 
-The scalable LumAgg topology runs two native binaries as separate processes:
+The scalable LumAgg topology runs native binaries as separate processes:
 
 ```text
 lumagg-market-data-worker -> Redis -> lumagg-api-server x N
+lumagg-analytics-indexer -> SQLite -> lumagg-api-server x N
 ```
 
 Use it for a public API, high request volume, shared market state, or an
@@ -36,7 +37,7 @@ tar -xzf lumagg-aggregator-linux-x86_64.tar.gz
 cd lumagg-aggregator-linux-x86_64
 ```
 
-The archive contains both binaries, a complete `lumagg-aggregator.toml`, the
+The archive contains all three binaries, a complete `lumagg-aggregator.toml`, the
 configuration reference, and optional systemd units.
 
 To build the same binaries from source instead:
@@ -45,12 +46,11 @@ To build the same binaries from source instead:
 git clone https://github.com/Lum-Agg/stellar-dex-agg.git
 cd stellar-dex-agg
 git checkout <release-tag-or-commit>
-cargo build --locked --release -p market-data-worker -p api-server
+cargo build --locked --release -p market-data-worker -p api-server -p analytics-indexer
 ```
 
-The Cargo package names remain `market-data-worker` and `api-server`; their
-release binaries are `target/release/lumagg-market-data-worker` and
-`target/release/lumagg-api-server`.
+The Cargo package names remain `market-data-worker`, `api-server`, and
+`analytics-indexer`; their release binaries use the `lumagg-` prefix.
 
 ## Configure Redis
 
@@ -82,12 +82,13 @@ Replace at least:
 - `api.aggregator_contract` with the deployed LumAgg Aggregator contract. Omit it
   only when the API should quote but never build transactions.
 
-Both processes read the same file, so the network and Redis settings cannot
+All processes read the same file, so network, contract, and storage settings cannot
 silently diverge. Validate the file before starting either process:
 
 ```bash
 ./lumagg-market-data-worker --config ./aggregator.toml --check-config
 ./lumagg-api-server --config ./aggregator.toml --check-config
+./lumagg-analytics-indexer --config ./aggregator.toml --check-config
 ```
 
 See [Configuration Reference](aggregator-configuration.md)
@@ -112,6 +113,12 @@ Additional API replicas use the same config and a different `LISTEN_ADDR`:
 
 ```bash
 ./lumagg-api-server --config ./aggregator.toml --listen-addr 127.0.0.1:3101
+```
+
+Start the optional analytics indexer when stats and history endpoints are needed:
+
+```bash
+./lumagg-analytics-indexer --config ./aggregator.toml run
 ```
 
 In production, translate the same environment file into your chosen service
@@ -142,12 +149,13 @@ those units:
 ```bash
 sudo useradd --system --home /var/lib/lumagg --shell /usr/sbin/nologin lumagg
 sudo install -d -o root -g lumagg -m 0750 /etc/lumagg
-sudo install -m 0755 lumagg-market-data-worker lumagg-api-server /usr/local/bin/
+sudo install -m 0755 lumagg-market-data-worker lumagg-api-server lumagg-analytics-indexer /usr/local/bin/
 sudo install -m 0640 -o root -g lumagg aggregator.toml /etc/lumagg/aggregator.toml
 sudo install -m 0644 systemd/*.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now lumagg-market-data-worker
 sudo systemctl enable --now lumagg-api@3100 lumagg-api@3101
+sudo systemctl enable --now lumagg-analytics-indexer
 ```
 
 Inspect startup with `journalctl -u lumagg-market-data-worker -f` and

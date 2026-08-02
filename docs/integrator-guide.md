@@ -191,7 +191,7 @@ Recent aggregator invocations for a connected wallet (same indexer DB as `/stats
 curl -s "https://api.lumagg.xyz/api/v1/swaps?user=G...&limit=20" | jq .
 ```
 
-Returns `data.swaps[]` with `tx_hash`, token amounts, `status`, and `is_split`. Empty history is `200` with `"swaps": []`. Requires `INDEXER_DB_PATH` on the server (otherwise `503`).
+Returns `data.swaps[]` with `tx_hash`, token amounts, `status`, and `is_split`. Empty history is `200` with `"swaps": []`. Requires the `[indexer]` TOML section on the server (otherwise `503`).
 
 ### Limit orders
 
@@ -216,13 +216,13 @@ curl -sX POST "https://api.lumagg.xyz/api/v1/orders/build_cancel" \
   -d '{"user": "G...", "order_id": 1}' | jq .
 ```
 
-`GET /orders` reads from the same indexer SQLite as `/swaps` (`INDEXER_DB_PATH`). Build endpoints require `ESCROW_CONTRACT` on the server. Response shape matches `build_tx`: `unsigned_tx_xdr`, `fee`, `execution`, `num_operations`, `contract`. SDK: `listOrders`, `buildCreateOrder`, `buildCancelOrder`.
+`GET /orders` reads from the same indexer SQLite as `/swaps` (`indexer.db_path`). Build endpoints require `features.escrow_contract`. Response shape matches `build_tx`: `unsigned_tx_xdr`, `fee`, `execution`, `num_operations`, `contract`. SDK: `listOrders`, `buildCreateOrder`, `buildCancelOrder`.
 
 **Orders env (api-server operator):**
 
 | Variable | Purpose |
 |----------|---------|
-| `INDEXER_DB_PATH` | SQLite with `limit_orders` table (required for list) |
+| `indexer.db_path` | SQLite with `limit_orders` table (required for list) |
 | `ESCROW_CONTRACT` | Deployed order-escrow contract id (required for build endpoints) |
 
 ### Token prices & chart history

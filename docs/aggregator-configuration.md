@@ -1,12 +1,14 @@
 # Aggregator Configuration Reference
 
-`lumagg-api-server` and `lumagg-market-data-worker` read the same TOML file.
+`lumagg-api-server`, `lumagg-market-data-worker`, and
+`lumagg-analytics-indexer` read the same TOML file.
 The release archive includes a complete `lumagg-aggregator.toml` template.
 Unknown sections and unknown keys are rejected to catch spelling mistakes.
 
 ```bash
 ./lumagg-market-data-worker --config ./aggregator.toml --check-config
 ./lumagg-api-server --config ./aggregator.toml --check-config
+./lumagg-analytics-indexer --config ./aggregator.toml --check-config
 ```
 
 The file can contain Redis credentials, partner keys, and Telegram credentials.
@@ -86,12 +88,26 @@ chmod 600 aggregator.toml
 | `access.partner_api_keys` | empty | Accepted `X-API-Key` values. Treat them as secrets. |
 | `access.rate_limit_bypass_ips` | loopback only | Additional exact IPs bypassing the public-IP bucket. |
 | `features.escrow_contract` | unset | Order Escrow contract for limit and DCA builders. |
-| `features.indexer_db_path` | unset | Analytics SQLite path for stats and history endpoints. |
 | `features.price_db_path` | unset | SQLite price-mark store. |
 | `features.price_sampler_enabled` | `true` | Enables sampling when a price DB is configured. |
 | `features.price_sample_secs` | `600` | Price sampling interval. |
 | `features.price_sample_token_limit` | `30` | Common tokens sampled beyond priority tokens. |
 | `features.price_retention_days` | unlimited | Optional sampled-tick retention. |
+
+## Analytics indexer
+
+The entire `[indexer]` section is optional. When present, the API reads the
+same SQLite database used by `lumagg-analytics-indexer` for stats, swap history,
+and order history.
+
+| TOML key | Program default | Description |
+| --- | --- | --- |
+| `indexer.db_path` | `./data/analytics-indexer.db` | Shared analytics SQLite path. |
+| `indexer.mode` | `events` | Ingestion mode: `events`, `envelope`, or `both`. |
+| `indexer.envelope_fallback` | `false` | Also inspect transaction envelopes for legacy events. |
+| `indexer.poll_secs` | `30` | Delay between live ingestion polls. |
+| `indexer.page_limit` | `10000` | Maximum events requested per RPC page. |
+| `indexer.start_ledger` | unset | Initial ledger when the database has no cursor. |
 
 ## Monitoring
 
