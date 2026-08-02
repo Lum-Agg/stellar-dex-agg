@@ -28,6 +28,12 @@ PRIMARY_PORT="${PRIMARY_PORT:-3100}"
 REMOTE_API_BASE="http://127.0.0.1:${PRIMARY_PORT}"
 # Must match deploy/lumagg-*.service (used only for post-deploy verify on server)
 REDIS_URL="${REDIS_URL:-redis://:REDISzlg153@127.0.0.1:6379/}"
+PRODUCTION_CONFIG="$(dirname "$0")/configs/production-aggregator.toml"
+
+if [[ ! -f "$PRODUCTION_CONFIG" ]]; then
+  echo "ERROR: Missing ${PRODUCTION_CONFIG}; create it from packaging/lumagg-aggregator.toml" >&2
+  exit 1
+fi
 
 echo "=== LumAgg deploy mode: ${MODE} ==="
 
@@ -39,6 +45,7 @@ rsync -az --delete \
   --exclude thirdparty \
   --exclude out \
   --exclude packages/frontend \
+  --exclude configs \
   -e "ssh -o StrictHostKeyChecking=no" \
   "$(dirname "$0")/" \
   "${SERVER}:${REMOTE_SRC}/"
@@ -55,15 +62,10 @@ echo "=== Building on server (${BUILD_PKGS[*]}) ==="
 ssh -o StrictHostKeyChecking=no "$SERVER" \
   "source ~/.cargo/env && cd ${REMOTE_SRC} && cargo build --release ${BUILD_PKGS[*]} 2>&1 | tail -12"
 
-echo "=== Telegram alerts config (server-only) ==="
-TELEGRAM_ENV_FILE="$(dirname "$0")/scripts/telegram.env.local"
-if [[ -f "$TELEGRAM_ENV_FILE" ]]; then
-  ssh -o StrictHostKeyChecking=no "$SERVER" "mkdir -p ${REMOTE_APP_DIR}/deploy"
-  scp -o StrictHostKeyChecking=no "$TELEGRAM_ENV_FILE" "${SERVER}:${REMOTE_APP_DIR}/deploy/telegram.env"
-  ssh -o StrictHostKeyChecking=no "$SERVER" "chmod 600 ${REMOTE_APP_DIR}/deploy/telegram.env"
-else
-  echo "WARN: ${TELEGRAM_ENV_FILE} missing — copy scripts/telegram.env.example and add tokens"
-fi
+echo "=== Uploading private Aggregator TOML ==="
+ssh -o StrictHostKeyChecking=no "$SERVER" "mkdir -p ${REMOTE_APP_DIR}/deploy"
+scp -o StrictHostKeyChecking=no "$PRODUCTION_CONFIG" "${SERVER}:${REMOTE_APP_DIR}/deploy/aggregator.toml"
+ssh -o StrictHostKeyChecking=no "$SERVER" "chmod 600 ${REMOTE_APP_DIR}/deploy/aggregator.toml"
 
 echo "=== Deploying binaries + systemd units (mode=${MODE}) ==="
 ssh -o StrictHostKeyChecking=no "$SERVER" \
@@ -71,6 +73,10 @@ ssh -o StrictHostKeyChecking=no "$SERVER" \
 set -euo pipefail
 
 mkdir -p "${REMOTE_APP_DIR}/target/release" "${REMOTE_APP_DIR}/deploy" "${REMOTE_APP_DIR}/data/logos"
+"${REMOTE_SRC}/target/release/lumagg-market-data-worker" \
+  --config "${REMOTE_APP_DIR}/deploy/aggregator.toml" --check-config
+"${REMOTE_SRC}/target/release/lumagg-api-server" \
+  --config "${REMOTE_APP_DIR}/deploy/aggregator.toml" --check-config
 cp "${REMOTE_SRC}/deploy/lumagg-api@.service" /etc/systemd/system/lumagg-api@.service
 cp "${REMOTE_SRC}/deploy/lumagg-worker.service" /etc/systemd/system/lumagg-worker.service
 rm -f /etc/systemd/system/lumagg-api.service

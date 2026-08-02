@@ -28,8 +28,8 @@ deploy/*
 !deploy/lumagg-worker-testnet.service
 !scripts/scf-quote-regression.sh
 .DS_Store
-broker/
 todo.org
+configs
 
 # Optional upstream clones (see thirdparty/README.md)
 thirdparty/*

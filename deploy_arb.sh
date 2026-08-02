@@ -4,16 +4,15 @@
 # Prerequisites on server:
 #   - stellar-rpc + redis + lumagg-worker (snapshot publisher)
 #   - /etc/mnemonic_code.txt with caller mnemonic (indices 1–9 funded for fees)
-#   - deploy/arb.env with ARB_SUBMIT_TX=0 for dry-run, then 1 for live submit
+#   - configs/production-arbitrage.toml generated and reviewed
 #
 # Usage:
 #   ./deploy_arb.sh              # build, install unit, restart service
 #   ./deploy_arb.sh install      # install binary + unit only (no restart)
 #   START=0 ./deploy_arb.sh        # build + install, skip systemctl restart
 #
-# Local overrides (optional, not committed):
-#   cp scripts/arb.env.example scripts/arb.env.local
-#   edit scripts/arb.env.local  →  copied to server deploy/arb.env
+# Private config is not committed. Start from packaging/lumagg-arbitrage.toml
+# when configuring a new machine.
 set -euo pipefail
 
 MODE="${1:-deploy}"
@@ -30,6 +29,12 @@ REMOTE_SRC="/opt/stellar-dex-aggregator-src"
 REMOTE_APP_DIR="/opt/stellar-dex-aggregator"
 REMOTE_ARB_BIN="${REMOTE_APP_DIR}/target/release/lumagg-arbitrage-bot"
 START="${START:-1}"
+PRODUCTION_CONFIG="$(dirname "$0")/configs/production-arbitrage.toml"
+
+if [[ ! -f "$PRODUCTION_CONFIG" ]]; then
+  echo "ERROR: Missing ${PRODUCTION_CONFIG}; create it from packaging/lumagg-arbitrage.toml" >&2
+  exit 1
+fi
 
 echo "=== LumAgg arbitrage bot deploy (mode=${MODE}, start=${START}) ==="
 
@@ -41,6 +46,7 @@ rsync -az --delete \
   --exclude thirdparty \
   --exclude out \
   --exclude packages/frontend \
+  --exclude configs \
   -e "ssh -o StrictHostKeyChecking=no" \
   "$(dirname "$0")/" \
   "${SERVER}:${REMOTE_SRC}/"
@@ -49,16 +55,10 @@ echo "=== Building lumagg-arbitrage-bot + quote-sim-probe on server ==="
 ssh -o StrictHostKeyChecking=no "$SERVER" \
   "source ~/.cargo/env && cd ${REMOTE_SRC} && cargo build --release -p arbitrage --bin lumagg-arbitrage-bot --bin quote-sim-probe --bin diag_simulate 2>&1 | tail -20"
 
-echo "=== Arb env (server-only) ==="
-ARB_ENV_FILE="$(dirname "$0")/scripts/arb.env.local"
-if [[ -f "$ARB_ENV_FILE" ]]; then
-  ssh -o StrictHostKeyChecking=no "$SERVER" "mkdir -p ${REMOTE_APP_DIR}/deploy"
-  scp -o StrictHostKeyChecking=no "$ARB_ENV_FILE" "${SERVER}:${REMOTE_APP_DIR}/deploy/arb.env"
-  ssh -o StrictHostKeyChecking=no "$SERVER" "chmod 600 ${REMOTE_APP_DIR}/deploy/arb.env"
-else
-  echo "WARN: ${ARB_ENV_FILE} missing — create from scripts/arb.env.example before live submit"
-  echo "      Service defaults to ARB_SUBMIT_TX=0 (simulate-only) from lumagg-arb.service"
-fi
+echo "=== Uploading private Arbitrage TOML ==="
+ssh -o StrictHostKeyChecking=no "$SERVER" "mkdir -p ${REMOTE_APP_DIR}/deploy"
+scp -o StrictHostKeyChecking=no "$PRODUCTION_CONFIG" "${SERVER}:${REMOTE_APP_DIR}/deploy/arbitrage.toml"
+ssh -o StrictHostKeyChecking=no "$SERVER" "chmod 600 ${REMOTE_APP_DIR}/deploy/arbitrage.toml"
 
 echo "=== Installing binary + systemd unit + quote-sim-probe timer ==="
 ssh -o StrictHostKeyChecking=no "$SERVER" \
@@ -66,6 +66,8 @@ ssh -o StrictHostKeyChecking=no "$SERVER" \
 set -euo pipefail
 mkdir -p "${REMOTE_APP_DIR}/target/release" "${REMOTE_APP_DIR}/deploy" "${REMOTE_APP_DIR}/scripts" "${REMOTE_APP_DIR}/logs"
 deploy_arb() {
+  "${REMOTE_SRC}/target/release/lumagg-arbitrage-bot" \
+    --config "${REMOTE_APP_DIR}/deploy/arbitrage.toml" --check-config
   systemctl stop lumagg-arb >/dev/null 2>&1 || true
   cp "${REMOTE_SRC}/target/release/lumagg-arbitrage-bot" "${REMOTE_ARB_BIN}"
   cp "${REMOTE_SRC}/target/release/quote-sim-probe" "${REMOTE_APP_DIR}/target/release/quote-sim-probe"
@@ -104,5 +106,5 @@ fi
 
 echo "=== Done ==="
 echo "Vault:  CCQQ3LRFCSGOYSSD6S4MGH6RWWYVDHYPJO6KYDJYC2IDZK4OGCK6P6KN"
-echo "Dry-run: ARB_SUBMIT_TX=0 in service/arb.env — set ARB_SUBMIT_TX=1 in deploy/arb.env then: systemctl restart lumagg-arb"
+echo "Submission mode: edit configs/production-arbitrage.toml, redeploy, then check journalctl -u lumagg-arb"
 echo "Probe timer: systemctl status lumagg-quote-sim-probe.timer  (every 30m; logs: journalctl -u lumagg-quote-sim-probe)"
