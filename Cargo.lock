@@ -820,7 +820,7 @@ dependencies = [
 
 [[package]]
 name = "analytics-indexer"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -905,7 +905,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "api-server"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "analytics-indexer",
  "anyhow",
@@ -935,7 +935,7 @@ dependencies = [
 
 [[package]]
 name = "arbitrage"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2258,7 +2258,7 @@ dependencies = [
 
 [[package]]
 name = "dex-adapters"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3771,7 +3771,7 @@ dependencies = [
 
 [[package]]
 name = "limit-keeper"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3833,7 +3833,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "lumagg-alerts"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "reqwest 0.12.28",
@@ -3844,7 +3844,7 @@ dependencies = [
 
 [[package]]
 name = "lumagg-config"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -3860,7 +3860,7 @@ dependencies = [
 
 [[package]]
 name = "lumagg-swap-api"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "api-server",
@@ -3883,7 +3883,7 @@ dependencies = [
 
 [[package]]
 name = "market-data-worker"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "dex-adapters",
@@ -3900,7 +3900,7 @@ dependencies = [
 
 [[package]]
 name = "market-snapshot"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4934,7 +4934,7 @@ dependencies = [
 
 [[package]]
 name = "router-engine"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5941,7 +5941,7 @@ dependencies = [
 
 [[package]]
 name = "stellar-dex-aggregator-sdk"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "reqwest 0.12.28",
