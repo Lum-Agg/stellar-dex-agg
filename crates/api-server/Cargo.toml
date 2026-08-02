@@ -8,10 +8,6 @@ license.workspace = true
 name = "lumagg-api-server"
 path = "src/main.rs"
 
-[[bin]]
-name = "verify-split-quote"
-path = "src/bin/verify_split_quote.rs"
-
 [dependencies]
 analytics-indexer = { path = "../analytics-indexer" }
 market-snapshot = { path = "../market-snapshot" }

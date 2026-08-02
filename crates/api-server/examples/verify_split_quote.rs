@@ -3,12 +3,12 @@
 //!
 //! Usage:
 //!   SNAPSHOT_REDIS_URL=redis://127.0.0.1:6379/ \
-//!     cargo run -p api-server --release --bin verify-split-quote
+//!     cargo run -p api-server --release --example verify_split_quote
 //!
 //!   API_URL=https://api.lumagg.xyz \
 //!   AMOUNT_IN=10000000000000 \
 //!   SNAPSHOT_REDIS_URL=redis://... \
-//!     cargo run -p api-server --release --bin verify-split-quote
+//!     cargo run -p api-server --release --example verify_split_quote
 //!
 //! Optional:
 //!   LOCAL_QUOTE=1          — skip API; run full local split quote instead
