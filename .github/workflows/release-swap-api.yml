@@ -61,6 +61,7 @@ jobs:
           install -m 0755 target/release/lumagg-arbitrage-bot "$arb_dir/lumagg-arbitrage-bot"
           install -m 0644 LICENSE "$arb_dir/LICENSE"
           install -m 0644 docs/arbitrage-deployment.md "$arb_dir/README.md"
+          install -m 0644 docs/arbitrage-configuration.md "$arb_dir/arbitrage-configuration.md"
           install -m 0644 packaging/lumagg-arbitrage.toml "$arb_dir/lumagg-arbitrage.toml"
           install -m 0644 packaging/lumagg-arbitrage.service "$arb_dir/lumagg-arbitrage.service"
 

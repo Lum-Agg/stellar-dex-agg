@@ -75,6 +75,9 @@ Edit `arbitrage.toml` and set the quote URLs, RPC, contract IDs, and bridge
 tokens. Start with conservative trade limits. Amounts are integer token units;
 XLM uses seven decimal places.
 
+See [Arbitrage Configuration](arbitrage-configuration.md) for every supported
+field and its operational meaning.
+
 The binary is not tied to systemd. Load the config and run it under any process
 manager:
 

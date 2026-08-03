@@ -53,6 +53,8 @@ RPC; latency directly affects opportunity validity.
 
 Guide: [Arbitrage Deployment](arbitrage-deployment.md)
 
+Configuration: [Arbitrage Configuration](arbitrage-configuration.md)
+
 ## Configuration files
 
 LumAgg uses TOML files rather than requiring environment variables:
