@@ -29,6 +29,7 @@ impl std::fmt::Display for IndexMode {
 #[derive(Debug, Clone)]
 pub struct IndexerConfig {
     pub rpc_url: String,
+    pub horizon_url: Option<String>,
     pub network_passphrase: String,
     pub aggregator_contract: String,
     /// When set, ingest order-escrow lifecycle events into `limit_orders`.
@@ -56,6 +57,7 @@ impl IndexerConfig {
 
         Ok(Self {
             rpc_url: config.network.rpc_url.clone(),
+            horizon_url: config.dex.horizon_url.clone(),
             network_passphrase: config.network.passphrase.clone(),
             aggregator_contract: config
                 .api

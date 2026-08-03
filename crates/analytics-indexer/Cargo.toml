@@ -27,6 +27,7 @@ tracing-subscriber.workspace = true
 chrono.workspace = true
 base64.workspace = true
 rusqlite = { version = "0.32", features = ["bundled"] }
+reqwest.workspace = true
 
 [dev-dependencies]
 tempfile = "3"

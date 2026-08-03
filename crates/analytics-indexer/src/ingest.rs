@@ -16,6 +16,12 @@ use {
     tracing::{info, warn},
 };
 
+#[derive(serde::Deserialize)]
+struct HorizonTransaction {
+    envelope_xdr: String,
+    result_xdr: Option<String>,
+}
+
 pub async fn run(config: IndexerConfig) -> Result<()> {
     config.ensure_parent_dir()?;
     let store = IndexStore::open(&config.db_path)?;
@@ -206,21 +212,37 @@ pub async fn repair_leg_indices(config: IndexerConfig, created_at_from: i64) -> 
     config.ensure_parent_dir()?;
     let store = IndexStore::open(&config.db_path)?;
     let rpc = config.rpc();
+    let http = reqwest::Client::new();
     let txs = store.list_tx_hashes_since(created_at_from)?;
     let mut fixed = 0u64;
     for (tx_hash, _ledger) in txs {
-        let got = match rpc.get_transaction(&tx_hash).await {
-            Ok(g) => g,
-            Err(e) => {
-                warn!(tx = %tx_hash, error = %e, "repair getTransaction failed");
-                continue;
+        let rpc_tx = rpc.get_transaction(&tx_hash).await;
+        let rpc_failure = rpc_tx.as_ref().err().map(ToString::to_string);
+        let rpc_envelope = rpc_tx.as_ref().ok().and_then(|got| got.envelope_xdr.as_deref());
+        let rpc_result = rpc_tx.as_ref().ok().and_then(|got| got.result_xdr.as_deref());
+
+        let horizon_tx = if rpc_envelope.is_none() {
+            match fetch_horizon_transaction(&http, config.horizon_url.as_deref(), &tx_hash).await {
+                Ok(tx) => Some(tx),
+                Err(e) => {
+                    warn!(
+                        tx = %tx_hash,
+                        rpc_error = rpc_failure.as_deref().unwrap_or("missing envelopeXdr"),
+                        horizon_error = %e,
+                        "repair could not load transaction envelope"
+                    );
+                    continue;
+                }
             }
+        } else {
+            None
         };
-        let Some(env) = got.envelope_xdr.as_deref() else {
-            warn!(tx = %tx_hash, "repair missing envelopeXdr");
-            continue;
+
+        let (envelope_xdr, result_xdr) = match horizon_tx.as_ref() {
+            Some(tx) => (tx.envelope_xdr.as_str(), tx.result_xdr.as_deref()),
+            None => (rpc_envelope.expect("checked above"), rpc_result),
         };
-        let parsed = match parse_envelope(env, &config.aggregator_contract, got.result_xdr.as_deref()) {
+        let parsed = match parse_envelope(envelope_xdr, &config.aggregator_contract, result_xdr) {
             Ok(Some(p)) => p,
             Ok(None) => {
                 warn!(tx = %tx_hash, "repair envelope had no aggregator invoke");
@@ -244,6 +266,24 @@ pub async fn repair_leg_indices(config: IndexerConfig, created_at_from: i64) -> 
     }
     info!(fixed, "leg index repair complete");
     Ok(fixed)
+}
+
+async fn fetch_horizon_transaction(
+    http: &reqwest::Client,
+    horizon_url: Option<&str>,
+    tx_hash: &str,
+) -> Result<HorizonTransaction> {
+    let horizon_url = horizon_url.context("dex.horizon_url is not configured")?;
+    let url = format!("{}/transactions/{tx_hash}", horizon_url.trim_end_matches('/'));
+    http.get(url)
+        .send()
+        .await
+        .context("request Horizon transaction")?
+        .error_for_status()
+        .context("Horizon transaction response")?
+        .json()
+        .await
+        .context("decode Horizon transaction")
 }
 
 /// One-shot backfill for `[start_ledger, latest)` then exit.
