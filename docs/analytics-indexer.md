@@ -8,7 +8,7 @@ The indexer polls Soroban RPC **`getEvents`** for the aggregator contract, group
 
 **Vault path:** When arb uses `vault.execute_round_trip`, the aggregator still emits events via CPI — same indexer path as direct `round_trip_swap`.
 
-**Legacy fallback:** `indexer.envelope_fallback = true` also ingests pre-upgrade txs and supplies token/path metadata for historical 4-field `leg` events. New compact `leg` events are self-contained.
+**Legacy fallback:** `indexer.envelope_fallback = true` also ingests pre-upgrade txs and supplies token/path metadata for historical 4-field `leg` events. New compact `leg` events are self-contained. For old ledgers, the fallback can use `dex.horizon_url` when the configured Soroban RPC no longer returns the transaction envelope.
 
 ## Aggregator events (requires WASM upgrade)
 
@@ -84,6 +84,7 @@ The indexer reads the same `lumagg-aggregator.toml` as the API and worker.
 | `indexer.poll_secs` | `30` | Poll interval |
 | `indexer.start_ledger` | unset | Initial ledger when the database has no cursor |
 | `indexer.page_limit` | `10000` | `getEvents` page size |
+| `dex.horizon_url` | public Horizon | Horizon fallback used for historical envelope repair |
 
 ## Commands
 

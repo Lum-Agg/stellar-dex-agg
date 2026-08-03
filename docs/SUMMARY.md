@@ -12,6 +12,7 @@
 
 ## Deploy
 
+- [Deployment Overview](deployment-overview.md)
 - [LumAgg Swap API](lumagg-swap-api.md)
 - [Production Aggregator](aggregator-deployment.md)
   - [Configuration Reference](aggregator-configuration.md)

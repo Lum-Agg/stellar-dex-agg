@@ -1,10 +1,12 @@
-# LumAgg
+# LumAgg Documentation
 
 LumAgg is a liquidity aggregator for Stellar. It quotes routes across Soroban
 DEXes (multi-hop and split when useful) and builds unsigned transactions for
 atomic execution through the LumAgg Aggregator contract.
 
 **Production API:** `https://api.lumagg.xyz`
+
+**Complete docs:** `https://lumagg.gitbook.io/`
 
 ## What do you want to do?
 
@@ -16,10 +18,14 @@ atomic execution through the LumAgg Aggregator contract.
 
 ### Self-host a quote stack
 
+Start with [Deployment Overview](deployment-overview.md) if you are choosing
+between the release binaries.
+
 | Need | Guide |
 | --- | --- |
 | Single-process quote API | [LumAgg Swap API](lumagg-swap-api.md) |
 | Shared market state + API replicas | [Production Aggregator](aggregator-deployment.md) |
+| Public stats, swap history, and arbitrage history | [Analytics Indexer](analytics-indexer.md) |
 | Aggregator / vault contracts | [Smart contracts](contracts-deployment.md) |
 
 ### Run atomic round-trip arbitrage

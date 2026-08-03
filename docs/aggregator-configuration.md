@@ -74,7 +74,7 @@ chmod 600 aggregator.toml
 | TOML key | Program default | Description |
 | --- | --- | --- |
 | `dex.aquarius_hydrate_concurrency` | `16` | Aquarius CLMM hydration concurrency. |
-| `dex.horizon_url` | public Horizon | Horizon endpoint for the Classic DEX adapter. |
+| `dex.horizon_url` | public Horizon | Horizon endpoint for the Classic DEX adapter and analytics envelope repair fallback. |
 | `dex.soroswap_factory_contract` | built-in mainnet address | Soroswap factory override. |
 | `dex.comet_factory` | built-in mainnet address | Comet factory override. |
 | `dex.comet_extra_pools` | empty | Additional Comet pool addresses. |
@@ -108,6 +108,11 @@ and order history.
 | `indexer.poll_secs` | `30` | Delay between live ingestion polls. |
 | `indexer.page_limit` | `10000` | Maximum events requested per RPC page. |
 | `indexer.start_ledger` | unset | Initial ledger when the database has no cursor. |
+
+When `indexer.envelope_fallback = true`, the indexer first tries Soroban RPC
+transaction data and then falls back to `dex.horizon_url` when old transaction
+envelopes are no longer available from the RPC. Use an archive-capable Horizon
+for historical repairs.
 
 ## Monitoring
 

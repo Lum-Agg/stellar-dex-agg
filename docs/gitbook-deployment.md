@@ -88,7 +88,13 @@ GitBook separates editable content spaces from published docs sites. Open the
 `LumAgg Documentation` docs site, link the synchronized space if it is not
 already linked, set the audience to `Public`, and click `Publish`.
 
-GitBook will first provide a URL similar to:
+The current public GitBook URL is:
+
+```text
+https://lumagg.gitbook.io/
+```
+
+GitBook may also provide a site URL similar to:
 
 ```text
 https://<organization>.gitbook.io/<site-slug>
