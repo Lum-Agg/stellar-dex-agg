@@ -3,18 +3,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { NATIVE_CONTRACT } from '@/lib/tokenDisplay';
+import { useTokenList } from '@/components/TokenSelector';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
 
 const XLM_SAC = NATIVE_CONTRACT;
 const USDC_SAC = 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75';
-
-const KNOWN_TOKENS: Record<string, string> = {
-  [XLM_SAC]: 'XLM',
-  [USDC_SAC]: 'USDC',
-  CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV: 'EURC',
-  CAUIKL3IYGMERDRUN6YSCLWVAKIFG5Q4YJHUKM4S4NJZQIA3BAS6OJPK: 'AQUA',
-};
 
 interface RoundTripSurplus {
   base_token: string;
@@ -56,9 +50,13 @@ function formatUsd(n: number): string {
   return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 }
 
-function tokenLabel(contract?: string | null): string {
+function tokenLabel(
+  contract: string | null | undefined,
+  labels: ReadonlyMap<string, string>,
+): string {
   if (!contract) return '—';
-  if (KNOWN_TOKENS[contract]) return KNOWN_TOKENS[contract];
+  const symbol = labels.get(contract);
+  if (symbol) return symbol;
   if (contract.length <= 12) return contract;
   return `${contract.slice(0, 4)}…${contract.slice(-4)}`;
 }
@@ -72,7 +70,9 @@ function formatAmount(raw: string | null | undefined, decimals = 7): string {
     const padded = digits.padStart(decimals + 1, '0');
     const whole = padded.slice(0, -decimals) || '0';
     const frac = padded.slice(-decimals).replace(/0+$/, '');
-    const body = frac ? `${Number(whole).toLocaleString()}.${frac}` : Number(whole).toLocaleString();
+    const body = frac
+      ? `${Number(whole).toLocaleString()}.${frac}`
+      : Number(whole).toLocaleString();
     return neg ? `−${body}` : body;
   } catch {
     return raw;
@@ -128,12 +128,17 @@ function formatSurplusSigned(raw: string | number | bigint, symbol: string): str
 }
 
 export default function ArbitragePage() {
+  const tokens = useTokenList();
   const [stats, setStats] = useState<StatsPayload | null>(null);
   const [trips, setTrips] = useState<RoundTripItem[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const tokenLabels = useMemo(
+    () => new Map(tokens.map((token) => [token.id, token.symbol])),
+    [tokens],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -141,7 +146,9 @@ export default function ArbitragePage() {
       try {
         const [statsRes, arbRes] = await Promise.all([
           fetch(`${API_URL}/api/v1/stats`, { cache: 'no-store' }).then((r) => r.json()),
-          fetch(`${API_URL}/api/v1/arbitrage?limit=25`, { cache: 'no-store' }).then((r) => r.json()),
+          fetch(`${API_URL}/api/v1/arbitrage?limit=25`, { cache: 'no-store' }).then((r) =>
+            r.json(),
+          ),
         ]);
         if (!statsRes.success) throw new Error(statsRes.error || 'stats request failed');
         if (!arbRes.success) throw new Error(arbRes.error || 'arbitrage request failed');
@@ -179,7 +186,8 @@ export default function ArbitragePage() {
     let daySpan = 0;
 
     for (const d of stats.daily) {
-      const hasRoundTrip = (d.round_trip_count ?? 0) > 0 || (d.round_trip_by_token?.length ?? 0) > 0;
+      const hasRoundTrip =
+        (d.round_trip_count ?? 0) > 0 || (d.round_trip_by_token?.length ?? 0) > 0;
       if (hasRoundTrip) daySpan += 1;
       for (const row of d.round_trip_by_token ?? []) {
         const surplus = toRawBigInt(row.gross_surplus);
@@ -250,8 +258,8 @@ export default function ArbitragePage() {
           </h1>
           <p className="text-[13px] text-[var(--text-muted)] mt-2 leading-relaxed max-w-2xl">
             Successful on-chain round trips executed through LumAgg. A vault holds principal;
-            callers pay gas. Gross surplus is base token returned minus base supplied — fees are
-            not deducted, so this is not net P&amp;L.
+            callers pay gas. Gross surplus is base token returned minus base supplied — fees are not
+            deducted, so this is not net P&amp;L.
           </p>
         </div>
         <Link
@@ -390,8 +398,8 @@ export default function ArbitragePage() {
                 </thead>
                 <tbody className="divide-y divide-[var(--border)]">
                   {trips.map((t) => {
-                    const base = tokenLabel(t.base_token);
-                    const bridge = tokenLabel(t.bridge_token);
+                    const base = tokenLabel(t.base_token, tokenLabels);
+                    const bridge = tokenLabel(t.bridge_token, tokenLabels);
                     return (
                       <tr key={t.tx_hash} className="text-[var(--text-secondary)]">
                         <td className="px-3 sm:px-4 py-2.5 whitespace-nowrap text-[var(--text-muted)]">
