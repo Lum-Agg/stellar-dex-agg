@@ -27,31 +27,14 @@
 //!   (`allowance_expiration_ledger`). Never `sequence()+N` inside this
 //!   contract. Do not use `u32::MAX` either (SAC rejects past max TTL).
 
-use {
-    lumagg_contract_types::SubRoute,
-    soroban_sdk::{contract, contractclient, contractimpl, contracttype, token, Address, BytesN, Env, Vec},
-};
+mod storage;
+mod types;
 
-#[contractclient(name = "AggregatorContractClient")]
-pub trait AggregatorContract {
-    fn round_trip_swap(
-        env: Env,
-        user: Address,
-        base_token: Address,
-        bridge_token: Address,
-        amount_in: i128,
-        leg_out: Vec<SubRoute>,
-        leg_back: Vec<SubRoute>,
-        min_amount_out: i128,
-    ) -> i128;
-}
+use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, Vec};
+use lumagg_contract_types::SubRoute;
 
-#[contracttype]
-#[derive(Clone)]
-enum DataKey {
-    Admin,
-    Caller(Address),
-}
+pub use types::AggregatorContract;
+use types::AggregatorContractClient;
 
 #[contract]
 pub struct VaultContract;
@@ -59,39 +42,36 @@ pub struct VaultContract;
 #[contractimpl]
 impl VaultContract {
     pub fn initialize(env: Env, admin: Address) {
-        if env.storage().instance().has(&DataKey::Admin) {
+        if storage::has_admin(&env) {
             panic!("Already initialized");
         }
-        env.storage().instance().set(&DataKey::Admin, &admin);
+        storage::set_admin(&env, &admin);
     }
 
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("Not initialized");
+        let admin: Address = storage::get_admin(&env);
         admin.require_auth();
         env.deployer().update_current_contract_wasm(new_wasm_hash);
     }
 
     pub fn admin(env: Env) -> Address {
-        env.storage().instance().get(&DataKey::Admin).expect("Not initialized")
+        storage::get_admin(&env)
     }
 
     pub fn add_caller(env: Env, caller: Address) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("Not initialized");
+        let admin: Address = storage::get_admin(&env);
         admin.require_auth();
-        env.storage().persistent().set(&DataKey::Caller(caller), &true);
+        storage::set_caller(&env, &caller, true);
     }
 
     pub fn remove_caller(env: Env, caller: Address) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("Not initialized");
+        let admin: Address = storage::get_admin(&env);
         admin.require_auth();
-        env.storage().persistent().remove(&DataKey::Caller(caller));
+        storage::set_caller(&env, &caller, false);
     }
 
     pub fn is_caller(env: Env, caller: Address) -> bool {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Caller(caller))
-            .unwrap_or(false)
+        storage::is_caller(&env, &caller)
     }
 
     /// Pull tokens from `from` into the vault (any account may fund the vault).
@@ -104,7 +84,7 @@ impl VaultContract {
 
     /// Admin emergency withdrawal from vault balances.
     pub fn admin_withdraw(env: Env, token: Address, to: Address, amount: i128) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("Not initialized");
+        let admin: Address = storage::get_admin(&env);
         admin.require_auth();
         assert!(amount > 0, "amount must be positive");
         let vault = env.current_contract_address();
@@ -130,7 +110,7 @@ impl VaultContract {
         allowance_expiration_ledger: u32,
     ) -> i128 {
         caller.require_auth();
-        assert!(Self::is_caller(env.clone(), caller.clone()), "caller not authorized");
+        assert!(storage::is_caller(&env, &caller), "caller not authorized");
         assert!(amount_in > 0, "amount_in must be positive");
         assert!(min_amount_out >= amount_in, "min_amount_out below principal");
         assert!(
