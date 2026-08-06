@@ -27,6 +27,8 @@
 //!   (`allowance_expiration_ledger`). Never `sequence()+N` inside this
 //!   contract. Do not use `u32::MAX` either (SAC rejects past max TTL).
 
+mod admin;
+mod auth;
 mod storage;
 mod types;
 
@@ -42,36 +44,27 @@ pub struct VaultContract;
 #[contractimpl]
 impl VaultContract {
     pub fn initialize(env: Env, admin: Address) {
-        if storage::has_admin(&env) {
-            panic!("Already initialized");
-        }
-        storage::set_admin(&env, &admin);
+        admin::initialize(env, admin);
     }
 
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
-        let admin: Address = storage::get_admin(&env);
-        admin.require_auth();
-        env.deployer().update_current_contract_wasm(new_wasm_hash);
+        admin::upgrade(env, new_wasm_hash);
     }
 
     pub fn admin(env: Env) -> Address {
-        storage::get_admin(&env)
+        admin::admin(env)
     }
 
     pub fn add_caller(env: Env, caller: Address) {
-        let admin: Address = storage::get_admin(&env);
-        admin.require_auth();
-        storage::set_caller(&env, &caller, true);
+        admin::add_caller(env, caller);
     }
 
     pub fn remove_caller(env: Env, caller: Address) {
-        let admin: Address = storage::get_admin(&env);
-        admin.require_auth();
-        storage::set_caller(&env, &caller, false);
+        admin::remove_caller(env, caller);
     }
 
     pub fn is_caller(env: Env, caller: Address) -> bool {
-        storage::is_caller(&env, &caller)
+        admin::is_caller(env, caller)
     }
 
     /// Pull tokens from `from` into the vault (any account may fund the vault).
@@ -84,11 +77,7 @@ impl VaultContract {
 
     /// Admin emergency withdrawal from vault balances.
     pub fn admin_withdraw(env: Env, token: Address, to: Address, amount: i128) {
-        let admin: Address = storage::get_admin(&env);
-        admin.require_auth();
-        assert!(amount > 0, "amount must be positive");
-        let vault = env.current_contract_address();
-        token::Client::new(&env, &token).transfer(&vault, &to, &amount);
+        admin::admin_withdraw(env, token, to, amount);
     }
 
     /// Authorized caller executes a round-trip arb atomically:
@@ -109,8 +98,7 @@ impl VaultContract {
         min_amount_out: i128,
         allowance_expiration_ledger: u32,
     ) -> i128 {
-        caller.require_auth();
-        assert!(storage::is_caller(&env, &caller), "caller not authorized");
+        auth::require_caller(&env, &caller);
         assert!(amount_in > 0, "amount_in must be positive");
         assert!(min_amount_out >= amount_in, "min_amount_out below principal");
         assert!(
