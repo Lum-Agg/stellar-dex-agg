@@ -12,97 +12,41 @@
 //! Users approve token transfers, the contract executes swaps, and outputs go
 //! directly back to the user — all in one atomic invocation.
 
+mod auth;
+mod events;
+mod math;
+mod storage;
+mod validate;
+
 pub use lumagg_contract_types::{DexType, SubRoute, SwapStep};
 use soroban_sdk::{
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
-    contract, contractimpl, contracttype, token, Address, BytesN, Env, IntoVal, Symbol, Val, Vec,
+    contract, contractimpl, token, Address, BytesN, Env, IntoVal, Symbol, Val, Vec,
 };
-
-/// Storage keys
-#[contracttype]
-#[derive(Clone)]
-pub enum DataKey {
-    Admin,
-}
 
 #[contract]
 pub struct AggregatorContract;
-
-/// Soroswap fee: ceil(amount_in * 3 / 1000), matching pair swap K-check.
-fn soroswap_fee(amount_in: i128) -> i128 {
-    if amount_in <= 0 {
-        return 0;
-    }
-    (amount_in * 3 + 999) / 1000
-}
-
-/// Soroswap library `get_amount_out` (floor division on output).
-fn soroswap_get_amount_out(amount_in: i128, reserve_in: i128, reserve_out: i128) -> i128 {
-    if amount_in <= 0 || reserve_in <= 0 || reserve_out <= 0 {
-        return 0;
-    }
-    let in_less = amount_in - soroswap_fee(amount_in);
-    if in_less <= 0 {
-        return 0;
-    }
-    in_less * reserve_out / (reserve_in + in_less)
-}
-
-/// Treat each `SubRoute.amount_in` as a positive weight and allocate
-/// `target_total` across routes. Intermediate routes use floor division; the
-/// last route receives the remainder so the sum is exact (`= target_total`).
-fn scale_sub_routes_to_total(env: &Env, routes: &Vec<SubRoute>, target_total: i128) -> Vec<SubRoute> {
-    assert!(!routes.is_empty(), "Empty sub_routes");
-    assert!(target_total > 0, "target_total must be positive");
-
-    let mut weight_sum: i128 = 0;
-    for sr in routes.iter() {
-        assert!(sr.amount_in > 0, "sub-route weight must be positive");
-        weight_sum = weight_sum.checked_add(sr.amount_in).expect("weight sum overflow");
-    }
-
-    let n = routes.len();
-    let mut out: Vec<SubRoute> = Vec::new(env);
-    let mut allocated: i128 = 0;
-    for i in 0..n {
-        let sr = routes.get(i).unwrap();
-        let amount = if i + 1 == n {
-            target_total - allocated
-        } else {
-            let scaled = sr.amount_in.checked_mul(target_total).expect("weight scale overflow") / weight_sum;
-            allocated = allocated.checked_add(scaled).expect("allocated overflow");
-            scaled
-        };
-        assert!(amount > 0, "scaled sub-route amount must be positive");
-        out.push_back(SubRoute {
-            amount_in: amount,
-            steps: sr.steps.clone(),
-        });
-    }
-    out
-}
 
 #[contractimpl]
 impl AggregatorContract {
     /// Initialize the contract with an admin address.
     /// Must be called once after deployment.
     pub fn initialize(env: Env, admin: Address) {
-        if env.storage().instance().has(&DataKey::Admin) {
+        if storage::has_admin(&env) {
             panic!("Already initialized");
         }
-        env.storage().instance().set(&DataKey::Admin, &admin);
+        storage::set_admin(&env, &admin);
     }
 
     /// Upgrade the contract WASM code. Only admin can call.
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("Not initialized");
-        admin.require_auth();
+        auth::require_admin(&env);
         env.deployer().update_current_contract_wasm(new_wasm_hash);
     }
 
     /// Get the admin address.
     pub fn admin(env: Env) -> Address {
-        env.storage().instance().get(&DataKey::Admin).expect("Not initialized")
+        storage::get_admin(&env)
     }
 
     /// Execute a swap atomically (single-path or split-order).
@@ -130,7 +74,7 @@ impl AggregatorContract {
         assert!(min_amount_out > 0, "min_amount_out must be positive");
 
         let contract_addr = env.current_contract_address();
-        let total_in = Self::validate_sub_routes(&token_in, &token_out, &sub_routes);
+        let total_in = validate::validate_sub_routes(&token_in, &token_out, &sub_routes);
 
         // Pull total input from user
         let token_in_client = token::Client::new(&env, &token_in);
@@ -147,16 +91,14 @@ impl AggregatorContract {
         let token_out_client = token::Client::new(&env, &token_out);
         token_out_client.transfer(&contract_addr, &user, &total_output);
 
-        env.events().publish(
-            (Symbol::new(&env, "swap"),),
-            (
-                user.clone(),
-                token_in.clone(),
-                token_out.clone(),
-                total_in,
-                total_output,
-                sub_routes.len() as u32,
-            ),
+        events::publish_swap(
+            &env,
+            &user,
+            &token_in,
+            &token_out,
+            total_in,
+            total_output,
+            sub_routes.len() as u32,
         );
 
         total_output
@@ -207,8 +149,8 @@ impl AggregatorContract {
 
         let mut leg_counter: u32 = 0;
 
-        let leg_out_in = Self::validate_sub_routes(&base_token, &bridge_token, &leg_out);
-        Self::validate_sub_routes(&bridge_token, &base_token, &leg_back);
+        let leg_out_in = validate::validate_sub_routes(&base_token, &bridge_token, &leg_out);
+        validate::validate_sub_routes(&bridge_token, &base_token, &leg_back);
         assert!(leg_out_in == amount_in, "leg_out amounts must sum to amount_in");
         let is_split = leg_out.len() > 1 || leg_back.len() > 1;
 
@@ -220,7 +162,7 @@ impl AggregatorContract {
         assert!(bridge_total > 0, "leg_out produced zero bridge token");
 
         // Scale leg_back weights → absolute bridge inputs that sum to o1.
-        let scaled_back = scale_sub_routes_to_total(&env, &leg_back, bridge_total);
+        let scaled_back = math::scale_sub_routes_to_total(&env, &leg_back, bridge_total);
 
         let base_total = Self::execute_sub_routes(&env, &scaled_back, &contract_addr, &mut leg_counter);
 
@@ -228,43 +170,18 @@ impl AggregatorContract {
 
         base_client.transfer(&contract_addr, &user, &base_total);
 
-        env.events().publish(
-            (Symbol::new(&env, "rt"),),
-            (
-                user.clone(),
-                base_token.clone(),
-                bridge_token.clone(),
-                amount_in,
-                base_total,
-                leg_counter,
-                is_split,
-            ),
+        events::publish_rt(
+            &env,
+            &user,
+            &base_token,
+            &bridge_token,
+            amount_in,
+            base_total,
+            leg_counter,
+            is_split,
         );
 
         base_total
-    }
-
-    fn validate_sub_routes(token_in: &Address, token_out: &Address, sub_routes: &Vec<SubRoute>) -> i128 {
-        assert!(!sub_routes.is_empty(), "Empty sub_routes");
-
-        let mut total_in = 0i128;
-        for sr in sub_routes.iter() {
-            assert!(sr.amount_in > 0, "Sub-route amount must be positive");
-            total_in = total_in.checked_add(sr.amount_in).expect("total input overflow");
-            assert!(!sr.steps.is_empty(), "Empty steps");
-
-            let first_step = sr.steps.first().unwrap();
-            let last_step = sr.steps.last().unwrap();
-            assert!(first_step.token_in == *token_in, "Sub-route must start with token_in");
-            assert!(last_step.token_out == *token_out, "Sub-route must end with token_out");
-
-            for i in 1..sr.steps.len() {
-                let previous = sr.steps.get(i - 1).unwrap();
-                let current = sr.steps.get(i).unwrap();
-                assert!(previous.token_out == current.token_in, "Disconnected sub-route");
-            }
-        }
-        total_in
     }
 
     /// Execute sub-routes that share the same token_in → token_out pair;
@@ -407,7 +324,7 @@ impl AggregatorContract {
                     (reserves.1, reserves.0)
                 };
 
-                let expected_out = soroswap_get_amount_out(amount_in, reserve_in, reserve_out);
+                let expected_out = math::soroswap_get_amount_out(amount_in, reserve_in, reserve_out);
                 if expected_out <= 0 {
                     return 0;
                 }
@@ -1475,7 +1392,7 @@ mod test {
                 steps: vec![&env, step],
             },
         ];
-        let scaled = scale_sub_routes_to_total(&env, &routes, 5000);
+        let scaled = math::scale_sub_routes_to_total(&env, &routes, 5000);
         assert_eq!(scaled.len(), 2);
         assert_eq!(scaled.get(0).unwrap().amount_in, 3296); // 5000 * 600 / 910
         assert_eq!(scaled.get(1).unwrap().amount_in, 1704); // remainder
