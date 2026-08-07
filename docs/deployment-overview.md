@@ -13,6 +13,19 @@ under your preferred process manager.
 | Public analytics, swap history, and arbitrage history | `lumagg-analytics-indexer` | Reads chain events into SQLite; API serves `/stats`, `/swaps`, and `/arbitrage` from that DB. |
 | Atomic round-trip arbitrage | `lumagg-arbitrage-bot` | Runs separately from the quote stack and should use low-latency quote API and RPC endpoints. |
 
+## Release archives
+
+Download the Linux x86_64 archives from the [GitHub Releases](https://github.com/Lum-Agg/stellar-dex-agg/releases) page. The analytics indexer is included in the aggregator archive because it shares the aggregator TOML configuration and is normally deployed alongside the API:
+
+| Archive | Included executables | Use |
+| --- | --- | --- |
+| `lumagg-swap-api-linux-x86_64.tar.gz` | `lumagg-swap-api` | Single-process quote API for testing or private self-hosting |
+| `lumagg-aggregator-linux-x86_64.tar.gz` | `lumagg-market-data-worker`, `lumagg-api-server`, `lumagg-analytics-indexer` | Shared production quote stack and on-chain analytics |
+| `lumagg-arbitrage-bot-linux-x86_64.tar.gz` | `lumagg-arbitrage-bot` | Standalone arbitrage service |
+
+Verify every downloaded archive with the matching `SHA256SUMS` file before
+extracting it.
+
 ## Recommended topologies
 
 ### Self-hosted quote API
