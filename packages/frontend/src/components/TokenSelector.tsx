@@ -199,7 +199,7 @@ export function TokenSelector({
       if (aOwned !== bOwned) return aOwned ? -1 : 1;
       return 0;
     });
-  }, [tokens, exclude, qLower, balancesReady, getBalance]);
+  }, [tokens, qLower, balancesReady, getBalance]);
 
   const exactIdMatch =
     filtered.length === 1 && q.length > 0 && qLower === filtered[0].id.toLowerCase();
