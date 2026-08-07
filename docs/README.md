@@ -19,11 +19,14 @@ atomic execution through the LumAgg Aggregator contract.
 ### Self-host a quote stack
 
 Start with [Deployment Overview](deployment-overview.md) if you are choosing
-between the release binaries.
+between the release binaries, or use the
+[Self-hosted Aggregator Quickstart](self-hosted-aggregator-quickstart.md) to
+run the split worker/API topology directly.
 
 | Need | Guide |
 | --- | --- |
 | Single-process quote API | [LumAgg Swap API](lumagg-swap-api.md) |
+| Split worker/API quote stack | [Self-hosted Aggregator Quickstart](self-hosted-aggregator-quickstart.md) |
 | Shared market state + API replicas | [Production Aggregator](aggregator-deployment.md) |
 | Public stats, swap history, and arbitrage history | [Analytics Indexer](analytics-indexer.md) |
 | Aggregator / vault contracts | [Smart contracts](contracts-deployment.md) |

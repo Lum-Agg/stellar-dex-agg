@@ -13,6 +13,7 @@
 ## Deploy
 
 - [Deployment Overview](deployment-overview.md)
+- [Self-hosted Aggregator Quickstart](self-hosted-aggregator-quickstart.md)
 - [LumAgg Swap API](lumagg-swap-api.md)
 - [Production Aggregator](aggregator-deployment.md)
   - [Configuration Reference](aggregator-configuration.md)

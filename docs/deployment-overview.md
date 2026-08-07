@@ -39,7 +39,9 @@ lumagg-analytics-indexer -> SQLite -> lumagg-api-server x N
 Use this when API replicas need shared market state, when a public endpoint must
 scale, or when an arbitrage operator needs a stable local quote plane.
 
-Guide: [Production Aggregator Deployment](aggregator-deployment.md)
+Quick path: [Self-hosted Aggregator Quickstart](self-hosted-aggregator-quickstart.md)
+
+Full guide: [Production Aggregator Deployment](aggregator-deployment.md)
 
 ### Arbitrage operator
 
