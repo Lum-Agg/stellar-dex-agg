@@ -72,6 +72,27 @@ Git.
 
 Reference: [Aggregator Configuration](aggregator-configuration.md)
 
+## Release archive smoke test
+
+After downloading all three release archives and `SHA256SUMS`, you can verify
+the package structure and config templates without connecting to RPC or Redis:
+
+```bash
+git clone https://github.com/Lum-Agg/stellar-dex-agg.git
+cd stellar-dex-agg
+./scripts/smoke-release-archives.sh
+```
+
+Run it from the directory containing:
+
+- `lumagg-swap-api-linux-x86_64.tar.gz`
+- `lumagg-aggregator-linux-x86_64.tar.gz`
+- `lumagg-arbitrage-bot-linux-x86_64.tar.gz`
+
+Use `DIST_DIR=/path/to/downloads ./scripts/smoke-release-archives.sh` when the
+archives are in another directory. The script checks required files, binary
+`--version`, and `--check-config` against patched dummy contract IDs.
+
 ## Validation checklist
 
 After deployment:
