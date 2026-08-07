@@ -5,8 +5,9 @@
 #   ./scripts/smoke-release-archives.sh
 #   DIST_DIR=./dist ./scripts/smoke-release-archives.sh
 #
-# The check is intentionally offline: it verifies archive contents, binary
-# startup, and TOML parsing without requiring RPC, Redis, or chain access.
+# The check is intentionally offline. It always verifies archive contents. On
+# Linux x86_64 it also verifies binary startup and TOML parsing without requiring
+# RPC, Redis, or chain access.
 set -euo pipefail
 
 DIST_DIR="${DIST_DIR:-.}"
@@ -48,6 +49,17 @@ test -f "$arb/README.md"
 test -f "$arb/arbitrage-configuration.md"
 test -f "$arb/lumagg-arbitrage.toml"
 test -f "$arb/lumagg-arbitrage.service"
+
+host_os="$(uname -s)"
+host_arch="$(uname -m)"
+if [[ "${EXECUTE_BINARIES:-auto}" == "0" || "${EXECUTE_BINARIES:-auto}" == "false" ]]; then
+  echo "archive structure smoke test passed; binary execution skipped"
+  exit 0
+fi
+if [[ "${EXECUTE_BINARIES:-auto}" == "auto" && ! ( "$host_os" == "Linux" && "$host_arch" == "x86_64" ) ]]; then
+  echo "archive structure smoke test passed; binary execution skipped on $host_os/$host_arch"
+  exit 0
+fi
 
 "$swap/lumagg-swap-api" --version
 "$cluster/lumagg-api-server" --version

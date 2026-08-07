@@ -90,8 +90,10 @@ Run it from the directory containing:
 - `lumagg-arbitrage-bot-linux-x86_64.tar.gz`
 
 Use `DIST_DIR=/path/to/downloads ./scripts/smoke-release-archives.sh` when the
-archives are in another directory. The script checks required files, binary
-`--version`, and `--check-config` against patched dummy contract IDs.
+archives are in another directory. The script always checks required files. On
+Linux x86_64 it also checks binary `--version` and `--check-config` against
+patched dummy contract IDs. On macOS or other non-Linux hosts it skips binary
+execution because the release archives contain Linux x86_64 binaries.
 
 ## Validation checklist
 
