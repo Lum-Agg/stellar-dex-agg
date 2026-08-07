@@ -9,6 +9,7 @@ import {
   amountToStroops,
   buildCancelDca,
   buildCreateDca,
+  ceilDiv,
   fetchLatestLedger,
   formatStroops,
   isLimitApiConfigured,
@@ -61,7 +62,16 @@ export function DcaCard() {
     try {
       const amountIn = amountToStroops(total, tokenIn.decimals);
       const chunkAmount = amountToStroops(chunk, tokenIn.decimals);
-      const chunks = Math.ceil(Number(BigInt(amountIn)) / Number(BigInt(chunkAmount)));
+      const amountInUnits = BigInt(amountIn);
+      const chunkUnits = BigInt(chunkAmount);
+      if (amountInUnits <= BigInt(0) || chunkUnits <= BigInt(0)) {
+        throw new Error('Amount and chunk must be positive');
+      }
+      const chunksBig = ceilDiv(amountInUnits, chunkUnits);
+      if (chunksBig > BigInt(Number.MAX_SAFE_INTEGER)) {
+        throw new Error('Too many DCA chunks');
+      }
+      const chunks = Number(chunksBig);
       const duration = interval * Math.max(1, chunks);
       if (duration + 720 > MAX_LIFETIME_LEDGERS) {
         throw new Error('Schedule exceeds the 30-day testnet limit');
@@ -131,7 +141,9 @@ export function DcaCard() {
         </p>
 
         <div className="surface-panel-raised p-4 sm:p-5">
-          <div className="mb-2.5 text-[13px] sm:text-[14px] text-[var(--text-muted)]">Total amount</div>
+          <div className="mb-2.5 text-[13px] sm:text-[14px] text-[var(--text-muted)]">
+            Total amount
+          </div>
           <div className="flex min-w-0 items-center gap-3">
             <input
               value={total}
@@ -263,4 +275,3 @@ export function DcaCard() {
     </div>
   );
 }
-

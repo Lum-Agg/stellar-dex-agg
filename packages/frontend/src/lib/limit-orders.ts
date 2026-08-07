@@ -107,6 +107,12 @@ export function amountToStroops(amount: string, decimals: number): string {
   return decimalToAtomicUnits(amount, decimals);
 }
 
+/** Ceiling division for token amounts without losing precision above 2^53. */
+export function ceilDiv(a: bigint, b: bigint): bigint {
+  if (b <= BigInt(0)) throw new Error('Divisor must be positive');
+  return (a + b - BigInt(1)) / b;
+}
+
 export function formatStroops(stroops: string, decimals: number): string {
   try {
     const n = BigInt(stroops);
@@ -216,6 +222,7 @@ export async function buildCancelOrder(params: {
 }
 
 export async function listDcaOrders(user: string): Promise<DcaOrder[]> {
+  if (!isLimitApiConfigured()) throw new Error('Limit API not configured');
   const resp = await fetch(`${LIMIT_API_URL}/api/v1/dca?${new URLSearchParams({ user })}`);
   const json = await resp.json();
   if (!json.success) throw new Error(json.error || 'Failed to list DCA orders');
@@ -246,6 +253,7 @@ export async function buildCreateDca(params: {
   minOutPerInE7: string;
   expiresLedger: number;
 }): Promise<BuildOrderTxResult> {
+  if (!isLimitApiConfigured()) throw new Error('Limit API not configured');
   const resp = await fetch(`${LIMIT_API_URL}/api/v1/dca/build_create`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -270,6 +278,7 @@ export async function buildCancelDca(params: {
   user: string;
   orderId: number;
 }): Promise<BuildOrderTxResult> {
+  if (!isLimitApiConfigured()) throw new Error('Limit API not configured');
   const resp = await fetch(`${LIMIT_API_URL}/api/v1/dca/build_cancel`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
