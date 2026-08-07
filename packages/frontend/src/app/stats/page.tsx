@@ -53,7 +53,10 @@ interface DailyStats {
 }
 
 function dayRoutedUsd(d: DailyStats): number | null {
-  if (typeof d.total_routed_dex_volume_usd === 'number' && Number.isFinite(d.total_routed_dex_volume_usd)) {
+  if (
+    typeof d.total_routed_dex_volume_usd === 'number' &&
+    Number.isFinite(d.total_routed_dex_volume_usd)
+  ) {
     return d.total_routed_dex_volume_usd;
   }
   return null;
@@ -306,12 +309,22 @@ export default function StatsPage() {
           </p>
         </div>
         {data && (
-          <a
-            href={`${API_URL}/api/v1/stats?format=csv`}
-            className="self-start sm:self-auto text-[12px] px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]/80 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] transition-colors"
-          >
-            Export CSV
-          </a>
+          <div className="self-start sm:self-auto flex flex-wrap items-center gap-2">
+            <a
+              href="https://defillama.com/dex-aggregators/chain/stellar"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[12px] px-3 py-1.5 rounded-lg border border-teal-400/25 bg-teal-400/5 text-teal-200 hover:border-teal-300/50 hover:bg-teal-400/10 transition-colors"
+            >
+              View on DefiLlama
+            </a>
+            <a
+              href={`${API_URL}/api/v1/stats?format=csv`}
+              className="text-[12px] px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]/80 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] transition-colors"
+            >
+              Export CSV
+            </a>
+          </div>
         )}
       </div>
 
@@ -328,9 +341,9 @@ export default function StatsPage() {
 
       {error && (
         <div className="text-sm text-amber-300/90 border border-amber-500/20 bg-amber-500/5 rounded-xl px-4 py-3">
-          Stats unavailable: {error}. Configure <code className="text-[var(--text-secondary)]">INDEXER_DB_PATH</code>{' '}
-          on the API server or use{' '}
-          <code className="text-[var(--text-secondary)]">analytics-indexer export-daily</code>.
+          Stats unavailable: {error}. Configure{' '}
+          <code className="text-[var(--text-secondary)]">INDEXER_DB_PATH</code> on the API server or
+          use <code className="text-[var(--text-secondary)]">analytics-indexer export-daily</code>.
         </div>
       )}
 
@@ -376,7 +389,9 @@ export default function StatsPage() {
             <div className="px-4 sm:px-5 pt-3 pb-1 flex flex-col gap-1.5">
               <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
                 <div>
-                  <h2 className="text-[15px] font-medium text-[var(--text-primary)]">Daily volume</h2>
+                  <h2 className="text-[15px] font-medium text-[var(--text-primary)]">
+                    Daily volume
+                  </h2>
                   <p className="text-[12px] text-[var(--text-primary)]0 mt-0.5">
                     Routed ≈ notional × hops (each DEX leg) · Notional = entry amount · cyan =
                     transactions
@@ -440,9 +455,12 @@ export default function StatsPage() {
                 </h2>
                 <p className="text-[12px] text-[var(--text-primary)]0 mt-1 max-w-2xl">
                   Successful on-chain round trips. Gross surplus is the actual base token returned
-                  minus the base token supplied; it excludes transaction fees and is not net P&amp;L.
-                  See the{' '}
-                  <Link href="/arbitrage" className="text-teal-300/90 hover:text-teal-200 underline underline-offset-2">
+                  minus the base token supplied; it excludes transaction fees and is not net
+                  P&amp;L. See the{' '}
+                  <Link
+                    href="/arbitrage"
+                    className="text-teal-300/90 hover:text-teal-200 underline underline-offset-2"
+                  >
                     Arbitrage
                   </Link>{' '}
                   page for recent trades.
@@ -455,9 +473,7 @@ export default function StatsPage() {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-5 gap-y-4 mt-5">
               <ArbMetric
                 label="Gross surplus (USD)"
-                value={
-                  derived.grossSurplusUsd != null ? formatUsd(derived.grossSurplusUsd) : '—'
-                }
+                value={derived.grossSurplusUsd != null ? formatUsd(derived.grossSurplusUsd) : '—'}
               />
               <ArbMetric
                 label="Successful round trips"
@@ -502,10 +518,7 @@ export default function StatsPage() {
           <div className="flex flex-wrap gap-x-5 gap-y-2 rounded-xl border border-[var(--border)] bg-[var(--bg-0)]/40 px-4 py-3 text-[12px] text-[var(--text-primary)]0">
             <OpsItem label="Cursor ledger" value={data.cursor_ledger?.toLocaleString() ?? '—'} />
             <OpsItem label="Days indexed" value={String(data.daily.length)} />
-            <OpsItem
-              label="USD pricing"
-              value={data.usd_pricing ? 'per-token day close' : '—'}
-            />
+            <OpsItem label="USD pricing" value={data.usd_pricing ? 'per-token day close' : '—'} />
             <OpsItem
               label="API"
               value={
@@ -732,8 +745,8 @@ function VolumeTrendChart({
   });
 
   const active = hover ? days[hover.index] : null;
-  const activeRouted = active ? dayRoutedUsd(active) ?? 0 : 0;
-  const activeNotional = active ? dayNotionalUsd(active) ?? 0 : 0;
+  const activeRouted = active ? (dayRoutedUsd(active) ?? 0) : 0;
+  const activeNotional = active ? (dayNotionalUsd(active) ?? 0) : 0;
 
   function dayFromClientX(clientX: number, clientY: number, svg: SVGSVGElement): number | null {
     const ctm = svg.getScreenCTM();

@@ -29,3 +29,4 @@
 ## Analytics
 
 - [Analytics Indexer](analytics-indexer.md)
+- [DefiLlama Listing](defillama.md)
