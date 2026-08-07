@@ -72,7 +72,8 @@ export function DcaCard() {
         throw new Error('Too many DCA chunks');
       }
       const chunks = Number(chunksBig);
-      const duration = interval * Math.max(1, chunks);
+      // The final chunk executes after (chunks - 1) intervals, not chunks intervals.
+      const duration = interval * Math.max(0, chunks - 1);
       if (duration + 720 > MAX_LIFETIME_LEDGERS) {
         throw new Error('Schedule exceeds the 30-day testnet limit');
       }
