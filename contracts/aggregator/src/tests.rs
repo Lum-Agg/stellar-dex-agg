@@ -23,7 +23,7 @@ fn create_token(env: &Env) -> (Address, StellarAssetClient<'static>, TokenClient
 
 fn setup_agg(env: &Env) -> (Address, AggregatorContractClient<'_>) {
     let admin = gen_addr(env);
-    let id = env.register_contract(None, AggregatorContract);
+    let id = env.register(AggregatorContract, ());
     let agg = AggregatorContractClient::new(env, &id);
     agg.initialize(&admin);
     (admin, agg)
@@ -232,7 +232,7 @@ fn test_aquarius_a2b_true() {
     let (b, sac_b, tok_b) = create_token(&env);
     sac_a.mint(&user, &1_000_000);
 
-    let pid = env.register_contract(None, aq_mock::AqPool);
+    let pid = env.register(aq_mock::AqPool, ());
     let p = pid.clone();
     AqPoolClient::new(&env, &pid).init(&a, &b);
     sac_b.mint(&p, &10_000_000);
@@ -262,7 +262,7 @@ fn test_aquarius_a2b_false() {
     let (b, sac_b, _) = create_token(&env);
     sac_b.mint(&user, &1_000_000);
 
-    let pid = env.register_contract(None, aq_mock::AqPool);
+    let pid = env.register(aq_mock::AqPool, ());
     let p = pid.clone();
     AqPoolClient::new(&env, &pid).init(&a, &b);
     sac_a.mint(&p, &10_000_000);
@@ -292,7 +292,7 @@ fn test_aquarius_rejects_low_output() {
     let (b, sac_b, _) = create_token(&env);
     sac_a.mint(&user, &1_000_000);
 
-    let pid = env.register_contract(None, aq_mock::AqPool);
+    let pid = env.register(aq_mock::AqPool, ());
     let p = pid.clone();
     AqPoolClient::new(&env, &pid).init(&a, &b);
     sac_b.mint(&p, &10_000_000);
@@ -326,7 +326,7 @@ fn test_soroswap_a2b_true() {
     let (b, sac_b, tok_b) = create_token(&env);
     sac_a.mint(&user, &1_000_000);
 
-    let pid = env.register_contract(None, ss_mock::SsPair);
+    let pid = env.register(ss_mock::SsPair, ());
     let p = pid.clone();
     SsPairClient::new(&env, &pid).init(&a, &b, &100_000, &100_000);
     sac_a.mint(&p, &100_000);
@@ -357,7 +357,7 @@ fn test_soroswap_a2b_false() {
     let (b, sac_b, _) = create_token(&env);
     sac_b.mint(&user, &1_000_000);
 
-    let pid = env.register_contract(None, ss_mock::SsPair);
+    let pid = env.register(ss_mock::SsPair, ());
     let p = pid.clone();
     SsPairClient::new(&env, &pid).init(&a, &b, &100_000, &100_000);
     sac_a.mint(&p, &100_000);
@@ -392,7 +392,7 @@ fn test_sushi_swap_with_hints() {
     let (b, sac_b, tok_b) = create_token(&env);
     sac_a.mint(&user, &1_000_000);
 
-    let pid = env.register_contract(None, sushi_mock::SushiPool);
+    let pid = env.register(sushi_mock::SushiPool, ());
     let p = pid.clone();
     SushiPoolClient::new(&env, &pid).init(&a, &b);
     sac_b.mint(&p, &10_000_000);
@@ -426,7 +426,7 @@ fn test_comet_swap_exact_amount_in() {
     let (b, sac_b, tok_b) = create_token(&env);
     sac_a.mint(&user, &1_000_000);
 
-    let pid = env.register_contract(None, comet_mock::CometPool);
+    let pid = env.register(comet_mock::CometPool, ());
     let p = pid.clone();
     CometPoolClient::new(&env, &pid).init(&a, &b);
     sac_b.mint(&p, &10_000_000);
@@ -461,12 +461,12 @@ fn test_multi_hop() {
     let (c, sac_c, tok_c) = create_token(&env);
     sac_a.mint(&user, &1_000_000);
 
-    let aq_id = env.register_contract(None, aq_mock::AqPool);
+    let aq_id = env.register(aq_mock::AqPool, ());
     let aq = aq_id.clone();
     AqPoolClient::new(&env, &aq_id).init(&a, &b);
     sac_b.mint(&aq, &10_000_000);
 
-    let ss_id = env.register_contract(None, ss_mock::SsPair);
+    let ss_id = env.register(ss_mock::SsPair, ());
     let ss = ss_id.clone();
     SsPairClient::new(&env, &ss_id).init(&b, &c, &100_000, &100_000);
     sac_b.mint(&ss, &100_000);
@@ -514,12 +514,12 @@ fn test_swap_split_two_routes() {
     let (b, sac_b, tok_b) = create_token(&env);
     sac_a.mint(&user, &1_000_000);
 
-    let aq_id = env.register_contract(None, aq_mock::AqPool);
+    let aq_id = env.register(aq_mock::AqPool, ());
     let aq = aq_id.clone();
     AqPoolClient::new(&env, &aq_id).init(&a, &b);
     sac_b.mint(&aq, &10_000_000);
 
-    let ss_id = env.register_contract(None, ss_mock::SsPair);
+    let ss_id = env.register(ss_mock::SsPair, ());
     let ss = ss_id.clone();
     SsPairClient::new(&env, &ss_id).init(&a, &b, &100_000, &100_000);
     sac_b.mint(&ss, &100_000);
@@ -577,12 +577,12 @@ fn test_round_trip_swap_two_legs() {
     let (bridge, sac_bridge, _) = create_token(&env);
     sac_base.mint(&user, &1_000_000);
 
-    let out_pid = env.register_contract(None, aq_mock::AqPool);
+    let out_pid = env.register(aq_mock::AqPool, ());
     let out_pool = out_pid.clone();
     AqPoolClient::new(&env, &out_pid).init(&base, &bridge);
     sac_bridge.mint(&out_pool, &10_000_000);
 
-    let back_pid = env.register_contract(None, aq_mock::AqPool);
+    let back_pid = env.register(aq_mock::AqPool, ());
     let back_pool = back_pid.clone();
     AqPoolClient::new(&env, &back_pid).init(&bridge, &base);
     sac_base.mint(&back_pool, &10_000_000);
@@ -639,17 +639,17 @@ fn test_round_trip_swap_split_out_leg() {
     let (bridge, sac_bridge, _) = create_token(&env);
     sac_base.mint(&user, &1_000_000);
 
-    let aq1_id = env.register_contract(None, aq_mock::AqPool);
+    let aq1_id = env.register(aq_mock::AqPool, ());
     let aq1 = aq1_id.clone();
     AqPoolClient::new(&env, &aq1_id).init(&base, &bridge);
     sac_bridge.mint(&aq1, &10_000_000);
 
-    let aq2_id = env.register_contract(None, aq_mock::AqPool);
+    let aq2_id = env.register(aq_mock::AqPool, ());
     let aq2 = aq2_id.clone();
     AqPoolClient::new(&env, &aq2_id).init(&base, &bridge);
     sac_bridge.mint(&aq2, &10_000_000);
 
-    let back_pid = env.register_contract(None, aq_mock::AqPool);
+    let back_pid = env.register(aq_mock::AqPool, ());
     let back_pool = back_pid.clone();
     AqPoolClient::new(&env, &back_pid).init(&bridge, &base);
     sac_base.mint(&back_pool, &20_000);
@@ -723,12 +723,12 @@ fn test_round_trip_leg_back_weight_mismatch_single() {
     let (bridge, sac_bridge, _) = create_token(&env);
     sac_base.mint(&user, &1_000_000);
 
-    let out_pid = env.register_contract(None, aq_mock::AqPool);
+    let out_pid = env.register(aq_mock::AqPool, ());
     let out_pool = out_pid.clone();
     AqPoolClient::new(&env, &out_pid).init(&base, &bridge);
     sac_bridge.mint(&out_pool, &10_000_000);
 
-    let back_pid = env.register_contract(None, aq_mock::AqPool);
+    let back_pid = env.register(aq_mock::AqPool, ());
     let back_pool = back_pid.clone();
     AqPoolClient::new(&env, &back_pid).init(&bridge, &base);
     sac_base.mint(&back_pool, &10_000_000);
@@ -787,17 +787,17 @@ fn test_round_trip_leg_back_split_rescale() {
     let (bridge, sac_bridge, _) = create_token(&env);
     sac_base.mint(&user, &1_000_000);
 
-    let out_pid = env.register_contract(None, aq_mock::AqPool);
+    let out_pid = env.register(aq_mock::AqPool, ());
     let out_pool = out_pid.clone();
     AqPoolClient::new(&env, &out_pid).init(&base, &bridge);
     sac_bridge.mint(&out_pool, &10_000_000);
 
-    let back1_id = env.register_contract(None, aq_mock::AqPool);
+    let back1_id = env.register(aq_mock::AqPool, ());
     let back1 = back1_id.clone();
     AqPoolClient::new(&env, &back1_id).init(&bridge, &base);
     sac_base.mint(&back1, &10_000_000);
 
-    let back2_id = env.register_contract(None, aq_mock::AqPool);
+    let back2_id = env.register(aq_mock::AqPool, ());
     let back2 = back2_id.clone();
     AqPoolClient::new(&env, &back2_id).init(&bridge, &base);
     sac_base.mint(&back2, &10_000_000);
@@ -905,7 +905,7 @@ fn test_aquarius_exact_match() {
     let (b, sac_b, tok_b) = create_token(&env);
     sac_a.mint(&user, &1_000_000);
 
-    let pid = env.register_contract(None, aq_mock::AqPool);
+    let pid = env.register(aq_mock::AqPool, ());
     let p = pid.clone();
     AqPoolClient::new(&env, &pid).init(&a, &b);
     sac_b.mint(&p, &10_000_000);
@@ -995,7 +995,7 @@ fn test_insufficient_balance_panics() {
     sac_a.mint(&user, &100);
     let (b, _, _) = create_token(&env);
 
-    let pid = env.register_contract(None, aq_mock::AqPool);
+    let pid = env.register(aq_mock::AqPool, ());
     let p = pid.clone();
     AqPoolClient::new(&env, &pid).init(&a, &b);
 

@@ -539,7 +539,7 @@ mod tests {
     }
 
     fn setup_escrow<'a>(env: &'a Env) -> (Address, OrderEscrowContractClient<'a>) {
-        let escrow_id = env.register_contract(None, OrderEscrowContract);
+        let escrow_id = env.register(OrderEscrowContract, ());
         let escrow = OrderEscrowContractClient::new(env, &escrow_id);
         escrow.initialize(&gen_addr(env), &gen_addr(env));
         (escrow_id, escrow)
@@ -556,10 +556,10 @@ mod tests {
         Address,
     ) {
         let owner = gen_addr(env);
-        let aggregator_id = env.register_contract(None, AggregatorContract);
+        let aggregator_id = env.register(AggregatorContract, ());
         aggregator_contract::AggregatorContractClient::new(env, &aggregator_id).initialize(&gen_addr(env));
 
-        let escrow_id = env.register_contract(None, OrderEscrowContract);
+        let escrow_id = env.register(OrderEscrowContract, ());
         let escrow = OrderEscrowContractClient::new(env, &escrow_id);
         escrow.initialize(&gen_addr(env), &aggregator_id);
 
@@ -567,7 +567,7 @@ mod tests {
         let (token_out, token_out_sac) = create_token(env);
         token_in_sac.mint(&owner, &10_000);
 
-        let pool_id = env.register_contract(None, aq_mock::AqPool);
+        let pool_id = env.register(aq_mock::AqPool, ());
         aq_mock::AqPoolClient::new(env, &pool_id).init(&token_in, &token_out);
         token_out_sac.mint(&pool_id, &10_000);
 
@@ -920,7 +920,7 @@ mod tests {
         let env = test_env();
         env.mock_all_auths();
         let (owner, escrow, token_in, token_out, _, pool_id) = setup_fill(&env);
-        let filler = env.register_contract(None, Filler);
+        let filler = env.register(Filler, ());
         assert_ne!(filler, owner);
         let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000, &10_000_000, &100);
         env.set_auths(&[]);
