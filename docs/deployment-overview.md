@@ -132,3 +132,13 @@ curl -fsS http://127.0.0.1:3100/api/v1/stats | jq
 
 `/health` means the process is alive. `/ready` means route data has loaded and
 the API can quote.
+
+For a repeatable grant or operations snapshot, run:
+
+```bash
+./scripts/operational-validation-report.sh --output operational-validation-report.md
+```
+
+This records public health/readiness, indexer coverage, invocation counts,
+DEX legs, round trips, USD notional, routed volume, and whether the 30-day data
+target has been reached. It also writes a JSON sidecar for later processing.

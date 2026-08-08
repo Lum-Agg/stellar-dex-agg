@@ -20,6 +20,7 @@ Grant close-out deliverable — Oct 2026 baseline.
 - **Telegram** (`deploy/telegram.env`): worker/API alerts + hourly arb P&amp;L
 - **Logs**: `journalctl -u lumagg-{arb,worker,indexer,api@3100}`
 - **Stats**: `/api/v1/stats` and `lumagg-analytics-indexer --config aggregator.toml status`
+- **Validation report**: `./scripts/operational-validation-report.sh --output docs/operational-validation-report.md`
 
 ## Protocol 27+
 
