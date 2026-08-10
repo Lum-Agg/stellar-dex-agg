@@ -129,6 +129,10 @@ curl -sG https://api.lumagg.xyz/api/v1/quote \
 
 Every 5 minutes `arb stats summary` logs:
 
+The plain fields are cumulative since the bot process started. The
+`delta_*` fields report only the new activity since the previous five-minute
+report, so they can be summed for daily monitoring without restarting the bot.
+
 
 | Field                       | Meaning                                                       |
 | --------------------------- | ------------------------------------------------------------- |
@@ -138,6 +142,12 @@ Every 5 minutes `arb stats summary` logs:
 | `discard_below_quoted`      | Route ran on-chain but below quoted profit                    |
 | `discard_fee_gate`          | Sim OK but net after fees < `ARB_MIN_PROFIT`                  |
 | `avg_quote_sim_gap_bps`     | Mean (quoted_bps − on_chain_bps); positive = quote optimistic |
+| `delta_opportunities`       | New opportunities since the previous report                    |
+| `delta_prepared`            | New prepared transactions since the previous report             |
+| `delta_sim_profit_rejected` | New economic simulation rejections since the previous report    |
+| `delta_submitted`           | New submitted transactions since the previous report             |
+| `delta_succeeded`           | New successful transactions since the previous report            |
+| `delta_failed`              | New failed transactions since the previous report                |
 
 
 Quiet-window Telegram alert (default: 5×60s ticks with ≥50 new opportunities and 0 prepares):

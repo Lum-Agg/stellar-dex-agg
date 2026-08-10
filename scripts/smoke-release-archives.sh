@@ -43,6 +43,12 @@ test -f "$cluster/openapi.yaml"
 test -f "$cluster/systemd/lumagg-api@.service"
 test -f "$cluster/systemd/lumagg-market-data-worker.service"
 test -f "$cluster/systemd/lumagg-analytics-indexer.service"
+for unit in \
+  "$cluster/systemd/lumagg-api@.service" \
+  "$cluster/systemd/lumagg-market-data-worker.service" \
+  "$cluster/systemd/lumagg-analytics-indexer.service"; do
+  grep -F -- '--config /etc/lumagg/lumagg-aggregator.toml' "$unit" >/dev/null
+done
 
 test -x "$arb/lumagg-arbitrage-bot"
 test -f "$arb/README.md"

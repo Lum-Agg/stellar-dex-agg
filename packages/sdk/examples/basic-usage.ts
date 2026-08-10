@@ -31,7 +31,7 @@ import { LumAggClient, type QuoteResult, type TokenInfo } from '../src/index';
 const API_URL = process.env.API_URL || 'https://api.lumagg.xyz';
 
 // Well-known Stellar mainnet contract ids.
-const XLM_CONTRACT = 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6T2ZMYIE2QDSOYLOU4';
+const XLM_CONTRACT = 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA';
 const USDC_CONTRACT = 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMIHG';
 
 const AMOUNT = process.env.AMOUNT || '100';

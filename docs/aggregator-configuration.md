@@ -18,11 +18,26 @@ Store it outside the repository and restrict it to the service account:
 chmod 600 aggregator.toml
 ```
 
+## Process usage
+
+All three binaries accept the same file, but each process uses only the
+sections relevant to its role:
+
+| Process | Main sections used | Does not require |
+| --- | --- | --- |
+| `lumagg-market-data-worker` | `network`, `redis`, `worker`, `dex`, `monitoring` | `api.aggregator_contract`, `indexer` |
+| `lumagg-api-server` | `network`, `redis`, `api`, `routing`, `dex`, `access`, `features`, `indexer`, `monitoring` | `worker` runtime settings |
+| `lumagg-analytics-indexer` | `network`, `dex`, `indexer`, `monitoring` | `redis`, `worker`, `api` |
+
+Keeping one shared file prevents network, contract, and database settings from
+drifting between processes. It does not mean every section is required by
+every binary.
+
 ## Network and Redis
 
 | TOML key | Required/default | Description |
 | --- | --- | --- |
-| `network.rpc_url` | required | Soroban JSON-RPC endpoint. Use a capacity-controlled endpoint in production. |
+| `network.rpc_url` | required | Soroban JSON-RPC endpoint. Use a capacity-controlled endpoint in production. This can be hosted separately from Horizon. |
 | `network.passphrase` | mainnet | Stellar network passphrase. It must match the RPC and deployed contracts. |
 | `redis.url` | required | Private Redis URL. Percent-encode reserved password characters. |
 | `redis.channel` | `lumagg:snapshot:events` | Snapshot Pub/Sub notification channel. |
@@ -74,7 +89,7 @@ chmod 600 aggregator.toml
 | TOML key | Program default | Description |
 | --- | --- | --- |
 | `dex.aquarius_hydrate_concurrency` | `16` | Aquarius CLMM hydration concurrency. |
-| `dex.horizon_url` | public Horizon | Horizon endpoint for the Classic DEX adapter and analytics envelope repair fallback. |
+| `dex.horizon_url` | public Horizon | Horizon endpoint for the Classic DEX adapter and analytics envelope repair fallback. It is independent of `network.rpc_url`; use your own Horizon host when available. |
 | `dex.soroswap_factory_contract` | built-in mainnet address | Soroswap factory override. |
 | `dex.comet_factory` | built-in mainnet address | Comet factory override. |
 | `dex.comet_extra_pools` | empty | Additional Comet pool addresses. |

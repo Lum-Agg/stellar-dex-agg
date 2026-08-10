@@ -22,6 +22,8 @@ const quote = await client.quote({
   tokenOut: 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75', // USDC
   amountIn: '1000000000', // 100 XLM stroops
   slippage: 0.5,
+  maxHops: 3,
+  maxSplits: 2,
 });
 
 const { unsignedTxXdr } = await client.buildTx({
@@ -69,6 +71,11 @@ contract. For DCA, `minOutPerInE7` is optional and defaults to `"0"` (market
 execution). All token amounts and rate fields are integer strings.
 
 Partner rate limit: pass `apiKey` in constructor → `X-API-Key` header (60 req/s).
+
+`quote()` also accepts `preferSoroban`, `maxHops`, and `maxSplits`. These map
+to the REST parameters `prefer_soroban`, `max_hops`, and `max_splits`. Omit
+them to use the API defaults. Amounts remain integer strings in the token's
+smallest unit; `slippage` is expressed as a percentage.
 
 ## Examples
 

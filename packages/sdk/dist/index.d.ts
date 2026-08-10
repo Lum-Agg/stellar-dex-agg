@@ -13,6 +13,10 @@ export interface QuoteParams {
     slippage?: number;
     /** When true, exclude Classic SDEX paths. */
     preferSoroban?: boolean;
+    /** Maximum number of DEX hops in a route. */
+    maxHops?: number;
+    /** Maximum number of split route portions. */
+    maxSplits?: number;
 }
 export interface QuoteSubRoute {
     source: string;

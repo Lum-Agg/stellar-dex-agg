@@ -84,6 +84,21 @@ Open the Vite URL, connect Freighter (Public), leave **Dry-run** checked to stop
 
 Use `prefer_soroban=1` when comparing against Soroban-only aggregators, or when your wallet cannot sign Classic PathPayment in the same flow.
 
+The route search can also be bounded with `max_hops` and `max_splits`:
+
+```bash
+curl -sG "$API/api/v1/quote" \
+  --data-urlencode "token_in=$XLM" \
+  --data-urlencode "token_out=$USDC" \
+  --data-urlencode "amount_in=10000000" \
+  --data-urlencode "max_hops=3" \
+  --data-urlencode "max_splits=2"
+```
+
+Both parameters are optional. Lower values can reduce quote latency and route
+complexity, while higher values may discover better execution at the cost of
+more search work. The SDK exposes them as `maxHops` and `maxSplits`.
+
 Soroswap API uses `protocols: ["soroswap","phoenix","aqua"]` (omit `"sdex"`) for the same effect. See [Soroswap API docs](https://docs.soroswap.finance/soroswap-api).
 
 ## 3. Rate limits & API keys

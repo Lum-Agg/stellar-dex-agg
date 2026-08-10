@@ -78,6 +78,9 @@ chmod 600 aggregator.toml
 Replace at least:
 
 - `network.rpc_url` with the production Soroban RPC.
+- `dex.horizon_url` with the Horizon endpoint used for Classic DEX access and
+  optional historical envelope fallback. Horizon and Soroban RPC may run on
+  different machines or be supplied by different providers.
 - `redis.url` with the private Redis URL.
 - `api.aggregator_contract` with the deployed LumAgg Aggregator contract. Omit it
   only when the API should quote but never build transactions.
@@ -150,7 +153,7 @@ those units:
 sudo useradd --system --home /var/lib/lumagg --shell /usr/sbin/nologin lumagg
 sudo install -d -o root -g lumagg -m 0750 /etc/lumagg
 sudo install -m 0755 lumagg-market-data-worker lumagg-api-server lumagg-analytics-indexer /usr/local/bin/
-sudo install -m 0640 -o root -g lumagg aggregator.toml /etc/lumagg/aggregator.toml
+sudo install -m 0640 -o root -g lumagg aggregator.toml /etc/lumagg/lumagg-aggregator.toml
 sudo install -m 0644 systemd/*.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now lumagg-market-data-worker
@@ -160,6 +163,11 @@ sudo systemctl enable --now lumagg-analytics-indexer
 
 Inspect startup with `journalctl -u lumagg-market-data-worker -f` and
 `journalctl -u 'lumagg-api@*' -f`.
+
+The analytics indexer is the only SQLite writer. Run one indexer process for a
+database file, and keep that file on local storage rather than a network
+filesystem. API replicas may read the same database, but should not run an
+additional indexer against it.
 
 ## Scale and upgrade
 

@@ -110,6 +110,10 @@ Linux x86_64 it also checks binary `--version` and `--check-config` against
 patched dummy contract IDs. On macOS or other non-Linux hosts it skips binary
 execution because the release archives contain Linux x86_64 binaries.
 
+The archive check also verifies that all three optional aggregator systemd
+units read `/etc/lumagg/lumagg-aggregator.toml`, matching the configuration
+install command in the deployment guide.
+
 ## Validation checklist
 
 After deployment:

@@ -15,6 +15,10 @@ export interface QuoteParams {
   slippage?: number;
   /** When true, exclude Classic SDEX paths. */
   preferSoroban?: boolean;
+  /** Maximum number of DEX hops in a route. */
+  maxHops?: number;
+  /** Maximum number of split route portions. */
+  maxSplits?: number;
 }
 
 export interface QuoteSubRoute {
@@ -298,6 +302,8 @@ export class LumAggClient {
     if (params.slippage !== undefined)
       search.set("slippage", String(params.slippage));
     if (params.preferSoroban) search.set("prefer_soroban", "1");
+    if (params.maxHops !== undefined) search.set("max_hops", String(params.maxHops));
+    if (params.maxSplits !== undefined) search.set("max_splits", String(params.maxSplits));
 
     const resp = await fetch(`${this.baseUrl}/api/v1/quote?${search}`, {
       headers: this.headers(),

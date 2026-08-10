@@ -98,6 +98,30 @@ pub struct ArbStatsSnapshot {
 }
 
 impl ArbStatsSnapshot {
+    /// Return counters observed since the previous reporter tick.
+    ///
+    /// Runtime counters are monotonic for the lifetime of the process. Using
+    /// saturating subtraction also keeps reporting safe across a restart or
+    /// any future counter reset.
+    pub fn delta_since(&self, previous: &Self) -> ArbStatsDelta {
+        ArbStatsDelta {
+            routes_evaluated: self.routes_evaluated.saturating_sub(previous.routes_evaluated),
+            opportunities: self.opportunities.saturating_sub(previous.opportunities),
+            txs_prepared: self.txs_prepared.saturating_sub(previous.txs_prepared),
+            txs_sim_rejected: self.txs_sim_rejected.saturating_sub(previous.txs_sim_rejected),
+            txs_sim_profit_rejected: self
+                .txs_sim_profit_rejected
+                .saturating_sub(previous.txs_sim_profit_rejected),
+            txs_submitted: self.txs_submitted.saturating_sub(previous.txs_submitted),
+            txs_succeeded: self.txs_succeeded.saturating_sub(previous.txs_succeeded),
+            txs_failed: self.txs_failed.saturating_sub(previous.txs_failed),
+            txs_dedup_skipped: self.txs_dedup_skipped.saturating_sub(previous.txs_dedup_skipped),
+            quote_sim_gap_samples: self
+                .quote_sim_gap_samples
+                .saturating_sub(previous.quote_sim_gap_samples),
+        }
+    }
+
     pub fn prepare_rate_bps(&self) -> u64 {
         if self.opportunities == 0 {
             return 0;
@@ -111,6 +135,20 @@ impl ArbStatsSnapshot {
         }
         (self.txs_sim_profit_rejected.saturating_mul(10_000)) / self.opportunities
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ArbStatsDelta {
+    pub routes_evaluated: u64,
+    pub opportunities: u64,
+    pub txs_prepared: u64,
+    pub txs_sim_rejected: u64,
+    pub txs_sim_profit_rejected: u64,
+    pub txs_submitted: u64,
+    pub txs_succeeded: u64,
+    pub txs_failed: u64,
+    pub txs_dedup_skipped: u64,
+    pub quote_sim_gap_samples: u64,
 }
 
 /// quoted_bps − on_chain_bps. Positive means the quote path looked better than
@@ -265,9 +303,12 @@ pub fn spawn_stats_reporter(runtime: SharedRuntime, interval: Duration) {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(interval);
         tick.tick().await;
+        let mut previous = runtime.stats.snapshot();
         loop {
             tick.tick().await;
             let s = runtime.stats.snapshot();
+            let delta = s.delta_since(&previous);
+            previous = s;
             info!(
                 routes_evaluated = s.routes_evaluated,
                 opportunities = s.opportunities,
@@ -287,6 +328,16 @@ pub fn spawn_stats_reporter(runtime: SharedRuntime, interval: Duration) {
                 failed = s.txs_failed,
                 dedup_skipped = s.txs_dedup_skipped,
                 dry_run = s.txs_dry_run,
+                delta_routes_evaluated = delta.routes_evaluated,
+                delta_opportunities = delta.opportunities,
+                delta_prepared = delta.txs_prepared,
+                delta_sim_rejected = delta.txs_sim_rejected,
+                delta_sim_profit_rejected = delta.txs_sim_profit_rejected,
+                delta_submitted = delta.txs_submitted,
+                delta_succeeded = delta.txs_succeeded,
+                delta_failed = delta.txs_failed,
+                delta_dedup_skipped = delta.txs_dedup_skipped,
+                delta_quote_sim_gap_samples = delta.quote_sim_gap_samples,
                 "arb stats summary"
             );
         }
@@ -377,5 +428,34 @@ mod tests {
         let s = ArbStats::default().snapshot();
         assert_eq!(s.prepare_rate_bps(), 0);
         assert_eq!(s.sim_reject_rate_bps(), 0);
+    }
+
+    #[test]
+    fn snapshot_delta_tracks_only_new_counters() {
+        let mut previous = ArbStatsSnapshot {
+            opportunities: 10,
+            txs_prepared: 2,
+            txs_succeeded: 1,
+            ..ArbStats::default().snapshot()
+        };
+        let current = ArbStatsSnapshot {
+            opportunities: 15,
+            txs_prepared: 3,
+            txs_succeeded: 2,
+            ..previous
+        };
+
+        assert_eq!(
+            current.delta_since(&previous),
+            ArbStatsDelta {
+                opportunities: 5,
+                txs_prepared: 1,
+                txs_succeeded: 1,
+                ..ArbStatsDelta::default()
+            }
+        );
+
+        previous.opportunities = 0;
+        assert_eq!(current.delta_since(&previous).opportunities, 15);
     }
 }
