@@ -45,27 +45,15 @@ function ensureKit() {
   kitInitialized = true;
 }
 
-/** True when kit still has a persisted connected session (not explicitly disconnected). */
-async function hasStoredSession(): Promise<boolean> {
-  try {
-    ensureKit();
-    const { address } = await StellarWalletsKit.getAddress();
-    return Boolean(address);
-  } catch {
-    return false;
-  }
-}
-
 /**
- * Prefer the wallet's current active account over the kit's persisted address.
- * `getAddress()` only reads kit memory/localStorage; `fetchAddress()` asks the
- * extension (e.g. Freighter) and updates kit state.
+ * Read the kit's persisted address without contacting the wallet extension.
+ * `fetchAddress()` can open a wallet permission prompt, so it must not run as
+ * part of passive page focus or visibility handling.
  */
 async function syncAddressFromWallet(): Promise<string | null> {
   try {
     ensureKit();
-    if (!(await hasStoredSession())) return null;
-    const { address } = await StellarWalletsKit.fetchAddress();
+    const { address } = await StellarWalletsKit.getAddress();
     return address || null;
   } catch {
     return null;
@@ -93,8 +81,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setAddress(null);
     });
 
-    // If the user switches accounts in the extension while this tab is open,
-    // re-sync when they come back to the page.
+    // Refresh only the kit's local state when the page regains focus. Do not
+    // call fetchAddress here: wallet extensions may open a permission prompt.
     const resync = () => {
       if (document.visibilityState === 'hidden') return;
       void (async () => {
