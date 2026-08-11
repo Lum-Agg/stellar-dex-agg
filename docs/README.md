@@ -13,8 +13,9 @@ atomic execution through the LumAgg Aggregator contract.
 ### Integrate a wallet, dApp, or bot
 
 1. [Integrator Guide](integrator-guide.md) — `GET /quote` → `POST /build_tx` → sign → submit
-2. [API Reference](api-reference.md) and [OpenAPI](openapi.yaml)
-3. npm SDK: [`@lumagg/sdk`](https://www.npmjs.com/package/@lumagg/sdk)
+2. [JavaScript / TypeScript Example](javascript-integration-example.md) — browser integration with an application-owned wallet adapter
+3. [API Reference](api-reference.md) and [OpenAPI](openapi.yaml)
+4. npm SDK: [`@lumagg/sdk`](https://www.npmjs.com/package/@lumagg/sdk)
 
 ### Self-host a quote stack
 

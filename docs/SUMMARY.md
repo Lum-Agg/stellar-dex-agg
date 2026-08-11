@@ -8,6 +8,7 @@
 ## Integrate
 
 - [Integrator Guide](integrator-guide.md)
+- [JavaScript / TypeScript Example](javascript-integration-example.md)
 - [API Reference](api-reference.md)
 
 ## Deploy
