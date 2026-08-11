@@ -10,7 +10,64 @@ This is the smallest browser-side integration flow for a third-party app:
 LumAgg does not need the user's secret key. The app only sends the user's
 public address when building the transaction.
 
-## Install
+## Pure REST API example
+
+No SDK is required. A browser app can call the public REST API directly with
+`fetch`:
+
+```ts
+const API = 'https://api.lumagg.xyz';
+const XLM = 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA';
+const USDC = 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75';
+
+export async function quoteAndBuild(userPublicKey: string, amountIn: string) {
+  const params = new URLSearchParams({
+    token_in: XLM,
+    token_out: USDC,
+    amount_in: amountIn,
+    slippage: '0.5',
+    max_hops: '3',
+    max_splits: '2',
+    // prefer_soroban is omitted: the default is false.
+  });
+
+  const quoteResponse = await fetch(`${API}/api/v1/quote?${params}`);
+  const quoteJson = await quoteResponse.json();
+  if (!quoteJson.success) throw new Error(quoteJson.error || 'Quote failed');
+
+  const quote = quoteJson.data;
+  const buildResponse = await fetch(`${API}/api/v1/build_tx`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      user_public_key: userPublicKey,
+      token_in: XLM,
+      token_out: USDC,
+      amount_in: quote.amount_in,
+      min_amount_out: quote.minimum_output,
+      sub_routes: quote.sub_routes,
+    }),
+  });
+  const buildJson = await buildResponse.json();
+  if (!buildJson.success) throw new Error(buildJson.error || 'Build failed');
+
+  return { quote, unsignedTxXdr: buildJson.data.unsigned_tx_xdr };
+}
+```
+
+The returned `unsigned_tx_xdr` is passed to the app's wallet adapter for
+signing. The app can then submit the signed XDR through its own Stellar RPC or
+through `POST /api/v1/submit_tx`.
+
+`prefer_soroban` defaults to `false`, so the normal API returns the best route
+across the supported venues. Set `prefer_soroban=1` only when the integration
+specifically requires Soroban-only routing; this is primarily used by the
+LumAgg arbitrage bot and should not be enabled by ordinary frontend swaps
+without a reason.
+
+## Optional SDK
+
+The npm SDK is an optional TypeScript wrapper around the same REST endpoints:
 
 ```bash
 npm install @lumagg/sdk
@@ -45,7 +102,7 @@ export async function swapXlmToUsdc(wallet: WalletAdapter, amountIn: string) {
     tokenOut: USDC,
     amountIn,
     slippage: 0.5,       // percentage, not basis points
-    preferSoroban: true, // omit this to allow Classic SDEX routes too
+    // preferSoroban is omitted; the API default is false.
     maxHops: 3,
     maxSplits: 2,
     userPublicKey: wallet.address,
@@ -114,7 +171,7 @@ const tx = await lumagg.buildTx({
 
 - `amountIn`, `expectedOutput`, and `minimumOutput` are integer strings in the token's smallest unit.
 - `slippage` is expressed as a percentage, for example `0.5` means 0.5%.
-- `preferSoroban: true` excludes Classic SDEX paths.
+- `preferSoroban` defaults to `false`; `true` is mainly for the arbitrage bot or an explicitly Soroban-only integration.
 - `maxHops` and `maxSplits` are optional route-complexity controls.
 - Do not cache quotes for long periods. Build and sign soon after quoting.
 - Public API documentation: [OpenAPI](./openapi.yaml).

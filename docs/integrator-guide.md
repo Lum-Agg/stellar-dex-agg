@@ -20,7 +20,7 @@ curl -sG "$API/api/v1/quote" \
   --data-urlencode "amount_in=10000000" \
   --data-urlencode "slippage=0.5"
 
-# 2) Soroban-only quote (exclude Classic SDEX — fair vs Soroswap API)
+# 2) Optional Soroban-only quote (mainly for arbitrage / Soroban-only integrations)
 curl -sG "$API/api/v1/quote" \
   --data-urlencode "token_in=$XLM" \
   --data-urlencode "token_out=$USDC" \
@@ -31,7 +31,7 @@ curl -sG "$API/api/v1/quote" \
 curl -sX POST "$API/api/v1/build_tx" \
   -H 'Content-Type: application/json' \
   -d '{
-    "user": "GYourFundedAddress",
+    "user_public_key": "GYourFundedAddress",
     "token_in": "'"$XLM"'",
     "token_out": "'"$USDC"'",
     "amount_in": "10000000",
@@ -82,7 +82,10 @@ Open the Vite URL, connect Freighter (Public), leave **Dry-run** checked to stop
 | omitted or `0` | Best price across **Soroban AMMs + Classic SDEX** |
 | `1` | **Soroban only** — no PathPayment / SDEX paths |
 
-Use `prefer_soroban=1` when comparing against Soroban-only aggregators, or when your wallet cannot sign Classic PathPayment in the same flow.
+`prefer_soroban` defaults to `false`. Ordinary frontend integrations should
+usually omit it and use the best route across supported venues. Set
+`prefer_soroban=1` mainly for the LumAgg arbitrage bot or when the integration
+explicitly requires Soroban-only routes.
 
 The route search can also be bounded with `max_hops` and `max_splits`:
 
