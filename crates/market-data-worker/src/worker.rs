@@ -322,25 +322,28 @@ async fn refresh_sources_parallel(
     adapters: &[Arc<dyn DexAdapter>],
     mut sources: Vec<SourceSnapshot>,
 ) -> Vec<SourceSnapshot> {
-    let snapshots = futures::future::join_all(adapters.iter().map(|adapter| async move {
-        let source_id = adapter.id().to_string();
-        match adapter.refresh_reserves().await {
-            Ok(updated) if updated > 0 => {
-                let pairs = adapter.get_cached_pairs().await;
-                if pairs.is_empty() {
-                    return None;
+    let snapshots = futures::future::join_all(adapters.iter().map(|adapter| {
+        let adapter = adapter.clone();
+        async move {
+            let source_id = adapter.id().to_string();
+            match adapter.refresh_reserves().await {
+                Ok(updated) if updated > 0 => {
+                    let pairs = adapter.get_cached_pairs().await;
+                    if pairs.is_empty() {
+                        return None;
+                    }
+                    let pairs = pairs.iter().map(trading_pair_snapshot).collect::<Vec<_>>();
+                    let pairs = sanitize_source_pairs(&source_id, pairs);
+                    Some(SourceSnapshot {
+                        source: source_id,
+                        pairs,
+                    })
                 }
-                let pairs = pairs.iter().map(trading_pair_snapshot).collect::<Vec<_>>();
-                let pairs = sanitize_source_pairs(&source_id, pairs);
-                Some(SourceSnapshot {
-                    source: source_id,
-                    pairs,
-                })
-            }
-            Ok(_) => None,
-            Err(error) => {
-                warn!("Reserve refresh failed for {}: {}", source_id, error);
-                None
+                Ok(_) => None,
+                Err(error) => {
+                    warn!("Reserve refresh failed for {}: {}", source_id, error);
+                    None
+                }
             }
         }
     }))
@@ -408,8 +411,9 @@ fn spawn_fast_pool_publish(
 }
 
 /// Slow path: refresh adapter reserves in background; coalesced via
-/// `in_flight`. When Redis is configured, publish refreshed caches so quotes
-/// do not sit on ledger-touch-only / discovery-only pool state.
+/// `in_flight`. When Redis is configured, write each chunk as soon as it is
+/// observed (write-through) so a long Aquarius sweep cannot clobber fresher
+/// ledger-touch Redis writes.
 fn spawn_background_reserve_refresh(
     in_flight: Arc<PoolRefreshInFlight>,
     shared: Arc<RwLock<WorkerShared>>,
@@ -418,11 +422,13 @@ fn spawn_background_reserve_refresh(
     aquarius_clmm: Arc<AquariusClmmAdapter>,
     aquarius: Arc<AquariusAdapter>,
     comet: Arc<CometAdapter>,
+    phoenix: Arc<PhoenixAdapter>,
+    soroswap: Arc<SoroswapAdapter>,
     pool_state_store: Option<Arc<dyn PoolStateStore>>,
     refresh_clmm: bool,
     publish_redis: bool,
     clmm_metrics: Arc<crate::clmm_metrics::ClmmCoverageMetrics>,
-    metrics: Option<Arc<crate::monitor::WorkerMonitorMetrics>>,
+    _metrics: Option<Arc<crate::monitor::WorkerMonitorMetrics>>,
 ) {
     if !in_flight.try_start() {
         debug!("reserve refresh skipped (previous cycle still running)");
@@ -442,6 +448,57 @@ fn spawn_background_reserve_refresh(
             let guard = shared.read().await;
             guard.sources.clone()
         };
+
+        if publish_redis {
+            if let Some(ref store) = pool_state_store {
+                crate::pool_state_write_through::refresh_all_venues_write_through(
+                    store.as_ref(),
+                    soroswap.as_ref(),
+                    aquarius.as_ref(),
+                    phoenix.as_ref(),
+                    comet.as_ref(),
+                    sushi.as_ref(),
+                    aquarius_clmm.as_ref(),
+                    refresh_clmm,
+                )
+                .await;
+                // Topology pairs from caches (RPC already done in write-through).
+                let refreshed = {
+                    let mut sources = sources;
+                    for adapter in &adapters {
+                        let source_id = adapter.id().to_string();
+                        let pairs = adapter.get_cached_pairs().await;
+                        if pairs.is_empty() {
+                            continue;
+                        }
+                        let pairs = pairs.iter().map(trading_pair_snapshot).collect::<Vec<_>>();
+                        let pairs = sanitize_source_pairs(&source_id, pairs);
+                        sources = upsert_source_snapshot(
+                            sources,
+                            SourceSnapshot {
+                                source: source_id,
+                                pairs,
+                            },
+                        );
+                    }
+                    sources
+                };
+                let clmm_pools = if refresh_clmm {
+                    collect_clmm_snapshots(sushi.as_ref(), aquarius_clmm.as_ref(), Some(clmm_metrics.as_ref())).await
+                } else {
+                    shared.read().await.clmm_pools.clone()
+                };
+                {
+                    let mut guard = shared.write().await;
+                    guard.sources = refreshed;
+                    guard.clmm_pools = clmm_pools;
+                }
+                debug!("write-through reserve refresh complete");
+                return;
+            }
+        }
+
+        // No Redis store: refresh in-memory only (embedded / legacy).
         let refreshed = refresh_sources_parallel(&adapters, sources).await;
         let clmm_pools = if refresh_clmm {
             collect_clmm_snapshots(sushi.as_ref(), aquarius_clmm.as_ref(), Some(clmm_metrics.as_ref())).await
@@ -451,24 +508,7 @@ fn spawn_background_reserve_refresh(
         {
             let mut guard = shared.write().await;
             guard.sources = refreshed;
-            guard.clmm_pools = clmm_pools.clone();
-        }
-
-        if publish_redis {
-            if let Err(error) = publish_pool_state_only(
-                pool_state_store.as_ref(),
-                &adapters,
-                aquarius.as_ref(),
-                comet.as_ref(),
-                &clmm_pools,
-                metrics.as_ref(),
-            )
-            .await
-            {
-                warn!("post-refresh Redis publish failed: {}", error);
-            } else {
-                debug!("post-refresh Redis pool state published");
-            }
+            guard.clmm_pools = clmm_pools;
         }
     });
 }
@@ -897,6 +937,8 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
                     aquarius_clmm.clone(),
                     aquarius.clone(),
                     comet.clone(),
+                    phoenix.clone(),
+                    soroswap.clone(),
                     pool_state_store.clone(),
                     false,
                     true,
@@ -913,6 +955,8 @@ pub async fn run(config: WorkerConfig) -> Result<()> {
                     aquarius_clmm.clone(),
                     aquarius.clone(),
                     comet.clone(),
+                    phoenix.clone(),
+                    soroswap.clone(),
                     pool_state_store.clone(),
                     true,
                     true,

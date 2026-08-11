@@ -125,29 +125,7 @@ pub struct FetchPipelineHandle {
 
 impl FetchPipelineHandle {
     pub fn enqueue_touched(&self, touched: HashSet<PoolRef>) {
-        for pool in touched {
-            let task = match pool.source.as_str() {
-                "soroswap" => FetchTask::SoroswapBatch {
-                    pool_addresses: vec![pool.pool_address],
-                },
-                "aquarius" => FetchTask::AquariusBatch {
-                    pool_addresses: vec![pool.pool_address],
-                },
-                "phoenix" => FetchTask::PhoenixBatch {
-                    pool_addresses: vec![pool.pool_address],
-                },
-                "comet" => FetchTask::CometPool {
-                    pool_address: pool.pool_address,
-                },
-                "sushi" | "aquarius_clmm" => FetchTask::ClmmPool {
-                    source: pool.source,
-                    pool_address: pool.pool_address,
-                },
-                other => {
-                    debug!(source = other, pool = %pool.pool_address, "ledger touch: no fetch handler");
-                    continue;
-                }
-            };
+        for task in coalesce_touched_into_tasks(touched) {
             match self.high_tx.try_send(task) {
                 Ok(()) => {
                     self.metrics.high_depth.fetch_add(1, Ordering::Relaxed);
@@ -162,6 +140,57 @@ impl FetchPipelineHandle {
             }
         }
     }
+}
+
+/// One batched task per xy=k/Aquarius/Phoenix source per poll; CLMM/Comet stay
+/// one-task-per-pool (heavier RPC).
+pub(crate) fn coalesce_touched_into_tasks(touched: HashSet<PoolRef>) -> Vec<FetchTask> {
+    let mut soroswap = Vec::new();
+    let mut aquarius = Vec::new();
+    let mut phoenix = Vec::new();
+    let mut tasks = Vec::new();
+
+    for pool in touched {
+        match pool.source.as_str() {
+            "soroswap" => soroswap.push(pool.pool_address),
+            "aquarius" => aquarius.push(pool.pool_address),
+            "phoenix" => phoenix.push(pool.pool_address),
+            "comet" => tasks.push(FetchTask::CometPool {
+                pool_address: pool.pool_address,
+            }),
+            "sushi" | "aquarius_clmm" => tasks.push(FetchTask::ClmmPool {
+                source: pool.source,
+                pool_address: pool.pool_address,
+            }),
+            other => {
+                debug!(source = other, pool = %pool.pool_address, "ledger touch: no fetch handler");
+            }
+        }
+    }
+
+    let mut push_batch = |source: &str, mut addrs: Vec<String>| {
+        if addrs.is_empty() {
+            return;
+        }
+        addrs.sort();
+        addrs.dedup();
+        match source {
+            "soroswap" => tasks.push(FetchTask::SoroswapBatch {
+                pool_addresses: addrs,
+            }),
+            "aquarius" => tasks.push(FetchTask::AquariusBatch {
+                pool_addresses: addrs,
+            }),
+            "phoenix" => tasks.push(FetchTask::PhoenixBatch {
+                pool_addresses: addrs,
+            }),
+            _ => {}
+        }
+    };
+    push_batch("soroswap", soroswap);
+    push_batch("aquarius", aquarius);
+    push_batch("phoenix", phoenix);
+    tasks
 }
 
 struct FetchWorkerContext {
@@ -472,4 +501,47 @@ async fn collect_xyk_from_adapter_cache(
         ));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pref(source: &str, pool: &str) -> PoolRef {
+        PoolRef {
+            source: source.to_string(),
+            pool_address: pool.to_string(),
+        }
+    }
+
+    #[test]
+    fn coalesce_batches_aquarius_and_soroswap_per_poll() {
+        let touched = HashSet::from([
+            pref("aquarius", "A2"),
+            pref("aquarius", "A1"),
+            pref("aquarius", "A1"),
+            pref("soroswap", "S1"),
+            pref("sushi", "CLMM1"),
+            pref("comet", "C1"),
+        ]);
+        let tasks = coalesce_touched_into_tasks(touched);
+        let aquarius = tasks.iter().find_map(|t| match t {
+            FetchTask::AquariusBatch { pool_addresses } => Some(pool_addresses.clone()),
+            _ => None,
+        });
+        assert_eq!(aquarius.as_deref(), Some(["A1".to_string(), "A2".to_string()].as_slice()));
+        let soroswap = tasks.iter().find_map(|t| match t {
+            FetchTask::SoroswapBatch { pool_addresses } => Some(pool_addresses.clone()),
+            _ => None,
+        });
+        assert_eq!(soroswap.as_deref(), Some(["S1".to_string()].as_slice()));
+        assert_eq!(
+            tasks
+                .iter()
+                .filter(|t| matches!(t, FetchTask::ClmmPool { .. } | FetchTask::CometPool { .. }))
+                .count(),
+            2
+        );
+        assert_eq!(tasks.len(), 4);
+    }
 }

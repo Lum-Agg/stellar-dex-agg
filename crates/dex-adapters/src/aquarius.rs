@@ -471,18 +471,62 @@ impl AquariusAdapter {
     /// Batch-refresh reserves via getLedgerEntries (volatile + stableswap
     /// instance storage).
     pub async fn refresh_all_reserves(&self) -> Result<usize> {
-        let pool_addresses: Vec<String> = {
-            let meta = self.pool_meta.read().await;
-            meta.keys().cloned().collect()
-        };
+        let pool_addresses = self.known_pool_addresses().await;
         self.refresh_pool_addresses(&pool_addresses).await
     }
 
-    /// Refresh a subset of pools (used by the fetch pipeline).
+    pub async fn known_pool_addresses(&self) -> Vec<String> {
+        self.pool_meta.read().await.keys().cloned().collect()
+    }
+
+    /// Ensure `pool_meta` exists for touched pools (e.g. after restart before
+    /// discovery finishes). Missing meta previously made ledger refresh a no-op.
+    async fn ensure_pool_meta(&self, pool_addresses: &[String]) {
+        let missing: Vec<String> = {
+            let meta = self.pool_meta.read().await;
+            pool_addresses
+                .iter()
+                .filter(|addr| !meta.contains_key(addr.as_str()))
+                .cloned()
+                .collect()
+        };
+        if missing.is_empty() {
+            return;
+        }
+
+        for addr in missing {
+            let Some(edges) = self.hydrate_pool(&addr).await else {
+                warn!(pool = %addr, "Aquarius: hydrate failed for touched pool missing meta");
+                continue;
+            };
+            let Some((_, meta)) = edges.first() else {
+                continue;
+            };
+            let meta = meta.clone();
+            let mut meta_map = self.pool_meta.write().await;
+            let mut pairs = self.pairs.write().await;
+            meta_map.insert(addr.clone(), meta);
+            for (pair, _) in edges {
+                let exists = pairs.iter().any(|p| {
+                    p.pool_address == pair.pool_address &&
+                        p.token_a.canonical() == pair.token_a.canonical() &&
+                        p.token_b.canonical() == pair.token_b.canonical()
+                });
+                if !exists {
+                    pairs.push(pair);
+                }
+            }
+            debug!(pool = %addr, "Aquarius: hydrated missing pool_meta for ledger touch");
+        }
+    }
+
+    /// Refresh a subset of pools (used by the fetch pipeline / write-through).
     pub async fn refresh_pool_addresses(&self, pool_addresses: &[String]) -> Result<usize> {
         if pool_addresses.is_empty() {
             return Ok(0);
         }
+
+        self.ensure_pool_meta(pool_addresses).await;
 
         let concurrency = std::env::var("POOL_STATE_REFRESH_CONCURRENCY")
             .ok()

@@ -55,35 +55,32 @@ impl SoroswapAdapter {
     /// This is ~200x faster than calling get_reserves() on each pool
     /// individually.
     pub async fn refresh_all_reserves(&self) -> Result<usize> {
-        let pairs = self.pairs.read().await;
-        if pairs.is_empty() {
+        let pool_addresses = self.known_pool_addresses().await;
+        self.refresh_pool_addresses(&pool_addresses).await
+    }
+
+    pub async fn known_pool_addresses(&self) -> Vec<String> {
+        self.pairs
+            .read()
+            .await
+            .iter()
+            .map(|p| p.pool_address.clone())
+            .collect()
+    }
+
+    /// Refresh a subset of pools (fetch pipeline / write-through full refresh).
+    pub async fn refresh_pool_addresses(&self, pool_addresses: &[String]) -> Result<usize> {
+        if pool_addresses.is_empty() {
             return Ok(0);
         }
-
-        let pool_addresses: Vec<String> = pairs.iter().map(|p| p.pool_address.clone()).collect();
-        drop(pairs); // Release read lock before write
-
         let concurrency = std::env::var("POOL_STATE_REFRESH_CONCURRENCY")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(8);
         let results =
-            crate::batch_refresh::batch_refresh_soroswap_reserves_parallel(&self.rpc, &pool_addresses, concurrency)
+            crate::batch_refresh::batch_refresh_soroswap_reserves_parallel(&self.rpc, pool_addresses, concurrency)
                 .await?;
-
-        let mut updated = 0;
-        let mut pairs = self.pairs.write().await;
-
-        for (addr, reserves) in &results {
-            if let Some((r0, r1)) = reserves {
-                if let Some(pair) = pairs.iter_mut().find(|p| &p.pool_address == addr) {
-                    pair.reserve_a = Some(*r0);
-                    pair.reserve_b = Some(*r1);
-                    updated += 1;
-                }
-            }
-        }
-
+        let updated = self.apply_batch_reserves(&results).await;
         debug!("Soroswap: batch-refreshed {}/{} pools", updated, pool_addresses.len());
         Ok(updated)
     }
