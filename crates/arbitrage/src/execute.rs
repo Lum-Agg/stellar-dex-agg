@@ -104,6 +104,17 @@ pub async fn prepare_opportunity_tx(
     };
     let mut quote = initial.clone();
 
+    // Amount optimization can issue many quotes before execution. Refresh the
+    // selected size so the transaction uses current pool state and route legs,
+    // rather than the snapshot that happened to win the search.
+    if ctx.config.optimize_amount {
+        let refreshed = quote_round_trip(ctx, &quote.base, &quote.bridge, quote.amount_in).await?;
+        if refreshed.profit() < ctx.config.min_profit_for(&quote.base.canonical()) {
+            return Ok(None);
+        }
+        quote = refreshed;
+    }
+
     let seq = fetch_account_sequence(&ctx.config.rpc_url, caller_public_key).await?;
     // Vault reclaim approve expiry: fixed op arg (not vault-side sequence()+N).
     // Cached getLatestLedger — cushion is ~100k ledgers, so a 60s-stale value is
