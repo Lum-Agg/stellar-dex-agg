@@ -67,11 +67,8 @@ impl Strategy<Event, Action> for BridgeStrategy {
     async fn process_event(&mut self, event: Event, _submitter: Arc<dyn ActionSubmitter<Action>>) {
         let Event::BridgeScan(item) = event;
         if let Some(sender) = &self.item_sender {
-            match sender.try_send(item) {
-                Ok(()) | Err(async_channel::TrySendError::Full(_)) => {}
-                Err(async_channel::TrySendError::Closed(_)) => {
-                    error!("bridge scan channel closed");
-                }
+            if let Err(e) = sender.send(item).await {
+                error!("bridge scan channel send failed: {e}");
             }
         }
     }
