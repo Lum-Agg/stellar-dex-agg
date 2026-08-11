@@ -143,6 +143,91 @@ The wallet must not expose a secret key to the application or LumAgg. For swaps
 into classic-backed assets such as USDC, the user may need an asset trustline
 before signing the swap.
 
+## Signing with Stellar Wallets Kit
+
+`@creit.tech/stellar-wallets-kit` provides one interface for multiple Stellar
+wallets. It is independent from `@lumagg/sdk`; the REST example above can be
+used with it directly.
+
+```bash
+npm install @creit.tech/stellar-wallets-kit
+```
+
+```ts
+import { StellarWalletsKit } from '@creit.tech/stellar-wallets-kit';
+import { FreighterModule } from '@creit.tech/stellar-wallets-kit/modules/freighter';
+import { LobstrModule } from '@creit.tech/stellar-wallets-kit/modules/lobstr';
+import { xBullModule } from '@creit.tech/stellar-wallets-kit/modules/xbull';
+import { Networks } from '@creit.tech/stellar-wallets-kit/types';
+
+StellarWalletsKit.init({
+  network: Networks.PUBLIC,
+  modules: [new FreighterModule(), new LobstrModule(), new xBullModule()],
+});
+
+export async function signWithWalletsKit(unsignedTxXdr: string) {
+  const { address } = await StellarWalletsKit.authModal();
+  if (!address) throw new Error('Wallet did not return a public address');
+
+  const { signedTxXdr } = await StellarWalletsKit.signTransaction(unsignedTxXdr, {
+    networkPassphrase: Networks.PUBLIC,
+    address,
+  });
+
+  return { address, signedTxXdr };
+}
+```
+
+After signing, submit `signedTxXdr` with the REST endpoint:
+
+```ts
+const response = await fetch('https://api.lumagg.xyz/api/v1/submit_tx', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ signed_tx_xdr: signedTxXdr }),
+});
+
+const submitted = await response.json();
+if (!submitted.success) throw new Error(submitted.error || 'Submit failed');
+```
+
+## Signing with Freighter directly
+
+If the app only supports Freighter, it can use Freighter's API without
+Wallets Kit:
+
+```bash
+npm install @stellar/freighter-api
+```
+
+```ts
+import { requestAccess, signTransaction } from '@stellar/freighter-api';
+
+export async function signWithFreighter(unsignedTxXdr: string) {
+  const access = await requestAccess();
+  if (access.error || !access.address) {
+    throw new Error(String(access.error || 'Freighter did not return an address'));
+  }
+
+  const result = await signTransaction(unsignedTxXdr, {
+    network: 'PUBLIC',
+    address: access.address,
+  });
+  if (typeof result === 'string') {
+    return { address: access.address, signedTxXdr: result };
+  }
+  if (result.error || !result.signedTxXdr) {
+    throw new Error(String(result.error || 'Freighter signing failed'));
+  }
+
+  return { address: access.address, signedTxXdr: result.signedTxXdr };
+}
+```
+
+Other wallets can be integrated by implementing the same two responsibilities:
+return the user's public address and sign the unsigned transaction XDR. The
+LumAgg quote and build API does not change.
+
 ## Quote and build separately
 
 If the application needs to inspect or modify the quote before building, call
