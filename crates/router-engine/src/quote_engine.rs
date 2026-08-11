@@ -307,10 +307,13 @@ impl QuoteEngine {
         let start = std::time::Instant::now();
         let slippage_bps = request.slippage_bps.unwrap_or(50);
 
+        // prefer_soroban: drop any path that touches classic_dex (including
+        // mixed classic+Soroban multi-hops). classic_only filtering alone still
+        // let hybrid paths through and broke arb encode.
         let paths: Vec<Path> = if request.prefer_soroban.unwrap_or(false) {
             paths
                 .iter()
-                .filter(|path| !Self::is_classic_only_path(path))
+                .filter(|path| !Self::path_contains_classic(path))
                 .cloned()
                 .collect()
         } else {
@@ -477,6 +480,10 @@ impl QuoteEngine {
 
     fn is_classic_only_path(path: &Path) -> bool {
         !path.sources.is_empty() && path.sources.iter().all(|source| source == CLASSIC_SOURCE)
+    }
+
+    fn path_contains_classic(path: &Path) -> bool {
+        path.sources.iter().any(|source| source == CLASSIC_SOURCE)
     }
 
     /// Quote a single path by simulating each hop sequentially.
@@ -1027,34 +1034,70 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn quote_prefers_soroban_route_without_mixing_classic_legs() {
+    async fn quote_prefer_soroban_skips_mixed_classic_legs() {
         let engine = QuoteEngine::new(PathFinderConfig::default(), SplitConfig::default());
+        // Only a mixed 2-hop path exists: classic + soroswap.
+        // Old prefer_soroban (classic-only filter) would keep this path;
+        // path_contains_classic must drop it so arb encode never sees classic_dex.
         engine
-            .update_pairs_from_cache(CLASSIC_SOURCE, &[pair(CLASSIC_SOURCE, "classic-pool", 10_000, 8_000)])
+            .update_pairs_from_cache(
+                CLASSIC_SOURCE,
+                &[pair_with_tokens(
+                    CLASSIC_SOURCE,
+                    "classic-mid",
+                    "token-in",
+                    "mid",
+                    500_000_000,
+                    500_000_000,
+                )],
+            )
             .await;
         engine
-            .update_pairs_from_cache("soroswap", &[pair("soroswap", "soro-pool", 100_000_000, 100_000_000)])
-            .await;
-        engine
-            .update_pairs_from_cache("aquarius", &[pair("aquarius", "aqua-pool", 100_000_000, 100_000_000)])
+            .update_pairs_from_cache(
+                "soroswap",
+                &[pair_with_tokens(
+                    "soroswap",
+                    "soro-mid-out",
+                    "mid",
+                    "token-out",
+                    500_000_000,
+                    500_000_000,
+                )],
+            )
             .await;
 
-        let route = engine
+        let prefer = engine
             .get_route(&RouteRequest {
                 token_in: token("token-in"),
                 token_out: token("token-out"),
                 amount_in: 5_000,
                 slippage_bps: Some(50),
-                max_hops: Some(1),
-                max_splits: Some(5),
+                max_hops: Some(2),
+                max_splits: Some(1),
+                prefer_soroban: Some(true),
+            })
+            .await;
+        assert!(
+            prefer.sub_orders.is_empty(),
+            "prefer_soroban must drop mixed classic+Soroban paths (no pure Soroban fallback here)"
+        );
+
+        let default_route = engine
+            .get_route(&RouteRequest {
+                token_in: token("token-in"),
+                token_out: token("token-out"),
+                amount_in: 5_000,
+                slippage_bps: Some(50),
+                max_hops: Some(2),
+                max_splits: Some(1),
                 prefer_soroban: None,
             })
             .await;
-
-        assert!(route
-            .sub_orders
-            .iter()
-            .all(|order| order.path.sources.iter().all(|source| source != CLASSIC_SOURCE)));
+        assert_eq!(default_route.sub_orders.len(), 1);
+        assert_eq!(
+            default_route.sub_orders[0].path.sources,
+            vec![CLASSIC_SOURCE.to_string(), "soroswap".to_string()]
+        );
     }
 
     #[tokio::test]
