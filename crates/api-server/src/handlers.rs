@@ -68,7 +68,9 @@ pub struct QuoteQuery {
     pub amount_in: String,
     pub slippage: Option<f64>,
     pub debug: Option<u8>,
-    /// When `1` or `true`, exclude Classic SDEX paths (Soroban AMMs only).
+    /// When `1`, Soroban AMMs only (no Classic SDEX / no Horizon).
+    /// Default may still return a pure classic route; mixed classic+Soroban
+    /// hops are never returned (unexecutable as one tx).
     pub prefer_soroban: Option<u8>,
     /// Path-finder hop limit (pool hops). Omit = server default.
     pub max_hops: Option<usize>,

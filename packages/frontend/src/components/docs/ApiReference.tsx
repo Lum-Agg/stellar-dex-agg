@@ -248,7 +248,7 @@ export function ApiReference() {
               name: 'prefer_soroban',
               type: '0 | 1',
               required: false,
-              desc: '1 = Soroban AMMs only (exclude Classic SDEX)',
+              desc: '1 = Soroban AMMs only (no Classic / no Horizon). Default may return pure classic or pure Soroban; never mixed hops',
             },
           ]}
           tryIt={<QuoteTryIt />}

@@ -135,8 +135,8 @@ export default function DocsOverviewPage() {
           </table>
         </div>
         <p className="docs-hint">
-          Use <code>prefer_soroban=1</code> on <code>/quote</code> to exclude Classic SDEX when
-          comparing against Soroban-only routers.
+          Use <code>prefer_soroban=1</code> on <code>/quote</code> for Soroban AMMs only (no
+          Classic SDEX). Default may return pure classic or pure Soroban; never mixed hops.
         </p>
       </section>
 

@@ -307,18 +307,21 @@ impl QuoteEngine {
         let start = std::time::Instant::now();
         let slippage_bps = request.slippage_bps.unwrap_or(50);
 
-        // prefer_soroban: drop any path that touches classic_dex (including
-        // mixed classic+Soroban multi-hops). classic_only filtering alone still
-        // let hybrid paths through and broke arb encode.
-        let paths: Vec<Path> = if request.prefer_soroban.unwrap_or(false) {
-            paths
-                .iter()
-                .filter(|path| !Self::path_contains_classic(path))
-                .cloned()
-                .collect()
-        } else {
-            paths.to_vec()
-        };
+        // Never return mixed classic+Soroban hops — they cannot form one tx.
+        // prefer_soroban: Soroban AMMs only (no classic / no Horizon).
+        // Default: pure classic OR pure Soroban compete; Horizon only for classic.
+        let prefer_soroban = request.prefer_soroban.unwrap_or(false);
+        let paths: Vec<Path> = paths
+            .iter()
+            .filter(|path| {
+                if prefer_soroban {
+                    !Self::path_contains_classic(path)
+                } else {
+                    Self::path_is_executable(path)
+                }
+            })
+            .cloned()
+            .collect();
 
         if paths.is_empty() {
             debug!(
@@ -484,6 +487,11 @@ impl QuoteEngine {
 
     fn path_contains_classic(path: &Path) -> bool {
         path.sources.iter().any(|source| source == CLASSIC_SOURCE)
+    }
+
+    /// Pure classic or pure Soroban — never mixed hops (unexecutable as one tx).
+    fn path_is_executable(path: &Path) -> bool {
+        Self::is_classic_only_path(path) || !Self::path_contains_classic(path)
     }
 
     /// Quote a single path by simulating each hop sequentially.
@@ -1034,11 +1042,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn quote_prefer_soroban_skips_mixed_classic_legs() {
+    async fn quote_drops_mixed_classic_legs_even_without_prefer_soroban() {
         let engine = QuoteEngine::new(PathFinderConfig::default(), SplitConfig::default());
-        // Only a mixed 2-hop path exists: classic + soroswap.
-        // Old prefer_soroban (classic-only filter) would keep this path;
-        // path_contains_classic must drop it so arb encode never sees classic_dex.
+        // Only a mixed 2-hop path exists: classic + soroswap — unexecutable as one tx.
         engine
             .update_pairs_from_cache(
                 CLASSIC_SOURCE,
@@ -1093,10 +1099,9 @@ mod tests {
                 prefer_soroban: None,
             })
             .await;
-        assert_eq!(default_route.sub_orders.len(), 1);
-        assert_eq!(
-            default_route.sub_orders[0].path.sources,
-            vec![CLASSIC_SOURCE.to_string(), "soroswap".to_string()]
+        assert!(
+            default_route.sub_orders.is_empty(),
+            "default /quote must also drop mixed classic+Soroban paths"
         );
     }
 
