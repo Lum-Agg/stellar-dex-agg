@@ -56,79 +56,15 @@ export async function quoteAndBuild(userPublicKey: string, amountIn: string) {
 ```
 
 The returned `unsigned_tx_xdr` is passed to the app's wallet adapter for
-signing. The app can then submit the signed XDR through its own Stellar RPC or
-through `POST /api/v1/submit_tx`.
+signing. We recommend submitting the signed XDR directly to a Stellar public
+Soroban RPC. LumAgg's `POST /api/v1/submit_tx` endpoint is available as a
+convenience fallback.
 
 `prefer_soroban` defaults to `false`, so the normal API returns the best route
 across the supported venues. Set `prefer_soroban=1` only when the integration
 specifically requires Soroban-only routing; this is primarily used by the
 LumAgg arbitrage bot and should not be enabled by ordinary frontend swaps
 without a reason.
-
-## Optional SDK
-
-The npm SDK is an optional TypeScript wrapper around the same REST endpoints:
-
-```bash
-npm install @lumagg/sdk
-```
-
-## Minimal browser example
-
-The wallet is intentionally represented by a small adapter interface. The
-integrator can connect it to any Stellar wallet flow it already uses.
-
-```ts
-import { LumAggClient } from '@lumagg/sdk';
-
-const XLM = 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA';
-const USDC = 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75';
-const PUBLIC_NETWORK = 'Public Global Stellar Network ; September 2015';
-
-type WalletAdapter = {
-  address: string;
-  signTransaction: (unsignedXdr: string, networkPassphrase: string) => Promise<string>;
-};
-
-const lumagg = new LumAggClient({
-  apiUrl: 'https://api.lumagg.xyz',
-  // apiKey: 'partner-key', // optional partner rate-limit key
-});
-
-export async function swapXlmToUsdc(wallet: WalletAdapter, amountIn: string) {
-  // Amounts are integer strings in the token's smallest unit.
-  const { quote, tx } = await lumagg.quoteAndBuild({
-    tokenIn: XLM,
-    tokenOut: USDC,
-    amountIn,
-    slippage: 0.5,       // percentage, not basis points
-    // preferSoroban is omitted; the API default is false.
-    maxHops: 3,
-    maxSplits: 2,
-    userPublicKey: wallet.address,
-  });
-
-  console.log('Expected output:', quote.expectedOutput);
-  console.log('Route legs:', quote.subRoutes.length);
-  console.log('Execution:', tx.execution);
-
-  // LumAgg returns unsigned XDR. The wallet signs it locally.
-  const signedXdr = await wallet.signTransaction(
-    tx.unsignedTxXdr,
-    PUBLIC_NETWORK,
-  );
-
-  // Alternatively, submit signedXdr through the wallet's own Stellar RPC.
-  const submitted = await lumagg.submitTx({ signedTxXdr });
-  const result = await lumagg.waitForTx(submitted.hash);
-
-  if (!result.confirmed) {
-    throw new Error(result.error || `Transaction ${submitted.hash} failed`);
-  }
-
-  return { hash: submitted.hash, expectedOutput: quote.expectedOutput };
-}
-```
 
 ## Wallet integration boundary
 
@@ -178,18 +114,40 @@ export async function signWithWalletsKit(unsignedTxXdr: string) {
 }
 ```
 
-After signing, submit `signedTxXdr` with the REST endpoint:
+After signing, submit directly to a Stellar public Soroban RPC:
+
+```bash
+npm install @stellar/stellar-sdk
+```
 
 ```ts
-const response = await fetch('https://api.lumagg.xyz/api/v1/submit_tx', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ signed_tx_xdr: signedTxXdr }),
-});
+import { Networks, TransactionBuilder, rpc } from '@stellar/stellar-sdk';
 
-const submitted = await response.json();
-if (!submitted.success) throw new Error(submitted.error || 'Submit failed');
+const transaction = TransactionBuilder.fromXDR(signedTxXdr, Networks.PUBLIC);
+const server = new rpc.Server('https://mainnet.sorobanrpc.com');
+let submitted = await server.sendTransaction(transaction);
+
+// Retry temporary RPC backpressure. Do not retry ERROR responses.
+for (let attempt = 0;
+     submitted.status === 'TRY_AGAIN_LATER' && attempt < 30;
+     attempt += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  submitted = await server.sendTransaction(transaction);
+}
+
+if (submitted.status !== 'PENDING' && submitted.status !== 'DUPLICATE') {
+  throw new Error(`Transaction submission failed: ${submitted.status}`);
+}
+
+console.log('Submitted:', submitted.hash);
 ```
+
+The app can poll the same RPC with `getTransaction(submitted.hash)` until the
+status is `SUCCESS` or `FAILED`. The exact RPC endpoint can be chosen by the
+integrator; use a public Soroban RPC for the same network as the wallet.
+
+As a fallback, the signed XDR can be sent to LumAgg's
+`POST /api/v1/submit_tx` endpoint with `{ "signed_tx_xdr": "..." }`.
 
 ## Signing with Freighter directly
 
@@ -239,7 +197,7 @@ const quote = await lumagg.quote({
   tokenOut: USDC,
   amountIn: '100000000',
   slippage: 0.5,
-  preferSoroban: true,
+  // preferSoroban is omitted; the API default is false.
 });
 
 const tx = await lumagg.buildTx({
@@ -261,3 +219,37 @@ const tx = await lumagg.buildTx({
 - Do not cache quotes for long periods. Build and sign soon after quoting.
 - Public API documentation: [OpenAPI](./openapi.yaml).
 - Full integration guide: [Integrator Guide](./integrator-guide.md).
+
+## Optional SDK integration
+
+The npm SDK is an optional TypeScript wrapper around the same REST endpoints.
+It is not required for a frontend integration. The SDK does not replace the
+wallet: the application still signs the returned unsigned XDR and can submit
+it directly to a Stellar public RPC.
+
+```bash
+npm install @lumagg/sdk
+```
+
+```ts
+import { LumAggClient } from '@lumagg/sdk';
+
+const client = new LumAggClient({ apiUrl: 'https://api.lumagg.xyz' });
+
+const { quote, tx } = await client.quoteAndBuild({
+  tokenIn: XLM,
+  tokenOut: USDC,
+  amountIn: '100000000',
+  slippage: 0.5,
+  // preferSoroban is omitted; the API default is false.
+  userPublicKey: wallet.address,
+});
+
+const signedXdr = await wallet.signTransaction(tx.unsignedTxXdr);
+
+// Recommended: submit signedXdr to the Stellar public RPC using
+// TransactionBuilder.fromXDR(...) and rpc.Server.sendTransaction(...).
+// The SDK fallback is also available:
+const submitted = await client.submitTx({ signedTxXdr });
+const result = await client.waitForTx(submitted.hash);
+```
