@@ -2,6 +2,7 @@
 
 use {
     anyhow::{anyhow, Result},
+    serde::Deserialize,
     soroban_client::network::{NetworkPassphrase, Networks},
 };
 
@@ -21,9 +22,18 @@ pub struct KeeperConfig {
 }
 
 impl KeeperConfig {
+    pub fn from_file(path: impl AsRef<std::path::Path>) -> Result<Self> {
+        let path = path.as_ref();
+        let source = std::fs::read_to_string(path)
+            .map_err(|e| anyhow!("read keeper config {}: {e}", path.display()))?;
+        let file: KeeperFileConfig = toml::from_str(&source)
+            .map_err(|e| anyhow!("parse keeper config {}: {e}", path.display()))?;
+        Self::from_file_config(file)
+    }
+
     pub fn from_env() -> Result<Self> {
         let dry_run = enabled("KEEPER_DRY_RUN");
-        Ok(Self {
+        Self::validate(Self {
             rpc_url: required("KEEPER_RPC_URL")?,
             // A dry-run never signs or submits, so it must be runnable
             // without placing an operational signing key in the environment.
@@ -43,6 +53,76 @@ impl KeeperConfig {
             reclaim: enabled("KEEPER_RECLAIM"),
         })
     }
+
+    fn from_file_config(file: KeeperFileConfig) -> Result<Self> {
+        let dry_run = file.dry_run;
+        let secret = if dry_run {
+            String::new()
+        } else {
+            match (file.secret, file.secret_file) {
+                (Some(secret), _) if !secret.trim().is_empty() => secret.trim().to_string(),
+                (_, Some(path)) => std::fs::read_to_string(&path)
+                    .map_err(|e| anyhow!("read keeper secret file {path}: {e}"))?
+                    .trim()
+                    .to_string(),
+                _ => String::new(),
+            }
+        };
+        Self::validate(Self {
+            rpc_url: file.rpc_url,
+            secret,
+            network: network_passphrase(&file.network)?.to_string(),
+            escrow_contract: file.escrow_contract,
+            aggregator_contract: file.aggregator_contract,
+            quote_api_url: file.quote_api_url,
+            poll_secs: file.poll_secs,
+            cursor_path: file.cursor_path,
+            dry_run,
+            max_fill: file.max_fill,
+            reclaim: file.reclaim,
+        })
+    }
+
+    fn validate(config: Self) -> Result<Self> {
+        if !config.dry_run && config.secret.trim().is_empty() {
+            return Err(anyhow!("keeper secret is required unless dry_run = true"));
+        }
+        if config.poll_secs == 0 {
+            return Err(anyhow!("poll_secs must be greater than zero"));
+        }
+        Ok(config)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct KeeperFileConfig {
+    rpc_url: String,
+    network: String,
+    escrow_contract: String,
+    aggregator_contract: String,
+    quote_api_url: String,
+    #[serde(default = "default_poll_secs")]
+    poll_secs: u64,
+    #[serde(default = "default_cursor_path")]
+    cursor_path: String,
+    #[serde(default)]
+    dry_run: bool,
+    #[serde(default)]
+    max_fill: Option<i128>,
+    #[serde(default)]
+    reclaim: bool,
+    #[serde(default)]
+    secret: Option<String>,
+    #[serde(default)]
+    secret_file: Option<String>,
+}
+
+fn default_poll_secs() -> u64 {
+    10
+}
+
+fn default_cursor_path() -> String {
+    "keeper.cursor".into()
 }
 
 fn required(name: &str) -> Result<String> {

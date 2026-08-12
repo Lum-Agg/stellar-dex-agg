@@ -1,0 +1,19 @@
+[Unit]
+Description=LumAgg Limit/DCA Keeper
+After=network.target
+
+[Service]
+Type=simple
+User=lumagg
+WorkingDirectory=/var/lib/lumagg
+ExecStart=/usr/local/bin/lumagg-limit-keeper --config /etc/lumagg/limit-keeper.toml
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/lumagg
+
+[Install]
+WantedBy=multi-user.target

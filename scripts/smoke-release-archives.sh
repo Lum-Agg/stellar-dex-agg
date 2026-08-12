@@ -14,6 +14,7 @@ DIST_DIR="${DIST_DIR:-.}"
 SWAP_ARCHIVE="${SWAP_ARCHIVE:-lumagg-swap-api-linux-x86_64.tar.gz}"
 AGG_ARCHIVE="${AGG_ARCHIVE:-lumagg-aggregator-linux-x86_64.tar.gz}"
 ARB_ARCHIVE="${ARB_ARCHIVE:-lumagg-arbitrage-bot-linux-x86_64.tar.gz}"
+KEEPER_ARCHIVE="${KEEPER_ARCHIVE:-lumagg-limit-keeper-linux-x86_64.tar.gz}"
 
 smoke_dir="$(mktemp -d)"
 trap 'rm -rf "$smoke_dir"' EXIT
@@ -21,10 +22,12 @@ trap 'rm -rf "$smoke_dir"' EXIT
 tar -xzf "$DIST_DIR/$SWAP_ARCHIVE" -C "$smoke_dir"
 tar -xzf "$DIST_DIR/$AGG_ARCHIVE" -C "$smoke_dir"
 tar -xzf "$DIST_DIR/$ARB_ARCHIVE" -C "$smoke_dir"
+tar -xzf "$DIST_DIR/$KEEPER_ARCHIVE" -C "$smoke_dir"
 
 swap="$smoke_dir/${SWAP_ARCHIVE%.tar.gz}"
 cluster="$smoke_dir/${AGG_ARCHIVE%.tar.gz}"
 arb="$smoke_dir/${ARB_ARCHIVE%.tar.gz}"
+keeper="$smoke_dir/${KEEPER_ARCHIVE%.tar.gz}"
 
 test -x "$swap/lumagg-swap-api"
 test -f "$swap/README.md"
@@ -56,6 +59,12 @@ test -f "$arb/arbitrage-configuration.md"
 test -f "$arb/lumagg-arbitrage.toml"
 test -f "$arb/lumagg-arbitrage.service"
 
+test -x "$keeper/lumagg-limit-keeper"
+test -f "$keeper/README.md"
+test -f "$keeper/lumagg-limit-keeper.toml"
+test -f "$keeper/lumagg-limit-keeper.service"
+grep -F -- '--config /etc/lumagg/limit-keeper.toml' "$keeper/lumagg-limit-keeper.service" >/dev/null
+
 host_os="$(uname -s)"
 host_arch="$(uname -m)"
 if [[ "${EXECUTE_BINARIES:-auto}" == "0" || "${EXECUTE_BINARIES:-auto}" == "false" ]]; then
@@ -72,6 +81,9 @@ fi
 "$cluster/lumagg-market-data-worker" --version
 "$cluster/lumagg-analytics-indexer" --version
 "$arb/lumagg-arbitrage-bot" --version
+"$keeper/lumagg-limit-keeper" --help
+cp "$keeper/lumagg-limit-keeper.toml" "$smoke_dir/keeper.toml"
+"$keeper/lumagg-limit-keeper" --config "$smoke_dir/keeper.toml" --check-config
 
 cp "$swap/lumagg-swap-api.toml" "$smoke_dir/swap-api.toml"
 "$swap/lumagg-swap-api" --config "$smoke_dir/swap-api.toml" --check-config

@@ -39,6 +39,21 @@ Passphrase: `Test SDF Network ; September 2015`
 
 ## Point services at testnet
 
+The preferred keeper deployment uses a TOML file and a separate secret file:
+
+```bash
+cp packaging/lumagg-limit-keeper.toml limit-keeper-testnet.toml
+sed -i 's/network = "public"/network = "testnet"/' limit-keeper-testnet.toml
+sed -i 's#https://your-stellar-rpc.example.com#https://soroban-testnet.stellar.org#' limit-keeper-testnet.toml
+# Set escrow_contract, aggregator_contract, quote_api_url, and cursor_path.
+./target/release/limit-keeper --config limit-keeper-testnet.toml
+```
+
+Use `dry_run = true` while validating discovery and fillability. For live testnet
+fills, set `dry_run = false`, create the file referenced by `secret_file` with
+mode `0600`, and keep it outside Git. The environment-variable form below is
+retained for compatibility with the existing testnet deployment scripts.
+
 ```bash
 set -a && source deploy/.env.limit-testnet.local && set +a
 

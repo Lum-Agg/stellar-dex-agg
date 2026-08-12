@@ -3786,6 +3786,7 @@ dependencies = [
  "stellar-strkey 0.0.16",
  "stellar-xdr 25.0.1",
  "tokio",
+ "toml",
  "tracing",
  "tracing-subscriber",
 ]

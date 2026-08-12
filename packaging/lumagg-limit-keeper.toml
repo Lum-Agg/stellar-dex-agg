@@ -1,0 +1,13 @@
+# LumAgg Limit/DCA keeper configuration.
+# Keep the signer in a separate 0600 file; do not put a secret in this file.
+rpc_url = "https://your-stellar-rpc.example.com"
+network = "public" # public or testnet
+escrow_contract = "CHANGE_ME"
+aggregator_contract = "CHANGE_ME"
+quote_api_url = "https://api.lumagg.xyz"
+poll_secs = 10
+cursor_path = "/var/lib/lumagg/limit-keeper.cursor"
+dry_run = true
+# max_fill = 100000000
+reclaim = false
+secret_file = "/etc/lumagg/limit-keeper.secret"

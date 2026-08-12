@@ -16,13 +16,42 @@ use {
     tracing_subscriber::EnvFilter,
 };
 
+fn config_path() -> Result<(Option<std::path::PathBuf>, bool, bool)> {
+    let mut args = std::env::args().skip(1);
+    let mut path = None;
+    let mut check = false;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--config" => path = Some(args.next().context("--config requires a file path")?.into()),
+            "-h" | "--help" => {
+                println!("limit-keeper --config <FILE> [--check-config]\n\n--config <FILE>  Keeper TOML configuration\n--check-config   Validate without connecting to RPC\nWithout --config, legacy environment variables are used.");
+                return Ok((None, true, false));
+            }
+            "--check-config" => check = true,
+            _ => anyhow::bail!("unknown argument: {arg}"),
+        }
+    }
+    Ok((path, false, check))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive("limit_keeper=info".parse()?))
         .init();
 
-    let config = KeeperConfig::from_env()?;
+    let (path, help, check) = config_path()?;
+    if help {
+        return Ok(());
+    }
+    let config = match path {
+        Some(path) => KeeperConfig::from_file(path)?,
+        None => KeeperConfig::from_env()?,
+    };
+    if check {
+        println!("configuration is valid");
+        return Ok(());
+    }
     let rpc = SorobanRpc::new(&config.rpc_url, &config.network);
     let quote_api = QuoteApiClient::new(&config.quote_api_url);
     let latest = rpc
