@@ -82,6 +82,39 @@ pub struct QuoteQuery {
     pub on_chain_validate: Option<u8>,
 }
 
+fn clamp_route_limits(config: &crate::config::AppConfig, query: &QuoteQuery) -> (Option<usize>, Option<usize>) {
+    (
+        query.max_hops.map(|value| value.min(config.path_finder_max_hops)),
+        query.max_splits.map(|value| value.min(config.max_splits)),
+    )
+}
+
+#[cfg(test)]
+mod quote_limit_tests {
+    use super::{clamp_route_limits, QuoteQuery};
+
+    #[test]
+    fn quote_limits_cannot_exceed_server_bounds() {
+        let config = crate::config::AppConfig {
+            path_finder_max_hops: 3,
+            max_splits: 3,
+            ..crate::config::AppConfig::default()
+        };
+        let query = QuoteQuery {
+            token_in: "XLM".into(),
+            token_out: "USDC".into(),
+            amount_in: "1".into(),
+            slippage: None,
+            debug: None,
+            prefer_soroban: None,
+            max_hops: Some(usize::MAX),
+            max_splits: Some(usize::MAX),
+            on_chain_validate: None,
+        };
+        assert_eq!(clamp_route_limits(&config, &query), (Some(3), Some(3)));
+    }
+}
+
 #[derive(Serialize)]
 pub struct QuoteResponse {
     pub success: bool,
@@ -214,13 +247,17 @@ pub async fn get_quote(State(state): State<AppState>, Query(params): Query<Quote
             .unwrap_or(false),
     };
 
+    // Client-supplied route limits are useful for integrators, but must not be
+    // allowed to bypass the server's configured CPU bounds.
+    let (max_hops, max_splits) = clamp_route_limits(&state.config, &params);
+
     let request = RouteRequest {
         token_in: TokenId::from_str_auto(&params.token_in),
         token_out: TokenId::from_str_auto(&params.token_out),
         amount_in,
         slippage_bps: Some(slippage_bps),
-        max_hops: params.max_hops,
-        max_splits: params.max_splits,
+        max_hops,
+        max_splits,
         prefer_soroban: params.prefer_soroban.map(|v| v != 0),
     };
 

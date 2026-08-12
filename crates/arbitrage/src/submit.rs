@@ -19,8 +19,6 @@ use {
 /// ~one Stellar ledger; poll runs **without** holding caller mutex.
 const POLL_ATTEMPTS: usize = 3;
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
-const SEND_ATTEMPTS: usize = 3;
-const SEND_RETRY_INTERVAL: Duration = Duration::from_millis(500);
 
 /// `stellar_baselib::Transaction::from_xdr_envelope` drops `TransactionExt::V1`
 /// (footprint/resource fee). Re-attach so `to_envelope()` stays a valid Soroban
@@ -45,34 +43,27 @@ pub async fn sign_and_submit(rpc_url: &str, keypair: &ExecutorKeypair, unsigned_
     tx.sign(&[keypair.inner().clone()]);
 
     let server = rpc_server(rpc_url)?;
-    for attempt in 1..=SEND_ATTEMPTS {
-        let result = server
-            .send_transaction(tx.clone())
-            .await
-            .map_err(|e| anyhow!("send_transaction: {:?}", e))?;
+    let result = server
+        .send_transaction(tx)
+        .await
+        .map_err(|e| anyhow!("send_transaction: {:?}", e))?;
 
-        match result.status {
-            SendTransactionStatus::Pending | SendTransactionStatus::Duplicate => {
-                return Ok(result.hash);
-            }
-            SendTransactionStatus::Error => {
-                let detail = result
-                    .to_error_result()
-                    .map(|r| format!("{:?}", r))
-                    .unwrap_or_else(|| "unknown".to_string());
-                return Err(anyhow!("tx rejected immediately: {}", detail));
-            }
-            SendTransactionStatus::TryAgainLater if attempt < SEND_ATTEMPTS => {
-                warn!(attempt, "RPC asked to retry transaction submission");
-                tokio::time::sleep(SEND_RETRY_INTERVAL).await;
-            }
-            SendTransactionStatus::TryAgainLater => {
-                return Err(anyhow!("RPC returned TRY_AGAIN_LATER after {} attempts", SEND_ATTEMPTS));
-            }
+    match result.status {
+        SendTransactionStatus::Pending | SendTransactionStatus::Duplicate => Ok(result.hash),
+        SendTransactionStatus::Error => {
+            let detail = result
+                .to_error_result()
+                .map(|r| format!("{:?}", r))
+                .unwrap_or_else(|| "unknown".to_string());
+            Err(anyhow!("tx rejected immediately: {}", detail))
+        }
+        // A real-time arb opportunity is stale when the RPC is overloaded;
+        // never retry it and create more submission pressure.
+        SendTransactionStatus::TryAgainLater => {
+            warn!("RPC returned TRY_AGAIN_LATER; dropping stale arb opportunity");
+            Err(anyhow!("RPC returned TRY_AGAIN_LATER; opportunity dropped"))
         }
     }
-
-    unreachable!("send attempt loop always returns")
 }
 
 pub async fn poll_transaction(rpc_url: &str, hash: &str) -> Result<()> {
@@ -125,6 +116,12 @@ fn spawn_poll_outcome(rpc_url: String, ctx: PollContext, stats: Arc<ArbStats>, p
                 );
             }
             Err(e) => {
+                if e.to_string() == "tx status poll timeout" {
+                    // A Soroban RPC may not expose the final result within the
+                    // short observation window. This is unknown, not failure.
+                    warn!(hash = %ctx.hash, "tx status not confirmed within poll window");
+                    return;
+                }
                 stats.txs_failed.fetch_add(1, Ordering::Relaxed);
                 profit.record_failed();
                 error!(hash = %ctx.hash, route = %ctx.route_label, error = %e, "arb tx failed");
