@@ -23,10 +23,33 @@ pub async fn quote_round_trip(
     bridge: &TokenId,
     amount_in: u128,
 ) -> Result<RoundTripQuote> {
-    let leg_out = quote_leg(ctx, base, bridge, amount_in).await?;
+    quote_round_trip_with_validation(ctx, base, bridge, amount_in, ctx.config.on_chain_validate).await
+}
+
+/// Quote a round trip with an explicit validation mode. The scanner normally
+/// uses local quote math; execution validates only the selected opportunity.
+pub async fn quote_round_trip_with_validation(
+    ctx: &ArbContext,
+    base: &TokenId,
+    bridge: &TokenId,
+    amount_in: u128,
+    on_chain_validate: bool,
+) -> Result<RoundTripQuote> {
+    let leg_out = ctx
+        .quote_client
+        .quote_leg_with_validation(&ctx.config, base, bridge, amount_in, on_chain_validate)
+        .await?;
 
     let leg_back = if leg_out.route.sub_orders.len() <= 1 {
-        quote_leg(ctx, bridge, base, leg_out.route.total_expected_out).await?
+        ctx.quote_client
+            .quote_leg_with_validation(
+                &ctx.config,
+                bridge,
+                base,
+                leg_out.route.total_expected_out,
+                on_chain_validate,
+            )
+            .await?
     } else {
         let mut back_subs = Vec::new();
         let mut back_steps = Vec::new();
@@ -37,7 +60,10 @@ pub async fn quote_round_trip(
             if bridge_in == 0 {
                 return Err(anyhow::anyhow!("leg_out split produced zero bridge output"));
             }
-            let partial = quote_leg(ctx, bridge, base, bridge_in).await?;
+            let partial = ctx
+                .quote_client
+                .quote_leg_with_validation(&ctx.config, bridge, base, bridge_in, on_chain_validate)
+                .await?;
             total_back_out = total_back_out.saturating_add(partial.route.total_expected_out);
             total_minimum_out = total_minimum_out.saturating_add(partial.minimum_out);
             back_subs.extend(partial.route.sub_orders);

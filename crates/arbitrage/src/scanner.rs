@@ -8,7 +8,7 @@ use {
     anyhow::Result,
     router_engine::TokenId,
     std::sync::atomic::Ordering,
-    tracing::{info, warn},
+    tracing::{debug, info, warn},
 };
 
 #[derive(Debug, Clone)]
@@ -49,8 +49,18 @@ pub async fn evaluate_bridge_pair(
         return Ok(None);
     }
 
-    let Ok(probe) = quote_round_trip(ctx, base, bridge, ctx.config.probe_amount_in).await else {
-        return Ok(None);
+    let probe = match quote_round_trip(ctx, base, bridge, ctx.config.probe_amount_in).await {
+        Ok(probe) => probe,
+        Err(error) => {
+            stats.quote_failed.fetch_add(1, Ordering::Relaxed);
+            debug!(
+                base = %base.canonical(),
+                bridge = %bridge.canonical(),
+                error = %error,
+                "round-trip quote failed"
+            );
+            return Ok(None);
+        }
     };
 
     // Always size-search when enabled — small probe can be flat while a larger
@@ -73,6 +83,7 @@ pub async fn evaluate_bridge_pair(
     let profit = quote.profit();
     let profit_bps = compute_profit_bps(quote.amount_in, quote.amount_out);
     if profit < ctx.config.min_profit_for(&base.canonical()) {
+        stats.unprofitable_quotes.fetch_add(1, Ordering::Relaxed);
         return Ok(None);
     }
 

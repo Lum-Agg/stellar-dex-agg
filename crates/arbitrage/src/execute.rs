@@ -2,7 +2,7 @@
 
 use {
     crate::{
-        bridge::{quote_round_trip, RoundTripQuote},
+        bridge::{quote_round_trip, quote_round_trip_with_validation, RoundTripQuote},
         callers::{CallerPool, DEFAULT_CALLER_COOLDOWN_MS},
         config::ArbConfig,
         context::ArbContext,
@@ -113,6 +113,25 @@ pub async fn prepare_opportunity_tx(
             return Ok(None);
         }
         quote = refreshed;
+    }
+
+    // Validate only the selected execution candidate. Enabling this during
+    // scanning multiplies RPC quote work across every bridge and can starve
+    // the event pipeline; this final check keeps the scanner fast while
+    // filtering stale local quotes before transaction simulation.
+    if !ctx.config.on_chain_validate {
+        let validated = quote_round_trip_with_validation(
+            ctx,
+            &quote.base,
+            &quote.bridge,
+            quote.amount_in,
+            true,
+        )
+        .await?;
+        if validated.profit() < ctx.config.min_profit_for(&quote.base.canonical()) {
+            return Ok(None);
+        }
+        quote = validated;
     }
 
     let seq = fetch_account_sequence(&ctx.config.rpc_url, caller_public_key).await?;

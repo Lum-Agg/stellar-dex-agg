@@ -185,12 +185,16 @@ pub fn format_report(
     let grand = vault_xlm.unwrap_or(0).saturating_add(caller_total);
 
     let funnel_block = format!(
-        "🔎 Quote→sim funnel (session):\n\
+         "🔎 Quote→sim funnel (session):\n\
+         · quote_failed: {}\n\
+         · unprofitable: {}\n\
          · opportunities: {}\n\
          · prepared: {} ({} bps)\n\
          · sim_profit_rejected: {} ({} bps)\n\
          · discards: size={} below_quoted={} fee={} probe={}\n\
          · avg quote−sim gap: `{}` bps (n={})",
+        funnel.quote_failed,
+        funnel.unprofitable_quotes,
         funnel.opportunities,
         funnel.txs_prepared,
         funnel.prepare_rate_bps(),
@@ -236,6 +240,8 @@ mod tests {
     fn empty_funnel() -> ArbStatsSnapshot {
         ArbStatsSnapshot {
             routes_evaluated: 1000,
+            quote_failed: 0,
+            unprofitable_quotes: 99,
             opportunities: 100,
             txs_prepared: 1,
             txs_sim_rejected: 0,

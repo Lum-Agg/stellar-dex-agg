@@ -93,6 +93,20 @@ impl QuoteApiClient {
         token_out: &TokenId,
         amount_in: u128,
     ) -> Result<LegQuote> {
+        self.quote_leg_with_validation(config, token_in, token_out, amount_in, config.on_chain_validate)
+            .await
+    }
+
+    /// Quote one leg with an explicit validation mode. Execution can enable
+    /// validation for one selected opportunity without slowing the scanner.
+    pub async fn quote_leg_with_validation(
+        &self,
+        config: &ArbConfig,
+        token_in: &TokenId,
+        token_out: &TokenId,
+        amount_in: u128,
+        on_chain_validate: bool,
+    ) -> Result<LegQuote> {
         if amount_in == 0 {
             return Err(anyhow!("amount_in must be positive"));
         }
@@ -107,7 +121,7 @@ impl QuoteApiClient {
             config.max_hops,
             config.max_splits,
         );
-        if config.on_chain_validate {
+        if on_chain_validate {
             url.push_str("&on_chain_validate=1");
         }
 

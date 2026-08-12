@@ -8,15 +8,14 @@ import {
   type SubmitVia,
 } from '@/lib/rpc';
 
-export function SubmitViaToggle({ network = 'public' }: { network?: SubmitNetwork }) {
-  const [submitVia, setSubmitVia] = useState<SubmitVia>('lumagg');
+export function SubmitViaToggle({ network: _network = 'public' }: { network?: SubmitNetwork }) {
+  const [submitVia, setSubmitVia] = useState<SubmitVia>('official');
 
   useEffect(() => {
     setSubmitVia(getSubmitViaPreference());
   }, []);
 
-  const host =
-    network === 'testnet' ? 'soroban-testnet.stellar.org' : 'mainnet.sorobanrpc.com';
+  const apiHost = 'api.lumagg.xyz';
 
   return (
     <label className="mt-4 flex items-start gap-2 cursor-pointer select-none text-[11px] leading-snug text-[var(--text-muted)]/70 hover:text-[var(--text-muted)]">
@@ -31,8 +30,8 @@ export function SubmitViaToggle({ network = 'public' }: { network?: SubmitNetwor
         }}
       />
       <span>
-        Advanced: submit via official RPC
-        {submitVia === 'official' ? ` (${host})` : ''}
+        Submit via LumAgg API instead of direct RPC
+        {submitVia === 'lumagg' ? ` (${apiHost})` : ''}
       </span>
     </label>
   );

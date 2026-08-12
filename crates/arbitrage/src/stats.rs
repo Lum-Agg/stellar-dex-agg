@@ -16,6 +16,8 @@ use {
 #[derive(Debug, Default)]
 pub struct ArbStats {
     pub routes_evaluated: AtomicU64,
+    pub quote_failed: AtomicU64,
+    pub unprofitable_quotes: AtomicU64,
     pub opportunities: AtomicU64,
     pub txs_prepared: AtomicU64,
     pub txs_sim_rejected: AtomicU64,
@@ -50,6 +52,8 @@ impl ArbStats {
         };
         ArbStatsSnapshot {
             routes_evaluated: self.routes_evaluated.load(Ordering::Relaxed),
+            quote_failed: self.quote_failed.load(Ordering::Relaxed),
+            unprofitable_quotes: self.unprofitable_quotes.load(Ordering::Relaxed),
             opportunities: self.opportunities.load(Ordering::Relaxed),
             txs_prepared: self.txs_prepared.load(Ordering::Relaxed),
             txs_sim_rejected: self.txs_sim_rejected.load(Ordering::Relaxed),
@@ -80,6 +84,8 @@ impl ArbStats {
 #[derive(Debug, Clone, Copy)]
 pub struct ArbStatsSnapshot {
     pub routes_evaluated: u64,
+    pub quote_failed: u64,
+    pub unprofitable_quotes: u64,
     pub opportunities: u64,
     pub txs_prepared: u64,
     pub txs_sim_rejected: u64,
@@ -106,6 +112,10 @@ impl ArbStatsSnapshot {
     pub fn delta_since(&self, previous: &Self) -> ArbStatsDelta {
         ArbStatsDelta {
             routes_evaluated: self.routes_evaluated.saturating_sub(previous.routes_evaluated),
+            quote_failed: self.quote_failed.saturating_sub(previous.quote_failed),
+            unprofitable_quotes: self
+                .unprofitable_quotes
+                .saturating_sub(previous.unprofitable_quotes),
             opportunities: self.opportunities.saturating_sub(previous.opportunities),
             txs_prepared: self.txs_prepared.saturating_sub(previous.txs_prepared),
             txs_sim_rejected: self.txs_sim_rejected.saturating_sub(previous.txs_sim_rejected),
@@ -140,6 +150,8 @@ impl ArbStatsSnapshot {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ArbStatsDelta {
     pub routes_evaluated: u64,
+    pub quote_failed: u64,
+    pub unprofitable_quotes: u64,
     pub opportunities: u64,
     pub txs_prepared: u64,
     pub txs_sim_rejected: u64,
@@ -180,6 +192,8 @@ impl QuietWindowTracker {
             consecutive_quiet: 0,
             last: ArbStatsSnapshot {
                 routes_evaluated: 0,
+                quote_failed: 0,
+                unprofitable_quotes: 0,
                 opportunities: 0,
                 txs_prepared: 0,
                 txs_sim_rejected: 0,
@@ -363,6 +377,8 @@ mod tests {
         let mut t = QuietWindowTracker::new(2, 10);
         let mut snap = ArbStatsSnapshot {
             routes_evaluated: 0,
+            quote_failed: 0,
+            unprofitable_quotes: 0,
             opportunities: 0,
             txs_prepared: 0,
             txs_sim_rejected: 0,
@@ -402,6 +418,8 @@ mod tests {
         let mut t = QuietWindowTracker::new(1, 100);
         let mut snap = ArbStatsSnapshot {
             routes_evaluated: 0,
+            quote_failed: 0,
+            unprofitable_quotes: 0,
             opportunities: 0,
             txs_prepared: 0,
             txs_sim_rejected: 0,

@@ -23,7 +23,7 @@ export async function signTransaction(xdr: string): Promise<string> {
 }
 
 /**
- * Submit a signed transaction through api-server.
+ * Submit a signed transaction through the configured RPC/API path.
  */
 export async function submitTransaction(
   signedXdr: string,
