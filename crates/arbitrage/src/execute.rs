@@ -414,7 +414,7 @@ pub async fn try_execute_opportunity(
         .and_then(|v| v.parse().ok())
         .unwrap_or(DEFAULT_CALLER_COOLDOWN_MS);
 
-    crate::submit::submit_prepared(
+    let submit_result = crate::submit::submit_prepared(
         &ctx.config.rpc_url,
         guard.keypair(),
         &prepared,
@@ -422,11 +422,22 @@ pub async fn try_execute_opportunity(
         profit,
         ctx.config.poll_tx,
     )
-    .await?;
+    .await;
 
-    // Release mutex immediately; in-flight cooldown prevents seq reuse for ~one
-    // ledger.
-    guard.mark_in_flight(cooldown_ms);
+    // Only reserve the caller when the RPC accepted the transaction or told us
+    // that an earlier transaction from this account is still pending. Immediate
+    // rejection, signing failure, and transport errors do not consume the
+    // sequence and should not reduce caller capacity.
+    let should_cooldown = submit_result.is_ok()
+        || submit_result
+            .as_ref()
+            .err()
+            .is_some_and(|e| e.to_string().contains("TRY_AGAIN_LATER"));
+    if should_cooldown {
+        guard.mark_in_flight(cooldown_ms);
+    }
+
+    submit_result?;
 
     Ok(true)
 }
