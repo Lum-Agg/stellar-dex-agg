@@ -1402,6 +1402,27 @@ pub struct SubmitTxResponse {
     pub error: Option<String>,
 }
 
+const MAX_SIGNED_TX_XDR_BYTES: usize = 96 * 1024;
+
+fn validate_signed_tx_xdr(signed_tx_xdr: &str) -> Result<(), String> {
+    if signed_tx_xdr.len() > MAX_SIGNED_TX_XDR_BYTES {
+        return Err(format!(
+            "signed_tx_xdr exceeds the {} byte limit",
+            MAX_SIGNED_TX_XDR_BYTES
+        ));
+    }
+
+    use stellar_xdr::curr::{Limits, ReadXdr, TransactionEnvelope};
+    let envelope = TransactionEnvelope::from_xdr_base64(signed_tx_xdr, Limits::none())
+        .map_err(|_| "signed_tx_xdr is not valid TransactionEnvelope XDR".to_string())?;
+    match envelope {
+        TransactionEnvelope::Tx(tx) if !tx.signatures.is_empty() => Ok(()),
+        TransactionEnvelope::Tx(_) => Err("signed_tx_xdr has no signatures".to_string()),
+        TransactionEnvelope::TxV0(_) => Err("transaction v0 envelopes are not supported".to_string()),
+        TransactionEnvelope::TxFeeBump(_) => Err("fee-bump envelopes are not supported".to_string()),
+    }
+}
+
 pub async fn submit_tx(State(state): State<AppState>, Json(body): Json<SubmitTxRequest>) -> impl IntoResponse {
     let signed_tx_xdr = body.signed_tx_xdr.trim();
     if signed_tx_xdr.is_empty() {
@@ -1416,19 +1437,23 @@ pub async fn submit_tx(State(state): State<AppState>, Json(body): Json<SubmitTxR
         );
     }
 
-    // Fast return: enqueue only. Clients poll `/api/v1/tx_status` (or balance) for
-    // inclusion.
-    const MAX_TRY_AGAIN_RETRIES: u32 = 2;
-    let mut retries = 0u32;
-    loop {
-        match state.rpc.send_transaction(signed_tx_xdr).await {
-            Ok(result) => {
-                if result.status == "TRY_AGAIN_LATER" && retries < MAX_TRY_AGAIN_RETRIES {
-                    retries += 1;
-                    tokio::time::sleep(std::time::Duration::from_millis(250 * retries as u64)).await;
-                    continue;
-                }
+    if let Err(error) = validate_signed_tx_xdr(signed_tx_xdr) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(SubmitTxResponse {
+                success: false,
+                hash: None,
+                status: None,
+                error: Some(error),
+            }),
+        );
+    }
 
+    // Fast return: enqueue only. Clients poll `/api/v1/tx_status` (or balance) for
+    // inclusion. Do not retry TRY_AGAIN_LATER here: the caller owns retry policy
+    // and may decide whether the signed transaction is still fresh enough.
+    match state.rpc.send_transaction(signed_tx_xdr).await {
+            Ok(result) => {
                 let accepted_status = result.status == "PENDING" || result.status == "DUPLICATE";
                 let accepted = accepted_status && !result.hash.is_empty();
                 let response_status = if accepted {
@@ -1464,19 +1489,16 @@ pub async fn submit_tx(State(state): State<AppState>, Json(body): Json<SubmitTxR
                     }),
                 );
             }
-            Err(e) => {
-                return (
-                    StatusCode::BAD_GATEWAY,
-                    Json(SubmitTxResponse {
-                        success: false,
-                        hash: None,
-                        status: None,
-                        error: Some(e.to_string()),
-                    }),
-                );
-            }
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(SubmitTxResponse {
+                    success: false,
+                    hash: None,
+                    status: None,
+                    error: Some(e.to_string()),
+                }),
+            ),
         }
-    }
 }
 
 #[derive(Deserialize)]
@@ -2173,5 +2195,26 @@ mod classic_dest_min_tests {
             ))
         );
         assert_eq!(parse_expert_asset_field("native"), None);
+    }
+}
+
+#[cfg(test)]
+mod submit_tx_validation_tests {
+    use super::validate_signed_tx_xdr;
+
+    #[test]
+    fn rejects_invalid_xdr_before_rpc() {
+        assert_eq!(
+            validate_signed_tx_xdr("not-xdr").unwrap_err(),
+            "signed_tx_xdr is not valid TransactionEnvelope XDR"
+        );
+    }
+
+    #[test]
+    fn rejects_oversized_xdr_before_decode() {
+        let oversized = "A".repeat(super::MAX_SIGNED_TX_XDR_BYTES + 1);
+        assert!(validate_signed_tx_xdr(&oversized)
+            .unwrap_err()
+            .contains("exceeds"));
     }
 }

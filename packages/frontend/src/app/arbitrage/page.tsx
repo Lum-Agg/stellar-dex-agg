@@ -30,6 +30,16 @@ interface StatsPayload {
   daily: DailyStats[];
 }
 
+interface DailyProfit {
+  day: string;
+  xlm: bigint;
+  usdc: bigint;
+  xlmTx: number;
+  usdcTx: number;
+}
+
+type ProfitRange = '30D' | '90D' | 'ALL';
+
 interface RoundTripItem {
   tx_hash: string;
   ledger: number;
@@ -127,6 +137,12 @@ function formatSurplusSigned(raw: string | number | bigint, symbol: string): str
   return `${neg ? '' : '+'}${formatted} ${symbol}`;
 }
 
+function formatDay(day: string): string {
+  const date = new Date(`${day}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return day;
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
 export default function ArbitragePage() {
   const tokens = useTokenList();
   const [stats, setStats] = useState<StatsPayload | null>(null);
@@ -135,6 +151,9 @@ export default function ArbitragePage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [profitRange, setProfitRange] = useState<ProfitRange>('30D');
+  const [showDailyTable, setShowDailyTable] = useState(false);
+  const [hoveredProfitDay, setHoveredProfitDay] = useState<string | null>(null);
   const tokenLabels = useMemo(
     () => new Map(tokens.map((token) => [token.id, token.symbol])),
     [tokens],
@@ -230,6 +249,45 @@ export default function ArbitragePage() {
       daySpan,
     };
   }, [stats]);
+
+  const dailyProfit = useMemo<DailyProfit[]>(() => {
+    if (!stats) return [];
+    return stats.daily
+      .map((day) => {
+        let xlm = BigInt(0);
+        let usdc = BigInt(0);
+        let xlmTx = 0;
+        let usdcTx = 0;
+        for (const row of day.round_trip_by_token ?? []) {
+          const surplus = toRawBigInt(row.gross_surplus);
+          if (surplus == null) continue;
+          if (row.base_token === XLM_SAC) {
+            xlm += surplus;
+            xlmTx += row.tx_count;
+          } else if (row.base_token === USDC_SAC) {
+            usdc += surplus;
+            usdcTx += row.tx_count;
+          }
+        }
+        return { day: day.day, xlm, usdc, xlmTx, usdcTx };
+      })
+      .filter((day) => day.xlm !== BigInt(0) || day.usdc !== BigInt(0));
+  }, [stats]);
+
+  const visibleDailyProfit = useMemo(() => {
+    if (profitRange === 'ALL') return dailyProfit;
+    const days = profitRange === '30D' ? 30 : 90;
+    return dailyProfit.slice(-days);
+  }, [dailyProfit, profitRange]);
+
+  const chartMax = useMemo(() => {
+    const zero = BigInt(0);
+    const values = visibleDailyProfit.flatMap((day) => [
+      day.xlm < zero ? -day.xlm : day.xlm,
+      day.usdc < zero ? -day.usdc : day.usdc,
+    ]);
+    return values.reduce((max, value) => (value > max ? value : max), BigInt(1));
+  }, [visibleDailyProfit]);
 
   async function loadMore() {
     if (!nextCursor || loadingMore) return;
@@ -342,6 +400,160 @@ export default function ArbitragePage() {
           </div>
         </div>
       )}
+
+      <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/60 overflow-hidden">
+        <div className="px-4 sm:px-5 pt-4 pb-3 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2">
+          <div>
+            <h2 className="text-[15px] font-medium text-[var(--text-primary)]">
+              Daily gross surplus
+            </h2>
+            <p className="text-[12px] text-[var(--text-muted)] mt-0.5">
+              Successful round trips · gross surplus before network fees
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 text-[11px] text-[var(--text-muted)]">
+            <div className="flex items-center rounded-lg border border-[var(--border)] bg-[var(--bg-0)]/50 p-0.5">
+              {(['30D', '90D', 'ALL'] as const).map((range) => (
+                <button
+                  key={range}
+                  type="button"
+                  onClick={() => setProfitRange(range)}
+                  className={`rounded-md px-2 py-1 transition-colors ${
+                    profitRange === range
+                      ? 'bg-[var(--surface-raised)] text-[var(--text-primary)]'
+                      : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
+                  }`}
+                >
+                  {range === 'ALL' ? 'All' : range}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="inline-flex items-center gap-1.5">
+                <i className="h-2 w-2 rounded-full bg-teal-300" />
+                XLM
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <i className="h-2 w-2 rounded-full bg-sky-300" />
+                USDC
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {dailyProfit.length === 0 ? (
+          <p className="border-t border-[var(--border)] px-4 sm:px-5 py-5 text-[13px] text-[var(--text-muted)]">
+            No daily surplus has been indexed yet.
+          </p>
+        ) : (
+          <>
+            <div className="border-t border-[var(--border)] px-4 sm:px-5 pt-5 pb-4">
+              <div className="flex items-end gap-2 sm:gap-3 h-44">
+                {visibleDailyProfit.map((day) => {
+                  const zero = BigInt(0);
+                  const xlmHeight = Number(
+                    ((day.xlm < zero ? -day.xlm : day.xlm) * BigInt(100)) / chartMax,
+                  );
+                  const usdcHeight = Number(
+                    ((day.usdc < zero ? -day.usdc : day.usdc) * BigInt(100)) / chartMax,
+                  );
+                  return (
+                    <div
+                      key={day.day}
+                      className="relative min-w-0 flex-1 h-full flex flex-col justify-end gap-2 group"
+                      onMouseEnter={() => setHoveredProfitDay(day.day)}
+                      onMouseLeave={() => setHoveredProfitDay(null)}
+                    >
+                      {hoveredProfitDay === day.day && (
+                        <div className="pointer-events-none absolute bottom-8 left-1/2 z-10 w-36 -translate-x-1/2 rounded-lg border border-[var(--border-strong)] bg-[var(--surface-raised)] px-3 py-2 text-[11px] shadow-xl">
+                          <div className="font-medium text-[var(--text-primary)]">{day.day}</div>
+                          <div className="mt-1 flex justify-between gap-3 text-teal-200">
+                            <span>XLM</span>
+                            <span className="tabular-nums">
+                              {formatSurplusSigned(day.xlm, 'XLM')}
+                            </span>
+                          </div>
+                          <div className="flex justify-between gap-3 text-sky-200">
+                            <span>USDC</span>
+                            <span className="tabular-nums">
+                              {formatSurplusSigned(day.usdc, 'USDC')}
+                            </span>
+                          </div>
+                          <div className="mt-1 border-t border-[var(--border)] pt-1 text-[var(--text-muted)]">
+                            {day.xlmTx + day.usdcTx} round trips
+                          </div>
+                        </div>
+                      )}
+                      <div className="flex-1 flex items-end justify-center gap-1">
+                        <div
+                          className="w-full max-w-5 rounded-t bg-teal-300/85 transition-all group-hover:bg-teal-200"
+                          style={{
+                            height: `${Math.max(xlmHeight, day.xlm !== BigInt(0) ? 3 : 0)}%`,
+                          }}
+                          title={`${day.day}: ${formatSurplusSigned(day.xlm, 'XLM')}`}
+                        />
+                        <div
+                          className="w-full max-w-5 rounded-t bg-sky-300/85 transition-all group-hover:bg-sky-200"
+                          style={{
+                            height: `${Math.max(usdcHeight, day.usdc !== BigInt(0) ? 3 : 0)}%`,
+                          }}
+                          title={`${day.day}: ${formatSurplusSigned(day.usdc, 'USDC')}`}
+                        />
+                      </div>
+                      <span className="truncate text-center text-[10px] text-[var(--text-muted)]">
+                        {formatDay(day.day)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="border-t border-[var(--border)]">
+              <button
+                type="button"
+                onClick={() => setShowDailyTable((shown) => !shown)}
+                className="flex w-full items-center justify-between px-4 sm:px-5 py-3 text-left text-[12px] text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
+                aria-expanded={showDailyTable}
+              >
+                <span>{showDailyTable ? 'Hide daily table' : 'Show daily table'}</span>
+                <span aria-hidden="true">{showDailyTable ? '⌃' : '⌄'}</span>
+              </button>
+            </div>
+            {showDailyTable && (
+              <div className="overflow-x-auto border-t border-[var(--border)]">
+                <table className="w-full text-[12px] text-left">
+                  <thead className="bg-[var(--bg-0)]/50 text-[var(--text-muted)]">
+                    <tr>
+                      <th className="px-4 py-2.5 font-medium">Day (UTC)</th>
+                      <th className="px-4 py-2.5 font-medium text-right">XLM surplus</th>
+                      <th className="px-4 py-2.5 font-medium text-right">USDC surplus</th>
+                      <th className="px-4 py-2.5 font-medium text-right">Round trips</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border)]">
+                    {[...visibleDailyProfit].reverse().map((day) => (
+                      <tr key={day.day} className="text-[var(--text-secondary)]">
+                        <td className="px-4 py-2.5 whitespace-nowrap text-[var(--text-muted)]">
+                          {day.day}
+                        </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap text-teal-200">
+                          {formatSurplusSigned(day.xlm, 'XLM')}
+                        </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap text-sky-200">
+                          {formatSurplusSigned(day.usdc, 'USDC')}
+                        </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap">
+                          {(day.xlmTx + day.usdcTx).toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+      </section>
 
       <section className="rounded-xl border border-teal-400/20 bg-[linear-gradient(115deg,rgba(45,212,191,0.08),rgba(15,23,42,0.18))] px-4 sm:px-5 py-4">
         <h2 className="text-[15px] font-medium text-[var(--text-primary)]">How it works</h2>

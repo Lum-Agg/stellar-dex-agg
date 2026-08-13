@@ -25,7 +25,11 @@ use {
     rate_limit::RateLimitState,
     state::AppState,
     std::{net::SocketAddr, path::PathBuf},
-    tower_http::{cors::CorsLayer, services::ServeDir},
+    tower_http::{
+        cors::CorsLayer,
+        limit::RequestBodyLimitLayer,
+        services::ServeDir,
+    },
     tracing::info,
 };
 
@@ -65,6 +69,9 @@ fn build_router(app_state: AppState, rate_limit: RateLimitState, logo_dir: PathB
     Router::new()
         .merge(api)
         .nest_service("/logos", ServeDir::new(logo_dir))
+        // Signed Stellar transactions are small; reject oversized JSON before
+        // deserialization or forwarding it to the upstream RPC.
+        .layer(RequestBodyLimitLayer::new(128 * 1024))
         .layer(CorsLayer::permissive())
 }
 
