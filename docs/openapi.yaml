@@ -912,6 +912,20 @@ components:
                         gross_surplus_usd:
                           type: number
                           nullable: true
+                  round_trip_by_bridge:
+                    type: array
+                    description: Successful round trips grouped by intermediary bridge token
+                    items:
+                      type: object
+                      properties:
+                        bridge_token:
+                          type: string
+                        tx_count:
+                          type: integer
+                        amount_in:
+                          type: string
+                        gross_surplus:
+                          type: string
                   by_token:
                     type: array
                     description: Entry notional grouped by invocation token_in

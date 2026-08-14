@@ -109,6 +109,11 @@ CONFIG=./lumagg-aggregator.toml
 
 - `export-daily` maps to planned dashboard cards.
 - **`GET /api/v1/stats`** on api-server when `[indexer]` is configured (same DB file).
+
+The daily JSON export also includes `round_trip_by_bridge`, an additive
+breakdown of successful round trips by intermediary bridge token. Existing
+`daily[].by_token[].amount_in` semantics are unchanged for external consumers
+such as DefiLlama.
 - Public UI: https://lumagg.xyz/stats
 - Sample export: [sample-indexer-export.json](./sample-indexer-export.json)
 

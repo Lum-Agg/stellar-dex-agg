@@ -41,6 +41,7 @@ impl Collector<BridgeScanItem> for BridgeCollector {
                             continue;
                         }
                         stats.routes_evaluated.fetch_add(1, Ordering::Relaxed);
+                        stats.record_bridge_evaluated(&bridge.canonical());
                         debug!(
                             base = %base.canonical(),
                             bridge = %bridge.canonical(),

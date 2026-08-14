@@ -139,6 +139,14 @@ export interface DailyStats {
   failedCount: number;
   byFunction?: Record<string, number>;
   byDex?: Record<string, number>;
+  roundTripByBridge?: RoundTripBridgeStats[];
+}
+
+export interface RoundTripBridgeStats {
+  bridgeToken: string;
+  txCount: number;
+  amountIn: string;
+  grossSurplus: string;
 }
 
 export interface StatsResult {
@@ -775,6 +783,14 @@ function mapDailyStats(raw: Record<string, unknown>): DailyStats {
     failedCount: Number(raw.failed_count ?? 0),
     byFunction: raw.by_function as Record<string, number> | undefined,
     byDex: raw.by_dex as Record<string, number> | undefined,
+    roundTripByBridge: Array.isArray(raw.round_trip_by_bridge)
+      ? raw.round_trip_by_bridge.map((row) => ({
+          bridgeToken: String((row as Record<string, unknown>).bridge_token ?? ""),
+          txCount: Number((row as Record<string, unknown>).tx_count ?? 0),
+          amountIn: String((row as Record<string, unknown>).amount_in ?? "0"),
+          grossSurplus: String((row as Record<string, unknown>).gross_surplus ?? "0"),
+        }))
+      : undefined,
   };
 }
 

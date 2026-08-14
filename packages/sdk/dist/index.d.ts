@@ -127,6 +127,13 @@ export interface DailyStats {
     failedCount: number;
     byFunction?: Record<string, number>;
     byDex?: Record<string, number>;
+    roundTripByBridge?: RoundTripBridgeStats[];
+}
+export interface RoundTripBridgeStats {
+    bridgeToken: string;
+    txCount: number;
+    amountIn: string;
+    grossSurplus: string;
 }
 export interface StatsResult {
     dbPath: string;

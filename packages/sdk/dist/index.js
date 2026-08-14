@@ -491,6 +491,14 @@ function mapDailyStats(raw) {
         failedCount: Number(raw.failed_count ?? 0),
         byFunction: raw.by_function,
         byDex: raw.by_dex,
+        roundTripByBridge: Array.isArray(raw.round_trip_by_bridge)
+            ? raw.round_trip_by_bridge.map((row) => ({
+                bridgeToken: String(row.bridge_token ?? ""),
+                txCount: Number(row.tx_count ?? 0),
+                amountIn: String(row.amount_in ?? "0"),
+                grossSurplus: String(row.gross_surplus ?? "0"),
+            }))
+            : undefined,
     };
 }
 function mapSubRoute(raw) {

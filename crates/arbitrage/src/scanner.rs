@@ -44,6 +44,7 @@ pub async fn evaluate_bridge_pair(
     bridge: &TokenId,
     stats: &ArbStats,
 ) -> Result<Option<ArbOpportunity>> {
+    let bridge_id = bridge.canonical();
     let max_in = resolve_max_amount_in(ctx, &base.canonical()).await;
     if max_in < ctx.config.min_amount_in {
         return Ok(None);
@@ -53,6 +54,7 @@ pub async fn evaluate_bridge_pair(
         Ok(probe) => probe,
         Err(error) => {
             stats.quote_failed.fetch_add(1, Ordering::Relaxed);
+            stats.record_bridge_quote_failed(&bridge_id);
             debug!(
                 base = %base.canonical(),
                 bridge = %bridge.canonical(),
@@ -84,10 +86,12 @@ pub async fn evaluate_bridge_pair(
     let profit_bps = compute_profit_bps(quote.amount_in, quote.amount_out);
     if profit < ctx.config.min_profit_for(&base.canonical()) {
         stats.unprofitable_quotes.fetch_add(1, Ordering::Relaxed);
+        stats.record_bridge_unprofitable(&bridge_id);
         return Ok(None);
     }
 
     stats.opportunities.fetch_add(1, Ordering::Relaxed);
+    stats.record_bridge_opportunity(&bridge_id);
 
     let route_label = quote.route_label();
     info!(

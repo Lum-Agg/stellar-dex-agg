@@ -7,7 +7,11 @@
 use {
     crate::runtime::SharedRuntime,
     std::{
-        sync::atomic::{AtomicI64, AtomicU64, Ordering},
+        collections::BTreeMap,
+        sync::{
+            atomic::{AtomicI64, AtomicU64, Ordering},
+            Mutex,
+        },
         time::Duration,
     },
     tracing::info,
@@ -15,6 +19,9 @@ use {
 
 #[derive(Debug, Default)]
 pub struct ArbStats {
+    /// Per-bridge funnel counters. Kept separate from the scalar snapshot so
+    /// the hot-path reporter remains cheap and backwards-compatible.
+    pub bridge: Mutex<BTreeMap<String, BridgeStats>>,
     pub routes_evaluated: AtomicU64,
     pub quote_failed: AtomicU64,
     pub unprofitable_quotes: AtomicU64,
@@ -41,7 +48,61 @@ pub struct ArbStats {
     pub txs_dedup_skipped: AtomicU64,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BridgeStats {
+    pub evaluated: u64,
+    pub quote_failed: u64,
+    pub unprofitable_quotes: u64,
+    pub opportunities: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgeStatsSnapshot {
+    pub bridge: String,
+    pub evaluated: u64,
+    pub quote_failed: u64,
+    pub unprofitable_quotes: u64,
+    pub opportunities: u64,
+}
+
 impl ArbStats {
+    fn with_bridge(&self, bridge: &str, update: impl FnOnce(&mut BridgeStats)) {
+        let mut by_bridge = self.bridge.lock().expect("arb bridge stats mutex poisoned");
+        update(by_bridge.entry(bridge.to_owned()).or_default());
+    }
+
+    pub fn record_bridge_evaluated(&self, bridge: &str) {
+        self.with_bridge(bridge, |stats| stats.evaluated = stats.evaluated.saturating_add(1));
+    }
+
+    pub fn record_bridge_quote_failed(&self, bridge: &str) {
+        self.with_bridge(bridge, |stats| stats.quote_failed = stats.quote_failed.saturating_add(1));
+    }
+
+    pub fn record_bridge_unprofitable(&self, bridge: &str) {
+        self.with_bridge(bridge, |stats| {
+            stats.unprofitable_quotes = stats.unprofitable_quotes.saturating_add(1)
+        });
+    }
+
+    pub fn record_bridge_opportunity(&self, bridge: &str) {
+        self.with_bridge(bridge, |stats| stats.opportunities = stats.opportunities.saturating_add(1));
+    }
+
+    pub fn bridge_breakdown(&self) -> Vec<BridgeStatsSnapshot> {
+        let by_bridge = self.bridge.lock().expect("arb bridge stats mutex poisoned");
+        by_bridge
+            .iter()
+            .map(|(bridge, stats)| BridgeStatsSnapshot {
+                bridge: bridge.clone(),
+                evaluated: stats.evaluated,
+                quote_failed: stats.quote_failed,
+                unprofitable_quotes: stats.unprofitable_quotes,
+                opportunities: stats.opportunities,
+            })
+            .collect()
+    }
+
     pub fn snapshot(&self) -> ArbStatsSnapshot {
         let gap_samples = self.quote_sim_gap_samples.load(Ordering::Relaxed);
         let gap_sum = self.quote_sim_gap_bps_sum.load(Ordering::Relaxed);
@@ -352,6 +413,7 @@ pub fn spawn_stats_reporter(runtime: SharedRuntime, interval: Duration) {
                 delta_failed = delta.txs_failed,
                 delta_dedup_skipped = delta.txs_dedup_skipped,
                 delta_quote_sim_gap_samples = delta.quote_sim_gap_samples,
+                bridge_breakdown = ?runtime.stats.bridge_breakdown(),
                 "arb stats summary"
             );
         }
@@ -475,5 +537,34 @@ mod tests {
 
         previous.opportunities = 0;
         assert_eq!(current.delta_since(&previous).opportunities, 15);
+    }
+
+    #[test]
+    fn bridge_breakdown_tracks_each_bridge() {
+        let stats = ArbStats::default();
+        stats.record_bridge_evaluated("A");
+        stats.record_bridge_evaluated("A");
+        stats.record_bridge_quote_failed("A");
+        stats.record_bridge_opportunity("B");
+
+        assert_eq!(
+            stats.bridge_breakdown(),
+            vec![
+                BridgeStatsSnapshot {
+                    bridge: "A".into(),
+                    evaluated: 2,
+                    quote_failed: 1,
+                    unprofitable_quotes: 0,
+                    opportunities: 0,
+                },
+                BridgeStatsSnapshot {
+                    bridge: "B".into(),
+                    evaluated: 0,
+                    quote_failed: 0,
+                    unprofitable_quotes: 0,
+                    opportunities: 1,
+                },
+            ]
+        );
     }
 }

@@ -6,7 +6,7 @@ use {
         prepare::fetch_account_native_balance,
         profit::{format_xlm4, format_xlm4_u, ProfitWindow, RecentTx},
         runtime::ArbRuntime,
-        stats::QuietWindowTracker,
+        stats::{BridgeStatsSnapshot, QuietWindowTracker},
         vault::fetch_token_balance_stroops,
     },
     lumagg_alerts::TelegramAlerter,
@@ -90,6 +90,7 @@ async fn build_profit_report(runtime: &ArbRuntime) -> anyhow::Result<String> {
     let vault_xlm = fetch_vault_xlm(runtime).await;
     let caller_lines = fetch_caller_balances(runtime).await;
     let funnel = runtime.stats.snapshot();
+    let bridge_breakdown = runtime.stats.bridge_breakdown();
     Ok(format_report(
         vault_xlm,
         &caller_lines,
@@ -97,6 +98,7 @@ async fn build_profit_report(runtime: &ArbRuntime) -> anyhow::Result<String> {
         &session,
         &recent,
         &funnel,
+        &bridge_breakdown,
     ))
 }
 
@@ -156,6 +158,35 @@ fn format_recent(recent: &[RecentTx]) -> String {
     lines.join("\n")
 }
 
+fn format_bridge_breakdown(rows: &[BridgeStatsSnapshot]) -> String {
+    let mut ranked: Vec<_> = rows.iter().filter(|row| row.evaluated > 0).collect();
+    ranked.sort_by(|a, b| {
+        b.opportunities
+            .cmp(&a.opportunities)
+            .then_with(|| b.evaluated.cmp(&a.evaluated))
+            .then_with(|| a.bridge.cmp(&b.bridge))
+    });
+
+    if ranked.is_empty() {
+        return "🧭 Bridge funnel: (no scans yet)".to_string();
+    }
+
+    let mut lines = vec!["🧭 Bridge funnel (top 6):".to_string()];
+    for row in ranked.into_iter().take(6) {
+        let quote_fail_bps = row.quote_failed.saturating_mul(10_000) / row.evaluated.max(1);
+        lines.push(format!(
+            "· {}: eval={} opp={} unprof={} quote_fail={} ({} bps)",
+            row.bridge,
+            row.evaluated,
+            row.opportunities,
+            row.unprofitable_quotes,
+            row.quote_failed,
+            quote_fail_bps,
+        ));
+    }
+    lines.join("\n")
+}
+
 pub fn format_report(
     vault_xlm: Option<u128>,
     callers: &[(usize, String, Option<u128>)],
@@ -163,6 +194,7 @@ pub fn format_report(
     session: &ProfitWindow,
     recent: &[RecentTx],
     funnel: &crate::stats::ArbStatsSnapshot,
+    bridge_breakdown: &[BridgeStatsSnapshot],
 ) -> String {
     let vault_line = match vault_xlm {
         Some(v) => format!("🏦 Vault XLM: `{}` XLM", format_xlm4_u(v)),
@@ -221,11 +253,14 @@ pub fn format_report(
          \n\
          {funnel_block}\n\
          \n\
+         {}\n\
+         \n\
          {caller_block}\n\
          ✅ Grand Total: `{}` XLM",
         format_window("⏱ Last hour:", hour),
         format_window("📈 Session:", session),
         format_recent(recent),
+        format_bridge_breakdown(bridge_breakdown),
         format_xlm4_u(grand),
     )
 }
@@ -283,6 +318,7 @@ mod tests {
             &session,
             &recent,
             &empty_funnel(),
+            &[],
         );
         assert!(msg.contains("LumAgg Arb Monitor"));
         assert!(msg.contains("Last hour"));

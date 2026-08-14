@@ -306,7 +306,10 @@ impl CometAdapter {
 
     /// One graph edge per unordered token pair with liquidity in the pool.
     pub fn trading_pairs_from_state(pool_address: &str, state: &CometPoolState) -> Vec<AdapterTradingPair> {
-        let tokens: Vec<String> = state.records.keys().cloned().collect();
+        // HashMap iteration order is intentionally nondeterministic. Sort the
+        // token ids so pair orientation and reserve_a/reserve_b are stable.
+        let mut tokens: Vec<String> = state.records.keys().cloned().collect();
+        tokens.sort();
         let fee_bps = (state.swap_fee / 1000) as u32;
         let mut pairs = Vec::new();
         for i in 0..tokens.len() {
@@ -538,8 +541,10 @@ mod tests {
         let pairs = CometAdapter::trading_pairs_from_state(pool, &state);
         assert_eq!(pairs.len(), 1);
         assert_eq!(pairs[0].pool_address, pool);
-        assert_eq!(pairs[0].reserve_a, Some(1_000_000));
-        assert_eq!(pairs[0].reserve_b, Some(2_000_000));
+        assert_eq!(pairs[0].token_a.canonical(), "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75");
+        assert_eq!(pairs[0].token_b.canonical(), "CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV");
+        assert_eq!(pairs[0].reserve_a, Some(2_000_000));
+        assert_eq!(pairs[0].reserve_b, Some(1_000_000));
         assert_eq!(pairs[0].fee_bps, 30);
     }
 

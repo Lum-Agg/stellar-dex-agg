@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import Link from 'next/link';
+import { displayTokenSymbol } from '@/lib/tokenDisplay';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
 
@@ -26,6 +27,13 @@ interface RoundTripSurplus {
   gross_surplus_usd?: number | null;
 }
 
+interface RoundTripBridgeStats {
+  bridge_token: string;
+  tx_count: number;
+  amount_in: string | number;
+  gross_surplus: string | number;
+}
+
 interface DailyStats {
   day: string;
   tx_count: number;
@@ -43,6 +51,7 @@ interface DailyStats {
   by_dex: Record<string, number>;
   round_trip_count?: number;
   round_trip_by_token?: RoundTripSurplus[];
+  round_trip_by_bridge?: RoundTripBridgeStats[];
   round_trip_gross_surplus_usd?: number | null;
   split_swap_count: number;
   success_count: number;
@@ -174,6 +183,7 @@ function shouldShowAxisLabel(index: number, n: number): boolean {
 
 export default function StatsPage() {
   const [data, setData] = useState<StatsPayload | null>(null);
+  const [tokenLabels, setTokenLabels] = useState<Map<string, string>>(new Map());
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [chartRange, setChartRange] = useState<ChartRange>(30);
@@ -200,6 +210,27 @@ export default function StatsPage() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${API_URL}/api/v1/tokens`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((payload) => {
+        if (cancelled || !Array.isArray(payload.tokens)) return;
+        const labels = new Map<string, string>();
+        for (const token of payload.tokens) {
+          if (!token || typeof token.id !== 'string' || typeof token.symbol !== 'string') continue;
+          labels.set(token.id, displayTokenSymbol(token.symbol, token.id));
+        }
+        setTokenLabels(labels);
+      })
+      .catch(() => {
+        // Address fallback remains useful when token metadata is unavailable.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const derived = useMemo(() => {
     if (!data) return null;
     const days = [...data.daily].sort((a, b) => a.day.localeCompare(b.day));
@@ -215,6 +246,7 @@ export default function StatsPage() {
     let routedPricedLegs = 0;
     const dexTotals: Record<string, number> = {};
     const fnTotals: Record<string, number> = {};
+    const bridgeTotals: Record<string, number> = {};
 
     for (const d of days) {
       txs += d.tx_count;
@@ -241,6 +273,10 @@ export default function StatsPage() {
       }
       for (const [k, v] of Object.entries(d.by_function)) {
         fnTotals[k] = (fnTotals[k] || 0) + v;
+      }
+      for (const row of d.round_trip_by_bridge ?? []) {
+        if (!row.bridge_token) continue;
+        bridgeTotals[row.bridge_token] = (bridgeTotals[row.bridge_token] || 0) + row.tx_count;
       }
     }
 
@@ -271,6 +307,7 @@ export default function StatsPage() {
       venuesHit,
       dexTotals,
       fnTotals,
+      bridgeTotals,
       maxVol,
       maxTx,
     };
@@ -494,7 +531,7 @@ export default function StatsPage() {
             </div>
           </section>
 
-          <div className="grid lg:grid-cols-2 gap-4">
+          <div className="grid lg:grid-cols-3 gap-4">
             <SharePanel
               title="DEX legs"
               subtitle="Hop counts via LumAgg (not full-market volume)"
@@ -510,8 +547,15 @@ export default function StatsPage() {
                   ? '#3dd6c6'
                   : name.includes('split')
                     ? '#22d3ee'
-                    : dexColor(name, i)
+                : dexColor(name, i)
               }
+            />
+            <SharePanel
+              title="Arbitrage bridges"
+              subtitle="Successful round trips by intermediary token"
+              entries={Object.entries(derived.bridgeTotals).sort((a, b) => b[1] - a[1])}
+              colorFn={() => '#f59e0b'}
+              displayName={(address) => tokenLabels.get(address) ?? shortTokenAddress(address)}
             />
           </div>
 
@@ -643,16 +687,23 @@ function OpsItem({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
+function shortTokenAddress(address: string): string {
+  if (address.length <= 12) return address;
+  return `${address.slice(0, 5)}…${address.slice(-4)}`;
+}
+
 function SharePanel({
   title,
   subtitle,
   entries,
   colorFn,
+  displayName,
 }: {
   title: string;
   subtitle: string;
   entries: [string, number][];
   colorFn: (name: string, index: number) => string;
+  displayName?: (name: string) => string;
 }) {
   const totalCount = entries.reduce((s, [, n]) => s + n, 0);
   const total = totalCount || 1;
@@ -676,9 +727,14 @@ function SharePanel({
             const pct = (count / total) * 100;
             const color = colorFn(name, i);
             return (
-              <li key={name}>
-                <div className="flex items-center justify-between gap-2 text-[12px] mb-1.5">
-                  <span className="text-[var(--text-secondary)] font-medium truncate">{name}</span>
+          <li key={name}>
+            <div className="flex items-center justify-between gap-2 text-[12px] mb-1.5">
+                  <span
+                    className="text-[var(--text-secondary)] font-medium truncate"
+                    title={name}
+                  >
+                    {displayName ? displayName(name) : name}
+                  </span>
                   <span className="text-[var(--text-muted)] tabular-nums shrink-0">
                     {count.toLocaleString()} · {pct.toFixed(1)}%
                   </span>

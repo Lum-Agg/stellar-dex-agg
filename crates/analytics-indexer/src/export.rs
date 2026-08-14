@@ -41,6 +41,14 @@ pub struct RoundTripSurplus {
     pub gross_surplus_usd: Option<f64>,
 }
 
+#[derive(Debug, Serialize, Clone)]
+pub struct RoundTripBridgeStats {
+    pub bridge_token: String,
+    pub tx_count: u64,
+    pub amount_in: i128,
+    pub gross_surplus: i128,
+}
+
 #[derive(Debug, Serialize)]
 pub struct DailyStats {
     pub day: String,
@@ -70,6 +78,8 @@ pub struct DailyStats {
     /// Gross round-trip surplus by base token. This is not net P&L because
     /// transaction fees are not available from aggregator events.
     pub round_trip_by_token: Vec<RoundTripSurplus>,
+    /// Successful round trips grouped by intermediary bridge token.
+    pub round_trip_by_bridge: Vec<RoundTripBridgeStats>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub round_trip_gross_surplus_usd: Option<f64>,
     pub split_swap_count: u64,
@@ -299,6 +309,36 @@ fn export_range(store: &IndexStore, start_ts: i64, end_ts: i64, day_label: &str)
     }
     let round_trip_count = round_trip_by_token.iter().map(|row| row.tx_count).sum();
 
+    let mut round_trip_by_bridge = Vec::new();
+    {
+        let mut stmt = store.conn().prepare(
+            "SELECT COALESCE(bridge_token, '') AS bridge,
+                    COUNT(*),
+                    COALESCE(SUM(CAST(amount_in AS INTEGER)), 0),
+                    COALESCE(SUM(
+                      CAST(amount_out AS INTEGER) - CAST(amount_in AS INTEGER)
+                    ), 0)
+             FROM swap_invocations
+             WHERE created_at >= ?1 AND created_at < ?2
+               AND function_name = 'round_trip_swap'
+               AND status = 'SUCCESS'
+               AND amount_out IS NOT NULL
+             GROUP BY bridge
+             ORDER BY 4 DESC",
+        )?;
+        let rows = stmt.query_map(params![start_ts, end_ts], |row| {
+            Ok(RoundTripBridgeStats {
+                bridge_token: row.get(0)?,
+                tx_count: row.get::<_, i64>(1)? as u64,
+                amount_in: row.get::<_, i64>(2)? as i128,
+                gross_surplus: row.get::<_, i64>(3)? as i128,
+            })
+        })?;
+        for row in rows {
+            round_trip_by_bridge.push(row?);
+        }
+    }
+
     Ok(DailyStats {
         day: day_label.to_string(),
         tx_count: tx_count as u64,
@@ -314,6 +354,7 @@ fn export_range(store: &IndexStore, start_ts: i64, end_ts: i64, day_label: &str)
         by_dex,
         round_trip_count,
         round_trip_by_token,
+        round_trip_by_bridge,
         round_trip_gross_surplus_usd: None,
         split_swap_count: split_swap_count as u64,
         success_count: success_count as u64,
@@ -376,6 +417,9 @@ mod tests {
         assert_eq!(stats.round_trip_by_token.len(), 1);
         assert_eq!(stats.round_trip_by_token[0].amount_in, 3_000);
         assert_eq!(stats.round_trip_by_token[0].gross_surplus, 65);
+        assert_eq!(stats.round_trip_by_bridge.len(), 1);
+        assert_eq!(stats.round_trip_by_bridge[0].bridge_token, "BRIDGE");
+        assert_eq!(stats.round_trip_by_bridge[0].tx_count, 2);
     }
 
     #[test]
