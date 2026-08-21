@@ -125,4 +125,24 @@ impl RoundTripQuote {
             self.base.canonical()
         )
     }
+
+    pub fn venue_route_label(&self) -> String {
+        fn leg_label(leg: &LegQuote) -> String {
+            let mut venues = Vec::new();
+            for steps in &leg.step_sets {
+                for step in steps {
+                    if !venues.iter().any(|venue| venue == &step.dex_type) {
+                        venues.push(step.dex_type.clone());
+                    }
+                }
+            }
+            if venues.is_empty() {
+                "unknown".into()
+            } else {
+                venues.join("+")
+            }
+        }
+
+        format!("{} → {}", leg_label(&self.leg_out), leg_label(&self.leg_back))
+    }
 }

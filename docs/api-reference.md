@@ -19,6 +19,8 @@ Self-hosted deployments use the address configured by `LISTEN_ADDR`.
 | --- | --- | --- |
 | `GET` | `/api/v1/quote` | Find and quote a single, multi-hop, or split route |
 | `POST` | `/api/v1/build_tx` | Build an unsigned transaction XDR for a quote |
+| `POST` | `/api/v1/submit_tx` | Optional signed-XDR proxy to the configured Soroban RPC |
+| `GET` | `/api/v1/tx_status?hash=...` | Poll a submitted transaction |
 | `GET` | `/api/v1/tokens` | Return routable token metadata |
 | `GET` | `/api/v1/balances?account=G...` | Return account balances used by the UI |
 | `GET` | `/api/v1/health` | Process liveness |
@@ -37,7 +39,8 @@ The normal integration flow is:
 ```
 
 LumAgg never needs the user's secret key. `/build_tx` returns unsigned XDR;
-the user's wallet signs and submits it. See the [Integrator Guide](integrator-guide.md)
+the user's wallet signs and submits it. Direct submission to the wallet provider's
+Stellar RPC is preferred; `/submit_tx` is an optional convenience proxy. See the [Integrator Guide](integrator-guide.md)
 for request examples, amount units, slippage, maximum hops, maximum splits,
 errors, and partner API keys.
 

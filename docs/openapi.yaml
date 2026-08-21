@@ -619,7 +619,9 @@ paths:
       summary: Submit signed XDR (fast enqueue)
       description: |
         Proxies signed envelope to the server Soroban RPC and returns quickly
-        (`PENDING` / hash). Poll `GET /api/v1/tx_status` for inclusion.
+        (`PENDING` / hash). Poll `GET /api/v1/tx_status` for inclusion. The
+        request body is limited to 128 KiB and `signed_tx_xdr` is limited to
+        96 KiB. Only signed, non-V0, non-fee-bump transaction envelopes are accepted.
       requestBody:
         required: true
         content:
@@ -630,6 +632,7 @@ paths:
               properties:
                 signed_tx_xdr:
                   type: string
+                  maxLength: 98304
                   description: Base64 signed transaction envelope XDR
       responses:
         '200':
@@ -656,6 +659,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SubmitTxResponse'
+        '413':
+          description: Request body exceeds the API limit
   /api/v1/tx_status:
     get:
       tags: [tx]
@@ -1009,6 +1014,10 @@ components:
                   count:
                     type: integer
                     format: int64
+            unclassified_failed_count:
+              type: integer
+              format: int64
+              description: Failed round trips whose result XDR was unavailable or could not be classified.
             next_cursor:
               type: string
               nullable: true

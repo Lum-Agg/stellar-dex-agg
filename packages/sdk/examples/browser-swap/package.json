@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@lumagg/sdk": "file:../..",
-    "@stellar/freighter-api": "^3.0.0"
+    "@stellar/freighter-api": "^3.0.0",
+    "@stellar/stellar-sdk": "^13.3.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

@@ -21,7 +21,7 @@ namespaces and are tracked as `(order_kind, order_id)` to avoid collisions.
 | `KEEPER_CURSOR_PATH` | no | `keeper.cursor` | Atomic checkpoint containing the ledger cursor and open orders |
 | `KEEPER_DRY_RUN` | no | off | Set to `1` to quote and log only; never sign or submit |
 | `KEEPER_MAX_FILL` | no | — | Optional cap per fill (stroops) |
-| `KEEPER_RECLAIM` | no | off | **MVP skip:** when `1`, expired orders are logged but reclaim txs are not submitted |
+| `KEEPER_RECLAIM` | no | off | when `1`, submit permissionless reclaim transactions for expired Limit/DCA orders |
 
 \* `KEEPER_SECRET` is optional when `KEEPER_DRY_RUN=1` (dry-run never signs).
 
@@ -68,11 +68,12 @@ unset KEEPER_DRY_RUN
 cargo run -p limit-keeper --release
 ```
 
-## Reclaim (MVP)
+## Reclaim
 
-`KEEPER_RECLAIM=1` is recognized in config but **not implemented** in this MVP:
-expired orders are skipped and no `reclaim_expired` transaction is built or
-submitted. Run reclaim manually or wait for a follow-up slice if needed.
+`KEEPER_RECLAIM=1` enables permissionless reclaim transactions for orders whose
+expiry ledger has passed. Limit orders use `reclaim_expired`; DCA orders use
+`reclaim_expired_dca`. The keeper waits until the expiry ledger is strictly in
+the past and removes an order from its local book only after confirmation.
 
 ## Build & test
 

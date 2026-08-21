@@ -22,6 +22,8 @@ pub struct ArbStats {
     /// Per-bridge funnel counters. Kept separate from the scalar snapshot so
     /// the hot-path reporter remains cheap and backwards-compatible.
     pub bridge: Mutex<BTreeMap<String, BridgeStats>>,
+    /// Bounded diagnostic counts only; never used for route selection.
+    pub failed_routes: Mutex<BTreeMap<String, u64>>,
     pub routes_evaluated: AtomicU64,
     pub quote_failed: AtomicU64,
     pub unprofitable_quotes: AtomicU64,
@@ -108,6 +110,23 @@ impl ArbStats {
                 opportunities: stats.opportunities,
             })
             .collect()
+    }
+
+    pub fn record_failed_route(&self, route: &str) {
+        let mut routes = self.failed_routes.lock().expect("arb failure stats mutex poisoned");
+        if let Some(count) = routes.get_mut(route) {
+            *count = count.saturating_add(1);
+        } else if routes.len() < 64 {
+            routes.insert(route.to_owned(), 1);
+        }
+    }
+
+    pub fn failed_route_breakdown(&self, limit: usize) -> Vec<(String, u64)> {
+        let routes = self.failed_routes.lock().expect("arb failure stats mutex poisoned");
+        let mut rows: Vec<_> = routes.iter().map(|(route, count)| (route.clone(), *count)).collect();
+        rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        rows.truncate(limit);
+        rows
     }
 
     pub fn snapshot(&self) -> ArbStatsSnapshot {
@@ -430,6 +449,7 @@ pub fn spawn_stats_reporter(runtime: SharedRuntime, interval: Duration) {
                 delta_caller_busy = delta.caller_busy,
                 delta_quote_sim_gap_samples = delta.quote_sim_gap_samples,
                 bridge_breakdown = ?runtime.stats.bridge_breakdown(),
+                failed_route_breakdown = ?runtime.stats.failed_route_breakdown(5),
                 "arb stats summary"
             );
         }

@@ -42,9 +42,16 @@ fn transaction_from_prepared_xdr(unsigned_xdr: &str) -> Result<Transaction> {
 }
 
 /// Sign Soroban-prepared envelope XDR and broadcast.
-pub async fn sign_and_submit(rpc_url: &str, keypair: &ExecutorKeypair, unsigned_xdr: &str) -> Result<String> {
+pub async fn sign_and_submit(rpc_url: &str, keypair: &ExecutorKeypair, unsigned_xdr: &str) -> Result<(String, String)> {
+    use soroban_client::xdr::WriteXdr;
+
     let mut tx = transaction_from_prepared_xdr(unsigned_xdr)?;
     tx.sign(&[keypair.inner().clone()]);
+    let signed_xdr = tx
+        .to_envelope()
+        .map_err(|e| anyhow!("encode signed envelope: {}", e))?
+        .to_xdr_base64(stellar_baselib::xdr::Limits::none())
+        .map_err(|e| anyhow!("encode signed envelope XDR: {:?}", e))?;
 
     let server = rpc_server(rpc_url)?;
     let result = server
@@ -53,7 +60,7 @@ pub async fn sign_and_submit(rpc_url: &str, keypair: &ExecutorKeypair, unsigned_
         .map_err(|e| anyhow!("send_transaction: {:?}", e))?;
 
     match result.status {
-        SendTransactionStatus::Pending | SendTransactionStatus::Duplicate => Ok(result.hash),
+        SendTransactionStatus::Pending | SendTransactionStatus::Duplicate => Ok((result.hash, signed_xdr)),
         SendTransactionStatus::Error => {
             let detail = result
                 .to_error_result()
@@ -95,9 +102,34 @@ pub async fn poll_transaction(rpc_url: &str, hash: &str) -> Result<()> {
     Err(anyhow!("tx status poll timeout"))
 }
 
+/// Re-simulate a failed submission to recover the diagnostic event text that
+/// Soroban RPC does not include in `getTransaction` results. This is only
+/// called after an on-chain failure, never on the successful hot path.
+async fn diagnose_failed_submission(rpc_url: &str, signed_tx_xdr: &str) -> Option<String> {
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "simulateTransaction",
+        "params": { "transaction": signed_tx_xdr },
+    });
+    let response = reqwest::Client::new()
+        .post(rpc_url)
+        .json(&body)
+        .send()
+        .await
+        .ok()?
+        .json::<serde_json::Value>()
+        .await
+        .ok()?;
+    let error = response.pointer("/result/error").and_then(|v| v.as_str())?;
+    Some(error.chars().take(4_000).collect())
+}
+
 struct PollContext {
     hash: String,
+    signed_tx_xdr: String,
     route_label: String,
+    venue_route_label: String,
     amount_in: u128,
     simulated_amount_out: u128,
     estimated_fee_stroops: u128,
@@ -138,6 +170,7 @@ fn spawn_poll_outcome(rpc_url: String, ctx: PollContext, stats: Arc<ArbStats>, p
                     warn!(hash = %ctx.hash, "tx status not confirmed within poll window");
                     return;
                 }
+                stats.record_failed_route(&ctx.venue_route_label);
                 stats.txs_failed.fetch_add(1, Ordering::Relaxed);
                 profit.record_failed();
                 if let Some(ledger) = &ctx.submission_ledger {
@@ -145,7 +178,15 @@ fn spawn_poll_outcome(rpc_url: String, ctx: PollContext, stats: Arc<ArbStats>, p
                         warn!(hash = %ctx.hash, error = %update_error, "failed to update submission ledger");
                     }
                 }
-                error!(hash = %ctx.hash, route = %ctx.route_label, error = %e, "arb tx failed");
+                let replay_error = diagnose_failed_submission(&rpc_url, &ctx.signed_tx_xdr).await;
+                error!(
+                    hash = %ctx.hash,
+                    route = %ctx.route_label,
+                    venue_route = %ctx.venue_route_label,
+                    error = %e,
+                    replay_error = ?replay_error,
+                    "arb tx failed"
+                );
             }
         }
     });
@@ -168,7 +209,7 @@ pub async fn submit_prepared(
         ));
     }
 
-    let hash = sign_and_submit(rpc_url, keypair, &prepared.unsigned_tx_xdr).await?;
+    let (hash, signed_tx_xdr) = sign_and_submit(rpc_url, keypair, &prepared.unsigned_tx_xdr).await?;
     if let Some(ledger) = &submission_ledger {
         if let Err(e) = ledger.record_submitted(
             &hash,
@@ -197,7 +238,9 @@ pub async fn submit_prepared(
             rpc_url.to_string(),
             PollContext {
                 hash,
+                signed_tx_xdr,
                 route_label: prepared.route_label.clone(),
+                venue_route_label: prepared.venue_route_label.clone(),
                 amount_in: prepared.amount_in,
                 simulated_amount_out: prepared.simulated_amount_out,
                 estimated_fee_stroops: prepared.estimated_fee_stroops,

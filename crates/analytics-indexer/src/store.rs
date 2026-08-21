@@ -435,6 +435,21 @@ impl IndexStore {
         Ok(out)
     }
 
+    pub fn list_unclassified_failed_tx_hashes(&self) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT tx_hash FROM swap_invocations
+             WHERE function_name = 'round_trip_swap'
+               AND status = 'FAILED' AND failure_reason IS NULL
+             ORDER BY created_at ASC, tx_hash ASC",
+        )?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
     pub fn count_invocations(&self) -> Result<i64> {
         let count: i64 = self
             .conn

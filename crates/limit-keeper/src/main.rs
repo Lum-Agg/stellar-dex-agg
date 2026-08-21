@@ -111,16 +111,36 @@ async fn main() -> Result<()> {
         }
 
         for order in book.iter().cloned().collect::<Vec<_>>() {
-            if latest >= order.expires_ledger {
+            if latest > order.expires_ledger {
                 if config.reclaim {
-                    // Reclaim is intentionally not submitted in this MVP. It is
-                    // safe to enable only after a dedicated reclaim transaction
-                    // path is operationally tested.
-                    info!(
-                        order_id = order.order_id,
-                        "expired order reclaim requested; skipping in MVP"
-                    );
+                    if config.dry_run {
+                        info!(order_id = order.order_id, kind = ?order.kind, "dry-run: would reclaim expired escrow order");
+                    } else {
+                        match limit_keeper::execute::execute_reclaim(
+                            &config.rpc_url,
+                            &config.network,
+                            &config.secret,
+                            &config.escrow_contract,
+                            order.kind,
+                            order.order_id,
+                        )
+                        .await
+                        {
+                            Ok(hash) => {
+                                info!(order_id = order.order_id, kind = ?order.kind, %hash, "submitted expired escrow reclaim");
+                                book.apply_expired(order.kind, order.order_id);
+                                save_checkpoint(&config.cursor_path, &KeeperCheckpoint::capture(cursor, &book))?;
+                            }
+                            Err(error) => {
+                                warn!(order_id = order.order_id, kind = ?order.kind, %error, "expired escrow reclaim failed")
+                            }
+                        }
+                    }
                 }
+                continue;
+            }
+            // The contract requires latest < expires_ledger for fills.
+            if latest == order.expires_ledger {
                 continue;
             }
             if order.next_executable_ledger.is_some_and(|due| latest < due) {

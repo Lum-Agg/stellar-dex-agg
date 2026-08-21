@@ -41,7 +41,7 @@ permissionless: callers do not need the owner's authorization.
 `amount_in` must be positive and no greater than the remaining input. The sum
 of all `sub_routes[].amount_in` values must equal `amount_in`, and
 `min_amount_out` must meet the stored limit. The contract calls
-`aggregator.swap`, transfers the resulting output to the order owner, reduces
+`aggregator.swap_restricted`, transfers the resulting output to the order owner, reduces
 the remaining input, and sets the status to `Filled` once no input remains.
 
 ### `cancel(order_id)`
@@ -72,14 +72,14 @@ the user's rate across partial fills.
 
 ## Aggregator authorization decision
 
-The escrow contract is passed as `user` to `aggregator.swap`. A direct contract
+The escrow contract is passed as `user` to `aggregator.swap_restricted`. A direct contract
 call made by the current contract is already authorized by Soroban, so
 `env.authorize_as_current_contract` must authorize only the deeper call made by
 the aggregator:
 
 `token_in.transfer(escrow, aggregator, total_input)`
 
-Do not wrap this transfer under an `aggregator.swap` authorization entry. That
+Do not wrap this transfer under an `aggregator.swap_restricted` authorization entry. That
 shape is rejected on-chain because `swap` is already in the invocation stack.
 The fill tests clear all external auth mocks before execution so this contract
 authorization cannot be hidden by permissive test helpers.

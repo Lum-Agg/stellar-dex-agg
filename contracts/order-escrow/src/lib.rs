@@ -906,6 +906,27 @@ mod tests {
     }
 
     #[test]
+    fn fill_dca_rejects_unregistered_venue_without_spending_escrow() {
+        let env = test_env();
+        env.mock_all_auths();
+        let (owner, escrow, token_in, token_out, _, _) = setup_fill(&env);
+        let order_id = escrow.create_dca(&owner, &token_in, &token_out, &5_000, &2_000, &10, &10, &0, &100);
+        let unregistered_pool = gen_addr(&env);
+        env.set_auths(&[]);
+
+        env.ledger().set_sequence_number(10);
+        let result = escrow.try_fill_dca(
+            &order_id,
+            &route(&env, &unregistered_pool, &token_in, &token_out, 2_000),
+            &2_000,
+        );
+
+        assert!(matches!(result, Ok(Err(_)) | Err(_)), "{result:?}");
+        assert_eq!(token::Client::new(&env, &token_in).balance(&escrow.address), 5_000);
+        assert_eq!(dca_order(&env, &escrow.address, order_id).amount_in_remaining, 5_000);
+    }
+
+    #[test]
     fn fill_rejects_expired() {
         let env = test_env();
         env.mock_all_auths();

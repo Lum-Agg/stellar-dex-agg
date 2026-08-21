@@ -1,5 +1,6 @@
 import './style.css';
 import { LumAggClient } from '@lumagg/sdk';
+import { Networks, TransactionBuilder, rpc } from '@stellar/stellar-sdk';
 import {
   isConnected,
   requestAccess,
@@ -9,6 +10,7 @@ import {
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.lumagg.xyz';
 const XLM = 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA';
 const USDC = 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75';
+const PUBLIC_RPC_URL = 'https://mainnet.sorobanrpc.com';
 
 const client = new LumAggClient({ apiUrl: API_URL });
 
@@ -61,13 +63,12 @@ swapBtn.addEventListener('click', async () => {
     }
     log(`USDC has_trustline=${usdcBal.hasTrustline} balance=${usdcBal.balance ?? '0'}`);
 
-    log(`Quoting ${amountIn} stroops XLM → USDC (preferSoroban)…`);
+    log(`Quoting ${amountIn} stroops XLM → USDC…`);
     const { quote, tx } = await client.quoteAndBuild({
       tokenIn: XLM,
       tokenOut: USDC,
       amountIn,
       slippage: 0.5,
-      preferSoroban: true,
       userPublicKey: address,
     });
     log(
@@ -90,9 +91,20 @@ swapBtn.addEventListener('click', async () => {
       return;
     }
 
-    log('Submitting via LumAgg /submit_tx…');
-    const submitted = await client.submitTx({ signedTxXdr: signedXdr });
-    log(`Submitted hash=${submitted.hash} status=${submitted.status ?? ''}`);
+    log('Submitting directly to Stellar Soroban RPC…');
+    const transaction = TransactionBuilder.fromXDR(signedXdr, Networks.PUBLIC);
+    const server = new rpc.Server(PUBLIC_RPC_URL);
+    let submitted = await server.sendTransaction(transaction);
+    for (let attempt = 0;
+      submitted.status === 'TRY_AGAIN_LATER' && attempt < 30;
+      attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      submitted = await server.sendTransaction(transaction);
+    }
+    if (submitted.status !== 'PENDING' && submitted.status !== 'DUPLICATE') {
+      throw new Error(`Transaction submission failed: ${submitted.status}`);
+    }
+    log(`Submitted hash=${submitted.hash} status=${submitted.status}`);
 
     log('Waiting for confirmation…');
     const status = await client.waitForTx(submitted.hash);

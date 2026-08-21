@@ -23,7 +23,8 @@ fn print_help() {
          backfill --start-ledger <N>  Backfill from a ledger and exit\n  \
          status                      Print the current database cursor\n  \
          export-daily [YYYY-MM-DD]   Export one day or all daily rollups\n  \
-         repair-legs [--from-ts <N>] Repair stored leg attribution\n\n\
+         repair-legs [--from-ts <N>] Repair stored leg attribution\n  \\
+         repair-failure-reasons      Classify failed round trips from result XDR\n\n\
          Options:\n  --config <FILE>       LumAgg Aggregator TOML configuration\n  \
          --check-config       Validate configuration and exit\n  -h, --help           Show this help\n  \
          -V, --version        Show version",
@@ -63,7 +64,9 @@ fn parse_args() -> Result<Option<Args>> {
                     .context("parse --from-ts")?;
             }
             "--check-config" => args.check_config = true,
-            "run" | "backfill" | "status" | "export-daily" | "repair-legs" if !command_set => {
+            "run" | "backfill" | "status" | "export-daily" | "repair-legs" | "repair-failure-reasons"
+                if !command_set =>
+            {
                 args.command = value;
                 command_set = true;
             }
@@ -143,6 +146,11 @@ async fn main() -> Result<()> {
         "repair-legs" => {
             let fixed = ingest::repair_leg_indices(config, args.repair_from_ts).await?;
             println!("{{\"repaired\":{fixed}}}");
+            Ok(())
+        }
+        "repair-failure-reasons" => {
+            let fixed = ingest::repair_failure_reasons(config).await?;
+            println!("{{\"classified\":{fixed}}}");
             Ok(())
         }
         command => bail!("unknown command: {command}"),

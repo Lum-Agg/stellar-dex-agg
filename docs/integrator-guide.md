@@ -42,7 +42,7 @@ curl -sX POST "$API/api/v1/build_tx" \
 
 Replace `sub_routes` with the array returned by `/quote`. Full schemas: [OpenAPI](./openapi.yaml).
 
-Flow: **`GET /quote`** → map `sub_routes` to **`POST /build_tx`** → wallet signs XDR → submit via **`POST /api/v1/submit_tx`** (LumAgg proxies Soroban RPC) or any same-network Soroban RPC.
+Flow: **`GET /quote`** → map `sub_routes` to **`POST /build_tx`** → wallet signs XDR → submit directly to any same-network Soroban RPC. **`POST /api/v1/submit_tx`** remains an optional LumAgg proxy when the integrator cannot reach an RPC directly.
 
 ### One-command smoke test
 
@@ -66,14 +66,14 @@ USER_G=G... npx tsx packages/sdk/examples/quote-build.ts
 
 ### Browser (Freighter) — full sign + submit
 
-CLI smoke stops at unsigned XDR. For the full loop (quote → build → Freighter sign → `submit_tx` → `tx_status`):
+CLI smoke stops at unsigned XDR. For the full loop (quote → build → Freighter sign → direct Soroban RPC submit → confirmation):
 
 ```bash
 cd packages/sdk && npm run build
 cd examples/browser-swap && npm install && npm run dev
 ```
 
-Open the Vite URL, connect Freighter (Public), leave **Dry-run** checked to stop after sign, or uncheck to submit on mainnet. See [`packages/sdk/examples/browser-swap/README.md`](../packages/sdk/examples/browser-swap/README.md).
+Open the Vite URL, connect Freighter (Public), leave **Dry-run** checked to stop after sign, or uncheck to submit directly on mainnet. See [`packages/sdk/examples/browser-swap/README.md`](../packages/sdk/examples/browser-swap/README.md). The example keeps `/api/v1/submit_tx` as an optional fallback.
 
 ## 2. `prefer_soroban`
 

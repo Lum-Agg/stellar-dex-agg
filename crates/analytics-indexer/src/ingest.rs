@@ -23,6 +23,7 @@ const OFFICIAL_TESTNET_RPC_URL: &str = "https://soroban-testnet.stellar.org";
 struct HorizonTransaction {
     envelope_xdr: String,
     result_meta_xdr: Option<String>,
+    result_xdr: Option<String>,
 }
 
 pub async fn run(config: IndexerConfig) -> Result<()> {
@@ -313,6 +314,48 @@ pub async fn repair_leg_indices(config: IndexerConfig, created_at_from: i64) -> 
         }
     }
     info!(fixed, "leg index repair complete");
+    Ok(fixed)
+}
+
+/// Classify failed round trips whose result XDR was not available during the
+/// original ingest. This deliberately avoids reparsing envelopes or legs.
+pub async fn repair_failure_reasons(config: IndexerConfig) -> Result<u64> {
+    config.ensure_parent_dir()?;
+    let store = IndexStore::open(&config.db_path)?;
+    let rpc = config.rpc();
+    let official_rpc = dex_adapters::SorobanRpc::new(
+        if config.network_passphrase == "Test SDF Network ; September 2015" {
+            OFFICIAL_TESTNET_RPC_URL
+        } else {
+            OFFICIAL_MAINNET_RPC_URL
+        },
+        &config.network_passphrase,
+    );
+    let http = reqwest::Client::new();
+    let tx_hashes = store.list_unclassified_failed_tx_hashes()?;
+    let mut fixed = 0u64;
+    for tx_hash in tx_hashes {
+        let own = rpc.get_transaction(&tx_hash).await;
+        let rpc_tx = match own {
+            Ok(tx) if tx.result_xdr.is_some() => Ok(tx),
+            own => official_rpc.get_transaction(&tx_hash).await.or(own),
+        };
+        let reason = rpc_tx.ok().and_then(|tx| classify_failure(tx.result_xdr.as_deref()));
+        let reason = match reason {
+            Some(reason) => Some(reason),
+            None => match fetch_horizon_transaction(&http, config.horizon_url.as_deref(), &tx_hash).await {
+                Ok(tx) => classify_failure(tx.result_xdr.as_deref()),
+                Err(_) => None,
+            },
+        };
+        let Some(reason) = reason else {
+            continue;
+        };
+        if store.update_invocation_failure_reason(&tx_hash, Some(&reason))? {
+            fixed += 1;
+        }
+    }
+    info!(fixed, "failure reason repair complete");
     Ok(fixed)
 }
 

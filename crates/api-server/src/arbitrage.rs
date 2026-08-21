@@ -36,6 +36,9 @@ pub struct ArbitrageData {
     pub failed_count: u64,
     /// Failed round trips classified from on-chain `resultXdr`.
     pub failure_reasons: Vec<FailureReasonCount>,
+    /// Failed round trips whose result XDR was unavailable or could not be
+    /// classified.
+    pub unclassified_failed_count: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
 }
@@ -171,7 +174,7 @@ pub async fn get_arbitrage(Query(params): Query<ArbitrageQuery>) -> Response {
         }
     };
 
-    let failure_reasons = match store.round_trip_failure_reason_counts() {
+    let failure_reasons: Vec<FailureReasonCount> = match store.round_trip_failure_reason_counts() {
         Ok(rows) => rows
             .into_iter()
             .map(|(reason, count)| FailureReasonCount { reason, count })
@@ -188,6 +191,8 @@ pub async fn get_arbitrage(Query(params): Query<ArbitrageQuery>) -> Response {
                 .into_response();
         }
     };
+    let classified_failed_count = failure_reasons.iter().map(|item| item.count).sum::<u64>();
+    let unclassified_failed_count = failed_count.saturating_sub(classified_failed_count);
 
     let next_cursor = if rows.len() as u32 >= limit {
         rows.last().map(|r| encode_cursor(r.created_at, &r.tx_hash))
@@ -220,6 +225,7 @@ pub async fn get_arbitrage(Query(params): Query<ArbitrageQuery>) -> Response {
                 success_count,
                 failed_count,
                 failure_reasons,
+                unclassified_failed_count,
                 next_cursor,
             }),
             error: None,

@@ -79,8 +79,45 @@ pub async fn execute_fill(
     Ok(submitted.hash)
 }
 
-pub fn build_reclaim_operation(escrow_contract: &str, order_id: u64) -> Result<xdr::Operation> {
-    contract_operation(escrow_contract, "reclaim_expired", vec![xdr::ScVal::U64(order_id)])
+/// Simulate, sign, submit, and wait briefly for an expired-order reclaim.
+pub async fn execute_reclaim(
+    rpc_url: &str,
+    network_passphrase: &str,
+    secret: &str,
+    escrow_contract: &str,
+    kind: OrderKind,
+    order_id: u64,
+) -> Result<String> {
+    let operation = build_reclaim_operation(escrow_contract, kind, order_id)?;
+    let keypair = Keypair::from_secret(secret).map_err(|e| anyhow!("invalid KEEPER_SECRET: {e:?}"))?;
+    let public_key = keypair.public_key();
+    let sequence = fetch_account_sequence(rpc_url, &public_key).await?;
+    let unsigned_xdr =
+        simulate_and_assemble(rpc_url, network_passphrase, &public_key, sequence as u64 + 1, operation).await?;
+
+    let mut tx = transaction_from_prepared_xdr(&unsigned_xdr, network_passphrase)?;
+    tx.sign(&[keypair]);
+    let server = rpc_server(rpc_url)?;
+    let submitted = server
+        .send_transaction(tx)
+        .await
+        .map_err(|e| anyhow!("send reclaim transaction: {e:?}"))?;
+    if submitted.status == SendTransactionStatus::Error {
+        return Err(anyhow!(
+            "reclaim transaction rejected: {:?}",
+            submitted.to_error_result()
+        ));
+    }
+    poll_transaction(rpc_url, &submitted.hash).await?;
+    Ok(submitted.hash)
+}
+
+pub fn build_reclaim_operation(escrow_contract: &str, kind: OrderKind, order_id: u64) -> Result<xdr::Operation> {
+    let function = match kind {
+        OrderKind::Limit => "reclaim_expired",
+        OrderKind::Dca => "reclaim_expired_dca",
+    };
+    contract_operation(escrow_contract, function, vec![xdr::ScVal::U64(order_id)])
 }
 
 fn build_fill_operation(
@@ -264,7 +301,7 @@ async fn simulate_and_assemble(
 ) -> Result<String> {
     let mut account = soroban_client::account::Account::new(public_key, &sequence.to_string())
         .map_err(|e| anyhow!("create keeper account: {e}"))?;
-    let bytes = operation.to_xdr(Limits::none()).context("encode fill operation")?;
+    let bytes = operation.to_xdr(Limits::none()).context("encode keeper operation")?;
     let operation = {
         use soroban_client::xdr::{Limits as ClientLimits, ReadXdr};
         soroban_client::xdr::Operation::from_xdr(bytes, ClientLimits::none()).context("decode fill operation")?
@@ -274,24 +311,24 @@ async fn simulate_and_assemble(
     builder.add_operation(operation);
     let tx = builder
         .set_timeout(TIMEOUT_INFINITE)
-        .map_err(|e| anyhow!("set fill timeout: {e}"))?
+        .map_err(|e| anyhow!("set keeper transaction timeout: {e}"))?
         .build();
     let simulation = rpc_server(rpc_url)?
         .simulate_transaction(&tx, None)
         .await
-        .map_err(|e| anyhow!("simulate fill transaction: {e:?}"))?;
+        .map_err(|e| anyhow!("simulate keeper transaction: {e:?}"))?;
     if simulation.error.is_some() {
         return Err(anyhow!(
-            "fill simulation failed: {}",
+            "keeper transaction simulation failed: {}",
             simulation.error.unwrap_or_default()
         ));
     }
-    let assembled = assemble_transaction(&tx, simulation).map_err(|e| anyhow!("assemble fill transaction: {e:?}"))?;
+    let assembled = assemble_transaction(&tx, simulation).map_err(|e| anyhow!("assemble keeper transaction: {e:?}"))?;
     {
         use soroban_client::xdr::{Limits as ClientLimits, WriteXdr};
         assembled
             .to_envelope()
-            .map_err(|e| anyhow!("fill envelope: {e}"))?
+            .map_err(|e| anyhow!("keeper transaction envelope: {e}"))?
             .to_xdr_base64(ClientLimits::none())
             .context("encode assembled fill transaction")
     }
@@ -317,22 +354,27 @@ async fn poll_transaction(rpc_url: &str, hash: &str) -> Result<()> {
         let status = server
             .get_transaction(hash)
             .await
-            .map_err(|e| anyhow!("poll fill {hash}: {e:?}"))?;
+            .map_err(|e| anyhow!("poll keeper transaction {hash}: {e:?}"))?;
         if status.status == TransactionStatus::Success {
             return Ok(());
         }
         if status.status == TransactionStatus::Failed {
-            return Err(anyhow!("fill {hash} failed on-chain: {:?}", status.to_result()));
+            return Err(anyhow!(
+                "keeper transaction {hash} failed on-chain: {:?}",
+                status.to_result()
+            ));
         }
     }
-    Err(anyhow!("fill {hash} was not confirmed before poll timeout"))
+    Err(anyhow!(
+        "keeper transaction {hash} was not confirmed before poll timeout"
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
         book::{OpenOrder, OrderKind},
-        execute::{fill_amount, fill_min_amount_out},
+        execute::{build_reclaim_operation, fill_amount, fill_min_amount_out},
         quote::Quote,
     };
 
@@ -361,5 +403,22 @@ mod tests {
 
         assert_eq!(fill_amount(&order(), Some(300)), 300);
         assert_eq!(fill_min_amount_out(&order(), 300, &quote), 650);
+    }
+
+    #[test]
+    fn builds_kind_specific_reclaim_operations() {
+        let contract = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM";
+        let function_name = |kind| {
+            let operation = build_reclaim_operation(contract, kind, 7).unwrap();
+            match operation.body {
+                stellar_xdr::curr::OperationBody::InvokeHostFunction(op) => match op.host_function {
+                    stellar_xdr::curr::HostFunction::InvokeContract(args) => args.function_name.to_string(),
+                    _ => panic!("expected contract invocation"),
+                },
+                _ => panic!("expected host function invocation"),
+            }
+        };
+        assert_eq!(function_name(OrderKind::Limit), "reclaim_expired");
+        assert_eq!(function_name(OrderKind::Dca), "reclaim_expired_dca");
     }
 }

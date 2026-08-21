@@ -35,8 +35,9 @@ Run a dry-run first:
 ```
 
 For live testnet fills, set `dry_run = false`. The keeper requires an XLM-funded
-signer for transaction fees. `reclaim = true` is not yet a live reclaim path;
-expired-order reclaim remains intentionally disabled in this MVP.
+signer for transaction fees. `reclaim = true` enables permissionless reclaim
+transactions after expiry: Limit orders use `reclaim_expired`, while DCA orders
+use `reclaim_expired_dca`.
 
 The old `KEEPER_*` environment-variable interface remains available for the
 existing testnet deployment scripts.

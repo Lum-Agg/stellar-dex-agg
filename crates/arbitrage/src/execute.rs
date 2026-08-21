@@ -26,6 +26,7 @@ use {
 #[derive(Debug, Clone)]
 pub struct PreparedArbTx {
     pub route_label: String,
+    pub venue_route_label: String,
     pub caller_public_key: String,
     pub amount_in: u128,
     /// Off-chain quoted output (quote-api).
@@ -89,24 +90,17 @@ fn build_op_for_quote(
     }
 }
 
-pub async fn prepare_opportunity_tx(
-    ctx: &ArbContext,
-    opp: &ArbOpportunity,
-    caller_public_key: &str,
-    stats: &ArbStats,
-) -> Result<Option<PreparedArbTx>> {
-    let Some(aggregator) = ctx.config.aggregator_contract.as_deref() else {
-        return Ok(None);
-    };
-
+/// Select and refresh an execution candidate without consuming a caller slot.
+///
+/// This stage can perform several quote calls. Keeping it outside the caller
+/// guard prevents slow market-data or validation requests from starving all
+/// accounts in the pool.
+async fn select_execution_quote(ctx: &ArbContext, opp: &ArbOpportunity) -> Result<Option<RoundTripQuote>> {
     let Some(initial) = quote_for_execute(ctx, opp).await else {
         return Ok(None);
     };
     let mut quote = initial.clone();
 
-    // Amount optimization can issue many quotes before execution. Refresh the
-    // selected size so the transaction uses current pool state and route legs,
-    // rather than the snapshot that happened to win the search.
     if ctx.config.optimize_amount {
         let refreshed = quote_round_trip(ctx, &quote.base, &quote.bridge, quote.amount_in).await?;
         if refreshed.profit() < ctx.config.min_profit_for(&quote.base.canonical()) {
@@ -115,10 +109,6 @@ pub async fn prepare_opportunity_tx(
         quote = refreshed;
     }
 
-    // Validate only the selected execution candidate. Enabling this during
-    // scanning multiplies RPC quote work across every bridge and can starve
-    // the event pipeline; this final check keeps the scanner fast while
-    // filtering stale local quotes before transaction simulation.
     if !ctx.config.on_chain_validate {
         let validated =
             quote_round_trip_with_validation(ctx, &quote.base, &quote.bridge, quote.amount_in, true).await?;
@@ -127,6 +117,22 @@ pub async fn prepare_opportunity_tx(
         }
         quote = validated;
     }
+
+    Ok(Some(quote))
+}
+
+pub async fn prepare_opportunity_tx(
+    ctx: &ArbContext,
+    opp: &ArbOpportunity,
+    quote: &RoundTripQuote,
+    caller_public_key: &str,
+    stats: &ArbStats,
+) -> Result<Option<PreparedArbTx>> {
+    let Some(aggregator) = ctx.config.aggregator_contract.as_deref() else {
+        return Ok(None);
+    };
+
+    let mut quote = quote.clone();
 
     let seq = fetch_account_sequence(&ctx.config.rpc_url, caller_public_key).await?;
     // Vault reclaim approve expiry: fixed op arg (not vault-side sequence()+N).
@@ -349,6 +355,7 @@ pub async fn prepare_opportunity_tx(
 
     Ok(Some(PreparedArbTx {
         route_label: quote.route_label(),
+        venue_route_label: quote.venue_route_label(),
         caller_public_key: caller_public_key.to_string(),
         amount_in: quote.amount_in,
         quoted_amount_out: quote.amount_out,
@@ -369,13 +376,17 @@ pub async fn try_execute_opportunity(
     submission_ledger: Option<Arc<crate::submission_ledger::SubmissionLedger>>,
     dry_run: bool,
 ) -> Result<bool> {
+    let Some(quote) = select_execution_quote(ctx, opp).await? else {
+        return Ok(false);
+    };
+
     let Some(guard) = caller_pool.try_acquire().await else {
         stats.caller_busy.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         warn!(route = %opp.route_label, "all callers busy, dropping opportunity");
         return Ok(false);
     };
 
-    let Some(prepared) = prepare_opportunity_tx(ctx, opp, &guard.public_key(), stats.as_ref()).await? else {
+    let Some(prepared) = prepare_opportunity_tx(ctx, opp, &quote, &guard.public_key(), stats.as_ref()).await? else {
         return Ok(false);
     };
 

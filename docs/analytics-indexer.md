@@ -103,6 +103,10 @@ CONFIG=./lumagg-aggregator.toml
 # Daily JSON export
 ./lumagg-analytics-indexer --config "$CONFIG" export-daily
 ./lumagg-analytics-indexer --config "$CONFIG" export-daily 2026-06-01
+
+# Classify failed round trips whose result XDR was unavailable during ingest.
+# Uses the configured RPC first and the official Stellar RPC as a fallback.
+./lumagg-analytics-indexer --config "$CONFIG" repair-failure-reasons
 ```
 
 ## Tranche 3 handoff

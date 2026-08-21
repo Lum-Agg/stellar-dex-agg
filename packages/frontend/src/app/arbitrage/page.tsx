@@ -56,6 +56,22 @@ interface RoundTripItem {
 interface ArbitrageStatusCounts {
   success_count?: number;
   failed_count?: number;
+  unclassified_failed_count?: number;
+}
+
+interface FailureReasonCount {
+  reason: string;
+  count: number;
+}
+
+function failureReasonLabel(reason: string): string {
+  const labels: Record<string, string> = {
+    HOST_FUNCTION_TRAPPED: 'Contract execution trapped',
+    INSUFFICIENT_BALANCE: 'Insufficient balance',
+    BAD_AUTH: 'Invalid authorization',
+    TX_FAILED: 'Transaction failed',
+  };
+  return labels[reason] ?? reason.replaceAll('_', ' ').toLowerCase();
 }
 
 function formatUsd(n: number): string {
@@ -153,6 +169,7 @@ export default function ArbitragePage() {
   const [stats, setStats] = useState<StatsPayload | null>(null);
   const [trips, setTrips] = useState<RoundTripItem[]>([]);
   const [statusCounts, setStatusCounts] = useState<ArbitrageStatusCounts>({});
+  const [failureReasons, setFailureReasons] = useState<FailureReasonCount[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -183,7 +200,9 @@ export default function ArbitragePage() {
         setStatusCounts({
           success_count: arbRes.data?.success_count,
           failed_count: arbRes.data?.failed_count,
+          unclassified_failed_count: arbRes.data?.unclassified_failed_count,
         });
+        setFailureReasons(arbRes.data?.failure_reasons ?? []);
         setNextCursor(arbRes.data?.next_cursor ?? null);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
@@ -590,6 +609,58 @@ export default function ArbitragePage() {
           <div className="mt-1 leading-relaxed">Indexed on-chain round trips only. Bot broadcasts still awaiting confirmation are not included.</div>
         </div>
       </section>
+
+      {failureReasons.length > 0 && (
+        <section className="rounded-xl border border-rose-300/15 bg-[var(--surface)]/60 overflow-hidden">
+          <div className="px-4 sm:px-5 pt-4 pb-3 flex items-baseline justify-between gap-2">
+            <div>
+              <h2 className="text-[15px] font-medium text-[var(--text-primary)]">Failure reasons</h2>
+              <p className="text-[12px] text-[var(--text-muted)] mt-0.5">
+                Confirmed failed round trips classified from on-chain transaction results
+              </p>
+            </div>
+            <span className="text-[12px] text-rose-200/80 tabular-nums">
+              {failureReasons.reduce((sum, item) => sum + item.count, 0).toLocaleString()}
+            </span>
+          </div>
+          <div className="border-t border-[var(--border)] divide-y divide-[var(--border)]">
+            {failureReasons.map((item) => {
+              const total = statusCounts.failed_count ?? 0;
+              const share = total > 0 ? (item.count / total) * 100 : 0;
+              return (
+                <div key={item.reason} className="px-4 sm:px-5 py-3">
+                  <div className="flex items-center justify-between gap-3 text-[12px]">
+                    <span className="text-[var(--text-secondary)]">{failureReasonLabel(item.reason)}</span>
+                    <span className="text-[var(--text-muted)] tabular-nums">
+                      {item.count.toLocaleString()} · {share.toFixed(1)}%
+                    </span>
+                  </div>
+                  <div className="mt-2 h-1.5 rounded-full bg-slate-800/80 overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-rose-300/70"
+                      style={{ width: `${Math.min(100, share)}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+            {(statusCounts.unclassified_failed_count ?? 0) > 0 && (
+              <div className="px-4 sm:px-5 py-3">
+                <div className="flex items-center justify-between gap-3 text-[12px]">
+                  <span className="text-[var(--text-secondary)]">Unclassified or legacy failure</span>
+                  <span className="text-[var(--text-muted)] tabular-nums">
+                    {(statusCounts.unclassified_failed_count ?? 0).toLocaleString()}
+                  </span>
+                </div>
+                <p className="mt-1 text-[11px] leading-relaxed text-[var(--text-muted)]">
+                  The transaction is confirmed failed, but its result XDR is unavailable or does not
+                  expose a stable reason.
+                </p>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/60 overflow-hidden">
         <div className="px-4 sm:px-5 pt-4 pb-3 flex items-baseline justify-between gap-2">
