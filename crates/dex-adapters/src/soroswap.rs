@@ -60,12 +60,7 @@ impl SoroswapAdapter {
     }
 
     pub async fn known_pool_addresses(&self) -> Vec<String> {
-        self.pairs
-            .read()
-            .await
-            .iter()
-            .map(|p| p.pool_address.clone())
-            .collect()
+        self.pairs.read().await.iter().map(|p| p.pool_address.clone()).collect()
     }
 
     /// Refresh a subset of pools (fetch pipeline / write-through full refresh).

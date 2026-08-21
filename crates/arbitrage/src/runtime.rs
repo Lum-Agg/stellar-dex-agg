@@ -4,7 +4,7 @@ use {
     crate::{
         callers::CallerPool, config::ArbConfig, context::ArbContext, dedup::SubmittedPathCache,
         prepare::LatestLedgerCache, profit::ProfitBook, quote_client::QuoteApiClient, stats::ArbStats,
-        vault::VaultBalanceCache, xlm_price::XlmUsdcPrice,
+        submission_ledger::SubmissionLedger, vault::VaultBalanceCache, xlm_price::XlmUsdcPrice,
     },
     anyhow::Result,
     std::sync::Arc,
@@ -16,6 +16,7 @@ pub struct ArbRuntime {
     pub config: ArbConfig,
     pub stats: Arc<ArbStats>,
     pub profit: Arc<ProfitBook>,
+    pub submission_ledger: Option<Arc<SubmissionLedger>>,
     pub path_cache: Mutex<SubmittedPathCache>,
     pub caller_pool: Option<CallerPool>,
     pub latest_ledger: Arc<LatestLedgerCache>,
@@ -33,10 +34,17 @@ impl ArbRuntime {
         let dedup_secs = config.submit_dedup_secs;
         let quote_client = QuoteApiClient::from_config(&config);
         let xlm_usdc_price = Arc::new(XlmUsdcPrice::new(config.xlm_usdc_price_e7));
+        let submission_ledger = config
+            .submission_db_path
+            .as_deref()
+            .map(SubmissionLedger::open)
+            .transpose()?
+            .map(Arc::new);
         Ok(Self {
             config,
             stats: Arc::new(ArbStats::default()),
             profit: Arc::new(ProfitBook::default()),
+            submission_ledger,
             path_cache: Mutex::new(SubmittedPathCache::new(std::time::Duration::from_secs(
                 dedup_secs.max(1),
             ))),

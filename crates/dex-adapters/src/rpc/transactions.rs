@@ -20,6 +20,8 @@ pub struct RpcTransaction {
     pub envelope_xdr: String,
     #[serde(default)]
     pub result_xdr: Option<String>,
+    #[serde(default)]
+    pub diagnostic_events_xdr: Vec<String>,
     pub ledger: u32,
     pub created_at: i64,
 }
@@ -140,6 +142,8 @@ impl SorobanRpc {
             tx_hash: String,
             envelope_xdr: String,
             result_xdr: Option<String>,
+            #[serde(default)]
+            diagnostic_events_xdr: Vec<String>,
             ledger: u32,
             created_at: i64,
         }
@@ -164,6 +168,7 @@ impl SorobanRpc {
                     tx_hash: t.tx_hash,
                     envelope_xdr: t.envelope_xdr,
                     result_xdr: t.result_xdr,
+                    diagnostic_events_xdr: t.diagnostic_events_xdr,
                     ledger: t.ledger,
                     created_at: t.created_at,
                 })

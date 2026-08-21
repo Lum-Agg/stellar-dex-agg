@@ -134,6 +134,16 @@ pub struct QuoteData {
     pub is_split: bool,
     pub sub_routes: Vec<SubRouteData>,
     pub compute_time_ms: u64,
+    /// Snapshot freshness metadata for diagnosing stale market quotes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot_generated_at_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot_age_ms: Option<u64>,
+    /// Age of the oldest hydrated pool state used by this quote.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pool_state_age_ms: Option<u64>,
     /// True when this response applied on-chain hop validation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_chain_validated: Option<bool>,
@@ -262,7 +272,9 @@ pub async fn get_quote(State(state): State<AppState>, Query(params): Query<Quote
     };
 
     let engine = state.current_engine().await;
-    let mut route = state.quote_route(&request).await;
+    let quote_result = state.quote_route_with_metadata(&request).await;
+    let pool_state_age_ms = quote_result.oldest_pool_age_ms;
+    let mut route = quote_result.route;
 
     if on_chain_validate && !route.sub_orders.is_empty() {
         let before = route.total_expected_out;
@@ -329,6 +341,15 @@ pub async fn get_quote(State(state): State<AppState>, Query(params): Query<Quote
         });
     }
 
+    let snapshot_meta = state.snapshot_meta.read().await.clone();
+    let snapshot_age_ms = snapshot_meta.as_ref().map(|meta| {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or_default();
+        now_ms.saturating_sub(meta.generated_at_ms)
+    });
+
     (
         StatusCode::OK,
         Json(QuoteResponse {
@@ -341,6 +362,10 @@ pub async fn get_quote(State(state): State<AppState>, Query(params): Query<Quote
                 is_split: route.is_split,
                 sub_routes,
                 compute_time_ms: route.compute_time_ms,
+                snapshot_version: snapshot_meta.as_ref().map(|meta| meta.version.clone()),
+                snapshot_generated_at_ms: snapshot_meta.as_ref().map(|meta| meta.generated_at_ms),
+                snapshot_age_ms,
+                pool_state_age_ms,
                 on_chain_validated: on_chain_validate.then_some(true),
                 debug: if include_debug {
                     route.debug.as_ref().map(|d| QuoteDebugData {
@@ -1453,52 +1478,52 @@ pub async fn submit_tx(State(state): State<AppState>, Json(body): Json<SubmitTxR
     // inclusion. Do not retry TRY_AGAIN_LATER here: the caller owns retry policy
     // and may decide whether the signed transaction is still fresh enough.
     match state.rpc.send_transaction(signed_tx_xdr).await {
-            Ok(result) => {
-                let accepted_status = result.status == "PENDING" || result.status == "DUPLICATE";
-                let accepted = accepted_status && !result.hash.is_empty();
-                let response_status = if accepted {
-                    StatusCode::OK
-                } else if result.status == "TRY_AGAIN_LATER" {
-                    StatusCode::SERVICE_UNAVAILABLE
-                } else {
-                    StatusCode::BAD_REQUEST
-                };
-                return (
-                    response_status,
-                    Json(SubmitTxResponse {
-                        success: accepted,
-                        hash: if result.hash.is_empty() {
-                            None
-                        } else {
-                            Some(result.hash)
-                        },
-                        status: Some(result.status.clone()),
-                        error: if accepted {
-                            None
-                        } else if accepted_status {
-                            Some("Transaction accepted without a transaction hash".to_string())
-                        } else if result.status == "TRY_AGAIN_LATER" {
-                            Some("Transaction queue is temporarily unavailable; retry shortly".to_string())
-                        } else {
-                            Some(
-                                result
-                                    .error_result_xdr
-                                    .unwrap_or_else(|| format!("Transaction rejected (status={})", result.status)),
-                            )
-                        },
-                    }),
-                );
-            }
-            Err(e) => (
-                StatusCode::BAD_GATEWAY,
+        Ok(result) => {
+            let accepted_status = result.status == "PENDING" || result.status == "DUPLICATE";
+            let accepted = accepted_status && !result.hash.is_empty();
+            let response_status = if accepted {
+                StatusCode::OK
+            } else if result.status == "TRY_AGAIN_LATER" {
+                StatusCode::SERVICE_UNAVAILABLE
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            return (
+                response_status,
                 Json(SubmitTxResponse {
-                    success: false,
-                    hash: None,
-                    status: None,
-                    error: Some(e.to_string()),
+                    success: accepted,
+                    hash: if result.hash.is_empty() {
+                        None
+                    } else {
+                        Some(result.hash)
+                    },
+                    status: Some(result.status.clone()),
+                    error: if accepted {
+                        None
+                    } else if accepted_status {
+                        Some("Transaction accepted without a transaction hash".to_string())
+                    } else if result.status == "TRY_AGAIN_LATER" {
+                        Some("Transaction queue is temporarily unavailable; retry shortly".to_string())
+                    } else {
+                        Some(
+                            result
+                                .error_result_xdr
+                                .unwrap_or_else(|| format!("Transaction rejected (status={})", result.status)),
+                        )
+                    },
                 }),
-            ),
+            );
         }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(SubmitTxResponse {
+                success: false,
+                hash: None,
+                status: None,
+                error: Some(e.to_string()),
+            }),
+        ),
+    }
 }
 
 #[derive(Deserialize)]
@@ -2213,8 +2238,6 @@ mod submit_tx_validation_tests {
     #[test]
     fn rejects_oversized_xdr_before_decode() {
         let oversized = "A".repeat(super::MAX_SIGNED_TX_XDR_BYTES + 1);
-        assert!(validate_signed_tx_xdr(&oversized)
-            .unwrap_err()
-            .contains("exceeds"));
+        assert!(validate_signed_tx_xdr(&oversized).unwrap_err().contains("exceeds"));
     }
 }

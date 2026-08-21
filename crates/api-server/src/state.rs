@@ -27,13 +27,20 @@ use {
             build_snapshot_store, should_reload_snapshot_version, subscribe_to_snapshot_events, MemorySnapshotStore,
             SnapshotListenerEvent, SnapshotStore, SnapshotStoreBackend,
         },
-        MarketSnapshot,
+        CurrentSnapshotMeta, MarketSnapshot,
     },
     router_engine::{split_optimizer::SplitConfig, OptimalRoute, QuoteEngine, RouteRequest},
     std::{path::PathBuf, sync::Arc},
     tokio::sync::{mpsc, RwLock},
     tracing::{info, warn},
 };
+
+/// A quoted route together with the freshness of the hydrated pool state used
+/// for that route.
+pub struct QuoteRouteResult {
+    pub route: OptimalRoute,
+    pub oldest_pool_age_ms: Option<u64>,
+}
 
 /// Shared application state.
 #[derive(Clone)]
@@ -45,6 +52,7 @@ pub struct AppState {
     pub pool_state_store: Option<Arc<dyn PoolStateStore>>,
     pub telegram: Option<Arc<lumagg_alerts::TelegramAlerter>>,
     pub price_store: Option<Arc<PriceStore>>,
+    pub snapshot_meta: Arc<RwLock<Option<CurrentSnapshotMeta>>>,
 }
 
 pub(crate) fn sanitize_cached_pairs(
@@ -235,7 +243,7 @@ async fn new_embedded(config: AppConfig) -> Result<AppState> {
     let rpc = Arc::new(SorobanRpc::new(&config.rpc_url, &config.network_passphrase));
     let token_metadata = Arc::new(TokenMetadataStore::new(rpc.clone()));
     let snapshot_events = Some(subscribe_memory_snapshot_versions(memory_snapshot));
-    let (engine, initial_version, initial_token_metadata) =
+    let (engine, initial_version, initial_token_metadata, initial_snapshot_meta) =
         load_initial_snapshot_engine(&config, snapshot_store.as_ref()).await?;
     if let Some(token_metadata_map) = initial_token_metadata {
         token_metadata.replace_all(token_metadata_map).await;
@@ -251,6 +259,7 @@ async fn new_embedded(config: AppConfig) -> Result<AppState> {
         pool_state_store,
         telegram,
         price_store,
+        snapshot_meta: Arc::new(RwLock::new(initial_snapshot_meta)),
     };
     state.spawn_snapshot_reloader(snapshot_store, snapshot_events, initial_version);
     state.spawn_price_sampler_if_configured();
@@ -288,20 +297,26 @@ async fn load_initial_snapshot_engine(
     Arc<QuoteEngine>,
     Option<String>,
     Option<std::collections::HashMap<String, TokenMetadata>>,
+    Option<CurrentSnapshotMeta>,
 )> {
     match snapshot_store.load_current_snapshot().await {
         Ok(snapshot) => {
             let version = snapshot.version.clone();
             let engine = Arc::new(build_engine_from_snapshot(config, &snapshot).await?);
             attach_snapshot_live_classic_adapter(&engine).await?;
-            Ok((engine, Some(version), Some(snapshot_token_metadata(&snapshot))))
+            Ok((
+                engine,
+                Some(version),
+                Some(snapshot_token_metadata(&snapshot)),
+                Some(snapshot.current_meta()),
+            ))
         }
         Err(error) => {
             warn!(
                 "Initial snapshot unavailable, starting with empty engine until reload succeeds: {}",
                 error
             );
-            Ok((build_empty_quote_engine(config), None, None))
+            Ok((build_empty_quote_engine(config), None, None, None))
         }
     }
 }
@@ -421,6 +436,11 @@ impl AppState {
     /// Find paths, hydrate pool state from Redis, then quote (no path prune; no
     /// RPC by default).
     pub async fn quote_route(&self, request: &RouteRequest) -> OptimalRoute {
+        self.quote_route_with_metadata(request).await.route
+    }
+
+    /// Quote and retain the age of the oldest pool state used by the quote.
+    pub async fn quote_route_with_metadata(&self, request: &RouteRequest) -> QuoteRouteResult {
         let started = std::time::Instant::now();
         let engine = self.current_engine().await;
         let paths = engine.find_candidate_paths(request).await;
@@ -486,7 +506,10 @@ impl AppState {
             is_split = route.is_split,
             "quote_route complete"
         );
-        route
+        QuoteRouteResult {
+            route,
+            oldest_pool_age_ms: oldest_age_ms,
+        }
     }
 
     fn spawn_snapshot_reloader(
@@ -497,6 +520,7 @@ impl AppState {
     ) {
         let engine_holder = self.engine.clone();
         let token_metadata = self.token_metadata.clone();
+        let snapshot_meta_holder = self.snapshot_meta.clone();
         let config = self.config.clone();
 
         tokio::spawn(async move {
@@ -576,6 +600,7 @@ impl AppState {
                         }
                         token_metadata.replace_all(snapshot_token_metadata(&snapshot)).await;
                         *engine_holder.write().await = engine;
+                        *snapshot_meta_holder.write().await = Some(snapshot.current_meta());
                         current_version = Some(snapshot.version.clone());
                         info!("Reloaded market snapshot version {}", snapshot.version);
                     }
@@ -597,7 +622,7 @@ impl AppState {
 
         if let Some(snapshot_store) = configured_snapshot_store(&config)? {
             let snapshot_events = configured_snapshot_event_listener(&config)?;
-            let (engine, initial_version, initial_token_metadata) =
+            let (engine, initial_version, initial_token_metadata, initial_snapshot_meta) =
                 load_initial_snapshot_engine(&config, snapshot_store.as_ref()).await?;
             if let Some(token_metadata_map) = initial_token_metadata {
                 token_metadata.replace_all(token_metadata_map).await;
@@ -616,6 +641,7 @@ impl AppState {
                 pool_state_store,
                 telegram,
                 price_store,
+                snapshot_meta: Arc::new(RwLock::new(initial_snapshot_meta)),
             };
             state.spawn_snapshot_reloader(snapshot_store, snapshot_events, initial_version);
             state.spawn_price_sampler_if_configured();
@@ -721,6 +747,7 @@ impl AppState {
             pool_state_store,
             telegram,
             price_store,
+            snapshot_meta: Arc::new(RwLock::new(None)),
         };
         state.spawn_price_sampler_if_configured();
         Ok(state)
@@ -845,9 +872,10 @@ mod tests {
     #[tokio::test]
     async fn initial_snapshot_load_failure_uses_empty_engine() {
         let config = AppConfig::default();
-        let (engine, current_version, token_metadata) = load_initial_snapshot_engine(&config, &FailingSnapshotStore)
-            .await
-            .unwrap();
+        let (engine, current_version, token_metadata, snapshot_meta) =
+            load_initial_snapshot_engine(&config, &FailingSnapshotStore)
+                .await
+                .unwrap();
 
         let route = engine
             .get_route(&router_engine::RouteRequest {
@@ -862,6 +890,9 @@ mod tests {
             .await;
 
         assert!(route.sub_orders.is_empty());
+        assert!(current_version.is_none());
+        assert!(token_metadata.is_none());
+        assert!(snapshot_meta.is_none());
         assert_eq!(current_version, None);
         assert!(token_metadata.is_none());
     }

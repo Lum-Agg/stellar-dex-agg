@@ -225,6 +225,7 @@ mod tests {
                     ledger,
                     created_at: at,
                     status: "SUCCESS".into(),
+                    failure_reason: None,
                     parsed: ParsedInvocation {
                         function_name: "swap".into(),
                         user_address: TEST_USER.into(),

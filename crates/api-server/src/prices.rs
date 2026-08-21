@@ -255,6 +255,7 @@ mod tests {
             pool_state_store: None,
             telegram: None,
             price_store,
+            snapshot_meta: Arc::new(RwLock::new(None)),
         }
     }
 

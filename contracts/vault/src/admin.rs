@@ -1,5 +1,7 @@
-use crate::{auth, storage};
-use soroban_sdk::{token, Address, BytesN, Env};
+use {
+    crate::{auth, storage},
+    soroban_sdk::{token, Address, BytesN, Env},
+};
 
 pub fn initialize(env: Env, admin: Address) {
     if storage::has_admin(&env) {

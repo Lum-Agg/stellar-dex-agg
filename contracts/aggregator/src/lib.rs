@@ -49,6 +49,16 @@ impl AggregatorContract {
         admin::admin(env)
     }
 
+    /// Register or remove a DEX venue for escrow-backed fills. Public swaps
+    /// remain open-routed; this registry only protects order escrow calls.
+    pub fn set_venue(env: Env, dex_type: DexType, dex_id: Address, allowed: bool) {
+        admin::set_venue(env, dex_type, dex_id, allowed);
+    }
+
+    pub fn is_venue(env: Env, dex_type: DexType, dex_id: Address) -> bool {
+        admin::is_venue(env, dex_type, dex_id)
+    }
+
     /// Execute a swap atomically (single-path or split-order).
     ///
     /// `sub_routes` is always a list of legs; a simple swap is one entry with
@@ -69,6 +79,20 @@ impl AggregatorContract {
         sub_routes: Vec<SubRoute>,
         min_amount_out: i128,
     ) -> i128 {
+        swap::swap(env, user, token_in, token_out, sub_routes, min_amount_out)
+    }
+
+    /// Execute an escrow-backed swap using only administrator-registered
+    /// venues. The caller must still authorize the escrow as `user`.
+    pub fn swap_restricted(
+        env: Env,
+        user: Address,
+        token_in: Address,
+        token_out: Address,
+        sub_routes: Vec<SubRoute>,
+        min_amount_out: i128,
+    ) -> i128 {
+        validate::validate_registered_venues(&env, &sub_routes);
         swap::swap(env, user, token_in, token_out, sub_routes, min_amount_out)
     }
 

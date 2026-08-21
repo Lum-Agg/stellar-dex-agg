@@ -36,10 +36,11 @@ mod types;
 #[cfg(test)]
 mod tests;
 
-use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, Vec};
-use lumagg_contract_types::SubRoute;
-
 pub use types::AggregatorContract;
+use {
+    lumagg_contract_types::SubRoute,
+    soroban_sdk::{contract, contractimpl, Address, BytesN, Env, Vec},
+};
 
 #[contract]
 pub struct VaultContract;

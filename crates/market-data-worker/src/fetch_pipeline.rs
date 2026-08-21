@@ -175,15 +175,9 @@ pub(crate) fn coalesce_touched_into_tasks(touched: HashSet<PoolRef>) -> Vec<Fetc
         addrs.sort();
         addrs.dedup();
         match source {
-            "soroswap" => tasks.push(FetchTask::SoroswapBatch {
-                pool_addresses: addrs,
-            }),
-            "aquarius" => tasks.push(FetchTask::AquariusBatch {
-                pool_addresses: addrs,
-            }),
-            "phoenix" => tasks.push(FetchTask::PhoenixBatch {
-                pool_addresses: addrs,
-            }),
+            "soroswap" => tasks.push(FetchTask::SoroswapBatch { pool_addresses: addrs }),
+            "aquarius" => tasks.push(FetchTask::AquariusBatch { pool_addresses: addrs }),
+            "phoenix" => tasks.push(FetchTask::PhoenixBatch { pool_addresses: addrs }),
             _ => {}
         }
     };
@@ -529,7 +523,10 @@ mod tests {
             FetchTask::AquariusBatch { pool_addresses } => Some(pool_addresses.clone()),
             _ => None,
         });
-        assert_eq!(aquarius.as_deref(), Some(["A1".to_string(), "A2".to_string()].as_slice()));
+        assert_eq!(
+            aquarius.as_deref(),
+            Some(["A1".to_string(), "A2".to_string()].as_slice())
+        );
         let soroswap = tasks.iter().find_map(|t| match t {
             FetchTask::SoroswapBatch { pool_addresses } => Some(pool_addresses.clone()),
             _ => None,

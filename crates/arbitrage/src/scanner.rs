@@ -168,6 +168,7 @@ async fn scan_with_context(runtime: &ArbRuntime, ctx: &ArbContext) -> Result<Vec
                         pool,
                         runtime.stats.clone(),
                         runtime.profit.clone(),
+                        runtime.submission_ledger.clone(),
                         runtime.dry_run(),
                     )
                     .await

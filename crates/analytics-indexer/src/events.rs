@@ -74,6 +74,7 @@ pub fn build_invocations_from_events(events: &[ContractEvent]) -> Result<Vec<Sto
             ledger: bundle.ledger,
             created_at,
             status,
+            failure_reason: None,
             parsed: ParsedInvocation {
                 function_name: summary.function_name,
                 user_address: summary.user_address,

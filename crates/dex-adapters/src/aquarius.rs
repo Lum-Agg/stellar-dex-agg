@@ -480,7 +480,8 @@ impl AquariusAdapter {
     }
 
     /// Ensure `pool_meta` exists for touched pools (e.g. after restart before
-    /// discovery finishes). Missing meta previously made ledger refresh a no-op.
+    /// discovery finishes). Missing meta previously made ledger refresh a
+    /// no-op.
     async fn ensure_pool_meta(&self, pool_addresses: &[String]) {
         let missing: Vec<String> = {
             let meta = self.pool_meta.read().await;

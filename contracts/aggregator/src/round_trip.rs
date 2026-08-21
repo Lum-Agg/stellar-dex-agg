@@ -1,6 +1,8 @@
-use crate::{events, math, validate};
-use lumagg_contract_types::SubRoute;
-use soroban_sdk::{token, Address, Env, Vec};
+use {
+    crate::{events, math, validate},
+    lumagg_contract_types::SubRoute,
+    soroban_sdk::{token, Address, Env, Vec},
+};
 
 /// Round-trip swap: base → bridge (split OK) → base (split OK) in one
 /// atomic invocation.
@@ -12,16 +14,16 @@ use soroban_sdk::{token, Address, Env, Vec};
 /// # Parameters
 ///
 /// - `leg_out`: sub-routes from `base_token` to `bridge_token`. Each
-///   `SubRoute.amount_in` is an absolute base-token input; they **must**
-///   sum to `amount_in`.
+///   `SubRoute.amount_in` is an absolute base-token input; they **must** sum to
+///   `amount_in`.
 /// - `leg_back`: sub-routes from `bridge_token` to `base_token`. Each
-///   `SubRoute.amount_in` is a **positive weight** (quoted bridge amounts
-///   are fine). After `leg_out` produces actual bridge total `o1`, weights
-///   are rescaled so executed inputs sum **exactly** to `o1` (last
-///   sub-route receives the remainder). Callers do **not** need to know
-///   `o1` at submit time.
-/// - `min_amount_out`: minimum total `base_token` returned (principal +
-///   profit floor)
+///   `SubRoute.amount_in` is a **positive weight** (quoted bridge amounts are
+///   fine). After `leg_out` produces actual bridge total `o1`, weights are
+///   rescaled so executed inputs sum **exactly** to `o1` (last sub-route
+///   receives the remainder). Callers do **not** need to know `o1` at submit
+///   time.
+/// - `min_amount_out`: minimum total `base_token` returned (principal + profit
+///   floor)
 ///
 /// # Integrator note
 ///
@@ -81,4 +83,3 @@ pub fn round_trip_swap(
 
     base_total
 }
-

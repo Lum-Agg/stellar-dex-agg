@@ -26,6 +26,39 @@ ADMIN=admin ADMIN_G=G... ./contracts/aggregator/deploy-testnet.sh
 AGGREGATOR=C... ADMIN=admin ADMIN_G=G... ./contracts/order-escrow/deploy-testnet.sh
 ```
 
+### Register venues before enabling fills
+
+The patched escrow calls `aggregator.swap_restricted`. Register every pool
+address that the keeper may use, together with its exact `DexType`, before
+starting live fills:
+
+```bash
+export AGGREGATOR=C...
+export ADMIN=admin
+export AQUARIUS_POOL=C...
+
+stellar contract invoke \
+  --id "$AGGREGATOR" \
+  --source "$ADMIN" \
+  --network lumagg-testnet \
+  -- \
+  set_venue --dex-type Aquarius --dex-id "$AQUARIUS_POOL" --allowed true
+
+stellar contract invoke \
+  --id "$AGGREGATOR" \
+  --source "$ADMIN" \
+  --network lumagg-testnet \
+  --send=no \
+  -- \
+  is_venue --dex-type Aquarius --dex-id "$AQUARIUS_POOL"
+```
+
+Repeat this for Soroswap pairs, Phoenix pools, Sushi pools, and Comet venues
+as applicable. Do not register an address solely because it implements a
+compatible ABI; verify the address against the intended DEX deployment and
+record the registration transaction. An unregistered route is rejected before
+the escrow transfers any input token.
+
 Artifacts (gitignored):
 
 | Path | Contents |
@@ -116,11 +149,12 @@ Never add `KEEPER_SECRET` to the generated shared env or repository.
 |---|------|--------|
 | 1 | Deploy scripts complete | Two `C…` ids; explorer links under `/testnet/` |
 | 2 | Start indexer + api-server with env snippet | No mainnet defaults |
-| 3 | `POST /api/v1/orders/build_create` with testnet user/tokens | `unsigned_tx_xdr` |
-| 4 | Sign + submit on testnet | `order_created` on escrow |
-| 5 | Wait for indexer poll → `GET /api/v1/orders?user=G…` | Open order listed |
-| 6 | Optional: `POST .../build_cancel` or keeper dry-run | Cancel XDR / dry-run fill log |
-| 7 | Create DCA and run keeper after its due ledger | One chunk fills and next ledger advances |
+| 3 | Register and verify every testnet venue | `is_venue` returns `true` |
+| 4 | `POST /api/v1/orders/build_create` with testnet user/tokens | `unsigned_tx_xdr` |
+| 5 | Sign + submit on testnet | `order_created` on escrow |
+| 6 | Wait for indexer poll → `GET /api/v1/orders?user=G…` | Open order listed |
+| 7 | Optional: `POST .../build_cancel` or keeper dry-run | Cancel XDR / dry-run fill log |
+| 8 | Create DCA and run keeper after its due ledger | One chunk fills and next ledger advances |
 
 **Verified live fill (2026-07-31):**
 
@@ -134,6 +168,21 @@ Never add `KEEPER_SECRET` to the generated shared env or repository.
   [`ac487d9f416f19c34a449cf6e8114eeb6e3a98ac1fa080b66e76492a37ef93eb`](https://stellar.expert/explorer/testnet/tx/ac487d9f416f19c34a449cf6e8114eeb6e3a98ac1fa080b66e76492a37ef93eb).
 - Post-test balances: Escrow XLM/test-USDC = `0`/`0`; Aggregator
   XLM/test-USDC = `0`/`0`.
+
+**Verified restricted fill after venue-authentication fix (2026-08-20):**
+
+- Aggregator: `CDJI26DXFQ4MD7VICA3Q6NEGWF53A3Z6IK7WTNMQ6UZUHL5XGQMEKJRE`
+- Escrow: `CDHPKN4XDD3VLTWFMKTL46JKDRXOIQYA75LX77ENY4WPQLKIFYWM66M6`
+- Route: testnet XLM → XTAR → test-USDC across two administrator-registered
+  Soroswap pairs.
+- Input/output: `500000` / `302763` token units.
+- The transaction executed through `swap_restricted`, emitted both `leg`
+  events, and completed `dca_filled`:
+  [`df2c468895b698d605786afe11f652af5c057addd5dc95caf54f4ca0e9e27417`](https://stellar.expert/explorer/testnet/tx/df2c468895b698d605786afe11f652af5c057addd5dc95caf54f4ca0e9e27417).
+
+The previous Escrow deployment predates the `upgrade` entrypoint and cannot
+be upgraded in place; future testnet fixes should use a new Escrow deployment
+or an Escrow instance that includes the upgrade entrypoint from deployment.
 
 ## Out of scope
 

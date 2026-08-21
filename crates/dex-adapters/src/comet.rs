@@ -541,8 +541,14 @@ mod tests {
         let pairs = CometAdapter::trading_pairs_from_state(pool, &state);
         assert_eq!(pairs.len(), 1);
         assert_eq!(pairs[0].pool_address, pool);
-        assert_eq!(pairs[0].token_a.canonical(), "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75");
-        assert_eq!(pairs[0].token_b.canonical(), "CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV");
+        assert_eq!(
+            pairs[0].token_a.canonical(),
+            "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
+        );
+        assert_eq!(
+            pairs[0].token_b.canonical(),
+            "CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV"
+        );
         assert_eq!(pairs[0].reserve_a, Some(2_000_000));
         assert_eq!(pairs[0].reserve_b, Some(1_000_000));
         assert_eq!(pairs[0].fee_bps, 30);

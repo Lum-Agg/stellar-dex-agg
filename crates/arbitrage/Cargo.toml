@@ -44,6 +44,7 @@ slip10_ed25519 = "0.1"
 hex.workspace = true
 burberry.workspace = true
 async-trait.workspace = true
+rusqlite = { version = "0.32", features = ["bundled"] }
 async-channel = "2.5"
 async-stream = "0.3"
 futures.workspace = true

@@ -102,6 +102,7 @@ async fn handle_item(
 
     if runtime.build_enabled() {
         submitter.submit(Action::ExecuteOpportunity(opp));
+        tracing::debug!(base = %item.base.canonical(), bridge = %item.bridge.canonical(), "opportunity queued for execution");
     }
 
     Ok(())

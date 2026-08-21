@@ -1,6 +1,8 @@
-use crate::{events, validate};
-use lumagg_contract_types::SubRoute;
-use soroban_sdk::{token, Address, Env, Vec};
+use {
+    crate::{events, validate},
+    lumagg_contract_types::SubRoute,
+    soroban_sdk::{token, Address, Env, Vec},
+};
 
 /// Execute a swap atomically (single-path or split-order).
 ///
@@ -57,7 +59,6 @@ pub fn swap(
     total_output
 }
 
-
 /// Execute sub-routes that share the same token_in → token_out pair;
 /// returns total output.
 ///
@@ -75,10 +76,10 @@ pub(crate) fn execute_sub_routes(
     let mut max_depth: u32 = 0;
     let mut total_output: i128 = 0;
     for sr in sub_routes.iter() {
-        let output = crate::invoke::execute_path(env, &sr.steps, sr.amount_in, contract_addr, path_base, &mut max_depth);
+        let output =
+            crate::invoke::execute_path(env, &sr.steps, sr.amount_in, contract_addr, path_base, &mut max_depth);
         total_output = total_output.checked_add(output).expect("total output overflow");
     }
     *leg_counter = path_base.checked_add(max_depth).expect("leg counter overflow");
     total_output
 }
-

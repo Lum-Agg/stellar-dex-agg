@@ -34,10 +34,70 @@ pub struct ParsedInvocation {
     pub legs: Vec<ParsedLeg>,
 }
 
+/// Convert Soroban's transaction result into a stable, low-cardinality reason.
+/// The raw diagnostic event XDR is useful for debugging, but is not suitable as
+/// an analytics dimension because it can contain dynamic VM details.
+pub fn classify_failure(result_xdr: Option<&str>) -> Option<String> {
+    let result_xdr = result_xdr?;
+    let result = xdr::TransactionResult::from_xdr_base64(result_xdr, Limits::none()).ok()?;
+    let reason = match result.result {
+        xdr::TransactionResultResult::TxFailed(results) => results.iter().find_map(|operation| match operation {
+            xdr::OperationResult::OpInner(xdr::OperationResultTr::InvokeHostFunction(
+                xdr::InvokeHostFunctionResult::Trapped,
+            )) => Some("HOST_FUNCTION_TRAPPED"),
+            xdr::OperationResult::OpInner(xdr::OperationResultTr::InvokeHostFunction(
+                xdr::InvokeHostFunctionResult::ResourceLimitExceeded,
+            )) => Some("HOST_FUNCTION_RESOURCE_LIMIT"),
+            xdr::OperationResult::OpInner(xdr::OperationResultTr::InvokeHostFunction(
+                xdr::InvokeHostFunctionResult::EntryArchived,
+            )) => Some("HOST_FUNCTION_ENTRY_ARCHIVED"),
+            xdr::OperationResult::OpInner(xdr::OperationResultTr::InvokeHostFunction(
+                xdr::InvokeHostFunctionResult::Malformed,
+            )) => Some("HOST_FUNCTION_MALFORMED"),
+            xdr::OperationResult::OpInner(xdr::OperationResultTr::InvokeHostFunction(
+                xdr::InvokeHostFunctionResult::InsufficientRefundableFee,
+            )) => Some("HOST_FUNCTION_INSUFFICIENT_REFUNDABLE_FEE"),
+            xdr::OperationResult::OpBadAuth => Some("OP_BAD_AUTH"),
+            xdr::OperationResult::OpNoAccount => Some("OP_NO_ACCOUNT"),
+            xdr::OperationResult::OpExceededWorkLimit => Some("OP_EXCEEDED_WORK_LIMIT"),
+            _ => None,
+        }),
+        xdr::TransactionResultResult::TxTooEarly => Some("TX_TOO_EARLY"),
+        xdr::TransactionResultResult::TxTooLate => Some("TX_TOO_LATE"),
+        xdr::TransactionResultResult::TxBadSeq => Some("TX_BAD_SEQ"),
+        xdr::TransactionResultResult::TxBadAuth => Some("TX_BAD_AUTH"),
+        xdr::TransactionResultResult::TxInsufficientBalance => Some("TX_INSUFFICIENT_BALANCE"),
+        xdr::TransactionResultResult::TxInsufficientFee => Some("TX_INSUFFICIENT_FEE"),
+        xdr::TransactionResultResult::TxSorobanInvalid => Some("TX_SOROBAN_INVALID"),
+        xdr::TransactionResultResult::TxMalformed => Some("TX_MALFORMED"),
+        xdr::TransactionResultResult::TxInternalError => Some("TX_INTERNAL_ERROR"),
+        xdr::TransactionResultResult::TxNotSupported => Some("TX_NOT_SUPPORTED"),
+        xdr::TransactionResultResult::TxMissingOperation => Some("TX_MISSING_OPERATION"),
+        xdr::TransactionResultResult::TxBadAuthExtra => Some("TX_BAD_AUTH_EXTRA"),
+        xdr::TransactionResultResult::TxNoAccount => Some("TX_NO_ACCOUNT"),
+        xdr::TransactionResultResult::TxBadSponsorship => Some("TX_BAD_SPONSORSHIP"),
+        xdr::TransactionResultResult::TxBadMinSeqAgeOrGap => Some("TX_BAD_MIN_SEQ_AGE_OR_GAP"),
+        xdr::TransactionResultResult::TxFeeBumpInnerFailed(_) => Some("TX_FEE_BUMP_INNER_FAILED"),
+        _ => Some("TX_FAILED"),
+    }?;
+    Some(reason.to_string())
+}
+
+#[cfg(test)]
+mod failure_tests {
+    use super::classify_failure;
+
+    #[test]
+    fn classifies_soroban_trap_result() {
+        let result = "AAAAAAAByAP/////AAAAAQAAAAAAAAAY/////gAAAAA=";
+        assert_eq!(classify_failure(Some(result)).as_deref(), Some("HOST_FUNCTION_TRAPPED"));
+    }
+}
+
 pub fn parse_envelope(
     envelope_xdr: &str,
     aggregator_contract: &str,
-    result_xdr: Option<&str>,
+    result_meta_xdr: Option<&str>,
 ) -> Result<Option<ParsedInvocation>> {
     let bytes = BASE64
         .decode(envelope_xdr.trim())
@@ -55,7 +115,7 @@ pub fn parse_envelope(
     };
 
     let agg_hash = contract_hash(aggregator_contract)?;
-    let amount_out = result_xdr.and_then(parse_success_return_i128);
+    let amount_out = result_meta_xdr.and_then(parse_success_return_i128);
 
     for op in tx.operations.iter() {
         let xdr::OperationBody::InvokeHostFunction(invoke) = &op.body else {
@@ -261,11 +321,15 @@ fn symbol_dex_source(sym: &str) -> String {
     .to_string()
 }
 
-fn parse_success_return_i128(_result_xdr: &str) -> Option<i128> {
-    // Soroban return values live in result meta (ScVal), not the legacy result XDR
-    // hash. v0 leaves amount_out unset; T3 can hydrate from meta or simulation
-    // if needed.
-    None
+fn parse_success_return_i128(result_meta_xdr: &str) -> Option<i128> {
+    let bytes = BASE64.decode(result_meta_xdr.trim()).ok()?;
+    let meta = xdr::TransactionMeta::from_xdr(&bytes, Limits::none()).ok()?;
+    let return_value = match meta {
+        xdr::TransactionMeta::V3(v3) => v3.soroban_meta?.return_value,
+        xdr::TransactionMeta::V4(v4) => v4.soroban_meta?.return_value?,
+        _ => return None,
+    };
+    scval_i128(&return_value)
 }
 
 fn contract_hash(contract: &str) -> Result<[u8; 32]> {

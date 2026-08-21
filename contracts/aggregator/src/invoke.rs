@@ -1,8 +1,10 @@
-use crate::math;
-use lumagg_contract_types::{DexType, SwapStep};
-use soroban_sdk::{
-    auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
-    token, Address, Env, IntoVal, Symbol, Val, Vec,
+use {
+    crate::math,
+    lumagg_contract_types::{DexType, SwapStep},
+    soroban_sdk::{
+        auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
+        token, Address, Env, IntoVal, Symbol, Val, Vec,
+    },
 };
 
 /// Comet rounds the approval ledger to avoid simulation vs execution
@@ -11,7 +13,6 @@ pub(crate) fn comet_approval_ledger(env: &Env) -> u32 {
     let seq = env.ledger().sequence();
     (seq / 100_000 + 1) * 100_000
 }
-
 
 /// Execute a path (sequence of swap steps) and return the final output
 /// amount.
@@ -41,7 +42,6 @@ pub(crate) fn execute_path(
     current_amount
 }
 
-
 pub(crate) fn dex_tag(dex_type: &DexType) -> u32 {
     match dex_type {
         DexType::Aquarius => 0,
@@ -51,7 +51,6 @@ pub(crate) fn dex_tag(dex_type: &DexType) -> u32 {
         DexType::CometDex => 4,
     }
 }
-
 
 /// Execute a single swap step on the appropriate DEX.
 pub(crate) fn execute_step(env: &Env, step: &SwapStep, amount_in: i128, my_address: &Address, hop_idx: u32) -> i128 {
@@ -68,7 +67,6 @@ pub(crate) fn execute_step(env: &Env, step: &SwapStep, amount_in: i128, my_addre
     );
     output
 }
-
 
 pub(crate) fn execute_step_inner(env: &Env, step: &SwapStep, amount_in: i128, my_address: &Address) -> i128 {
     match step.dex_type {
@@ -208,9 +206,9 @@ pub(crate) fn execute_step_inner(env: &Env, step: &SwapStep, amount_in: i128, my
                     &soroban_sdk::Bytes::from_array(
                         env,
                         &[
-                            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xfd,
-                            0x89, 0x63, 0xef, 0xd1, 0xfc, 0x6a, 0x50, 0x64, 0x88, 0x49, 0x5d, 0x95, 0x1d, 0x52,
-                            0x63, 0x98, 0x8d, 0x25,
+                            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xfd, 0x89,
+                            0x63, 0xef, 0xd1, 0xfc, 0x6a, 0x50, 0x64, 0x88, 0x49, 0x5d, 0x95, 0x1d, 0x52, 0x63, 0x98,
+                            0x8d, 0x25,
                         ],
                     ),
                 )
@@ -307,4 +305,3 @@ pub(crate) fn execute_step_inner(env: &Env, step: &SwapStep, amount_in: i128, my
         }
     }
 }
-

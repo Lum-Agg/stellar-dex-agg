@@ -362,6 +362,10 @@ impl SorobanRpc {
                 .and_then(|s| s.as_str())
                 .map(|s| s.to_string()),
             result_xdr: result.get("resultXdr").and_then(|s| s.as_str()).map(|s| s.to_string()),
+            result_meta_xdr: result
+                .get("resultMetaXdr")
+                .and_then(|s| s.as_str())
+                .map(|s| s.to_string()),
         })
     }
 
@@ -442,6 +446,7 @@ pub struct GetTransactionResult {
     pub status: String,
     pub envelope_xdr: Option<String>,
     pub result_xdr: Option<String>,
+    pub result_meta_xdr: Option<String>,
 }
 
 // ===== ScVal extraction helpers =====
@@ -471,6 +476,13 @@ pub fn parse_fee_bps_u32(val: &xdr::ScVal) -> Option<u32> {
 pub fn scval_to_u128(val: &xdr::ScVal) -> Result<u128> {
     match val {
         xdr::ScVal::U128(parts) => Ok(((parts.hi as u128) << 64) | (parts.lo as u128)),
+        // Aquarius estimate_swap returns I128 on mainnet even though the
+        // amount is non-negative. Accept it at this boundary so callers do
+        // not treat a valid quote as a failed simulation.
+        xdr::ScVal::I128(parts) => {
+            let value = ((parts.hi as i128) << 64) | (parts.lo as u64 as i128);
+            u128::try_from(value).map_err(|_| anyhow!("Expected non-negative I128"))
+        }
         _ => Err(anyhow!("Expected U128, got {:?}", std::mem::discriminant(val))),
     }
 }
@@ -532,5 +544,14 @@ mod tests {
             Some(3000)
         );
         assert!(parse_fee_bps_u32(&xdr::ScVal::Symbol("nope".try_into().unwrap())).is_none());
+    }
+
+    #[test]
+    fn scval_to_u128_accepts_non_negative_i128() {
+        assert_eq!(
+            scval_to_u128(&xdr::ScVal::I128(xdr::Int128Parts { hi: 0, lo: 123 })).unwrap(),
+            123
+        );
+        assert!(scval_to_u128(&xdr::ScVal::I128(xdr::Int128Parts { hi: -1, lo: u64::MAX })).is_err());
     }
 }

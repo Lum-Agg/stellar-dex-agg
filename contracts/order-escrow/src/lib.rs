@@ -4,13 +4,22 @@ use {
     lumagg_contract_types::SubRoute,
     soroban_sdk::{
         auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
-        contract, contractclient, contractimpl, contracttype, token, Address, Env, IntoVal, Symbol, Vec,
+        contract, contractclient, contractimpl, contracttype, token, Address, BytesN, Env, IntoVal, Symbol, Vec,
     },
 };
 
 #[contractclient(name = "AggregatorContractClient")]
 pub trait AggregatorContract {
     fn swap(
+        env: Env,
+        user: Address,
+        token_in: Address,
+        token_out: Address,
+        sub_routes: Vec<SubRoute>,
+        min_amount_out: i128,
+    ) -> i128;
+
+    fn swap_restricted(
         env: Env,
         user: Address,
         token_in: Address,
@@ -121,6 +130,13 @@ impl OrderEscrowContract {
         env.storage().instance().set(&DataKey::Aggregator, &aggregator);
         env.storage().instance().set(&DataKey::NextOrderId, &0u64);
         env.storage().instance().set(&DataKey::NextDcaOrderId, &0u64);
+    }
+
+    /// Upgrade the escrow WASM code. Only the configured admin can call this.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("Not initialized");
+        admin.require_auth();
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
     }
 
     pub fn create_limit(
@@ -245,7 +261,7 @@ impl OrderEscrowContract {
             .expect("Not initialized");
         let escrow = env.current_contract_address();
         authorize_swap_as_current_contract(&env, &aggregator, &escrow, &order.token_in, amount_in);
-        let amount_out = AggregatorContractClient::new(&env, &aggregator).swap(
+        let amount_out = AggregatorContractClient::new(&env, &aggregator).swap_restricted(
             &escrow,
             &order.token_in,
             &order.token_out,
@@ -371,7 +387,7 @@ impl OrderEscrowContract {
             .expect("Not initialized");
         let escrow = env.current_contract_address();
         authorize_swap_as_current_contract(&env, &aggregator, &escrow, &order.token_in, amount_in);
-        let amount_out = AggregatorContractClient::new(&env, &aggregator).swap(
+        let amount_out = AggregatorContractClient::new(&env, &aggregator).swap_restricted(
             &escrow,
             &order.token_in,
             &order.token_out,
@@ -557,7 +573,9 @@ mod tests {
     ) {
         let owner = gen_addr(env);
         let aggregator_id = env.register(AggregatorContract, ());
-        aggregator_contract::AggregatorContractClient::new(env, &aggregator_id).initialize(&gen_addr(env));
+        let aggregator_admin = gen_addr(env);
+        let aggregator = aggregator_contract::AggregatorContractClient::new(env, &aggregator_id);
+        aggregator.initialize(&aggregator_admin);
 
         let escrow_id = env.register(OrderEscrowContract, ());
         let escrow = OrderEscrowContractClient::new(env, &escrow_id);
@@ -570,6 +588,7 @@ mod tests {
         let pool_id = env.register(aq_mock::AqPool, ());
         aq_mock::AqPoolClient::new(env, &pool_id).init(&token_in, &token_out);
         token_out_sac.mint(&pool_id, &10_000);
+        aggregator.set_venue(&DexType::Aquarius, &pool_id, &true);
 
         (owner, escrow, token_in, token_out, token_in_sac, pool_id)
     }
@@ -863,6 +882,27 @@ mod tests {
 
         assert!(matches!(result, Ok(Err(_)) | Err(_)), "{result:?}");
         assert_eq!(token::Client::new(&env, &token_in).balance(&escrow.address), 5_000);
+    }
+
+    #[test]
+    fn fill_rejects_unregistered_venue_without_spending_escrow() {
+        let env = test_env();
+        env.mock_all_auths();
+        let (owner, escrow, token_in, token_out, _, _) = setup_fill(&env);
+        let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000, &10_000_000, &100);
+        let unregistered_pool = gen_addr(&env);
+        env.set_auths(&[]);
+
+        let result = escrow.try_fill(
+            &order_id,
+            &5_000,
+            &route(&env, &unregistered_pool, &token_in, &token_out, 5_000),
+            &5_000,
+        );
+
+        assert!(matches!(result, Ok(Err(_)) | Err(_)), "{result:?}");
+        assert_eq!(token::Client::new(&env, &token_in).balance(&escrow.address), 5_000);
+        assert_eq!(order(&env, &escrow.address, order_id).amount_in_remaining, 5_000);
     }
 
     #[test]

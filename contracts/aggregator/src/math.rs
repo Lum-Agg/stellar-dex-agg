@@ -1,5 +1,7 @@
-use lumagg_contract_types::SubRoute;
-use soroban_sdk::{Env, Vec};
+use {
+    lumagg_contract_types::SubRoute,
+    soroban_sdk::{Env, Vec},
+};
 
 /// Soroswap fee: ceil(amount_in * 3 / 1000), matching pair swap K-check.
 pub(crate) fn soroswap_fee(amount_in: i128) -> i128 {

@@ -1,5 +1,8 @@
-use lumagg_contract_types::SubRoute;
-use soroban_sdk::{Address, Vec};
+use {
+    crate::admin,
+    lumagg_contract_types::SubRoute,
+    soroban_sdk::{Address, Vec},
+};
 
 pub(crate) fn validate_sub_routes(token_in: &Address, token_out: &Address, sub_routes: &Vec<SubRoute>) -> i128 {
     assert!(!sub_routes.is_empty(), "Empty sub_routes");
@@ -22,4 +25,15 @@ pub(crate) fn validate_sub_routes(token_in: &Address, token_out: &Address, sub_r
         }
     }
     total_in
+}
+
+pub(crate) fn validate_registered_venues(env: &soroban_sdk::Env, sub_routes: &Vec<SubRoute>) {
+    for route in sub_routes.iter() {
+        for step in route.steps.iter() {
+            assert!(
+                admin::is_venue(env.clone(), step.dex_type.clone(), step.dex_id.clone()),
+                "venue is not registered"
+            );
+        }
+    }
 }

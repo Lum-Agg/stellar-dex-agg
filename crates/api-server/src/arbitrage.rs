@@ -30,8 +30,20 @@ pub struct ArbitrageResponse {
 #[derive(Debug, Serialize)]
 pub struct ArbitrageData {
     pub round_trips: Vec<RoundTripItem>,
+    /// Terminal statuses observed by the analytics indexer. These counts do
+    /// not include bot broadcasts that have not been indexed yet.
+    pub success_count: u64,
+    pub failed_count: u64,
+    /// Failed round trips classified from on-chain `resultXdr`.
+    pub failure_reasons: Vec<FailureReasonCount>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FailureReasonCount {
+    pub reason: String,
+    pub count: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -144,6 +156,39 @@ pub async fn get_arbitrage(Query(params): Query<ArbitrageQuery>) -> Response {
         }
     };
 
+    let (success_count, failed_count) = match store.round_trip_status_counts() {
+        Ok(counts) => counts,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ArbitrageResponse {
+                    success: false,
+                    data: None,
+                    error: Some(format!("count round-trip statuses: {e}")),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let failure_reasons = match store.round_trip_failure_reason_counts() {
+        Ok(rows) => rows
+            .into_iter()
+            .map(|(reason, count)| FailureReasonCount { reason, count })
+            .collect(),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ArbitrageResponse {
+                    success: false,
+                    data: None,
+                    error: Some(format!("count round-trip failure reasons: {e}")),
+                }),
+            )
+                .into_response();
+        }
+    };
+
     let next_cursor = if rows.len() as u32 >= limit {
         rows.last().map(|r| encode_cursor(r.created_at, &r.tx_hash))
     } else {
@@ -172,6 +217,9 @@ pub async fn get_arbitrage(Query(params): Query<ArbitrageQuery>) -> Response {
             success: true,
             data: Some(ArbitrageData {
                 round_trips,
+                success_count,
+                failed_count,
+                failure_reasons,
                 next_cursor,
             }),
             error: None,

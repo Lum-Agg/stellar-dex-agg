@@ -1,7 +1,7 @@
 # Order escrow
 
 `order-escrow` holds a user's input token for a limit order and permits anyone
-to fill it through `aggregator.swap`. The contract is the custodian of the
+to fill it through the aggregator's restricted route. The contract is the custodian of the
 unfilled input; it is not an order book or a price oracle.
 
 ## ABI
@@ -11,6 +11,13 @@ unfilled input; it is not an order book or a price oracle.
 Initializes the contract once. `admin` must authorize initialization.
 `aggregator` is the deployed LumAgg aggregator contract used by fills.
 
+### `upgrade(new_wasm_hash)`
+
+Upgrades the escrow WASM while preserving the existing contract address and
+orders. Only the configured admin may call it. Upgrade the Aggregator first
+when the new escrow depends on a new Aggregator entrypoint such as
+`swap_restricted`.
+
 ### `create_limit(owner, token_in, token_out, amount_in, limit_out_per_in_e7, expires_ledger) -> order_id`
 
 Creates an open limit order and transfers `amount_in` from `owner` into this
@@ -19,6 +26,12 @@ tokens must differ, and `expires_ledger` must be later than the current ledger.
 
 The created order stores its owner, pair, remaining input, rate limit, expiry,
 and status (`Open`, `Filled`, `Cancelled`, or `Expired`).
+
+Fills use `aggregator.swap_restricted`, not the public open-routing `swap`
+entrypoint. Every `(DexType, dex_id)` in a limit/DCA route must first be
+registered by the aggregator administrator with `set_venue`; this prevents a
+permissionless filler from substituting an arbitrary ABI-compatible contract.
+Public `swap` remains open-routed for ordinary user-directed swaps.
 
 ### `fill(order_id, amount_in, sub_routes, min_amount_out) -> amount_out`
 
@@ -81,6 +94,12 @@ ADMIN=admin ADMIN_G=G... ./scripts/deploy-limit-testnet.sh
 ```
 
 Smoke checklist: [docs/limit-orders-testnet.md](../../docs/limit-orders-testnet.md).
+
+To upgrade an existing testnet escrow without changing its address:
+
+```bash
+ESCROW=C... ADMIN=admin ./contracts/order-escrow/upgrade-testnet.sh
+```
 
 ## DCA orders
 

@@ -81,6 +81,7 @@ pub struct Execution {
     pub poll_tx: Option<bool>,
     pub submit_dedup_secs: Option<u64>,
     pub caller_cooldown_ms: Option<u64>,
+    pub submission_db_path: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -157,6 +158,7 @@ impl ArbitrageConfig {
         set_option("ARB_POLL_TX", &self.execution.poll_tx);
         set_option("ARB_SUBMIT_DEDUP_SECS", &self.execution.submit_dedup_secs);
         set_option("ARB_CALLER_COOLDOWN_MS", &self.execution.caller_cooldown_ms);
+        set_option("ARB_SUBMISSION_DB_PATH", &self.execution.submission_db_path);
 
         set_option("RUST_LOG", &self.monitoring.log_filter);
         set_option("TELEGRAM_ALERTS_ENABLED", &self.monitoring.telegram_enabled);

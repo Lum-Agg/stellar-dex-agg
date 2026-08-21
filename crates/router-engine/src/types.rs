@@ -127,7 +127,8 @@ pub struct RouteRequest {
     /// Maximum number of splits (default: 5)
     pub max_splits: Option<usize>,
     /// When true, Soroban AMMs only (no Classic SDEX / no Horizon).
-    /// Default may still return a pure classic route; mixed hops are never returned.
+    /// Default may still return a pure classic route; mixed hops are never
+    /// returned.
     pub prefer_soroban: Option<bool>,
 }
 

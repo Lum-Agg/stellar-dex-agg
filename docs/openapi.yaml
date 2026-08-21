@@ -199,9 +199,9 @@ paths:
   /api/v1/arbitrage:
     get:
       tags: [health]
-      summary: Successful round-trip (arbitrage) history
+      summary: Round-trip arbitrage history and terminal status counts
       description: |
-        Recent successful on-chain `round_trip_swap` invocations from the analytics indexer.
+        Recent successful on-chain `round_trip_swap` invocations and indexed terminal status counts.
         Gross surplus is `amount_out - amount_in` in base-token stroops; transaction fees are not deducted.
         Requires `INDEXER_DB_PATH` on the API server.
       parameters:
@@ -749,6 +749,21 @@ components:
                 $ref: '#/components/schemas/SubRoute'
             compute_time_ms:
               type: integer
+            snapshot_version:
+              type: string
+              description: Version of the market snapshot used for this quote.
+            snapshot_generated_at_ms:
+              type: integer
+              format: int64
+              description: Snapshot generation time in Unix milliseconds.
+            snapshot_age_ms:
+              type: integer
+              format: int64
+              description: Approximate age of the market snapshot when the quote was returned.
+            pool_state_age_ms:
+              type: integer
+              format: int64
+              description: Age in milliseconds of the oldest hydrated pool state used by this quote.
         error:
           type: string
     SubRoute:
@@ -974,6 +989,26 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/RoundTripItem'
+            success_count:
+              type: integer
+              format: int64
+              description: Total indexed successful round-trip invocations.
+            failed_count:
+              type: integer
+              format: int64
+              description: Total indexed failed round-trip invocations.
+            failure_reasons:
+              type: array
+              description: Classified indexed failures decoded from Soroban resultXdr; legacy rows may be absent.
+              items:
+                type: object
+                required: [reason, count]
+                properties:
+                  reason:
+                    type: string
+                  count:
+                    type: integer
+                    format: int64
             next_cursor:
               type: string
               nullable: true

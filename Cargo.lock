@@ -952,6 +952,7 @@ dependencies = [
  "market-snapshot",
  "reqwest 0.12.28",
  "router-engine",
+ "rusqlite",
  "serde",
  "serde_json",
  "slip10_ed25519",

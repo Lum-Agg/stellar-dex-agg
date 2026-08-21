@@ -13,6 +13,7 @@ pub struct StoredInvocation {
     pub ledger: u32,
     pub created_at: i64,
     pub status: String,
+    pub failure_reason: Option<String>,
     pub parsed: ParsedInvocation,
 }
 
@@ -144,6 +145,7 @@ impl IndexStore {
                 ledger INTEGER NOT NULL,
                 created_at INTEGER NOT NULL,
                 status TEXT NOT NULL,
+                failure_reason TEXT,
                 function_name TEXT NOT NULL,
                 user_address TEXT NOT NULL,
                 token_in TEXT,
@@ -215,6 +217,7 @@ impl IndexStore {
         // Older production DBs were created before bridge_token / amount_is_actual
         // existed. CREATE TABLE IF NOT EXISTS does not alter existing tables.
         self.ensure_column("swap_invocations", "bridge_token", "TEXT")?;
+        self.ensure_column("swap_invocations", "failure_reason", "TEXT")?;
         self.ensure_column("swap_invocations", "is_split", "INTEGER NOT NULL DEFAULT 0")?;
         self.ensure_column("swap_legs", "token_in", "TEXT")?;
         self.ensure_column("swap_legs", "token_out", "TEXT")?;
@@ -278,8 +281,8 @@ impl IndexStore {
         let inserted = self.conn.execute(
             "INSERT OR IGNORE INTO swap_invocations (
                 tx_hash, ledger, created_at, status, function_name, user_address,
-                token_in, token_out, bridge_token, amount_in, amount_out, is_split
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                token_in, token_out, bridge_token, amount_in, amount_out, is_split, failure_reason
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 record.tx_hash,
                 record.ledger,
@@ -293,6 +296,7 @@ impl IndexStore {
                 p.amount_in.to_string(),
                 p.amount_out.map(|v| v.to_string()),
                 p.is_split as i32,
+                record.failure_reason,
             ],
         )?;
 
@@ -347,9 +351,16 @@ impl IndexStore {
             .execute("DELETE FROM swap_legs WHERE tx_hash = ?1", params![tx_hash])?;
         self.conn.execute(
             "UPDATE swap_invocations
-             SET bridge_token = ?1, is_split = ?2
-             WHERE tx_hash = ?3",
-            params![parsed.bridge_token, parsed.is_split as i32, tx_hash],
+             SET bridge_token = ?1,
+                 is_split = ?2,
+                 amount_out = COALESCE(amount_out, ?3)
+             WHERE tx_hash = ?4",
+            params![
+                parsed.bridge_token,
+                parsed.is_split as i32,
+                parsed.amount_out.map(|v| v.to_string()),
+                tx_hash
+            ],
         )?;
         for leg in &parsed.legs {
             let mut enriched = leg.clone();
@@ -364,6 +375,27 @@ impl IndexStore {
             self.insert_leg(tx_hash, &enriched)?;
         }
         Ok(true)
+    }
+
+    pub fn update_invocation_status(&self, tx_hash: &str, status: &str) -> Result<bool> {
+        // A pruned Soroban RPC reports historical transactions as NOT_FOUND.
+        // That is an availability result, not a terminal chain status, and
+        // must never overwrite a previously indexed SUCCESS or FAILED row.
+        if status == "NOT_FOUND" {
+            return Ok(false);
+        }
+        Ok(self.conn.execute(
+            "UPDATE swap_invocations SET status = ?1 WHERE tx_hash = ?2",
+            params![status, tx_hash],
+        )? > 0)
+    }
+
+    pub fn update_invocation_failure_reason(&self, tx_hash: &str, reason: Option<&str>) -> Result<bool> {
+        Ok(self.conn.execute(
+            "UPDATE swap_invocations SET failure_reason = COALESCE(failure_reason, ?1)
+             WHERE tx_hash = ?2 AND status = 'FAILED'",
+            params![reason, tx_hash],
+        )? > 0)
     }
 
     fn insert_leg(&self, tx_hash: &str, leg: &ParsedLeg) -> Result<()> {
@@ -525,6 +557,39 @@ impl IndexStore {
             }
         }
         Ok(out)
+    }
+
+    /// Count indexed round-trip invocations by terminal on-chain status.
+    pub fn round_trip_status_counts(&self) -> Result<(u64, u64)> {
+        let mut stmt = self.conn.prepare(
+            "SELECT status, COUNT(*) FROM swap_invocations
+             WHERE function_name = 'round_trip_swap' AND status IN ('SUCCESS', 'FAILED')
+             GROUP BY status",
+        )?;
+        let mut success = 0u64;
+        let mut failed = 0u64;
+        let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64)))?;
+        for row in rows {
+            match row? {
+                (status, count) if status == "SUCCESS" => success = count,
+                (status, count) if status == "FAILED" => failed = count,
+                _ => {}
+            }
+        }
+        Ok((success, failed))
+    }
+
+    /// Count classified on-chain failures. Legacy failures without a decoded
+    /// result remain excluded rather than being assigned a guessed reason.
+    pub fn round_trip_failure_reason_counts(&self) -> Result<Vec<(String, u64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT failure_reason, COUNT(*) FROM swap_invocations
+             WHERE function_name = 'round_trip_swap' AND status = 'FAILED'
+               AND failure_reason IS NOT NULL
+             GROUP BY failure_reason ORDER BY COUNT(*) DESC, failure_reason ASC",
+        )?;
+        let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64)))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
 
     pub fn upsert_created(
@@ -735,6 +800,7 @@ mod tests {
             ledger: 1,
             created_at,
             status: "SUCCESS".into(),
+            failure_reason: None,
             parsed: ParsedInvocation {
                 function_name: "swap".into(),
                 user_address: user.into(),
@@ -828,6 +894,27 @@ mod tests {
             .unwrap();
         assert_eq!(page2.len(), 1);
         assert_eq!(page2[0].tx_hash, "tx_rt_old");
+    }
+
+    #[test]
+    fn replace_invocation_legs_fills_missing_amount_out() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.db");
+        let store = IndexStore::open(&path).unwrap();
+        let user = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+
+        let mut stored = sample("tx_missing_out", user, 100, 1_000);
+        stored.parsed.function_name = "round_trip_swap".into();
+        stored.parsed.bridge_token = Some("BRIDGE".into());
+        stored.parsed.amount_out = None;
+        store.insert_invocation(&stored).unwrap();
+
+        let mut repaired = stored.parsed.clone();
+        repaired.amount_out = Some(1_025);
+        assert!(store.replace_invocation_legs("tx_missing_out", &repaired).unwrap());
+
+        let rows = store.list_recent_round_trips(10, None).unwrap();
+        assert_eq!(rows[0].amount_out.as_deref(), Some("1025"));
     }
 
     #[test]

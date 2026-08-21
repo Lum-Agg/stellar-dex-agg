@@ -53,6 +53,11 @@ interface RoundTripItem {
   is_split: boolean;
 }
 
+interface ArbitrageStatusCounts {
+  success_count?: number;
+  failed_count?: number;
+}
+
 function formatUsd(n: number): string {
   if (!Number.isFinite(n)) return '—';
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
@@ -147,6 +152,7 @@ export default function ArbitragePage() {
   const tokens = useTokenList();
   const [stats, setStats] = useState<StatsPayload | null>(null);
   const [trips, setTrips] = useState<RoundTripItem[]>([]);
+  const [statusCounts, setStatusCounts] = useState<ArbitrageStatusCounts>({});
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -174,6 +180,10 @@ export default function ArbitragePage() {
         if (cancelled) return;
         setStats(statsRes.data);
         setTrips(arbRes.data?.round_trips ?? []);
+        setStatusCounts({
+          success_count: arbRes.data?.success_count,
+          failed_count: arbRes.data?.failed_count,
+        });
         setNextCursor(arbRes.data?.next_cursor ?? null);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
@@ -564,6 +574,23 @@ export default function ArbitragePage() {
         </p>
       </section>
 
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <StatusCard
+          label="Confirmed success"
+          value={statusCounts.success_count?.toLocaleString() ?? '—'}
+          tone="success"
+        />
+        <StatusCard
+          label="Confirmed failed"
+          value={statusCounts.failed_count?.toLocaleString() ?? '—'}
+          tone="failed"
+        />
+        <div className="col-span-2 sm:col-span-1 rounded-xl border border-[var(--border)] bg-[var(--surface)]/60 px-4 py-3 text-[11px] text-[var(--text-muted)]">
+          <div className="text-[var(--text-secondary)]">Status scope</div>
+          <div className="mt-1 leading-relaxed">Indexed on-chain round trips only. Bot broadcasts still awaiting confirmation are not included.</div>
+        </div>
+      </section>
+
       <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/60 overflow-hidden">
         <div className="px-4 sm:px-5 pt-4 pb-3 flex items-baseline justify-between gap-2">
           <div>
@@ -673,6 +700,25 @@ export default function ArbitragePage() {
           </>
         )}
       </section>
+    </div>
+  );
+}
+
+function StatusCard({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: 'success' | 'failed';
+}) {
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/60 px-4 py-3">
+      <div className="text-[11px] text-[var(--text-muted)]">{label}</div>
+      <div className={`mt-1 text-xl tabular-nums ${tone === 'success' ? 'text-teal-200' : 'text-rose-200'}`}>
+        {value}
+      </div>
     </div>
   );
 }

@@ -66,6 +66,7 @@ pub struct ArbConfig {
     /// Poll `get_transaction` after submit (Telegram stats). Default off.
     pub poll_tx: bool,
     pub submit_dedup_secs: u64,
+    pub submission_db_path: Option<String>,
 }
 
 impl ArbConfig {
@@ -225,6 +226,10 @@ impl ArbConfig {
             .and_then(|v| v.parse().ok())
             .unwrap_or(6);
 
+        let submission_db_path = std::env::var("ARB_SUBMISSION_DB_PATH")
+            .ok()
+            .filter(|v| !v.trim().is_empty());
+
         Ok(Self {
             quote_api_urls,
             aggregator_contract,
@@ -258,6 +263,7 @@ impl ArbConfig {
             dry_run,
             poll_tx,
             submit_dedup_secs,
+            submission_db_path,
         })
     }
 

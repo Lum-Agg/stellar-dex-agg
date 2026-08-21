@@ -1,6 +1,8 @@
-use crate::{auth, types::AggregatorContractClient};
-use lumagg_contract_types::SubRoute;
-use soroban_sdk::{token, Address, Env, Vec};
+use {
+    crate::{auth, types::AggregatorContractClient},
+    lumagg_contract_types::SubRoute,
+    soroban_sdk::{token, Address, Env, Vec},
+};
 
 pub fn deposit(env: Env, from: Address, token: Address, amount: i128) {
     from.require_auth();

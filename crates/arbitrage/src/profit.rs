@@ -8,6 +8,9 @@ const RECENT_TXS: usize = 5;
 pub struct ProfitWindow {
     pub succeeded: u64,
     pub failed: u64,
+    /// Broadcast was accepted, but the short status poll did not reach a
+    /// terminal result. This is unknown, not a failed transaction.
+    pub unknown: u64,
     pub submitted: u64,
     /// Sum of (simulated_amount_out - amount_in) on SUCCESS.
     pub gross_profit_stroops: u128,
@@ -75,6 +78,12 @@ impl ProfitBook {
         let mut g = self.inner.lock().unwrap();
         g.session.failed += 1;
         g.hour.failed += 1;
+    }
+
+    pub fn record_unknown(&self) {
+        let mut g = self.inner.lock().unwrap();
+        g.session.unknown += 1;
+        g.hour.unknown += 1;
     }
 
     /// Snapshot session + take (reset) the hourly window for a report.

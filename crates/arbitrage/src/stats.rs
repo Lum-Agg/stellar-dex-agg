@@ -46,6 +46,9 @@ pub struct ArbStats {
     pub txs_succeeded: AtomicU64,
     pub txs_failed: AtomicU64,
     pub txs_dedup_skipped: AtomicU64,
+    /// Opportunities dropped because every caller was preparing or cooling
+    /// down.
+    pub caller_busy: AtomicU64,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -76,7 +79,9 @@ impl ArbStats {
     }
 
     pub fn record_bridge_quote_failed(&self, bridge: &str) {
-        self.with_bridge(bridge, |stats| stats.quote_failed = stats.quote_failed.saturating_add(1));
+        self.with_bridge(bridge, |stats| {
+            stats.quote_failed = stats.quote_failed.saturating_add(1)
+        });
     }
 
     pub fn record_bridge_unprofitable(&self, bridge: &str) {
@@ -86,7 +91,9 @@ impl ArbStats {
     }
 
     pub fn record_bridge_opportunity(&self, bridge: &str) {
-        self.with_bridge(bridge, |stats| stats.opportunities = stats.opportunities.saturating_add(1));
+        self.with_bridge(bridge, |stats| {
+            stats.opportunities = stats.opportunities.saturating_add(1)
+        });
     }
 
     pub fn bridge_breakdown(&self) -> Vec<BridgeStatsSnapshot> {
@@ -130,6 +137,7 @@ impl ArbStats {
             txs_succeeded: self.txs_succeeded.load(Ordering::Relaxed),
             txs_failed: self.txs_failed.load(Ordering::Relaxed),
             txs_dedup_skipped: self.txs_dedup_skipped.load(Ordering::Relaxed),
+            caller_busy: self.caller_busy.load(Ordering::Relaxed),
         }
     }
 
@@ -162,6 +170,7 @@ pub struct ArbStatsSnapshot {
     pub txs_succeeded: u64,
     pub txs_failed: u64,
     pub txs_dedup_skipped: u64,
+    pub caller_busy: u64,
 }
 
 impl ArbStatsSnapshot {
@@ -174,9 +183,7 @@ impl ArbStatsSnapshot {
         ArbStatsDelta {
             routes_evaluated: self.routes_evaluated.saturating_sub(previous.routes_evaluated),
             quote_failed: self.quote_failed.saturating_sub(previous.quote_failed),
-            unprofitable_quotes: self
-                .unprofitable_quotes
-                .saturating_sub(previous.unprofitable_quotes),
+            unprofitable_quotes: self.unprofitable_quotes.saturating_sub(previous.unprofitable_quotes),
             opportunities: self.opportunities.saturating_sub(previous.opportunities),
             txs_prepared: self.txs_prepared.saturating_sub(previous.txs_prepared),
             txs_sim_rejected: self.txs_sim_rejected.saturating_sub(previous.txs_sim_rejected),
@@ -187,6 +194,7 @@ impl ArbStatsSnapshot {
             txs_succeeded: self.txs_succeeded.saturating_sub(previous.txs_succeeded),
             txs_failed: self.txs_failed.saturating_sub(previous.txs_failed),
             txs_dedup_skipped: self.txs_dedup_skipped.saturating_sub(previous.txs_dedup_skipped),
+            caller_busy: self.caller_busy.saturating_sub(previous.caller_busy),
             quote_sim_gap_samples: self
                 .quote_sim_gap_samples
                 .saturating_sub(previous.quote_sim_gap_samples),
@@ -221,6 +229,7 @@ pub struct ArbStatsDelta {
     pub txs_succeeded: u64,
     pub txs_failed: u64,
     pub txs_dedup_skipped: u64,
+    pub caller_busy: u64,
     pub quote_sim_gap_samples: u64,
 }
 
@@ -270,6 +279,7 @@ impl QuietWindowTracker {
                 txs_succeeded: 0,
                 txs_failed: 0,
                 txs_dedup_skipped: 0,
+                caller_busy: 0,
             },
             primed: false,
         }
@@ -386,6 +396,8 @@ pub fn spawn_stats_reporter(runtime: SharedRuntime, interval: Duration) {
             previous = s;
             info!(
                 routes_evaluated = s.routes_evaluated,
+                quote_failed = s.quote_failed,
+                unprofitable_quotes = s.unprofitable_quotes,
                 opportunities = s.opportunities,
                 prepared = s.txs_prepared,
                 prepare_rate_bps = s.prepare_rate_bps(),
@@ -402,8 +414,11 @@ pub fn spawn_stats_reporter(runtime: SharedRuntime, interval: Duration) {
                 succeeded = s.txs_succeeded,
                 failed = s.txs_failed,
                 dedup_skipped = s.txs_dedup_skipped,
+                caller_busy = runtime.stats.caller_busy.load(Ordering::Relaxed),
                 dry_run = s.txs_dry_run,
                 delta_routes_evaluated = delta.routes_evaluated,
+                delta_quote_failed = delta.quote_failed,
+                delta_unprofitable_quotes = delta.unprofitable_quotes,
                 delta_opportunities = delta.opportunities,
                 delta_prepared = delta.txs_prepared,
                 delta_sim_rejected = delta.txs_sim_rejected,
@@ -412,6 +427,7 @@ pub fn spawn_stats_reporter(runtime: SharedRuntime, interval: Duration) {
                 delta_succeeded = delta.txs_succeeded,
                 delta_failed = delta.txs_failed,
                 delta_dedup_skipped = delta.txs_dedup_skipped,
+                delta_caller_busy = delta.caller_busy,
                 delta_quote_sim_gap_samples = delta.quote_sim_gap_samples,
                 bridge_breakdown = ?runtime.stats.bridge_breakdown(),
                 "arb stats summary"
@@ -456,6 +472,7 @@ mod tests {
             txs_succeeded: 0,
             txs_failed: 0,
             txs_dedup_skipped: 0,
+            caller_busy: 0,
         };
         assert!(t.observe(snap).is_none()); // prime
 
@@ -497,6 +514,7 @@ mod tests {
             txs_succeeded: 0,
             txs_failed: 0,
             txs_dedup_skipped: 0,
+            caller_busy: 0,
         };
         assert!(t.observe(snap).is_none());
         snap.opportunities = 50; // below threshold

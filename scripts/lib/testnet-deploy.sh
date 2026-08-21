@@ -99,17 +99,24 @@ run_stellar_tx() {
 find_wasm() {
   local name="$1"
   local root="$2"
-  local candidate
+  local candidate best="" best_mtime=0 mtime
   for candidate in \
     "$root/target/wasm32v1-none/contract-release/${name}.wasm" \
     "$root/target/wasm32v1-none/release/${name}.wasm" \
     "$root/target/wasm32-unknown-unknown/release/${name}.wasm"
   do
     if [[ -f "$candidate" ]]; then
-      echo "$candidate"
-      return 0
+      mtime=$(stat -c %Y "$candidate" 2>/dev/null || stat -f %m "$candidate")
+      if [[ -z "$best" || "$mtime" -gt "$best_mtime" ]]; then
+        best="$candidate"
+        best_mtime="$mtime"
+      fi
     fi
   done
+  if [[ -n "$best" ]]; then
+    printf '%s\n' "$best"
+    return 0
+  fi
   return 1
 }
 

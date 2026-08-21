@@ -7,7 +7,7 @@ use {
     anyhow::Result,
     async_trait::async_trait,
     burberry::Executor,
-    tracing::warn,
+    tracing::{debug, warn},
 };
 
 pub struct TxExecutor {
@@ -27,6 +27,7 @@ impl Executor<ArbOpportunity> for TxExecutor {
     }
 
     async fn execute(&self, opp: ArbOpportunity) -> Result<()> {
+        debug!(route = %opp.route_label, "executor received opportunity");
         let runtime = self.runtime.clone();
 
         tokio::spawn(async move {
@@ -66,6 +67,7 @@ impl Executor<ArbOpportunity> for TxExecutor {
                 pool,
                 runtime.stats.clone(),
                 runtime.profit.clone(),
+                runtime.submission_ledger.clone(),
                 runtime.dry_run(),
             )
             .await

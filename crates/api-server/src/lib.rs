@@ -25,11 +25,7 @@ use {
     rate_limit::RateLimitState,
     state::AppState,
     std::{net::SocketAddr, path::PathBuf},
-    tower_http::{
-        cors::CorsLayer,
-        limit::RequestBodyLimitLayer,
-        services::ServeDir,
-    },
+    tower_http::{cors::CorsLayer, limit::RequestBodyLimitLayer, services::ServeDir},
     tracing::info,
 };
 

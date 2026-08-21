@@ -5,7 +5,7 @@ use {
         config::{IndexerConfig, DEFAULT_LOOKBACK_LEDGERS},
         events::build_invocations_from_events,
         order_events::ingest_escrow_order_events,
-        parser::parse_envelope,
+        parser::{classify_failure, parse_envelope},
         store::{IndexStore, StoredInvocation},
     },
     anyhow::{Context, Result},
@@ -16,10 +16,13 @@ use {
     tracing::{info, warn},
 };
 
+const OFFICIAL_MAINNET_RPC_URL: &str = "https://mainnet.sorobanrpc.com";
+const OFFICIAL_TESTNET_RPC_URL: &str = "https://soroban-testnet.stellar.org";
+
 #[derive(serde::Deserialize)]
 struct HorizonTransaction {
     envelope_xdr: String,
-    result_xdr: Option<String>,
+    result_meta_xdr: Option<String>,
 }
 
 pub async fn run(config: IndexerConfig) -> Result<()> {
@@ -128,6 +131,11 @@ async fn ingest_range(
         for record in build_invocations_from_events(&events)? {
             if store.insert_invocation(&record)? {
                 ingested += 1;
+            } else {
+                // An older envelope fallback row may already exist without
+                // amount_out. Merge the event summary so successful trades
+                // do not remain permanently incomplete in the public API.
+                let _ = store.replace_invocation_legs(&record.tx_hash, &record.parsed)?;
             }
         }
     }
@@ -140,25 +148,39 @@ async fn ingest_range(
             contract_ids: Some(vec![config.aggregator_contract.clone()]),
         }];
         match rpc
-            .get_contract_transactions(start_ledger, Some(end_ledger), &filters, config.page_limit)
+            // getTransactions is capped at 200 even when getEvents accepts
+            // the larger configured page limit.
+            .get_contract_transactions(start_ledger, Some(end_ledger), &filters, config.page_limit.min(200))
             .await
         {
             Ok(txs) => {
                 for tx in txs {
-                    let parsed =
-                        match parse_envelope(&tx.envelope_xdr, &config.aggregator_contract, tx.result_xdr.as_deref()) {
-                            Ok(Some(p)) => p,
-                            Ok(None) => continue,
-                            Err(e) => {
-                                warn!(tx = %tx.tx_hash, error = %e, "failed to parse envelope");
-                                continue;
-                            }
-                        };
+                    // A failed Soroban transaction can have an envelope that
+                    // this parser cannot decode, while resultXdr is still
+                    // sufficient to classify the terminal failure. Update an
+                    // event-derived row before attempting envelope parsing.
+                    let failure_reason = if tx.status == "FAILED" {
+                        classify_failure(tx.result_xdr.as_deref())
+                    } else {
+                        None
+                    };
+                    if failure_reason.is_some() {
+                        let _ = store.update_invocation_failure_reason(&tx.tx_hash, failure_reason.as_deref())?;
+                    }
+                    let parsed = match parse_envelope(&tx.envelope_xdr, &config.aggregator_contract, None) {
+                        Ok(Some(p)) => p,
+                        Ok(None) => continue,
+                        Err(e) => {
+                            warn!(tx = %tx.tx_hash, error = %e, "failed to parse envelope");
+                            continue;
+                        }
+                    };
                     let record = StoredInvocation {
                         tx_hash: tx.tx_hash.clone(),
                         ledger: tx.ledger,
                         created_at: tx.created_at,
                         status: tx.status.clone(),
+                        failure_reason,
                         parsed,
                     };
                     // Enrich event-derived actual leg amounts with envelope token
@@ -166,6 +188,8 @@ async fn ingest_range(
                     if store.insert_invocation(&record)? {
                         ingested += 1;
                     } else {
+                        let _ = store
+                            .update_invocation_failure_reason(&record.tx_hash, record.failure_reason.as_deref())?;
                         let _ = store.replace_invocation_legs(&record.tx_hash, &record.parsed)?;
                     }
                 }
@@ -212,14 +236,38 @@ pub async fn repair_leg_indices(config: IndexerConfig, created_at_from: i64) -> 
     config.ensure_parent_dir()?;
     let store = IndexStore::open(&config.db_path)?;
     let rpc = config.rpc();
+    let official_rpc = dex_adapters::SorobanRpc::new(
+        if config.network_passphrase == "Test SDF Network ; September 2015" {
+            OFFICIAL_TESTNET_RPC_URL
+        } else {
+            OFFICIAL_MAINNET_RPC_URL
+        },
+        &config.network_passphrase,
+    );
     let http = reqwest::Client::new();
     let txs = store.list_tx_hashes_since(created_at_from)?;
     let mut fixed = 0u64;
     for (tx_hash, _ledger) in txs {
-        let rpc_tx = rpc.get_transaction(&tx_hash).await;
+        let own_rpc_tx = rpc.get_transaction(&tx_hash).await;
+        // Prefer the self-hosted RPC. Use the official endpoint only when the
+        // local node has pruned the transaction or its Soroban result metadata.
+        let rpc_tx = match own_rpc_tx {
+            Ok(tx) if tx.envelope_xdr.is_some() && tx.result_meta_xdr.is_some() => Ok(tx),
+            own => official_rpc.get_transaction(&tx_hash).await.or(own),
+        };
         let rpc_failure = rpc_tx.as_ref().err().map(ToString::to_string);
         let rpc_envelope = rpc_tx.as_ref().ok().and_then(|got| got.envelope_xdr.as_deref());
-        let rpc_result = rpc_tx.as_ref().ok().and_then(|got| got.result_xdr.as_deref());
+        let rpc_result_meta = rpc_tx.as_ref().ok().and_then(|got| got.result_meta_xdr.as_deref());
+        if let Some(status) = rpc_tx.as_ref().ok().map(|got| got.status.as_str()) {
+            let _ = store.update_invocation_status(&tx_hash, status)?;
+        }
+        if let Some(reason) = rpc_tx
+            .as_ref()
+            .ok()
+            .and_then(|got| classify_failure(got.result_xdr.as_deref()))
+        {
+            let _ = store.update_invocation_failure_reason(&tx_hash, Some(&reason))?;
+        }
 
         let horizon_tx = if rpc_envelope.is_none() {
             match fetch_horizon_transaction(&http, config.horizon_url.as_deref(), &tx_hash).await {
@@ -238,11 +286,11 @@ pub async fn repair_leg_indices(config: IndexerConfig, created_at_from: i64) -> 
             None
         };
 
-        let (envelope_xdr, result_xdr) = match horizon_tx.as_ref() {
-            Some(tx) => (tx.envelope_xdr.as_str(), tx.result_xdr.as_deref()),
-            None => (rpc_envelope.expect("checked above"), rpc_result),
+        let (envelope_xdr, result_meta_xdr) = match horizon_tx.as_ref() {
+            Some(tx) => (tx.envelope_xdr.as_str(), tx.result_meta_xdr.as_deref()),
+            None => (rpc_envelope.expect("checked above"), rpc_result_meta),
         };
-        let parsed = match parse_envelope(envelope_xdr, &config.aggregator_contract, result_xdr) {
+        let parsed = match parse_envelope(envelope_xdr, &config.aggregator_contract, result_meta_xdr) {
             Ok(Some(p)) => p,
             Ok(None) => {
                 warn!(tx = %tx_hash, "repair envelope had no aggregator invoke");

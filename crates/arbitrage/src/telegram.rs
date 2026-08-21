@@ -128,12 +128,14 @@ fn format_window(label: &str, w: &ProfitWindow) -> String {
         "{label}\n\
          · succeeded: {}\n\
          · failed: {}\n\
+         · unknown: {}\n\
          · submitted: {}\n\
          · gross profit: `{}` XLM\n\
          · est. fees: `{}` XLM\n\
          · net: `{}` XLM",
         w.succeeded,
         w.failed,
+        w.unknown,
         w.submitted,
         format_xlm4_u(w.gross_profit_stroops),
         format_xlm4_u(w.fee_stroops),
@@ -176,12 +178,7 @@ fn format_bridge_breakdown(rows: &[BridgeStatsSnapshot]) -> String {
         let quote_fail_bps = row.quote_failed.saturating_mul(10_000) / row.evaluated.max(1);
         lines.push(format!(
             "· {}: eval={} opp={} unprof={} quote_fail={} ({} bps)",
-            row.bridge,
-            row.evaluated,
-            row.opportunities,
-            row.unprofitable_quotes,
-            row.quote_failed,
-            quote_fail_bps,
+            row.bridge, row.evaluated, row.opportunities, row.unprofitable_quotes, row.quote_failed, quote_fail_bps,
         ));
     }
     lines.join("\n")
@@ -217,10 +214,11 @@ pub fn format_report(
     let grand = vault_xlm.unwrap_or(0).saturating_add(caller_total);
 
     let funnel_block = format!(
-         "🔎 Quote→sim funnel (session):\n\
+        "🔎 Quote→sim funnel (session):\n\
          · quote_failed: {}\n\
          · unprofitable: {}\n\
          · opportunities: {}\n\
+         · caller_busy: {}\n\
          · prepared: {} ({} bps)\n\
          · sim_profit_rejected: {} ({} bps)\n\
          · discards: size={} below_quoted={} fee={} probe={}\n\
@@ -228,6 +226,7 @@ pub fn format_report(
         funnel.quote_failed,
         funnel.unprofitable_quotes,
         funnel.opportunities,
+        funnel.caller_busy,
         funnel.txs_prepared,
         funnel.prepare_rate_bps(),
         funnel.txs_sim_profit_rejected,
@@ -292,6 +291,7 @@ mod tests {
             txs_succeeded: 1,
             txs_failed: 0,
             txs_dedup_skipped: 0,
+            caller_busy: 0,
         }
     }
 
@@ -300,6 +300,7 @@ mod tests {
         let hour = ProfitWindow {
             succeeded: 2,
             failed: 1,
+            unknown: 0,
             submitted: 3,
             gross_profit_stroops: 500_000,
             fee_stroops: 1_000_000,

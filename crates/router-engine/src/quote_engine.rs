@@ -489,7 +489,8 @@ impl QuoteEngine {
         path.sources.iter().any(|source| source == CLASSIC_SOURCE)
     }
 
-    /// Pure classic or pure Soroban — never mixed hops (unexecutable as one tx).
+    /// Pure classic or pure Soroban — never mixed hops (unexecutable as one
+    /// tx).
     fn path_is_executable(path: &Path) -> bool {
         Self::is_classic_only_path(path) || !Self::path_contains_classic(path)
     }

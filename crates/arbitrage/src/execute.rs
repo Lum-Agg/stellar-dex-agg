@@ -120,14 +120,8 @@ pub async fn prepare_opportunity_tx(
     // the event pipeline; this final check keeps the scanner fast while
     // filtering stale local quotes before transaction simulation.
     if !ctx.config.on_chain_validate {
-        let validated = quote_round_trip_with_validation(
-            ctx,
-            &quote.base,
-            &quote.bridge,
-            quote.amount_in,
-            true,
-        )
-        .await?;
+        let validated =
+            quote_round_trip_with_validation(ctx, &quote.base, &quote.bridge, quote.amount_in, true).await?;
         if validated.profit() < ctx.config.min_profit_for(&quote.base.canonical()) {
             return Ok(None);
         }
@@ -372,9 +366,11 @@ pub async fn try_execute_opportunity(
     caller_pool: &CallerPool,
     stats: Arc<ArbStats>,
     profit: Arc<crate::profit::ProfitBook>,
+    submission_ledger: Option<Arc<crate::submission_ledger::SubmissionLedger>>,
     dry_run: bool,
 ) -> Result<bool> {
     let Some(guard) = caller_pool.try_acquire().await else {
+        stats.caller_busy.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         warn!(route = %opp.route_label, "all callers busy, dropping opportunity");
         return Ok(false);
     };
@@ -420,6 +416,7 @@ pub async fn try_execute_opportunity(
         &prepared,
         stats.clone(),
         profit,
+        submission_ledger,
         ctx.config.poll_tx,
     )
     .await;
@@ -428,8 +425,8 @@ pub async fn try_execute_opportunity(
     // that an earlier transaction from this account is still pending. Immediate
     // rejection, signing failure, and transport errors do not consume the
     // sequence and should not reduce caller capacity.
-    let should_cooldown = submit_result.is_ok()
-        || submit_result
+    let should_cooldown = submit_result.is_ok() ||
+        submit_result
             .as_ref()
             .err()
             .is_some_and(|e| e.to_string().contains("TRY_AGAIN_LATER"));
@@ -447,6 +444,8 @@ pub async fn try_execute_opportunity(
 fn is_structural_sim_failure(err: &str) -> bool {
     let e = err.to_ascii_lowercase();
     e.contains("invalidaction") ||
+        e.contains("unreachablecodereached") ||
+        (e.contains("vm call trapped") && e.contains("hosterror")) ||
         e.contains("outside of the footprint") ||
         e.contains("exceededlimit") ||
         (e.contains("footprint") && (e.contains("hosterror") || e.contains("trapped")))
@@ -464,6 +463,20 @@ mod tests {
     fn detects_invalid_action() {
         assert!(is_structural_sim_failure(
             "simulation missing i128 return value: HostError: Error(WasmVm, InvalidAction)"
+        ));
+    }
+
+    #[test]
+    fn detects_unreachable_code_trap() {
+        assert!(is_structural_sim_failure(
+            "simulation missing i128 return value: HostError: UnreachableCodeReached"
+        ));
+    }
+
+    #[test]
+    fn detects_wrapped_host_trap() {
+        assert!(is_structural_sim_failure(
+            "VM call trapped with HostError while preparing Aquarius swap"
         ));
     }
 

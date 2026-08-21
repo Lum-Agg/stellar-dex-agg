@@ -24,10 +24,10 @@ pub struct KeeperConfig {
 impl KeeperConfig {
     pub fn from_file(path: impl AsRef<std::path::Path>) -> Result<Self> {
         let path = path.as_ref();
-        let source = std::fs::read_to_string(path)
-            .map_err(|e| anyhow!("read keeper config {}: {e}", path.display()))?;
-        let file: KeeperFileConfig = toml::from_str(&source)
-            .map_err(|e| anyhow!("parse keeper config {}: {e}", path.display()))?;
+        let source =
+            std::fs::read_to_string(path).map_err(|e| anyhow!("read keeper config {}: {e}", path.display()))?;
+        let file: KeeperFileConfig =
+            toml::from_str(&source).map_err(|e| anyhow!("parse keeper config {}: {e}", path.display()))?;
         Self::from_file_config(file)
     }
 

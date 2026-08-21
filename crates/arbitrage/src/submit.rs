@@ -2,7 +2,10 @@
 //! pattern).
 
 use {
-    crate::{execute::PreparedArbTx, keypair::ExecutorKeypair, prepare::rpc_server, stats::ArbStats},
+    crate::{
+        execute::PreparedArbTx, keypair::ExecutorKeypair, prepare::rpc_server, stats::ArbStats,
+        submission_ledger::SubmissionLedger,
+    },
     anyhow::{anyhow, Result},
     soroban_client::{
         network::{NetworkPassphrase, Networks},
@@ -16,8 +19,9 @@ use {
     tracing::{error, info, warn},
 };
 
-/// ~one Stellar ledger; poll runs **without** holding caller mutex.
-const POLL_ATTEMPTS: usize = 3;
+/// Allow several ledgers for RPC indexing before classifying a broadcast as
+/// unknown. Poll runs without holding the caller mutex.
+const POLL_ATTEMPTS: usize = 15;
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 /// `stellar_baselib::Transaction::from_xdr_envelope` drops `TransactionExt::V1`
@@ -97,6 +101,7 @@ struct PollContext {
     amount_in: u128,
     simulated_amount_out: u128,
     estimated_fee_stroops: u128,
+    submission_ledger: Option<Arc<SubmissionLedger>>,
 }
 
 /// Poll in background so caller mutex is not held (~6s ledger window).
@@ -104,6 +109,11 @@ fn spawn_poll_outcome(rpc_url: String, ctx: PollContext, stats: Arc<ArbStats>, p
     tokio::spawn(async move {
         match poll_transaction(&rpc_url, &ctx.hash).await {
             Ok(()) => {
+                if let Some(ledger) = &ctx.submission_ledger {
+                    if let Err(e) = ledger.mark_status(&ctx.hash, "SUCCESS", None) {
+                        warn!(hash = %ctx.hash, error = %e, "failed to update submission ledger");
+                    }
+                }
                 stats.txs_succeeded.fetch_add(1, Ordering::Relaxed);
                 let gross = ctx.simulated_amount_out.saturating_sub(ctx.amount_in);
                 profit.record_success(&ctx.hash, ctx.amount_in, gross, ctx.estimated_fee_stroops);
@@ -119,11 +129,22 @@ fn spawn_poll_outcome(rpc_url: String, ctx: PollContext, stats: Arc<ArbStats>, p
                 if e.to_string() == "tx status poll timeout" {
                     // A Soroban RPC may not expose the final result within the
                     // short observation window. This is unknown, not failure.
+                    profit.record_unknown();
+                    if let Some(ledger) = &ctx.submission_ledger {
+                        if let Err(e) = ledger.mark_status(&ctx.hash, "UNKNOWN", Some("poll_timeout")) {
+                            warn!(hash = %ctx.hash, error = %e, "failed to update submission ledger");
+                        }
+                    }
                     warn!(hash = %ctx.hash, "tx status not confirmed within poll window");
                     return;
                 }
                 stats.txs_failed.fetch_add(1, Ordering::Relaxed);
                 profit.record_failed();
+                if let Some(ledger) = &ctx.submission_ledger {
+                    if let Err(update_error) = ledger.mark_status(&ctx.hash, "FAILED", Some(&e.to_string())) {
+                        warn!(hash = %ctx.hash, error = %update_error, "failed to update submission ledger");
+                    }
+                }
                 error!(hash = %ctx.hash, route = %ctx.route_label, error = %e, "arb tx failed");
             }
         }
@@ -137,6 +158,7 @@ pub async fn submit_prepared(
     prepared: &PreparedArbTx,
     stats: Arc<ArbStats>,
     profit: Arc<crate::profit::ProfitBook>,
+    submission_ledger: Option<Arc<SubmissionLedger>>,
     poll_tx: bool,
 ) -> Result<()> {
     if !prepared.simulated {
@@ -147,6 +169,19 @@ pub async fn submit_prepared(
     }
 
     let hash = sign_and_submit(rpc_url, keypair, &prepared.unsigned_tx_xdr).await?;
+    if let Some(ledger) = &submission_ledger {
+        if let Err(e) = ledger.record_submitted(
+            &hash,
+            &prepared.caller_public_key,
+            &prepared.route_label,
+            prepared.amount_in,
+            prepared.quoted_amount_out,
+            prepared.simulated_amount_out,
+            prepared.estimated_fee_stroops,
+        ) {
+            warn!(hash = %hash, error = %e, "failed to record submitted transaction");
+        }
+    }
     stats.txs_submitted.fetch_add(1, Ordering::Relaxed);
     profit.record_submitted();
     info!(
@@ -166,6 +201,7 @@ pub async fn submit_prepared(
                 amount_in: prepared.amount_in,
                 simulated_amount_out: prepared.simulated_amount_out,
                 estimated_fee_stroops: prepared.estimated_fee_stroops,
+                submission_ledger,
             },
             stats,
             profit,

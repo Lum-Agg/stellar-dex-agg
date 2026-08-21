@@ -16,10 +16,7 @@ pub fn set_admin(env: &Env, admin: &Address) {
 }
 
 pub fn get_admin(env: &Env) -> Address {
-    env.storage()
-        .instance()
-        .get(&DataKey::Admin)
-        .expect("Not initialized")
+    env.storage().instance().get(&DataKey::Admin).expect("Not initialized")
 }
 
 pub fn set_caller(env: &Env, caller: &Address, allowed: bool) {
