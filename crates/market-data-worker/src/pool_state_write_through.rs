@@ -101,9 +101,7 @@ async fn write_through_phoenix(phoenix: &PhoenixAdapter, store: &dyn PoolStateSt
     };
     let pairs = phoenix.get_cached_pairs().await;
     let values = xyk_values_for_source("phoenix", &pairs);
-    if !values.is_empty() {
-        store.set_xyk_batch(&values).await?;
-    }
+    store.replace_xyk_source("phoenix", &values).await?;
     debug!(updated, written = values.len(), "Phoenix write-through refresh done");
     Ok(updated)
 }

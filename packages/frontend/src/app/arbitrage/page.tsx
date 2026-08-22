@@ -72,11 +72,33 @@ function failureReasonLabel(reason: string): string {
     HOST_FUNCTION_RESOURCE_LIMIT: 'Soroban resource limit exceeded',
     HOST_FUNCTION_INVALID_ACTION: 'Invalid contract action',
     HOST_FUNCTION_ENTRY_ARCHIVED: 'Contract entry archived',
+    AGGREGATOR_INVALID_AMOUNT: 'Aggregator: invalid amount',
+    AGGREGATOR_INVALID_MINIMUM_OUT: 'Aggregator: invalid minimum output',
+    AGGREGATOR_EMPTY_ROUTES: 'Aggregator: empty route list',
+    AGGREGATOR_INVALID_ROUTE: 'Aggregator: invalid route structure',
+    AGGREGATOR_DISCONNECTED_ROUTE: 'Aggregator: disconnected route',
+    AGGREGATOR_INVALID_STEP: 'Aggregator: invalid swap step',
+    AGGREGATOR_ZERO_STEP_OUTPUT: 'Aggregator: zero output from swap step',
+    AGGREGATOR_OUTPUT_BELOW_MINIMUM: 'Aggregator: output below minimum',
+    AGGREGATOR_VENUE_NOT_REGISTERED: 'Aggregator: venue not registered',
+    AGGREGATOR_ARITHMETIC_OVERFLOW: 'Aggregator: arithmetic overflow',
+    AGGREGATOR_NOT_INITIALIZED: 'Aggregator: not initialized',
     INSUFFICIENT_BALANCE: 'Insufficient balance',
     BAD_AUTH: 'Invalid authorization',
     TX_FAILED: 'Transaction failed',
   };
-  return labels[reason] ?? reason.replaceAll('_', ' ').toLowerCase();
+  if (labels[reason]) return labels[reason];
+
+  const venueTrap = reason.match(/^HOST_FUNCTION_UNREACHABLE_CODE_(.+)$/);
+  if (venueTrap) return `Contract unreachable code trap (${venueTrap[1]})`;
+  const venueBudget = reason.match(/^HOST_FUNCTION_BUDGET_EXCEEDED_(.+)$/);
+  if (venueBudget) return `Soroban resource budget exceeded (${venueBudget[1]})`;
+  const venueAction = reason.match(/^HOST_FUNCTION_INVALID_ACTION_(.+)$/);
+  if (venueAction) return `Invalid contract action (${venueAction[1]})`;
+  const venueArchived = reason.match(/^HOST_FUNCTION_ENTRY_ARCHIVED_(.+)$/);
+  if (venueArchived) return `Contract entry archived (${venueArchived[1]})`;
+
+  return reason.replaceAll('_', ' ').toLowerCase();
 }
 
 function formatUsd(n: number): string {

@@ -68,6 +68,31 @@ to historical daily USD by the API. It is **gross surplus, not net P&L**:
 transaction fees are not present in aggregator events and are not deducted.
 Failed transactions and bot simulation estimates are excluded.
 
+## Failure reason labels
+
+The Aggregator emits Soroban contract errors for failures caused by its own
+validation and accounting logic. The indexer maps these numeric errors to
+stable labels instead of leaving them as generic `HOST_FUNCTION_TRAPPED`:
+
+| Code | Label |
+|------|-------|
+| `#1` | `AGGREGATOR_INVALID_AMOUNT` |
+| `#2` | `AGGREGATOR_INVALID_MINIMUM_OUT` |
+| `#3` | `AGGREGATOR_EMPTY_ROUTES` |
+| `#4` | `AGGREGATOR_INVALID_ROUTE` |
+| `#5` | `AGGREGATOR_DISCONNECTED_ROUTE` |
+| `#6` | `AGGREGATOR_INVALID_STEP` |
+| `#7` | `AGGREGATOR_ZERO_STEP_OUTPUT` |
+| `#8` | `AGGREGATOR_OUTPUT_BELOW_MINIMUM` |
+| `#9` | `AGGREGATOR_VENUE_NOT_REGISTERED` |
+| `#10` | `AGGREGATOR_ARITHMETIC_OVERFLOW` |
+| `#11` | `AGGREGATOR_NOT_INITIALIZED` |
+
+This classification is applied to both the mainnet and testnet Aggregator
+contract addresses. Errors raised inside a DEX remain separately classified as
+venue or Soroban host failures because the Aggregator cannot translate another
+contract's error codes.
+
 ## Configuration
 
 The indexer reads the same `lumagg-aggregator.toml` as the API and worker.

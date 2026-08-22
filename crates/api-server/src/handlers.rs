@@ -2050,7 +2050,28 @@ pub async fn build_tx(State(state): State<AppState>, Json(body): Json<BuildTxReq
             // Simulate failed — do NOT return a broken raw XDR.
             // A Soroban tx without sorobanData cannot be signed by any wallet.
             // Categorize the error for a better UX message.
-            let user_msg = if e.contains("Output below minimum") ||
+            let user_msg = if e.contains(AGGREGATOR_CONTRACT) && e.contains("Error(Contract, #3)") {
+                "Swap simulation failed: the route contains no executable sub-routes. Refresh the quote and try again."
+                    .to_string()
+            } else if e.contains(AGGREGATOR_CONTRACT) && e.contains("Error(Contract, #4)") {
+                "Swap simulation failed: the route structure is invalid. Refresh the quote and try again."
+                    .to_string()
+            } else if e.contains(AGGREGATOR_CONTRACT) && e.contains("Error(Contract, #5)") {
+                "Swap simulation failed: the route contains disconnected token steps. Refresh the quote and try again."
+                    .to_string()
+            } else if e.contains(AGGREGATOR_CONTRACT) && e.contains("Error(Contract, #6)") {
+                "Swap simulation failed: one of the route steps is invalid. Refresh the quote and try again."
+                    .to_string()
+            } else if e.contains(AGGREGATOR_CONTRACT) && e.contains("Error(Contract, #8)") {
+                "Swap failed: on-chain output was below your minimum. Refresh the quote or increase slippage."
+                    .to_string()
+            } else if e.contains(AGGREGATOR_CONTRACT) && e.contains("Error(Contract, #9)") {
+                "Swap simulation failed: this route uses a venue that is not registered for escrow execution. Try another route."
+                    .to_string()
+            } else if e.contains(AGGREGATOR_CONTRACT) && e.contains("Error(Contract, #10)") {
+                "Swap simulation failed: the Aggregator detected an arithmetic overflow. Refresh the quote or use a smaller amount."
+                    .to_string()
+            } else if e.contains("Output below minimum") ||
                 e.contains("below minimum") ||
                 (e.contains("UnreachableCodeReached") && e.contains("swap"))
             {

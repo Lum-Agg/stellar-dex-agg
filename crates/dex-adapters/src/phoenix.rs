@@ -71,7 +71,14 @@ impl PhoenixAdapter {
 
         for entry in entries.iter() {
             match self.parse_pool_info(entry).await {
-                Ok(Some(pool)) => pools.push(pool),
+                Ok(Some((pair, fee_bps))) => {
+                    // Phoenix blended pools can be placed in deposit-only
+                    // bootstrap mode. Keep legacy pools compatible when the
+                    // optional floor query is not available.
+                    if self.pool_meets_trading_floor(&pair).await {
+                        pools.push((pair, fee_bps));
+                    }
+                }
                 Ok(None) => {}
                 Err(e) => debug!("Phoenix pool parse error: {}", e),
             }
@@ -79,6 +86,44 @@ impl PhoenixAdapter {
 
         info!("Phoenix: fetched {} pools", pools.len());
         Ok(pools)
+    }
+
+    async fn pool_meets_trading_floor(&self, pair: &AdapterTradingPair) -> bool {
+        let floor = match self
+            .rpc
+            .call_no_args(&pair.pool_address, "min_trading_balances")
+            .await
+        {
+            Ok(xdr::ScVal::Vec(Some(values))) if values.len() == 2 => {
+                let min_a = scval_to_i128(&values[0]).ok();
+                let min_b = scval_to_i128(&values[1]).ok();
+                match (min_a, min_b) {
+                    (Some(a), Some(b)) if a >= 0 && b >= 0 => Some((a as u128, b as u128)),
+                    _ => None,
+                }
+            }
+            // Older Phoenix pools do not expose this optional view.
+            Ok(_) | Err(_) => None,
+        };
+
+        let Some((min_a, min_b)) = floor else {
+            return true;
+        };
+
+        let reserve_a = pair.reserve_a.unwrap_or_default();
+        let reserve_b = pair.reserve_b.unwrap_or_default();
+        let tradeable = meets_trading_floor(reserve_a, reserve_b, min_a, min_b);
+        if !tradeable {
+            debug!(
+                pool = %pair.pool_address,
+                reserve_a,
+                reserve_b,
+                min_a,
+                min_b,
+                "Phoenix pool below trading floor; excluding from quotes"
+            );
+        }
+        tradeable
     }
 
     /// Parse a single LiquidityPoolInfo entry.
@@ -176,6 +221,10 @@ impl PhoenixAdapter {
             address: contract_address.to_string(),
         }
     }
+}
+
+fn meets_trading_floor(reserve_a: u128, reserve_b: u128, min_a: u128, min_b: u128) -> bool {
+    reserve_a >= min_a && reserve_b >= min_b
 }
 
 #[async_trait]
@@ -365,5 +414,12 @@ mod tests {
         assert_eq!(at_30, 18_532_013);
         assert_eq!(at_50, 18_494_838);
         assert!(at_30 > at_50);
+    }
+
+    #[test]
+    fn trading_floor_requires_both_reserves() {
+        assert!(meets_trading_floor(100, 200, 0, 200));
+        assert!(!meets_trading_floor(100, 199, 0, 200));
+        assert!(!meets_trading_floor(99, 200, 100, 200));
     }
 }

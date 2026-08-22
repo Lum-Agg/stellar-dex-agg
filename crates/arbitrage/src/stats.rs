@@ -140,10 +140,12 @@ impl ArbStats {
             "trustline_missing"
         } else if lower.contains("error(contract, #13)") {
             "contract_13"
+        } else if lower.contains("error(contract, #337)") && lower.contains("phoenix") {
+            "phoenix_contract_337"
         } else if lower.contains("error(contract, #337)") {
             "contract_337"
         } else if lower.contains("unreachablecodereached") {
-            "unreachable_code"
+            unreachable_reason(&lower)
         } else if lower.contains("footprint") {
             "footprint"
         } else {
@@ -171,7 +173,9 @@ impl ArbStats {
     pub fn record_chain_failure(&self, error: &str) {
         let lower = error.to_ascii_lowercase();
         let reason = if lower.contains("unreachablecodereached") {
-            "unreachable_code"
+            unreachable_reason(&lower)
+        } else if lower.contains("error(contract, #337)") && lower.contains("phoenix") {
+            "phoenix_contract_337"
         } else if lower.contains("trustline entry is missing") || lower.contains("trustline is missing") {
             "trustline_missing"
         } else if lower.contains("invalidaction") {
@@ -239,6 +243,28 @@ impl ArbStats {
         let gap = quote_sim_gap_bps(amount_in, quoted_amount_out, on_chain_base_out);
         self.quote_sim_gap_bps_sum.fetch_add(gap, Ordering::Relaxed);
         self.quote_sim_gap_samples.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+fn unreachable_reason(error: &str) -> &'static str {
+    let aquarius = error.contains("aquarius");
+    let phoenix = error.contains("phoenix");
+    let soroswap = error.contains("soroswappair") || error.contains("soroswap");
+    let sushi = error.contains("sushi");
+    let comet = error.contains("cometdex") || error.contains("comet");
+    let count = [aquarius, phoenix, soroswap, sushi, comet]
+        .into_iter()
+        .filter(|matched| *matched)
+        .count();
+
+    match count {
+        0 => "unreachable_code",
+        1 if aquarius => "unreachable_code_aquarius",
+        1 if phoenix => "unreachable_code_phoenix",
+        1 if soroswap => "unreachable_code_soroswap",
+        1 if sushi => "unreachable_code_sushi",
+        1 if comet => "unreachable_code_comet",
+        _ => "unreachable_code_mixed_venues",
     }
 }
 
@@ -695,6 +721,19 @@ mod tests {
     }
 
     #[test]
+    fn simulation_failure_breakdown_identifies_phoenix_contract_error() {
+        let stats = ArbStats::default();
+        stats.record_sim_failure(
+            "HostError: Error(Contract, #337) contract:CBEN... [Phoenix] failing with contract error",
+        );
+
+        assert_eq!(
+            stats.sim_failure_breakdown(2),
+            vec![("phoenix_contract_337".into(), 1)]
+        );
+    }
+
+    #[test]
     fn chain_failure_breakdown_classifies_replay_diagnostics() {
         let stats = ArbStats::default();
         stats.record_chain_failure("HostError: Error(WasmVm, InvalidAction) UnreachableCodeReached");
@@ -707,6 +746,21 @@ mod tests {
                 ("minimum_out".into(), 1),
                 ("trustline_missing".into(), 1),
                 ("unreachable_code".into(), 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn failure_breakdown_preserves_venue_context() {
+        let stats = ArbStats::default();
+        stats.record_chain_failure("UnreachableCodeReached [Aquarius]");
+        stats.record_chain_failure("UnreachableCodeReached [Aquarius] [Phoenix]");
+
+        assert_eq!(
+            stats.chain_failure_breakdown(4),
+            vec![
+                ("unreachable_code_aquarius".into(), 1),
+                ("unreachable_code_mixed_venues".into(), 1),
             ]
         );
     }

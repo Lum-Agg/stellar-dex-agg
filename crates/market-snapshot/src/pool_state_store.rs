@@ -163,6 +163,9 @@ pub trait PoolStateStore: Send + Sync {
     ) -> Result<()>;
 
     async fn set_xyk_batch(&self, values: &[XykPoolStateValue]) -> Result<()>;
+    /// Replace all XYK keys for one source, removing pools no longer returned
+    /// by discovery (for example a Phoenix pool in deposit-only mode).
+    async fn replace_xyk_source(&self, source: &str, values: &[XykPoolStateValue]) -> Result<()>;
     async fn set_clmm_batch(&self, pools: &[ClmmPoolSnapshot]) -> Result<()>;
     async fn set_aquarius_batch(&self, values: &[AquariusPoolStateValue]) -> Result<()>;
     async fn set_comet_batch(&self, values: &[CometPoolStateValue]) -> Result<()>;
@@ -228,6 +231,17 @@ impl PoolStateStore for MemoryPoolStateStore {
         let mut map = self.xyk.write().await;
         for value in stamped {
             map.insert(XykPoolStateValue::pool_key(&value.source, &value.pool_address), value);
+        }
+        Ok(())
+    }
+
+    async fn replace_xyk_source(&self, source: &str, values: &[XykPoolStateValue]) -> Result<()> {
+        let mut map = self.xyk.write().await;
+        map.retain(|key, _| !key.starts_with(&format!("{source}:")));
+        for value in values {
+            let mut value = value.clone();
+            value.updated_at_ms = stamp_pool_updated_at_ms(Some(value.updated_at_ms));
+            map.insert(XykPoolStateValue::pool_key(source, &value.pool_address), value);
         }
         Ok(())
     }
@@ -514,6 +528,37 @@ impl PoolStateStore for RedisPoolStateStore {
             return Ok(());
         }
         let mut conn = self.client.get_multiplexed_async_connection().await?;
+        for value in values {
+            let mut value = value.clone();
+            value.updated_at_ms = stamp_pool_updated_at_ms(Some(value.updated_at_ms));
+            let key = XykPoolStateValue::redis_key(&value.source, &value.pool_address);
+            let bytes = serde_json::to_vec(&value)?;
+            conn.set_ex::<_, _, ()>(key, bytes, self.ttl_secs).await?;
+        }
+        Ok(())
+    }
+
+    async fn replace_xyk_source(&self, source: &str, values: &[XykPoolStateValue]) -> Result<()> {
+        let mut conn = self.client.get_multiplexed_async_connection().await?;
+        let pattern = format!("{XYK_KEY_PREFIX}:{source}:*");
+        let mut cursor = 0u64;
+        loop {
+            let (next, keys): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(&pattern)
+                .arg("COUNT")
+                .arg(500)
+                .query_async(&mut conn)
+                .await?;
+            if !keys.is_empty() {
+                redis::cmd("DEL").arg(keys).query_async::<()>(&mut conn).await?;
+            }
+            cursor = next;
+            if cursor == 0 {
+                break;
+            }
+        }
         for value in values {
             let mut value = value.clone();
             value.updated_at_ms = stamp_pool_updated_at_ms(Some(value.updated_at_ms));

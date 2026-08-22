@@ -102,22 +102,72 @@ pub fn classify_failure_with_diagnostics(result_xdr: Option<&str>, diagnostic_ev
         .collect::<Vec<_>>()
         .join(" ");
 
-    for (needle, classified) in [
-        ("UnreachableCodeReached", "HOST_FUNCTION_UNREACHABLE_CODE"),
-        ("ExceededLimit", "HOST_FUNCTION_BUDGET_EXCEEDED"),
-        ("InvalidAction", "HOST_FUNCTION_INVALID_ACTION"),
-        ("EntryArchived", "HOST_FUNCTION_ENTRY_ARCHIVED"),
-    ] {
-        if diagnostic_text.contains(needle) {
-            return Some(classified.to_string());
+    Some(classify_diagnostic_text(&diagnostic_text, &reason))
+}
+
+const MAINNET_AGGREGATOR_CONTRACT: &str = "CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K";
+const TESTNET_AGGREGATOR_CONTRACT: &str = "CDJI26DXFQ4MD7VICA3Q6NEGWF53A3Z6IK7WTNMQ6UZUHL5XGQMEKJRE";
+
+fn classify_diagnostic_text(diagnostic_text: &str, fallback: &str) -> String {
+    if diagnostic_text.contains(MAINNET_AGGREGATOR_CONTRACT)
+        || diagnostic_text.contains(TESTNET_AGGREGATOR_CONTRACT)
+    {
+        for (code, classified) in [
+            ("Error(Contract, #1)", "AGGREGATOR_INVALID_AMOUNT"),
+            ("Error(Contract, #2)", "AGGREGATOR_INVALID_MINIMUM_OUT"),
+            ("Error(Contract, #3)", "AGGREGATOR_EMPTY_ROUTES"),
+            ("Error(Contract, #4)", "AGGREGATOR_INVALID_ROUTE"),
+            ("Error(Contract, #5)", "AGGREGATOR_DISCONNECTED_ROUTE"),
+            ("Error(Contract, #6)", "AGGREGATOR_INVALID_STEP"),
+            ("Error(Contract, #7)", "AGGREGATOR_ZERO_STEP_OUTPUT"),
+            ("Error(Contract, #8)", "AGGREGATOR_OUTPUT_BELOW_MINIMUM"),
+            ("Error(Contract, #9)", "AGGREGATOR_VENUE_NOT_REGISTERED"),
+            ("Error(Contract, #10)", "AGGREGATOR_ARITHMETIC_OVERFLOW"),
+            ("Error(Contract, #11)", "AGGREGATOR_NOT_INITIALIZED"),
+        ] {
+            if diagnostic_text.contains(code) {
+                return classified.to_string();
+            }
         }
     }
-    Some(reason)
+
+    if diagnostic_text.contains("UnreachableCodeReached") {
+        return venue_reason(diagnostic_text, "HOST_FUNCTION_UNREACHABLE_CODE");
+    }
+    if diagnostic_text.contains("ExceededLimit") {
+        return venue_reason(diagnostic_text, "HOST_FUNCTION_BUDGET_EXCEEDED");
+    }
+    if diagnostic_text.contains("InvalidAction") {
+        return venue_reason(diagnostic_text, "HOST_FUNCTION_INVALID_ACTION");
+    }
+    if diagnostic_text.contains("EntryArchived") {
+        return venue_reason(diagnostic_text, "HOST_FUNCTION_ENTRY_ARCHIVED");
+    }
+    fallback.to_string()
+}
+
+fn venue_reason(diagnostic_text: &str, base: &str) -> String {
+    let venues = [
+        ("Aquarius", "AQUARIUS"),
+        ("Phoenix", "PHOENIX"),
+        ("SoroswapPair", "SOROSWAP"),
+        ("Sushi", "SUSHI"),
+        ("CometDex", "COMET"),
+    ];
+    let matched: Vec<_> = venues
+        .iter()
+        .filter_map(|(needle, label)| diagnostic_text.contains(needle).then_some(*label))
+        .collect();
+    match matched.as_slice() {
+        [venue] => format!("{base}_{venue}"),
+        [] => base.to_string(),
+        _ => format!("{base}_MIXED_VENUES"),
+    }
 }
 
 #[cfg(test)]
 mod failure_tests {
-    use super::{classify_failure, classify_failure_with_diagnostics};
+    use super::{classify_diagnostic_text, classify_failure, classify_failure_with_diagnostics};
 
     #[test]
     fn classifies_soroban_trap_result() {
@@ -131,6 +181,36 @@ mod failure_tests {
         assert_eq!(
             classify_failure_with_diagnostics(Some(result), &[]).as_deref(),
             Some("HOST_FUNCTION_TRAPPED")
+        );
+    }
+
+    #[test]
+    fn classifies_unreachable_code_by_venue() {
+        assert_eq!(
+            classify_diagnostic_text("Error(WasmVm, InvalidAction) UnreachableCodeReached [Aquarius]", "HOST_FUNCTION_TRAPPED"),
+            "HOST_FUNCTION_UNREACHABLE_CODE_AQUARIUS"
+        );
+        assert_eq!(
+            classify_diagnostic_text("UnreachableCodeReached [Aquarius] [Phoenix]", "HOST_FUNCTION_TRAPPED"),
+            "HOST_FUNCTION_UNREACHABLE_CODE_MIXED_VENUES"
+        );
+    }
+
+    #[test]
+    fn classifies_aggregator_contract_error() {
+        assert_eq!(
+            classify_diagnostic_text(
+                "contract:CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K Error(Contract, #5)",
+                "HOST_FUNCTION_TRAPPED"
+            ),
+            "AGGREGATOR_DISCONNECTED_ROUTE"
+        );
+        assert_eq!(
+            classify_diagnostic_text(
+                "contract:CDJI26DXFQ4MD7VICA3Q6NEGWF53A3Z6IK7WTNMQ6UZUHL5XGQMEKJRE Error(Contract, #3)",
+                "HOST_FUNCTION_TRAPPED"
+            ),
+            "AGGREGATOR_EMPTY_ROUTES"
         );
     }
 }
