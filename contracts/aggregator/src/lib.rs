@@ -14,6 +14,7 @@
 
 mod admin;
 mod auth;
+mod errors;
 mod events;
 mod invoke;
 mod math;
@@ -25,8 +26,11 @@ mod validate;
 #[cfg(test)]
 mod tests;
 
-pub use lumagg_contract_types::{DexType, SubRoute, SwapStep};
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, Vec};
+pub use {
+    errors::AggregatorError,
+    lumagg_contract_types::{DexType, SubRoute, SwapStep},
+};
 
 #[contract]
 pub struct AggregatorContract;

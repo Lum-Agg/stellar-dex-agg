@@ -179,6 +179,11 @@ fn spawn_poll_outcome(rpc_url: String, ctx: PollContext, stats: Arc<ArbStats>, p
                     }
                 }
                 let replay_error = diagnose_failed_submission(&rpc_url, &ctx.signed_tx_xdr).await;
+                if let Some(diagnostic) = replay_error.as_deref() {
+                    stats.record_chain_failure(diagnostic);
+                } else {
+                    stats.record_chain_failure(&e.to_string());
+                }
                 error!(
                     hash = %ctx.hash,
                     route = %ctx.route_label,

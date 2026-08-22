@@ -85,7 +85,7 @@ pub async fn apply_on_chain_hop_validation(
             Ok(Some(chain_out)) if chain_out > 0 => {
                 any_validated = true;
                 if chain_out != local_out {
-                    debug!(
+                    warn!(
                         source = %sub.path.sources.join("+"),
                         local_out,
                         chain_out,
@@ -98,7 +98,7 @@ pub async fn apply_on_chain_hop_validation(
                 total_out = total_out.saturating_add(chain_out);
             }
             Ok(_) => {
-                warn!(
+                debug!(
                     source = %sub.path.sources.join("+"),
                     amount_in = sub.amount_in,
                     "on-chain hop validation failed; keeping local quote"

@@ -279,7 +279,7 @@ pub async fn get_quote(State(state): State<AppState>, Query(params): Query<Quote
     if on_chain_validate && !route.sub_orders.is_empty() {
         let before = route.total_expected_out;
         route = apply_on_chain_hop_validation(&state.rpc, &engine, route, slippage_bps).await;
-        tracing::info!(
+        tracing::debug!(
             on_chain_validate = true,
             before_out = before,
             after_out = route.total_expected_out,
@@ -979,10 +979,10 @@ pub struct BalancesResponse {
 }
 
 const BALANCE_FETCH_CONCURRENCY: usize = 64;
-const NATIVE_SAC: &str = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";
+const MAINNET_NATIVE_SAC: &str = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";
 
-fn is_native_sac(token: &str) -> bool {
-    token == NATIVE_SAC || token == "native"
+fn is_native_sac(token: &str, native_sac: &str) -> bool {
+    token == native_sac || token == "native"
 }
 
 fn simulate_indicates_missing_trustline(err: &str) -> bool {
@@ -995,8 +995,10 @@ async fn fetch_sac_balance_with_trustline(
     token: &str,
     account_arg: &xdr::ScVal,
 ) -> (u128, Option<bool>) {
-    if is_native_sac(token) {
-        let balance = match rpc.simulate_call(token, "balance", vec![account_arg.clone()]).await {
+    let native_sac = dex_adapters::utils::compute_sac_contract_id("native", rpc.network_passphrase()).ok();
+    if token == "native" || native_sac.as_deref().is_some_and(|native| is_native_sac(token, native)) {
+        let contract = native_sac.as_deref().unwrap_or(token);
+        let balance = match rpc.simulate_call(contract, "balance", vec![account_arg.clone()]).await {
             Ok(val) => scval_to_i128(&val).unwrap_or(0).max(0) as u128,
             Err(_) => 0,
         };
@@ -1227,7 +1229,10 @@ pub(crate) fn parse_expert_asset_field(asset: &str) -> Option<(String, String)> 
 
 /// Resolve a Stellar Asset Contract to its classic code + issuer (for
 /// ChangeTrust).
-pub async fn get_classic_asset(Query(query): Query<ClassicAssetQuery>) -> impl IntoResponse {
+pub async fn get_classic_asset(
+    State(state): State<AppState>,
+    Query(query): Query<ClassicAssetQuery>,
+) -> impl IntoResponse {
     let contract = query.contract.trim();
     if contract.is_empty() {
         return Json(ClassicAssetResponse {
@@ -1237,7 +1242,9 @@ pub async fn get_classic_asset(Query(query): Query<ClassicAssetQuery>) -> impl I
             error: Some("Missing contract id".to_string()),
         });
     }
-    if is_native_sac(contract) {
+    let native_sac = dex_adapters::utils::compute_sac_contract_id("native", state.rpc.network_passphrase())
+        .unwrap_or_else(|_| MAINNET_NATIVE_SAC.to_string());
+    if contract == native_sac {
         return Json(ClassicAssetResponse {
             success: false,
             code: None,
@@ -1254,7 +1261,9 @@ pub async fn get_classic_asset(Query(query): Query<ClassicAssetQuery>) -> impl I
         });
     }
 
-    // Fast path for well-known SACs (same set as classic DEX adapter).
+    // Fast path for well-known mainnet SACs (the public expert endpoint below
+    // is also mainnet-scoped).
+    let is_mainnet = state.rpc.network_passphrase() == "Public Global Stellar Network ; September 2015";
     const KNOWN: &[(&str, &str, &str)] = &[
         (
             "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
@@ -1268,7 +1277,7 @@ pub async fn get_classic_asset(Query(query): Query<ClassicAssetQuery>) -> impl I
         ),
     ];
     for (sac, code, issuer) in KNOWN {
-        if *sac == contract {
+        if is_mainnet && *sac == contract {
             return Json(ClassicAssetResponse {
                 success: true,
                 code: Some((*code).to_string()),

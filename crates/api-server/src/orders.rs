@@ -155,6 +155,21 @@ pub async fn get_orders(Query(params): Query<OrdersQuery>) -> Response {
         }
     };
 
+    let escrow_contract = match require_escrow_contract(std::env::var("ESCROW_CONTRACT").ok()) {
+        Ok(contract) => contract,
+        Err(error) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(OrdersResponse {
+                    success: false,
+                    data: None,
+                    error: Some(error),
+                }),
+            )
+                .into_response();
+        }
+    };
+
     let Some(db_path) = indexer_db_path() else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -182,7 +197,6 @@ pub async fn get_orders(Query(params): Query<OrdersQuery>) -> Response {
         }
     };
 
-    let escrow_contract = std::env::var("ESCROW_CONTRACT").unwrap_or_default();
     match store.list_by_owner_for(&escrow_contract, user, status_filter) {
         Ok(rows) => {
             let orders = rows
@@ -260,6 +274,20 @@ pub async fn get_dca_orders(Query(params): Query<OrdersQuery>) -> Response {
         )
             .into_response();
     }
+    let escrow_contract = match require_escrow_contract(std::env::var("ESCROW_CONTRACT").ok()) {
+        Ok(contract) => contract,
+        Err(error) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(OrdersResponse {
+                    success: false,
+                    data: None,
+                    error: Some(error),
+                }),
+            )
+                .into_response();
+        }
+    };
     let Some(db_path) = indexer_db_path() else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -285,7 +313,6 @@ pub async fn get_dca_orders(Query(params): Query<OrdersQuery>) -> Response {
                 .into_response()
         }
     };
-    let escrow_contract = std::env::var("ESCROW_CONTRACT").unwrap_or_default();
     match store.list_dca_by_owner_for(&escrow_contract, user, include_all) {
         Ok(rows) => Json(
             serde_json::json!({ "success": true, "data": { "orders": rows.into_iter().map(|r| DcaOrderItem {
@@ -730,6 +757,27 @@ mod tests {
         .await
         .into_response();
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn missing_escrow_contract_is_503_for_order_listing() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("idx.db");
+        seed_db(&path);
+        std::env::set_var("INDEXER_DB_PATH", path.to_str().unwrap());
+        std::env::remove_var("ESCROW_CONTRACT");
+
+        let resp = get_orders(Query(OrdersQuery {
+            user: Some(TEST_USER.into()),
+            status: None,
+        }))
+        .await
+        .into_response();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let json = body_json(resp).await;
+        assert_eq!(json["error"], "ESCROW_CONTRACT is not configured");
+
+        std::env::remove_var("INDEXER_DB_PATH");
     }
 
     #[tokio::test]

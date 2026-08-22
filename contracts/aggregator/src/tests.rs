@@ -929,7 +929,7 @@ fn test_aquarius_exact_match() {
 // ═══════════════════════════════════════════════════════════════════════
 
 #[test]
-#[should_panic(expected = "Empty steps")]
+#[should_panic(expected = "Error(Contract, #4)")]
 fn test_empty_steps_panics() {
     let env = Env::default();
     env.mock_all_auths();
@@ -946,7 +946,7 @@ fn test_empty_steps_panics() {
 }
 
 #[test]
-#[should_panic(expected = "Disconnected sub-route")]
+#[should_panic(expected = "Error(Contract, #5)")]
 fn test_disconnected_sub_route_panics() {
     let env = Env::default();
     env.mock_all_auths();

@@ -12,7 +12,7 @@ use {
     crate::types::{OptimalRoute, SimulationResult, SubOrder, UnsignedTransaction},
     anyhow::{anyhow, Result},
     dex_adapters::rpc::SorobanRpc,
-    sha2::Digest,
+    sha2::{Digest, Sha256},
     std::sync::Arc,
     stellar_xdr::curr as xdr,
 };
@@ -326,18 +326,12 @@ impl TransactionBuilder {
     fn token_to_scval(&self, token: &dex_adapters::TokenId) -> Result<xdr::ScVal> {
         match token {
             dex_adapters::TokenId::Native => {
-                // XLM SAC address on mainnet
-                self.contract_to_scval("CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA")
+                let sac = asset_sac_address(xdr::Asset::Native, &self.config.network_passphrase)?;
+                self.contract_to_scval(&sac)
             }
             dex_adapters::TokenId::Classic { code, issuer } => {
-                // Compute SAC address for classic asset
-                // For now, use a placeholder - real implementation needs SAC computation
-                let asset_str = format!("{}:{}", code, issuer);
-                // TODO: compute_sac_contract_id
-                Err(anyhow!(
-                    "Classic asset SAC computation not yet implemented for {}",
-                    asset_str
-                ))
+                let sac = classic_asset_sac_address(code, issuer, &self.config.network_passphrase)?;
+                self.contract_to_scval(&sac)
             }
             dex_adapters::TokenId::Contract { address } => self.contract_to_scval(address),
         }
@@ -348,5 +342,74 @@ impl TransactionBuilder {
             hi: (val >> 64) as i64,
             lo: val as u64,
         })
+    }
+}
+
+/// Derive the Stellar Asset Contract address from the canonical contract ID
+/// preimage, including the network identifier required by `HashIDPreimage`.
+fn classic_asset_sac_address(code: &str, issuer: &str, network_passphrase: &str) -> Result<String> {
+    let issuer = stellar_strkey::ed25519::PublicKey::from_string(issuer)
+        .map_err(|e| anyhow!("Invalid asset issuer: {:?}", e))?;
+    let code_bytes = code.as_bytes();
+    let asset = match code_bytes.len() {
+        1..=4 => {
+            let mut padded = [0u8; 4];
+            padded[..code_bytes.len()].copy_from_slice(code_bytes);
+            xdr::Asset::CreditAlphanum4(xdr::AlphaNum4 {
+                asset_code: xdr::AssetCode4(padded),
+                issuer: xdr::AccountId(xdr::PublicKey::PublicKeyTypeEd25519(xdr::Uint256(issuer.0))),
+            })
+        }
+        5..=12 => {
+            let mut padded = [0u8; 12];
+            padded[..code_bytes.len()].copy_from_slice(code_bytes);
+            xdr::Asset::CreditAlphanum12(xdr::AlphaNum12 {
+                asset_code: xdr::AssetCode12(padded),
+                issuer: xdr::AccountId(xdr::PublicKey::PublicKeyTypeEd25519(xdr::Uint256(issuer.0))),
+            })
+        }
+        _ => return Err(anyhow!("Classic asset code must be 1-12 bytes")),
+    };
+
+    asset_sac_address(asset, network_passphrase)
+}
+
+fn asset_sac_address(asset: xdr::Asset, network_passphrase: &str) -> Result<String> {
+    use stellar_xdr::curr::{Limits, WriteXdr};
+
+    let preimage = xdr::HashIdPreimage::ContractId(xdr::HashIdPreimageContractId {
+        network_id: xdr::Hash(Sha256::digest(network_passphrase.as_bytes()).into()),
+        contract_id_preimage: xdr::ContractIdPreimage::Asset(asset),
+    })
+    .to_xdr(Limits::none())
+    .map_err(|e| anyhow!("encode SAC contract preimage: {e:?}"))?;
+    Ok(stellar_strkey::Contract(Sha256::digest(preimage).into())
+        .to_string()
+        .to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{asset_sac_address, classic_asset_sac_address};
+
+    #[test]
+    fn derives_mainnet_usdc_sac_address() {
+        let address = classic_asset_sac_address(
+            "USDC",
+            "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+            "Public Global Stellar Network ; September 2015",
+        )
+        .unwrap();
+        assert_eq!(address, "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75");
+    }
+
+    #[test]
+    fn derives_mainnet_native_sac_address() {
+        let address = asset_sac_address(
+            stellar_xdr::curr::Asset::Native,
+            "Public Global Stellar Network ; September 2015",
+        )
+        .unwrap();
+        assert_eq!(address, "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA");
     }
 }

@@ -35,7 +35,7 @@ impl Executor<ArbOpportunity> for TxExecutor {
                 return;
             };
 
-            let path_key = round_trip_dedup_key(&opp.quote.base, &opp.quote.bridge);
+            let path_key = round_trip_dedup_key(&opp.quote);
             let reserved = if runtime.submit_enabled() {
                 let mut cache = runtime.path_cache.lock().await;
                 if !cache.try_reserve(path_key.clone()) {

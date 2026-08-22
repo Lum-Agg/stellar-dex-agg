@@ -1,9 +1,12 @@
 //! Suppress duplicate submissions for the same pool path within one ledger
 //! window.
 
-use std::{
-    collections::HashMap,
-    time::{Duration, Instant},
+use {
+    crate::bridge::RoundTripQuote,
+    std::{
+        collections::HashMap,
+        time::{Duration, Instant},
+    },
 };
 
 /// Default ~1 Stellar ledger (~5s); stellar-arb uses 6s.
@@ -66,8 +69,30 @@ pub fn path_dedup_key(pool_addresses: &[String]) -> String {
     pool_addresses.join("|")
 }
 
-pub fn round_trip_dedup_key(base: &router_engine::TokenId, bridge: &router_engine::TokenId) -> String {
-    format!("{}|{}", base.canonical(), bridge.canonical())
+/// Build a key for the exact out-leg and back-leg route. Different routes may
+/// share a pool, but should not suppress each other solely for that reason.
+pub fn round_trip_dedup_key(quote: &RoundTripQuote) -> String {
+    fn leg_key(leg: &crate::quote_client::LegQuote) -> String {
+        leg.route
+            .sub_orders
+            .iter()
+            .map(|sub_order| {
+                format!(
+                    "{}:{}",
+                    sub_order.path.sources.join(","),
+                    sub_order.path.pool_addresses.join(">")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("||")
+    }
+
+    format!(
+        "{}|{}|{}",
+        quote.base.canonical(),
+        leg_key(&quote.leg_out),
+        leg_key(&quote.leg_back)
+    )
 }
 
 #[cfg(test)]

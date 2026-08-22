@@ -40,8 +40,14 @@ chmod 600 arbitrage-callers
 | `accounts.caller_indices` | `[0]` | Derivation indices used when `mnemonic_path` is configured. |
 
 Use either direct caller secrets or a mnemonic. Caller accounts must have enough
-XLM for fees. If `contracts.vault` is not set, they also need token balances and
-trustlines for the traded assets.
+XLM for fees. When `contracts.vault` is configured, the vault holds the trading
+principal and callers do not need classic trustlines for the intermediate or
+base assets. Without a vault, callers must hold the trading principal directly,
+including any required balances and trustlines.
+
+This does not repair an invalid DEX pool. A Soroban pool account that lacks the
+trustline for one of its classic-backed assets can still make simulation fail;
+remove or repair that pool in the venue data before enabling the route.
 
 ## Assets
 

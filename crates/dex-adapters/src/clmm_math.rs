@@ -1729,15 +1729,6 @@ mod tests {
 
     #[test]
     fn clmm_quote_allowed_requires_complete_and_in_range() {
-        let pool = ClmmPoolState {
-            sqrt_price_x96: sqrt_ratio_at_tick(-200),
-            tick: -200,
-            liquidity: 1_000_000,
-            fee_bps: 30,
-            tick_spacing: 200,
-            token0: "A".to_string(),
-            token1: "B".to_string(),
-        };
         let mut ticks = TickDataStore::new();
         let compressed = bitmap::compress_tick(-200, 200);
         let (chunk_pos, slot) = bitmap::chunk_address(compressed);

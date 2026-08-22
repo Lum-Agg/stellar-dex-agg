@@ -9,9 +9,7 @@
 use {
     dex_adapters::{
         aquarius_clmm::AquariusClmmAdapter,
-        clmm_math,
         rpc::{scval_to_address, scval_to_i128, scval_to_u128, SorobanRpc},
-        traits::TokenId,
         DexAdapter,
     },
     std::sync::Arc,

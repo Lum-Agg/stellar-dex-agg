@@ -67,6 +67,11 @@ interface FailureReasonCount {
 function failureReasonLabel(reason: string): string {
   const labels: Record<string, string> = {
     HOST_FUNCTION_TRAPPED: 'Contract execution trapped',
+    HOST_FUNCTION_UNREACHABLE_CODE: 'Contract unreachable code trap',
+    HOST_FUNCTION_BUDGET_EXCEEDED: 'Soroban resource budget exceeded',
+    HOST_FUNCTION_RESOURCE_LIMIT: 'Soroban resource limit exceeded',
+    HOST_FUNCTION_INVALID_ACTION: 'Invalid contract action',
+    HOST_FUNCTION_ENTRY_ARCHIVED: 'Contract entry archived',
     INSUFFICIENT_BALANCE: 'Insufficient balance',
     BAD_AUTH: 'Invalid authorization',
     TX_FAILED: 'Transaction failed',
@@ -616,7 +621,7 @@ export default function ArbitragePage() {
             <div>
               <h2 className="text-[15px] font-medium text-[var(--text-primary)]">Failure reasons</h2>
               <p className="text-[12px] text-[var(--text-muted)] mt-0.5">
-                Confirmed failed round trips classified from on-chain transaction results
+                Confirmed failed round trips classified from on-chain Soroban diagnostics
               </p>
             </div>
             <span className="text-[12px] text-rose-200/80 tabular-nums">

@@ -131,6 +131,13 @@ The development schema currently has no migration layer. After schema changes,
 start from a fresh indexer SQLite file (back up any data you need first) and
 backfill aggregator events.
 
+Order-escrow rows are scoped by the composite key `(escrow_contract, order_id)`.
+This is required because every newly deployed escrow instance starts its order
+counter again at zero. The API must use the same `features.escrow_contract` as
+the indexer; the config loader exposes it to the API as `ESCROW_CONTRACT`.
+When changing escrow instances or upgrading this schema, back up and rebuild
+the SQLite file before restarting the indexer and API.
+
 For the compact `leg` rollout:
 
 1. Upgrade the Aggregator WASM before disabling envelope fallback.

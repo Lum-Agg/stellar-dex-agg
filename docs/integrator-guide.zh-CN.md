@@ -221,7 +221,7 @@ curl -sX POST "https://api.lumagg.xyz/api/v1/orders/build_cancel" \
   -d '{"user": "G...", "order_id": 1}' | jq .
 ```
 
-`GET /orders` 与 `/swaps` 共用 indexer SQLite（`indexer.db_path`）。build 接口需配置 `features.escrow_contract`。响应字段与 `build_tx` 一致：`unsigned_tx_xdr`、`fee`、`execution`、`num_operations`、`contract`。SDK 方法：`listOrders`、`buildCreateOrder`、`buildCancelOrder`。
+`GET /orders` 与 `/swaps` 共用 indexer SQLite（`indexer.db_path`），并且 API 服务必须配置对应的 `ESCROW_CONTRACT`。如果缺少任一配置，订单列表接口返回 `503`，而不是把“服务未配置”误显示为空订单。build 接口需配置 `features.escrow_contract`。响应字段与 `build_tx` 一致：`unsigned_tx_xdr`、`fee`、`execution`、`num_operations`、`contract`。SDK 方法：`listOrders`、`buildCreateOrder`、`buildCancelOrder`。
 
 **限价单环境变量（api-server 运维）：**
 

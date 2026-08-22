@@ -83,14 +83,55 @@ pub fn classify_failure(result_xdr: Option<&str>) -> Option<String> {
     Some(reason.to_string())
 }
 
+/// Refine a generic host trap with the stable VM error exposed by Soroban's
+/// diagnostic events. Keep the returned values low-cardinality so they remain
+/// useful in aggregate stats and do not expose raw dynamic diagnostics.
+pub fn classify_failure_with_diagnostics(result_xdr: Option<&str>, diagnostic_events_xdr: &[String]) -> Option<String> {
+    let reason = classify_failure(result_xdr)?;
+    if reason != "HOST_FUNCTION_TRAPPED" {
+        return Some(reason);
+    }
+
+    let diagnostic_text = diagnostic_events_xdr
+        .iter()
+        .filter_map(|raw| {
+            xdr::DiagnosticEvent::from_xdr_base64(raw, Limits::none())
+                .ok()
+                .map(|event| format!("{event:?}"))
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    for (needle, classified) in [
+        ("UnreachableCodeReached", "HOST_FUNCTION_UNREACHABLE_CODE"),
+        ("ExceededLimit", "HOST_FUNCTION_BUDGET_EXCEEDED"),
+        ("InvalidAction", "HOST_FUNCTION_INVALID_ACTION"),
+        ("EntryArchived", "HOST_FUNCTION_ENTRY_ARCHIVED"),
+    ] {
+        if diagnostic_text.contains(needle) {
+            return Some(classified.to_string());
+        }
+    }
+    Some(reason)
+}
+
 #[cfg(test)]
 mod failure_tests {
-    use super::classify_failure;
+    use super::{classify_failure, classify_failure_with_diagnostics};
 
     #[test]
     fn classifies_soroban_trap_result() {
         let result = "AAAAAAAByAP/////AAAAAQAAAAAAAAAY/////gAAAAA=";
         assert_eq!(classify_failure(Some(result)).as_deref(), Some("HOST_FUNCTION_TRAPPED"));
+    }
+
+    #[test]
+    fn keeps_generic_trap_when_diagnostics_are_unavailable() {
+        let result = "AAAAAAAByAP/////AAAAAQAAAAAAAAAY/////gAAAAA=";
+        assert_eq!(
+            classify_failure_with_diagnostics(Some(result), &[]).as_deref(),
+            Some("HOST_FUNCTION_TRAPPED")
+        );
     }
 }
 

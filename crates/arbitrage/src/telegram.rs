@@ -91,6 +91,7 @@ async fn build_profit_report(runtime: &ArbRuntime) -> anyhow::Result<String> {
     let caller_lines = fetch_caller_balances(runtime).await;
     let funnel = runtime.stats.snapshot();
     let bridge_breakdown = runtime.stats.bridge_breakdown();
+    let sim_failure_breakdown = runtime.stats.sim_failure_breakdown(4);
     Ok(format_report(
         vault_xlm,
         &caller_lines,
@@ -99,6 +100,7 @@ async fn build_profit_report(runtime: &ArbRuntime) -> anyhow::Result<String> {
         &recent,
         &funnel,
         &bridge_breakdown,
+        &sim_failure_breakdown,
     ))
 }
 
@@ -192,6 +194,7 @@ pub fn format_report(
     recent: &[RecentTx],
     funnel: &crate::stats::ArbStatsSnapshot,
     bridge_breakdown: &[BridgeStatsSnapshot],
+    sim_failure_breakdown: &[(String, u64)],
 ) -> String {
     let vault_line = match vault_xlm {
         Some(v) => format!("🏦 Vault XLM: `{}` XLM", format_xlm4_u(v)),
@@ -239,6 +242,17 @@ pub fn format_report(
         funnel.quote_sim_gap_samples,
     );
 
+    let failure_block = if sim_failure_breakdown.is_empty() {
+        "🧪 Sim failure reasons: (none)".to_string()
+    } else {
+        let rows = sim_failure_breakdown
+            .iter()
+            .map(|(reason, count)| format!("{reason}={count}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("🧪 Sim failure reasons: {rows}")
+    };
+
     format!(
         "📊 LumAgg Arb Monitor\n\
          \n\
@@ -251,6 +265,8 @@ pub fn format_report(
          {}\n\
          \n\
          {funnel_block}\n\
+         \n\
+         {failure_block}\n\
          \n\
          {}\n\
          \n\
@@ -319,6 +335,7 @@ mod tests {
             &session,
             &recent,
             &empty_funnel(),
+            &[],
             &[],
         );
         assert!(msg.contains("LumAgg Arb Monitor"));

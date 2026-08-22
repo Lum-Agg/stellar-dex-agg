@@ -1,5 +1,5 @@
 use {
-    crate::{events, validate},
+    crate::{errors::AggregatorError, events, validate},
     lumagg_contract_types::SubRoute,
     soroban_sdk::{token, Address, Env, Vec},
 };
@@ -25,11 +25,11 @@ pub fn swap(
     min_amount_out: i128,
 ) -> i128 {
     user.require_auth();
-    assert!(token_in != token_out, "tokens must differ");
-    assert!(min_amount_out > 0, "min_amount_out must be positive");
+    soroban_sdk::assert_with_error!(env, token_in != token_out, AggregatorError::InvalidRoute);
+    soroban_sdk::assert_with_error!(env, min_amount_out > 0, AggregatorError::InvalidMinimumOut);
 
     let contract_addr = env.current_contract_address();
-    let total_in = validate::validate_sub_routes(&token_in, &token_out, &sub_routes);
+    let total_in = validate::validate_sub_routes(&env, &token_in, &token_out, &sub_routes);
 
     // Pull total input from user
     let token_in_client = token::Client::new(&env, &token_in);
@@ -40,7 +40,7 @@ pub fn swap(
 
     // Slippage: per-hop pool mins are 0; only check total output here (all
     // sub_routes summed).
-    assert!(total_output >= min_amount_out, "Output below minimum");
+    soroban_sdk::assert_with_error!(env, total_output >= min_amount_out, AggregatorError::OutputBelowMinimum);
 
     // Transfer total output to user
     let token_out_client = token::Client::new(&env, &token_out);
@@ -78,8 +78,12 @@ pub(crate) fn execute_sub_routes(
     for sr in sub_routes.iter() {
         let output =
             crate::invoke::execute_path(env, &sr.steps, sr.amount_in, contract_addr, path_base, &mut max_depth);
-        total_output = total_output.checked_add(output).expect("total output overflow");
+        total_output = total_output
+            .checked_add(output)
+            .unwrap_or_else(|| soroban_sdk::panic_with_error!(env, AggregatorError::ArithmeticOverflow));
     }
-    *leg_counter = path_base.checked_add(max_depth).expect("leg counter overflow");
+    *leg_counter = path_base
+        .checked_add(max_depth)
+        .unwrap_or_else(|| soroban_sdk::panic_with_error!(env, AggregatorError::ArithmeticOverflow));
     total_output
 }

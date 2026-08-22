@@ -32,7 +32,7 @@ use {
     router_engine::{split_optimizer::SplitConfig, OptimalRoute, QuoteEngine, RouteRequest},
     std::{path::PathBuf, sync::Arc},
     tokio::sync::{mpsc, RwLock},
-    tracing::{info, warn},
+    tracing::{debug, info, warn},
 };
 
 /// A quoted route together with the freshness of the hydrated pool state used
@@ -480,7 +480,7 @@ impl AppState {
             .filter(|p| !p.sources.is_empty() && p.sources.iter().all(|s| s.as_str() != "classic_dex"))
             .count();
         let hydrate_ms = hydrate_started.elapsed().as_millis();
-        tracing::info!(
+        debug!(
             paths = paths.len(),
             soroban_paths = soroban_path_count,
             xyk_hydrated = hydration.xyk_pools.len(),
@@ -499,7 +499,7 @@ impl AppState {
         // arb. Freshness is handled by worker refresh→Redis + thin-split filter.
         let quote_started = std::time::Instant::now();
         let route = engine.get_route_with_paths(request, &paths, Some(&hydration)).await;
-        tracing::info!(
+        debug!(
             quote_ms = quote_started.elapsed().as_millis(),
             total_ms = started.elapsed().as_millis(),
             engine_compute_ms = route.compute_time_ms,

@@ -1,5 +1,5 @@
 use {
-    crate::math,
+    crate::{errors::AggregatorError, math},
     lumagg_contract_types::{DexType, SwapStep},
     soroban_sdk::{
         auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
@@ -24,15 +24,15 @@ pub(crate) fn execute_path(
     path_base: u32,
     max_depth: &mut u32,
 ) -> i128 {
-    assert!(amount_in > 0, "Path input must be positive");
+    soroban_sdk::assert_with_error!(env, amount_in > 0, AggregatorError::InvalidAmount);
     let mut current_amount = amount_in;
 
     for (i, step) in steps.iter().enumerate() {
-        assert!(step.token_in != step.token_out, "Step tokens must differ");
-        assert!(step.in_idx != step.out_idx, "Step indices must differ");
+        soroban_sdk::assert_with_error!(env, step.token_in != step.token_out, AggregatorError::InvalidStep);
+        soroban_sdk::assert_with_error!(env, step.in_idx != step.out_idx, AggregatorError::InvalidStep);
         let hop_idx = path_base + i as u32;
         current_amount = execute_step(env, &step, current_amount, my_address, hop_idx);
-        assert!(current_amount > 0, "Step output must be positive");
+        soroban_sdk::assert_with_error!(env, current_amount > 0, AggregatorError::ZeroStepOutput);
         let depth = (i as u32) + 1;
         if depth > *max_depth {
             *max_depth = depth;

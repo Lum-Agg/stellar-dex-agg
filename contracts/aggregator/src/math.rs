@@ -1,4 +1,5 @@
 use {
+    crate::errors::AggregatorError,
     lumagg_contract_types::SubRoute,
     soroban_sdk::{Env, Vec},
 };
@@ -27,13 +28,15 @@ pub(crate) fn soroswap_get_amount_out(amount_in: i128, reserve_in: i128, reserve
 /// `target_total` across routes. Intermediate routes use floor division; the
 /// last route receives the remainder so the sum is exact (`= target_total`).
 pub(crate) fn scale_sub_routes_to_total(env: &Env, routes: &Vec<SubRoute>, target_total: i128) -> Vec<SubRoute> {
-    assert!(!routes.is_empty(), "Empty sub_routes");
-    assert!(target_total > 0, "target_total must be positive");
+    soroban_sdk::assert_with_error!(env, !routes.is_empty(), AggregatorError::EmptyRoutes);
+    soroban_sdk::assert_with_error!(env, target_total > 0, AggregatorError::InvalidAmount);
 
     let mut weight_sum: i128 = 0;
     for sr in routes.iter() {
-        assert!(sr.amount_in > 0, "sub-route weight must be positive");
-        weight_sum = weight_sum.checked_add(sr.amount_in).expect("weight sum overflow");
+        soroban_sdk::assert_with_error!(env, sr.amount_in > 0, AggregatorError::InvalidAmount);
+        weight_sum = weight_sum
+            .checked_add(sr.amount_in)
+            .unwrap_or_else(|| soroban_sdk::panic_with_error!(env, AggregatorError::ArithmeticOverflow));
     }
 
     let n = routes.len();
@@ -44,11 +47,17 @@ pub(crate) fn scale_sub_routes_to_total(env: &Env, routes: &Vec<SubRoute>, targe
         let amount = if i + 1 == n {
             target_total - allocated
         } else {
-            let scaled = sr.amount_in.checked_mul(target_total).expect("weight scale overflow") / weight_sum;
-            allocated = allocated.checked_add(scaled).expect("allocated overflow");
+            let scaled = sr
+                .amount_in
+                .checked_mul(target_total)
+                .unwrap_or_else(|| soroban_sdk::panic_with_error!(env, AggregatorError::ArithmeticOverflow)) /
+                weight_sum;
+            allocated = allocated
+                .checked_add(scaled)
+                .unwrap_or_else(|| soroban_sdk::panic_with_error!(env, AggregatorError::ArithmeticOverflow));
             scaled
         };
-        assert!(amount > 0, "scaled sub-route amount must be positive");
+        soroban_sdk::assert_with_error!(env, amount > 0, AggregatorError::InvalidAmount);
         out.push_back(SubRoute {
             amount_in: amount,
             steps: sr.steps.clone(),

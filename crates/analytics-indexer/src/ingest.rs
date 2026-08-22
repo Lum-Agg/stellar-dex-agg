@@ -5,14 +5,15 @@ use {
         config::{IndexerConfig, DEFAULT_LOOKBACK_LEDGERS},
         events::build_invocations_from_events,
         order_events::ingest_escrow_order_events,
-        parser::{classify_failure, parse_envelope},
+        parser::{classify_failure, classify_failure_with_diagnostics, parse_envelope},
         store::{IndexStore, StoredInvocation},
     },
     anyhow::{Context, Result},
     dex_adapters::rpc::{
         events::{EventFilterSpec, MAX_LEDGER_SCAN_PER_REQUEST},
-        transactions::TransactionFilterSpec,
+        transactions::{TransactionFilterSpec, DEFAULT_TX_PAGE_LIMIT},
     },
+    std::collections::{HashMap, HashSet},
     tracing::{info, warn},
 };
 
@@ -161,7 +162,7 @@ async fn ingest_range(
                     // sufficient to classify the terminal failure. Update an
                     // event-derived row before attempting envelope parsing.
                     let failure_reason = if tx.status == "FAILED" {
-                        classify_failure(tx.result_xdr.as_deref())
+                        classify_failure_with_diagnostics(tx.result_xdr.as_deref(), &tx.diagnostic_events_xdr)
                     } else {
                         None
                     };
@@ -265,7 +266,7 @@ pub async fn repair_leg_indices(config: IndexerConfig, created_at_from: i64) -> 
         if let Some(reason) = rpc_tx
             .as_ref()
             .ok()
-            .and_then(|got| classify_failure(got.result_xdr.as_deref()))
+            .and_then(|got| classify_failure_with_diagnostics(got.result_xdr.as_deref(), &got.diagnostic_events_xdr))
         {
             let _ = store.update_invocation_failure_reason(&tx_hash, Some(&reason))?;
         }
@@ -317,8 +318,9 @@ pub async fn repair_leg_indices(config: IndexerConfig, created_at_from: i64) -> 
     Ok(fixed)
 }
 
-/// Classify failed round trips whose result XDR was not available during the
-/// original ingest. This deliberately avoids reparsing envelopes or legs.
+/// Classify failed round trips whose result XDR or diagnostic events were not
+/// available during the original ingest. This deliberately avoids reparsing
+/// envelopes or legs.
 pub async fn repair_failure_reasons(config: IndexerConfig) -> Result<u64> {
     config.ensure_parent_dir()?;
     let store = IndexStore::open(&config.db_path)?;
@@ -332,15 +334,73 @@ pub async fn repair_failure_reasons(config: IndexerConfig) -> Result<u64> {
         &config.network_passphrase,
     );
     let http = reqwest::Client::new();
-    let tx_hashes = store.list_unclassified_failed_tx_hashes()?;
+    let txs = store.list_unclassified_failed_transactions()?;
+    let filters = vec![TransactionFilterSpec {
+        contract_ids: Some(vec![config.aggregator_contract.clone()]),
+    }];
     let mut fixed = 0u64;
-    for tx_hash in tx_hashes {
+    let mut diagnostic_txs = HashMap::new();
+    let mut offset = 0;
+    while offset < txs.len() {
+        let chunk_start = (txs[offset].1 / MAX_LEDGER_SCAN_PER_REQUEST) * MAX_LEDGER_SCAN_PER_REQUEST;
+        let chunk_end = chunk_start.saturating_add(MAX_LEDGER_SCAN_PER_REQUEST);
+        let mut chunk_hashes = HashSet::new();
+        while offset < txs.len() && txs[offset].1 < chunk_end {
+            chunk_hashes.insert(txs[offset].0.clone());
+            offset += 1;
+        }
+
+        let own_items = rpc
+            .get_contract_transactions(chunk_start.max(1), Some(chunk_end), &filters, DEFAULT_TX_PAGE_LIMIT)
+            .await
+            .unwrap_or_default();
+        for tx in own_items {
+            if chunk_hashes.contains(&tx.tx_hash) {
+                diagnostic_txs.insert(tx.tx_hash.clone(), tx);
+            }
+        }
+
+        let missing = chunk_hashes
+            .iter()
+            .filter(|hash| !diagnostic_txs.contains_key(*hash))
+            .count();
+        if missing > 0 {
+            if let Ok(items) = official_rpc
+                .get_contract_transactions(chunk_start.max(1), Some(chunk_end), &filters, DEFAULT_TX_PAGE_LIMIT)
+                .await
+            {
+                for tx in items {
+                    if chunk_hashes.contains(&tx.tx_hash) {
+                        diagnostic_txs.insert(tx.tx_hash.clone(), tx);
+                    }
+                }
+            }
+        }
+    }
+
+    for (tx_hash, _ledger) in txs {
+        if let Some(tx) = diagnostic_txs.get(&tx_hash) {
+            if let Some(reason) = classify_failure_with_diagnostics(tx.result_xdr.as_deref(), &tx.diagnostic_events_xdr)
+            {
+                if store.refine_invocation_failure_reason(&tx_hash, &reason)? {
+                    fixed += 1;
+                    continue;
+                }
+            }
+        }
+
         let own = rpc.get_transaction(&tx_hash).await;
         let rpc_tx = match own {
-            Ok(tx) if tx.result_xdr.is_some() => Ok(tx),
+            // A self-hosted node may retain resultXdr after pruning the
+            // diagnostic events. Prefer it only when both are present so the
+            // official RPC can provide the missing failure classification.
+            Ok(tx) if tx.result_xdr.is_some() && !tx.diagnostic_events_xdr.is_empty() => Ok(tx),
             own => official_rpc.get_transaction(&tx_hash).await.or(own),
         };
-        let reason = rpc_tx.ok().and_then(|tx| classify_failure(tx.result_xdr.as_deref()));
+        let reason = rpc_tx
+            .as_ref()
+            .ok()
+            .and_then(|tx| classify_failure_with_diagnostics(tx.result_xdr.as_deref(), &tx.diagnostic_events_xdr));
         let reason = match reason {
             Some(reason) => Some(reason),
             None => match fetch_horizon_transaction(&http, config.horizon_url.as_deref(), &tx_hash).await {
@@ -351,7 +411,7 @@ pub async fn repair_failure_reasons(config: IndexerConfig) -> Result<u64> {
         let Some(reason) = reason else {
             continue;
         };
-        if store.update_invocation_failure_reason(&tx_hash, Some(&reason))? {
+        if store.refine_invocation_failure_reason(&tx_hash, &reason)? {
             fixed += 1;
         }
     }

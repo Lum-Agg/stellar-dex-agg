@@ -1,5 +1,5 @@
 use {
-    crate::{events, math, validate},
+    crate::{errors::AggregatorError, events, math, validate},
     lumagg_contract_types::SubRoute,
     soroban_sdk::{token, Address, Env, Vec},
 };
@@ -41,17 +41,17 @@ pub fn round_trip_swap(
     min_amount_out: i128,
 ) -> i128 {
     user.require_auth();
-    assert!(amount_in > 0, "amount_in must be positive");
-    assert!(min_amount_out >= amount_in, "min_amount_out below principal");
-    assert!(base_token != bridge_token, "base and bridge must differ");
+    soroban_sdk::assert_with_error!(env, amount_in > 0, AggregatorError::InvalidAmount);
+    soroban_sdk::assert_with_error!(env, min_amount_out >= amount_in, AggregatorError::InvalidMinimumOut);
+    soroban_sdk::assert_with_error!(env, base_token != bridge_token, AggregatorError::InvalidRoute);
 
     let contract_addr = env.current_contract_address();
 
     let mut leg_counter: u32 = 0;
 
-    let leg_out_in = validate::validate_sub_routes(&base_token, &bridge_token, &leg_out);
-    validate::validate_sub_routes(&bridge_token, &base_token, &leg_back);
-    assert!(leg_out_in == amount_in, "leg_out amounts must sum to amount_in");
+    let leg_out_in = validate::validate_sub_routes(&env, &base_token, &bridge_token, &leg_out);
+    validate::validate_sub_routes(&env, &bridge_token, &base_token, &leg_back);
+    soroban_sdk::assert_with_error!(env, leg_out_in == amount_in, AggregatorError::InvalidAmount);
     let is_split = leg_out.len() > 1 || leg_back.len() > 1;
 
     // Pull base from user
@@ -59,14 +59,14 @@ pub fn round_trip_swap(
     base_client.transfer(&user, &contract_addr, &amount_in);
 
     let bridge_total = crate::swap::execute_sub_routes(&env, &leg_out, &contract_addr, &mut leg_counter);
-    assert!(bridge_total > 0, "leg_out produced zero bridge token");
+    soroban_sdk::assert_with_error!(env, bridge_total > 0, AggregatorError::ZeroStepOutput);
 
     // Scale leg_back weights → absolute bridge inputs that sum to o1.
     let scaled_back = math::scale_sub_routes_to_total(&env, &leg_back, bridge_total);
 
     let base_total = crate::swap::execute_sub_routes(&env, &scaled_back, &contract_addr, &mut leg_counter);
 
-    assert!(base_total >= min_amount_out, "Output below minimum");
+    soroban_sdk::assert_with_error!(env, base_total >= min_amount_out, AggregatorError::OutputBelowMinimum);
 
     base_client.transfer(&contract_addr, &user, &base_total);
 

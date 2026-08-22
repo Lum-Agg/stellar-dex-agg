@@ -217,10 +217,23 @@ Manual oneshot: `systemctl start lumagg-quote-sim-probe.service`
 - **Arb-only vault** — no public withdraw; callers cannot drain in a separate tx.
 - **Multi-hop fees** — Soroban resource fees scale with legs; gate on **net** profit (`ARB_MIN_PROFIT`).
 - **Caller rotation** — round-robin acquire avoids single-caller starvation.
-- **Trustlines** — arb uses SAC; callers should **not** need classic trustlines (clean with `clean_caller_trustlines` if legacy cron ran).
+- **Trustlines** — with the vault path, arb callers use SAC and should **not** need classic trustlines. A DEX pool account can still lack a required trustline; that is a venue-data/venue-health failure and must be repaired or filtered rather than fixed by adding trustlines to callers.
 - **Contract upgrades** — WASM upload costs ~20 XLM on mainnet; coordinate before upgrade.
 
 
+
+### Diagnosing trustline simulation failures
+
+`Error(Contract, #13)` with `trustline entry is missing for account` does not
+necessarily identify an arb caller problem. In the Vault execution path, the
+caller normally only needs XLM for fees. A Phoenix or other DEX pool can invoke
+a classic-backed SAC transfer to an account used by the pool; if that account
+does not hold the asset trustline, Soroban simulation fails before submission.
+
+Check the diagnostic event for the failing asset SAC, pool contract, and target
+account, then verify the target account on Horizon. Do not add trustlines to
+all arb callers as a workaround. The pool owner must repair the account, or the
+specific stale route should remain discarded until the venue state is fixed.
 
 ## 6. Operator checklist
 

@@ -284,7 +284,9 @@ paths:
       summary: Wallet limit orders (indexer DB)
       description: |
         Open and historical limit orders for a Stellar account from escrow lifecycle events.
-        Requires `INDEXER_DB_PATH` on the API server (same SQLite as `/stats` and `/swaps`).
+        Requires `INDEXER_DB_PATH` and `ESCROW_CONTRACT` on the API server (the
+        database must be indexed for that escrow instance). The same SQLite file
+        is shared with `/stats` and `/swaps`.
         Default `status=open` returns only open orders; `status=all` includes filled, cancelled, and expired.
       parameters:
         - name: user
@@ -312,7 +314,7 @@ paths:
         '400':
           description: Missing or invalid `user` / `status`
         '503':
-          description: INDEXER_DB_PATH not configured
+          description: INDEXER_DB_PATH or ESCROW_CONTRACT not configured, or the indexer DB is unavailable
   /api/v1/orders/build_create:
     post:
       tags: [orders]
@@ -371,8 +373,10 @@ paths:
       summary: Wallet DCA orders (indexer DB)
       description: |
         Open and historical DCA orders for a Stellar account from escrow lifecycle events.
-        Requires `INDEXER_DB_PATH` on the API server. Default `status=open` returns only
-        open orders; `status=all` also includes filled, cancelled, and expired orders.
+        Requires `INDEXER_DB_PATH` and `ESCROW_CONTRACT` on the API server. The
+        database must be indexed for that escrow instance. Default `status=open`
+        returns only open orders; `status=all` also includes filled, cancelled,
+        and expired orders.
       parameters:
         - name: user
           in: query
@@ -399,7 +403,7 @@ paths:
         '400':
           description: Missing or invalid `user` / `status`
         '503':
-          description: INDEXER_DB_PATH not configured
+          description: INDEXER_DB_PATH or ESCROW_CONTRACT not configured, or the indexer DB is unavailable
   /api/v1/dca/build_create:
     post:
       tags: [orders]

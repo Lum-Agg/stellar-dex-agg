@@ -366,6 +366,16 @@ impl SorobanRpc {
                 .get("resultMetaXdr")
                 .and_then(|s| s.as_str())
                 .map(|s| s.to_string()),
+            diagnostic_events_xdr: result
+                .get("diagnosticEventsXdr")
+                .and_then(|events| events.as_array())
+                .map(|events| {
+                    events
+                        .iter()
+                        .filter_map(|event| event.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default(),
         })
     }
 
@@ -447,6 +457,7 @@ pub struct GetTransactionResult {
     pub envelope_xdr: Option<String>,
     pub result_xdr: Option<String>,
     pub result_meta_xdr: Option<String>,
+    pub diagnostic_events_xdr: Vec<String>,
 }
 
 // ===== ScVal extraction helpers =====

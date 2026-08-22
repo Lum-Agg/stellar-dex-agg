@@ -222,6 +222,7 @@ impl IndexStore {
             CREATE INDEX IF NOT EXISTS idx_dca_orders_owner ON dca_orders(owner, status);
             ",
         )?;
+        self.migrate_legacy_order_tables()?;
         // Older production DBs were created before bridge_token / amount_is_actual
         // existed. CREATE TABLE IF NOT EXISTS does not alter existing tables.
         self.ensure_column("swap_invocations", "bridge_token", "TEXT")?;
@@ -233,6 +234,88 @@ impl IndexStore {
         // Legacy rows predate the actual-vs-envelope distinction; treat them as
         // actual so historical routed volume does not collapse to zero.
         self.ensure_column("swap_legs", "amount_is_actual", "INTEGER NOT NULL DEFAULT 1")?;
+        Ok(())
+    }
+
+    fn migrate_legacy_order_tables(&self) -> Result<()> {
+        if !self.table_has_column("limit_orders", "escrow_contract")? {
+            self.conn.execute_batch(
+                "
+                DROP INDEX IF EXISTS idx_limit_orders_owner;
+                ALTER TABLE limit_orders RENAME TO limit_orders_legacy;
+                CREATE TABLE limit_orders (
+                  escrow_contract TEXT NOT NULL,
+                  order_id INTEGER NOT NULL,
+                  owner TEXT NOT NULL,
+                  token_in TEXT NOT NULL,
+                  token_out TEXT NOT NULL,
+                  amount_in_initial TEXT,
+                  amount_in_remaining TEXT NOT NULL,
+                  limit_out_per_in_e7 TEXT NOT NULL,
+                  expires_ledger INTEGER NOT NULL,
+                  status TEXT NOT NULL,
+                  created_ledger INTEGER,
+                  updated_ledger INTEGER NOT NULL,
+                  created_at INTEGER,
+                  updated_at INTEGER NOT NULL,
+                  PRIMARY KEY (escrow_contract, order_id)
+                );
+                INSERT INTO limit_orders (
+                  escrow_contract, order_id, owner, token_in, token_out,
+                  amount_in_initial, amount_in_remaining, limit_out_per_in_e7,
+                  expires_ledger, status, created_ledger, updated_ledger,
+                  created_at, updated_at
+                )
+                SELECT '', order_id, owner, token_in, token_out,
+                  amount_in_initial, amount_in_remaining, limit_out_per_in_e7,
+                  expires_ledger, status, created_ledger, updated_ledger,
+                  created_at, updated_at
+                FROM limit_orders_legacy;
+                DROP TABLE limit_orders_legacy;
+                CREATE INDEX idx_limit_orders_owner ON limit_orders(owner, status);
+                ",
+            )?;
+        }
+
+        if !self.table_has_column("dca_orders", "escrow_contract")? {
+            self.conn.execute_batch(
+                "
+                DROP INDEX IF EXISTS idx_dca_orders_owner;
+                ALTER TABLE dca_orders RENAME TO dca_orders_legacy;
+                CREATE TABLE dca_orders (
+                  escrow_contract TEXT NOT NULL,
+                  order_id INTEGER NOT NULL,
+                  owner TEXT NOT NULL,
+                  token_in TEXT NOT NULL,
+                  token_out TEXT NOT NULL,
+                  amount_in_initial TEXT NOT NULL,
+                  amount_in_remaining TEXT NOT NULL,
+                  chunk_amount TEXT NOT NULL,
+                  interval_ledgers INTEGER NOT NULL,
+                  next_executable_ledger INTEGER NOT NULL,
+                  min_out_per_in_e7 TEXT NOT NULL,
+                  expires_ledger INTEGER NOT NULL,
+                  status TEXT NOT NULL,
+                  updated_ledger INTEGER NOT NULL,
+                  updated_at INTEGER NOT NULL,
+                  PRIMARY KEY (escrow_contract, order_id)
+                );
+                INSERT INTO dca_orders (
+                  escrow_contract, order_id, owner, token_in, token_out,
+                  amount_in_initial, amount_in_remaining, chunk_amount,
+                  interval_ledgers, next_executable_ledger, min_out_per_in_e7,
+                  expires_ledger, status, updated_ledger, updated_at
+                )
+                SELECT '', order_id, owner, token_in, token_out,
+                  amount_in_initial, amount_in_remaining, chunk_amount,
+                  interval_ledgers, next_executable_ledger, min_out_per_in_e7,
+                  expires_ledger, status, updated_ledger, updated_at
+                FROM dca_orders_legacy;
+                DROP TABLE dca_orders_legacy;
+                CREATE INDEX idx_dca_orders_owner ON dca_orders(owner, status);
+                ",
+            )?;
+        }
         Ok(())
     }
 
@@ -406,6 +489,19 @@ impl IndexStore {
         )? > 0)
     }
 
+    /// Replace a generic trap classification when a later RPC response
+    /// provides a more specific diagnostic reason.
+    pub fn refine_invocation_failure_reason(&self, tx_hash: &str, reason: &str) -> Result<bool> {
+        let updated = self.conn.execute(
+            "UPDATE swap_invocations SET failure_reason = ?1
+             WHERE tx_hash = ?2 AND status = 'FAILED'
+               AND (failure_reason IS NULL OR failure_reason = 'HOST_FUNCTION_TRAPPED')
+               AND (failure_reason IS NULL OR failure_reason <> ?1)",
+            params![reason, tx_hash],
+        )?;
+        Ok(updated > 0)
+    }
+
     fn insert_leg(&self, tx_hash: &str, leg: &ParsedLeg) -> Result<()> {
         self.conn.execute(
             "INSERT INTO swap_legs (
@@ -444,13 +540,22 @@ impl IndexStore {
     }
 
     pub fn list_unclassified_failed_tx_hashes(&self) -> Result<Vec<String>> {
+        Ok(self
+            .list_unclassified_failed_transactions()?
+            .into_iter()
+            .map(|(tx_hash, _)| tx_hash)
+            .collect())
+    }
+
+    pub fn list_unclassified_failed_transactions(&self) -> Result<Vec<(String, u32)>> {
         let mut stmt = self.conn.prepare(
-            "SELECT tx_hash FROM swap_invocations
+            "SELECT tx_hash, ledger FROM swap_invocations
              WHERE function_name = 'round_trip_swap'
-               AND status = 'FAILED' AND failure_reason IS NULL
+               AND status = 'FAILED'
+               AND (failure_reason IS NULL OR failure_reason = 'HOST_FUNCTION_TRAPPED')
              ORDER BY created_at ASC, tx_hash ASC",
         )?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u32)))?;
         let mut out = Vec::new();
         for row in rows {
             out.push(row?);
@@ -1138,6 +1243,58 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].tx_hash, "tx_rt");
         assert!(rows[0].bridge_token.is_none());
+    }
+
+    #[test]
+    fn open_migrates_legacy_order_tables_without_dropping_rows() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("legacy-orders.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "
+                CREATE TABLE limit_orders (
+                  order_id INTEGER PRIMARY KEY, owner TEXT NOT NULL,
+                  token_in TEXT NOT NULL, token_out TEXT NOT NULL,
+                  amount_in_initial TEXT, amount_in_remaining TEXT NOT NULL,
+                  limit_out_per_in_e7 TEXT NOT NULL, expires_ledger INTEGER NOT NULL,
+                  status TEXT NOT NULL, created_ledger INTEGER,
+                  updated_ledger INTEGER NOT NULL, created_at INTEGER,
+                  updated_at INTEGER NOT NULL
+                );
+                CREATE INDEX idx_limit_orders_owner ON limit_orders(owner, status);
+                INSERT INTO limit_orders VALUES
+                  (1, 'OWNER', 'IN', 'OUT', '100', '100', '2', 999,
+                   'open', 10, 10, 1000, 1000);
+                CREATE TABLE dca_orders (
+                  order_id INTEGER PRIMARY KEY, owner TEXT NOT NULL,
+                  token_in TEXT NOT NULL, token_out TEXT NOT NULL,
+                  amount_in_initial TEXT NOT NULL, amount_in_remaining TEXT NOT NULL,
+                  chunk_amount TEXT NOT NULL, interval_ledgers INTEGER NOT NULL,
+                  next_executable_ledger INTEGER NOT NULL, min_out_per_in_e7 TEXT NOT NULL,
+                  expires_ledger INTEGER NOT NULL, status TEXT NOT NULL,
+                  updated_ledger INTEGER NOT NULL, updated_at INTEGER NOT NULL
+                );
+                CREATE INDEX idx_dca_orders_owner ON dca_orders(owner, status);
+                INSERT INTO dca_orders VALUES
+                  (1, 'OWNER', 'IN', 'OUT', '100', '100', '25', 10, 20, '2',
+                   999, 'open', 10, 1000);
+                ",
+            )
+            .unwrap();
+        }
+
+        let store = IndexStore::open(&path).unwrap();
+        let limit = store.list_by_owner_for("", "OWNER", Some("all")).unwrap();
+        let dca = store.list_dca_by_owner_for("", "OWNER", true).unwrap();
+        assert_eq!(limit.len(), 1);
+        assert_eq!(limit[0].order_id, 1);
+        assert_eq!(limit[0].amount_in_initial.as_deref(), Some("100"));
+        assert_eq!(dca.len(), 1);
+        assert_eq!(dca[0].order_id, 1);
+        assert_eq!(dca[0].amount_in_initial, "100");
+        assert!(store.table_has_column("limit_orders", "escrow_contract").unwrap());
+        assert!(store.table_has_column("dca_orders", "escrow_contract").unwrap());
     }
 
     #[test]

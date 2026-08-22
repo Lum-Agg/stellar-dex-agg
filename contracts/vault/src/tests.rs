@@ -17,14 +17,14 @@ fn create_token(env: &Env) -> (Address, soroban_sdk::token::StellarAssetClient<'
 }
 
 fn setup_agg(env: &Env) -> aggregator_contract::AggregatorContractClient<'_> {
-    let id = env.register_contract(None, AggregatorContract);
+    let id = env.register(AggregatorContract, ());
     let agg = aggregator_contract::AggregatorContractClient::new(env, &id);
     agg.initialize(&gen_addr(env));
     agg
 }
 
 fn setup_vault<'a>(env: &'a Env, admin: &Address) -> (Address, VaultContractClient<'a>) {
-    let id = env.register_contract(None, VaultContract);
+    let id = env.register(VaultContract, ());
     let vault = VaultContractClient::new(env, &id);
     vault.initialize(admin);
     (id, vault)
@@ -80,12 +80,12 @@ fn execute_round_trip_returns_funds_to_vault() {
     sac_base.mint(&funder, &1_000_000);
     vault.deposit(&funder, &base, &100_000);
 
-    let out_pid = env.register_contract(None, aq_mock::AqPool);
+    let out_pid = env.register(aq_mock::AqPool, ());
     let out_pool = out_pid.clone();
     aq_mock::AqPoolClient::new(&env, &out_pid).init(&base, &bridge);
     sac_bridge.mint(&out_pool, &10_000_000);
 
-    let back_pid = env.register_contract(None, aq_mock::AqPool);
+    let back_pid = env.register(aq_mock::AqPool, ());
     let back_pool = back_pid.clone();
     aq_mock::AqPoolClient::new(&env, &back_pid).init(&bridge, &base);
     sac_base.mint(&back_pool, &10_000_000);

@@ -20,7 +20,7 @@ use {
     anyhow::{Context, Result},
     std::sync::Arc,
     stellar_xdr::curr as sxdr,
-    tracing::{info, warn},
+    tracing::{debug, info, warn},
 };
 
 #[derive(Debug, Clone)]
@@ -263,11 +263,22 @@ pub async fn prepare_opportunity_tx(
                 // as dead-path failures when we cannot recover a meaningful
                 // base-token output from the event log.
                 if is_structural_sim_failure(&err_str) {
+                    stats.record_sim_failure(&err_str);
+                    // Soroban errors may include a full diagnostic event log.
+                    // Keep the normal production log bounded; the complete
+                    // payload remains available at debug level when needed.
+                    let summary = summarize_sim_error(&err_str);
                     warn!(
-                        error = %err,
+                        error = %summary,
                         route = %opp.route_label,
                         caller = %caller_public_key,
                         "structural sim failure — discard"
+                    );
+                    debug!(
+                        error = %err_str,
+                        route = %opp.route_label,
+                        caller = %caller_public_key,
+                        "structural sim failure details"
                     );
                     stats
                         .txs_sim_rejected
@@ -462,6 +473,22 @@ fn is_structural_sim_failure(err: &str) -> bool {
         (e.contains("footprint") && (e.contains("hosterror") || e.contains("trapped")))
 }
 
+const SIM_ERROR_SUMMARY_LIMIT: usize = 256;
+
+fn summarize_sim_error(err: &str) -> String {
+    let without_event_log = err.split("Event log").next().unwrap_or(err);
+    let compact = without_event_log.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.len() <= SIM_ERROR_SUMMARY_LIMIT {
+        return compact;
+    }
+
+    let mut end = SIM_ERROR_SUMMARY_LIMIT.saturating_sub(3);
+    while end > 0 && !compact.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}...", &compact[..end])
+}
+
 pub fn execution_enabled(config: &ArbConfig) -> bool {
     config.build_tx && config.aggregator_contract.is_some()
 }
@@ -519,6 +546,22 @@ mod tests {
         assert_eq!(
             parse_base_received_from_sim_error(log, base, agg, caller),
             Some(99_990_273)
+        );
+    }
+
+    #[test]
+    fn summarizes_large_simulation_errors() {
+        let input = format!("HostError: {}", "x".repeat(2_000));
+        let summary = super::summarize_sim_error(&input);
+        assert_eq!(summary.len(), super::SIM_ERROR_SUMMARY_LIMIT);
+        assert!(summary.ends_with("..."));
+    }
+
+    #[test]
+    fn compacts_multiline_simulation_errors() {
+        assert_eq!(
+            super::summarize_sim_error("HostError:\n  Error(Contract, #337)\n\nnext Event log (newest first): ..."),
+            "HostError: Error(Contract, #337) next"
         );
     }
 }

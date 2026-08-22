@@ -9,7 +9,7 @@ use {
     dex_adapters::{
         rpc::{scval_to_address, scval_to_u32, SorobanRpc},
         soroswap::SOROSWAP_FACTORY,
-        DexAdapter, SorobanRpc as _,
+        DexAdapter,
     },
     std::sync::Arc,
     stellar_xdr::curr as xdr,

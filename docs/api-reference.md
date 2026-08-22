@@ -54,7 +54,8 @@ Limit and DCA endpoints prepare unsigned transactions against the configured
 Order Escrow contract. The wallet remains responsible for signing and
 submitting the returned XDR. Listing endpoints read lifecycle events indexed in
 `indexer.db_path`, so a submitted transaction may take one indexer poll to
-appear.
+appear. The API server must also set `ESCROW_CONTRACT`; if either setting is
+missing, the listing endpoints return `503` instead of an empty result.
 
 DCA orders divide `amount_in` into `chunk_amount` executions separated by
 `interval_ledgers`. `start_ledger` cannot be in the past, and

@@ -24,6 +24,11 @@ pub struct ArbStats {
     pub bridge: Mutex<BTreeMap<String, BridgeStats>>,
     /// Bounded diagnostic counts only; never used for route selection.
     pub failed_routes: Mutex<BTreeMap<String, u64>>,
+    /// Structural simulation failure categories for operator reports.
+    pub sim_failure_reasons: Mutex<BTreeMap<String, u64>>,
+    /// On-chain submission failure categories, populated from the replay
+    /// diagnostic returned after polling a failed transaction.
+    pub chain_failure_reasons: Mutex<BTreeMap<String, u64>>,
     pub routes_evaluated: AtomicU64,
     pub quote_failed: AtomicU64,
     pub unprofitable_quotes: AtomicU64,
@@ -124,6 +129,74 @@ impl ArbStats {
     pub fn failed_route_breakdown(&self, limit: usize) -> Vec<(String, u64)> {
         let routes = self.failed_routes.lock().expect("arb failure stats mutex poisoned");
         let mut rows: Vec<_> = routes.iter().map(|(route, count)| (route.clone(), *count)).collect();
+        rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        rows.truncate(limit);
+        rows
+    }
+
+    pub fn record_sim_failure(&self, error: &str) {
+        let lower = error.to_ascii_lowercase();
+        let reason = if lower.contains("trustline entry is missing") || lower.contains("trustline is missing") {
+            "trustline_missing"
+        } else if lower.contains("error(contract, #13)") {
+            "contract_13"
+        } else if lower.contains("error(contract, #337)") {
+            "contract_337"
+        } else if lower.contains("unreachablecodereached") {
+            "unreachable_code"
+        } else if lower.contains("footprint") {
+            "footprint"
+        } else {
+            "other"
+        };
+        let mut reasons = self
+            .sim_failure_reasons
+            .lock()
+            .expect("arb simulation failure stats mutex poisoned");
+        let count = reasons.entry(reason.to_owned()).or_default();
+        *count = count.saturating_add(1);
+    }
+
+    pub fn sim_failure_breakdown(&self, limit: usize) -> Vec<(String, u64)> {
+        let reasons = self
+            .sim_failure_reasons
+            .lock()
+            .expect("arb simulation failure stats mutex poisoned");
+        let mut rows: Vec<_> = reasons.iter().map(|(reason, count)| (reason.clone(), *count)).collect();
+        rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        rows.truncate(limit);
+        rows
+    }
+
+    pub fn record_chain_failure(&self, error: &str) {
+        let lower = error.to_ascii_lowercase();
+        let reason = if lower.contains("unreachablecodereached") {
+            "unreachable_code"
+        } else if lower.contains("trustline entry is missing") || lower.contains("trustline is missing") {
+            "trustline_missing"
+        } else if lower.contains("invalidaction") {
+            "invalid_action"
+        } else if lower.contains("footprint") {
+            "footprint"
+        } else if lower.contains("min_amount_out") || lower.contains("minimum_out") {
+            "minimum_out"
+        } else {
+            "other"
+        };
+        let mut reasons = self
+            .chain_failure_reasons
+            .lock()
+            .expect("arb chain failure stats mutex poisoned");
+        let count = reasons.entry(reason.to_owned()).or_default();
+        *count = count.saturating_add(1);
+    }
+
+    pub fn chain_failure_breakdown(&self, limit: usize) -> Vec<(String, u64)> {
+        let reasons = self
+            .chain_failure_reasons
+            .lock()
+            .expect("arb chain failure stats mutex poisoned");
+        let mut rows: Vec<_> = reasons.iter().map(|(reason, count)| (reason.clone(), *count)).collect();
         rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         rows.truncate(limit);
         rows
@@ -449,6 +522,8 @@ pub fn spawn_stats_reporter(runtime: SharedRuntime, interval: Duration) {
                 delta_caller_busy = delta.caller_busy,
                 delta_quote_sim_gap_samples = delta.quote_sim_gap_samples,
                 bridge_breakdown = ?runtime.stats.bridge_breakdown(),
+                sim_failure_breakdown = ?runtime.stats.sim_failure_breakdown(6),
+                chain_failure_breakdown = ?runtime.stats.chain_failure_breakdown(6),
                 failed_route_breakdown = ?runtime.stats.failed_route_breakdown(5),
                 "arb stats summary"
             );
@@ -602,6 +677,36 @@ mod tests {
                     unprofitable_quotes: 0,
                     opportunities: 1,
                 },
+            ]
+        );
+    }
+
+    #[test]
+    fn simulation_failure_breakdown_classifies_contract_errors() {
+        let stats = ArbStats::default();
+        stats.record_sim_failure("HostError: Error(Contract, #13) trustline entry is missing");
+        stats.record_sim_failure("HostError: Error(Contract, #337)");
+        stats.record_sim_failure("HostError: Error(Contract, #337)");
+
+        assert_eq!(
+            stats.sim_failure_breakdown(4),
+            vec![("contract_337".into(), 2), ("trustline_missing".into(), 1)]
+        );
+    }
+
+    #[test]
+    fn chain_failure_breakdown_classifies_replay_diagnostics() {
+        let stats = ArbStats::default();
+        stats.record_chain_failure("HostError: Error(WasmVm, InvalidAction) UnreachableCodeReached");
+        stats.record_chain_failure("HostError: trustline entry is missing for account");
+        stats.record_chain_failure("tx failed on-chain: minimum_out assertion");
+
+        assert_eq!(
+            stats.chain_failure_breakdown(4),
+            vec![
+                ("minimum_out".into(), 1),
+                ("trustline_missing".into(), 1),
+                ("unreachable_code".into(), 1),
             ]
         );
     }
