@@ -19,6 +19,7 @@ pub struct StoredInvocation {
 
 #[derive(Debug, Clone)]
 pub struct LimitOrderRow {
+    pub escrow_contract: String,
     pub order_id: i64,
     pub owner: String,
     pub token_in: String,
@@ -36,6 +37,7 @@ pub struct LimitOrderRow {
 
 #[derive(Debug, Clone)]
 pub struct DcaOrderRow {
+    pub escrow_contract: String,
     pub order_id: i64,
     pub owner: String,
     pub token_in: String,
@@ -88,38 +90,40 @@ pub struct IndexStore {
 
 fn map_limit_order_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LimitOrderRow> {
     Ok(LimitOrderRow {
-        order_id: row.get(0)?,
-        owner: row.get(1)?,
-        token_in: row.get(2)?,
-        token_out: row.get(3)?,
-        amount_in_initial: row.get(4)?,
-        amount_in_remaining: row.get(5)?,
-        limit_out_per_in_e7: row.get(6)?,
-        expires_ledger: row.get::<_, i64>(7)? as u32,
-        status: row.get(8)?,
-        created_ledger: row.get::<_, Option<i64>>(9)?.map(|v| v as u32),
-        updated_ledger: row.get::<_, i64>(10)? as u32,
-        created_at: row.get(11)?,
-        updated_at: row.get(12)?,
+        escrow_contract: row.get(0)?,
+        order_id: row.get(1)?,
+        owner: row.get(2)?,
+        token_in: row.get(3)?,
+        token_out: row.get(4)?,
+        amount_in_initial: row.get(5)?,
+        amount_in_remaining: row.get(6)?,
+        limit_out_per_in_e7: row.get(7)?,
+        expires_ledger: row.get::<_, i64>(8)? as u32,
+        status: row.get(9)?,
+        created_ledger: row.get::<_, Option<i64>>(10)?.map(|v| v as u32),
+        updated_ledger: row.get::<_, i64>(11)? as u32,
+        created_at: row.get(12)?,
+        updated_at: row.get(13)?,
     })
 }
 
 fn map_dca_order_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DcaOrderRow> {
     Ok(DcaOrderRow {
-        order_id: row.get(0)?,
-        owner: row.get(1)?,
-        token_in: row.get(2)?,
-        token_out: row.get(3)?,
-        amount_in_initial: row.get(4)?,
-        amount_in_remaining: row.get(5)?,
-        chunk_amount: row.get(6)?,
-        interval_ledgers: row.get::<_, i64>(7)? as u32,
-        next_executable_ledger: row.get::<_, i64>(8)? as u32,
-        min_out_per_in_e7: row.get(9)?,
-        expires_ledger: row.get::<_, i64>(10)? as u32,
-        status: row.get(11)?,
-        updated_ledger: row.get::<_, i64>(12)? as u32,
-        updated_at: row.get(13)?,
+        escrow_contract: row.get(0)?,
+        order_id: row.get(1)?,
+        owner: row.get(2)?,
+        token_in: row.get(3)?,
+        token_out: row.get(4)?,
+        amount_in_initial: row.get(5)?,
+        amount_in_remaining: row.get(6)?,
+        chunk_amount: row.get(7)?,
+        interval_ledgers: row.get::<_, i64>(8)? as u32,
+        next_executable_ledger: row.get::<_, i64>(9)? as u32,
+        min_out_per_in_e7: row.get(10)?,
+        expires_ledger: row.get::<_, i64>(11)? as u32,
+        status: row.get(12)?,
+        updated_ledger: row.get::<_, i64>(13)? as u32,
+        updated_at: row.get(14)?,
     })
 }
 
@@ -177,7 +181,8 @@ impl IndexStore {
             CREATE INDEX IF NOT EXISTS idx_swap_legs_dex ON swap_legs(dex_source);
 
             CREATE TABLE IF NOT EXISTS limit_orders (
-              order_id INTEGER PRIMARY KEY,
+              escrow_contract TEXT NOT NULL,
+              order_id INTEGER NOT NULL,
               owner TEXT NOT NULL,
               token_in TEXT NOT NULL,
               token_out TEXT NOT NULL,
@@ -189,13 +194,15 @@ impl IndexStore {
               created_ledger INTEGER,
               updated_ledger INTEGER NOT NULL,
               created_at INTEGER,
-              updated_at INTEGER NOT NULL
+              updated_at INTEGER NOT NULL,
+              PRIMARY KEY (escrow_contract, order_id)
             );
 
             CREATE INDEX IF NOT EXISTS idx_limit_orders_owner ON limit_orders(owner, status);
 
             CREATE TABLE IF NOT EXISTS dca_orders (
-              order_id INTEGER PRIMARY KEY,
+              escrow_contract TEXT NOT NULL,
+              order_id INTEGER NOT NULL,
               owner TEXT NOT NULL,
               token_in TEXT NOT NULL,
               token_out TEXT NOT NULL,
@@ -208,7 +215,8 @@ impl IndexStore {
               expires_ledger INTEGER NOT NULL,
               status TEXT NOT NULL,
               updated_ledger INTEGER NOT NULL,
-              updated_at INTEGER NOT NULL
+              updated_at INTEGER NOT NULL,
+              PRIMARY KEY (escrow_contract, order_id)
             );
 
             CREATE INDEX IF NOT EXISTS idx_dca_orders_owner ON dca_orders(owner, status);
@@ -622,13 +630,48 @@ impl IndexStore {
         created_at: i64,
         updated_at: i64,
     ) -> Result<()> {
+        self.upsert_created_for(
+            "",
+            order_id,
+            owner,
+            token_in,
+            token_out,
+            amount_in_initial,
+            amount_in_remaining,
+            limit_out_per_in_e7,
+            expires_ledger,
+            created_ledger,
+            updated_ledger,
+            created_at,
+            updated_at,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn upsert_created_for(
+        &self,
+        escrow_contract: &str,
+        order_id: i64,
+        owner: &str,
+        token_in: &str,
+        token_out: &str,
+        amount_in_initial: &str,
+        amount_in_remaining: &str,
+        limit_out_per_in_e7: &str,
+        expires_ledger: u32,
+        created_ledger: u32,
+        updated_ledger: u32,
+        created_at: i64,
+        updated_at: i64,
+    ) -> Result<()> {
         self.conn.execute(
             "INSERT OR IGNORE INTO limit_orders (
-                order_id, owner, token_in, token_out, amount_in_initial, amount_in_remaining,
+                escrow_contract, order_id, owner, token_in, token_out, amount_in_initial, amount_in_remaining,
                 limit_out_per_in_e7, expires_ledger, status, created_ledger, updated_ledger,
                 created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'open', ?9, ?10, ?11, ?12)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'open', ?10, ?11, ?12, ?13)",
             params![
+                escrow_contract,
                 order_id,
                 owner,
                 token_in,
@@ -655,12 +698,30 @@ impl IndexStore {
         updated_ledger: u32,
         updated_at: i64,
     ) -> Result<bool> {
+        self.apply_filled_for("", order_id, amount_in_remaining, updated_ledger, updated_at)
+    }
+
+    pub fn apply_filled_for(
+        &self,
+        escrow_contract: &str,
+        order_id: i64,
+        amount_in_remaining: &str,
+        updated_ledger: u32,
+        updated_at: i64,
+    ) -> Result<bool> {
         let status = if amount_in_remaining == "0" { "filled" } else { "open" };
         let updated = self.conn.execute(
             "UPDATE limit_orders
              SET amount_in_remaining = ?1, status = ?2, updated_ledger = ?3, updated_at = ?4
-             WHERE order_id = ?5 AND status = 'open'",
-            params![amount_in_remaining, status, updated_ledger, updated_at, order_id,],
+             WHERE escrow_contract = ?5 AND order_id = ?6 AND status = 'open'",
+            params![
+                amount_in_remaining,
+                status,
+                updated_ledger,
+                updated_at,
+                escrow_contract,
+                order_id,
+            ],
         )?;
         Ok(updated > 0)
     }
@@ -672,36 +733,56 @@ impl IndexStore {
             status == "cancelled" || status == "expired",
             "invalid closed status: {status}"
         );
+        self.apply_closed_for("", order_id, status, updated_ledger, updated_at)
+    }
+
+    pub fn apply_closed_for(
+        &self,
+        escrow_contract: &str,
+        order_id: i64,
+        status: &str,
+        updated_ledger: u32,
+        updated_at: i64,
+    ) -> Result<bool> {
         let updated = self.conn.execute(
             "UPDATE limit_orders
              SET status = ?1, amount_in_remaining = '0', updated_ledger = ?2, updated_at = ?3
-             WHERE order_id = ?4 AND status = 'open'",
-            params![status, updated_ledger, updated_at, order_id],
+             WHERE escrow_contract = ?4 AND order_id = ?5 AND status = 'open'",
+            params![status, updated_ledger, updated_at, escrow_contract, order_id],
         )?;
         Ok(updated > 0)
     }
 
     pub fn list_by_owner(&self, owner: &str, status_filter: Option<&str>) -> Result<Vec<LimitOrderRow>> {
+        self.list_by_owner_for("", owner, status_filter)
+    }
+
+    pub fn list_by_owner_for(
+        &self,
+        escrow_contract: &str,
+        owner: &str,
+        status_filter: Option<&str>,
+    ) -> Result<Vec<LimitOrderRow>> {
         let sql = match status_filter {
             Some("all") => {
-                "SELECT order_id, owner, token_in, token_out, amount_in_initial,
+                "SELECT escrow_contract, order_id, owner, token_in, token_out, amount_in_initial,
                         amount_in_remaining, limit_out_per_in_e7, expires_ledger, status,
                         created_ledger, updated_ledger, created_at, updated_at
                  FROM limit_orders
-                 WHERE owner = ?1
+                 WHERE escrow_contract = ?1 AND owner = ?2
                  ORDER BY updated_at DESC, order_id DESC"
             }
             _ => {
-                "SELECT order_id, owner, token_in, token_out, amount_in_initial,
+                "SELECT escrow_contract, order_id, owner, token_in, token_out, amount_in_initial,
                         amount_in_remaining, limit_out_per_in_e7, expires_ledger, status,
                         created_ledger, updated_ledger, created_at, updated_at
                  FROM limit_orders
-                 WHERE owner = ?1 AND status = 'open'
+                 WHERE escrow_contract = ?1 AND owner = ?2 AND status = 'open'
                  ORDER BY updated_at DESC, order_id DESC"
             }
         };
         let mut stmt = self.conn.prepare(sql)?;
-        let rows = stmt.query_map(params![owner], map_limit_order_row)?;
+        let rows = stmt.query_map(params![escrow_contract, owner], map_limit_order_row)?;
         let mut out = Vec::new();
         for r in rows {
             out.push(r?);
@@ -725,13 +806,48 @@ impl IndexStore {
         updated_ledger: u32,
         updated_at: i64,
     ) -> Result<()> {
+        self.upsert_dca_created_for(
+            "",
+            order_id,
+            owner,
+            token_in,
+            token_out,
+            amount_in,
+            chunk_amount,
+            interval_ledgers,
+            next_executable_ledger,
+            min_out_per_in_e7,
+            expires_ledger,
+            updated_ledger,
+            updated_at,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn upsert_dca_created_for(
+        &self,
+        escrow_contract: &str,
+        order_id: i64,
+        owner: &str,
+        token_in: &str,
+        token_out: &str,
+        amount_in: &str,
+        chunk_amount: &str,
+        interval_ledgers: u32,
+        next_executable_ledger: u32,
+        min_out_per_in_e7: &str,
+        expires_ledger: u32,
+        updated_ledger: u32,
+        updated_at: i64,
+    ) -> Result<()> {
         self.conn.execute(
             "INSERT OR IGNORE INTO dca_orders (
-              order_id, owner, token_in, token_out, amount_in_initial, amount_in_remaining,
+              escrow_contract, order_id, owner, token_in, token_out, amount_in_initial, amount_in_remaining,
               chunk_amount, interval_ledgers, next_executable_ledger, min_out_per_in_e7,
               expires_ledger, status, updated_ledger, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?7, ?8, ?9, ?10, 'open', ?11, ?12)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7, ?8, ?9, ?10, ?11, 'open', ?12, ?13)",
             params![
+                escrow_contract,
                 order_id,
                 owner,
                 token_in,
@@ -757,42 +873,82 @@ impl IndexStore {
         updated_ledger: u32,
         updated_at: i64,
     ) -> Result<bool> {
+        self.apply_dca_filled_for(
+            "",
+            order_id,
+            amount_in_remaining,
+            next_executable_ledger,
+            updated_ledger,
+            updated_at,
+        )
+    }
+
+    pub fn apply_dca_filled_for(
+        &self,
+        escrow_contract: &str,
+        order_id: i64,
+        amount_in_remaining: &str,
+        next_executable_ledger: u32,
+        updated_ledger: u32,
+        updated_at: i64,
+    ) -> Result<bool> {
         let status = if amount_in_remaining == "0" { "filled" } else { "open" };
         Ok(self.conn.execute(
             "UPDATE dca_orders SET amount_in_remaining=?1, next_executable_ledger=?2,
-             status=?3, updated_ledger=?4, updated_at=?5 WHERE order_id=?6 AND status='open'",
+             status=?3, updated_ledger=?4, updated_at=?5 WHERE escrow_contract=?6 AND order_id=?7 AND status='open'",
             params![
                 amount_in_remaining,
                 next_executable_ledger,
                 status,
                 updated_ledger,
                 updated_at,
+                escrow_contract,
                 order_id
             ],
         )? > 0)
     }
 
     pub fn apply_dca_closed(&self, order_id: i64, status: &str, updated_ledger: u32, updated_at: i64) -> Result<bool> {
+        self.apply_dca_closed_for("", order_id, status, updated_ledger, updated_at)
+    }
+
+    pub fn apply_dca_closed_for(
+        &self,
+        escrow_contract: &str,
+        order_id: i64,
+        status: &str,
+        updated_ledger: u32,
+        updated_at: i64,
+    ) -> Result<bool> {
         anyhow::ensure!(status == "cancelled" || status == "expired", "invalid DCA status");
         Ok(self.conn.execute(
             "UPDATE dca_orders SET amount_in_remaining='0', status=?1, updated_ledger=?2,
-             updated_at=?3 WHERE order_id=?4 AND status='open'",
-            params![status, updated_ledger, updated_at, order_id],
+             updated_at=?3 WHERE escrow_contract=?4 AND order_id=?5 AND status='open'",
+            params![status, updated_ledger, updated_at, escrow_contract, order_id],
         )? > 0)
     }
 
     pub fn list_dca_by_owner(&self, owner: &str, include_all: bool) -> Result<Vec<DcaOrderRow>> {
+        self.list_dca_by_owner_for("", owner, include_all)
+    }
+
+    pub fn list_dca_by_owner_for(
+        &self,
+        escrow_contract: &str,
+        owner: &str,
+        include_all: bool,
+    ) -> Result<Vec<DcaOrderRow>> {
         let sql = if include_all {
-            "SELECT order_id,owner,token_in,token_out,amount_in_initial,amount_in_remaining,
+            "SELECT escrow_contract,order_id,owner,token_in,token_out,amount_in_initial,amount_in_remaining,
              chunk_amount,interval_ledgers,next_executable_ledger,min_out_per_in_e7,expires_ledger,
-             status,updated_ledger,updated_at FROM dca_orders WHERE owner=?1 ORDER BY updated_at DESC"
+             status,updated_ledger,updated_at FROM dca_orders WHERE escrow_contract=?1 AND owner=?2 ORDER BY updated_at DESC"
         } else {
-            "SELECT order_id,owner,token_in,token_out,amount_in_initial,amount_in_remaining,
+            "SELECT escrow_contract,order_id,owner,token_in,token_out,amount_in_initial,amount_in_remaining,
              chunk_amount,interval_ledgers,next_executable_ledger,min_out_per_in_e7,expires_ledger,
-             status,updated_ledger,updated_at FROM dca_orders WHERE owner=?1 AND status='open' ORDER BY updated_at DESC"
+             status,updated_ledger,updated_at FROM dca_orders WHERE escrow_contract=?1 AND owner=?2 AND status='open' ORDER BY updated_at DESC"
         };
         let mut stmt = self.conn.prepare(sql)?;
-        let rows = stmt.query_map(params![owner], map_dca_order_row)?;
+        let rows = stmt.query_map(params![escrow_contract, owner], map_dca_order_row)?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
 
@@ -1276,5 +1432,38 @@ mod tests {
         assert_eq!(row.amount_in_remaining, "0");
         assert_eq!(row.updated_ledger, 110);
         assert_eq!(row.updated_at, 2_000);
+    }
+
+    #[test]
+    fn order_ids_are_scoped_to_the_escrow_contract() {
+        let dir = tempdir().unwrap();
+        let store = IndexStore::open(dir.path().join("test.db")).unwrap();
+
+        for (contract, amount) in [("ESCROW_A", "100"), ("ESCROW_B", "200")] {
+            store
+                .upsert_created_for(
+                    contract, 1, OWNER, "USDC", "XLM", amount, amount, "2500000", 999, 10, 10, 1_000, 1_000,
+                )
+                .unwrap();
+        }
+
+        let a = store.list_by_owner_for("ESCROW_A", OWNER, Some("all")).unwrap();
+        let b = store.list_by_owner_for("ESCROW_B", OWNER, Some("all")).unwrap();
+        assert_eq!(a.len(), 1);
+        assert_eq!(b.len(), 1);
+        assert_eq!(a[0].order_id, 1);
+        assert_eq!(b[0].order_id, 1);
+        assert_eq!(a[0].amount_in_initial.as_deref(), Some("100"));
+        assert_eq!(b[0].amount_in_initial.as_deref(), Some("200"));
+
+        assert!(store.apply_filled_for("ESCROW_A", 1, "0", 20, 2_000).unwrap());
+        assert_eq!(
+            store.list_by_owner_for("ESCROW_A", OWNER, Some("all")).unwrap()[0].status,
+            "filled"
+        );
+        assert_eq!(
+            store.list_by_owner_for("ESCROW_B", OWNER, Some("all")).unwrap()[0].status,
+            "open"
+        );
     }
 }

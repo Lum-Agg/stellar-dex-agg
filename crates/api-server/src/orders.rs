@@ -182,7 +182,8 @@ pub async fn get_orders(Query(params): Query<OrdersQuery>) -> Response {
         }
     };
 
-    match store.list_by_owner(user, status_filter) {
+    let escrow_contract = std::env::var("ESCROW_CONTRACT").unwrap_or_default();
+    match store.list_by_owner_for(&escrow_contract, user, status_filter) {
         Ok(rows) => {
             let orders = rows
                 .into_iter()
@@ -284,7 +285,8 @@ pub async fn get_dca_orders(Query(params): Query<OrdersQuery>) -> Response {
                 .into_response()
         }
     };
-    match store.list_dca_by_owner(user, include_all) {
+    let escrow_contract = std::env::var("ESCROW_CONTRACT").unwrap_or_default();
+    match store.list_dca_by_owner_for(&escrow_contract, user, include_all) {
         Ok(rows) => Json(
             serde_json::json!({ "success": true, "data": { "orders": rows.into_iter().map(|r| DcaOrderItem {
             order_id: r.order_id, owner: r.owner, token_in: r.token_in, token_out: r.token_out,
@@ -661,7 +663,8 @@ mod tests {
     fn seed_db(path: &std::path::Path) {
         let store = IndexStore::open(path).unwrap();
         store
-            .upsert_created(
+            .upsert_created_for(
+                TEST_ESCROW,
                 1,
                 TEST_USER,
                 "TIN",
@@ -750,6 +753,7 @@ mod tests {
         let path = dir.path().join("idx.db");
         seed_db(&path);
         std::env::set_var("INDEXER_DB_PATH", path.to_str().unwrap());
+        std::env::set_var("ESCROW_CONTRACT", TEST_ESCROW);
         let resp = get_orders(Query(OrdersQuery {
             user: Some(TEST_USER.into()),
             status: Some("open".into()),
@@ -763,6 +767,7 @@ mod tests {
         assert_eq!(json["data"]["orders"][0]["order_id"], 1);
         assert_eq!(json["data"]["orders"][0]["token_in"], "TIN");
         std::env::remove_var("INDEXER_DB_PATH");
+        std::env::remove_var("ESCROW_CONTRACT");
     }
 
     const TEST_TOKEN_IN: &str = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";

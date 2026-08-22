@@ -13,6 +13,7 @@ use {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParsedOrderEvent {
     Created {
+        escrow_contract: String,
         order_id: u64,
         owner: String,
         token_in: String,
@@ -24,22 +25,26 @@ pub enum ParsedOrderEvent {
         updated_at: i64,
     },
     Filled {
+        escrow_contract: String,
         order_id: u64,
         amount_in_remaining: String,
         ledger: u32,
         updated_at: i64,
     },
     Cancelled {
+        escrow_contract: String,
         order_id: u64,
         ledger: u32,
         updated_at: i64,
     },
     Expired {
+        escrow_contract: String,
         order_id: u64,
         ledger: u32,
         updated_at: i64,
     },
     DcaCreated {
+        escrow_contract: String,
         order_id: u64,
         owner: String,
         token_in: String,
@@ -54,6 +59,7 @@ pub enum ParsedOrderEvent {
         updated_at: i64,
     },
     DcaFilled {
+        escrow_contract: String,
         order_id: u64,
         amount_in_remaining: String,
         next_executable_ledger: u32,
@@ -61,11 +67,13 @@ pub enum ParsedOrderEvent {
         updated_at: i64,
     },
     DcaCancelled {
+        escrow_contract: String,
         order_id: u64,
         ledger: u32,
         updated_at: i64,
     },
     DcaExpired {
+        escrow_contract: String,
         order_id: u64,
         ledger: u32,
         updated_at: i64,
@@ -86,6 +94,7 @@ pub fn parse_escrow_order_event(event: &ContractEvent) -> Result<Option<ParsedOr
         "order_created" => {
             require_fields(&fields, 6, &kind)?;
             Ok(Some(ParsedOrderEvent::Created {
+                escrow_contract: event.contract_id.clone(),
                 order_id,
                 owner: scval_address(&fields[0])?,
                 token_in: scval_address(&fields[1])?,
@@ -100,6 +109,7 @@ pub fn parse_escrow_order_event(event: &ContractEvent) -> Result<Option<ParsedOr
         "order_filled" => {
             require_fields(&fields, 4, &kind)?;
             Ok(Some(ParsedOrderEvent::Filled {
+                escrow_contract: event.contract_id.clone(),
                 order_id,
                 amount_in_remaining: amount_to_string(scval_i128(&fields[3])?),
                 ledger: event.ledger,
@@ -109,6 +119,7 @@ pub fn parse_escrow_order_event(event: &ContractEvent) -> Result<Option<ParsedOr
         "order_cancelled" => {
             require_fields(&fields, 2, &kind)?;
             Ok(Some(ParsedOrderEvent::Cancelled {
+                escrow_contract: event.contract_id.clone(),
                 order_id,
                 ledger: event.ledger,
                 updated_at,
@@ -117,6 +128,7 @@ pub fn parse_escrow_order_event(event: &ContractEvent) -> Result<Option<ParsedOr
         "order_expired" => {
             require_fields(&fields, 2, &kind)?;
             Ok(Some(ParsedOrderEvent::Expired {
+                escrow_contract: event.contract_id.clone(),
                 order_id,
                 ledger: event.ledger,
                 updated_at,
@@ -125,6 +137,7 @@ pub fn parse_escrow_order_event(event: &ContractEvent) -> Result<Option<ParsedOr
         "dca_created" => {
             require_fields(&fields, 9, &kind)?;
             Ok(Some(ParsedOrderEvent::DcaCreated {
+                escrow_contract: event.contract_id.clone(),
                 order_id,
                 owner: scval_address(&fields[0])?,
                 token_in: scval_address(&fields[1])?,
@@ -142,6 +155,7 @@ pub fn parse_escrow_order_event(event: &ContractEvent) -> Result<Option<ParsedOr
         "dca_filled" => {
             require_fields(&fields, 5, &kind)?;
             Ok(Some(ParsedOrderEvent::DcaFilled {
+                escrow_contract: event.contract_id.clone(),
                 order_id,
                 amount_in_remaining: amount_to_string(scval_i128(&fields[3])?),
                 next_executable_ledger: scval_u32(&fields[4])?,
@@ -150,11 +164,13 @@ pub fn parse_escrow_order_event(event: &ContractEvent) -> Result<Option<ParsedOr
             }))
         }
         "dca_cancelled" => Ok(Some(ParsedOrderEvent::DcaCancelled {
+            escrow_contract: event.contract_id.clone(),
             order_id,
             ledger: event.ledger,
             updated_at,
         })),
         "dca_expired" => Ok(Some(ParsedOrderEvent::DcaExpired {
+            escrow_contract: event.contract_id.clone(),
             order_id,
             ledger: event.ledger,
             updated_at,
@@ -168,6 +184,7 @@ pub fn parse_escrow_order_event(event: &ContractEvent) -> Result<Option<ParsedOr
 pub fn apply_parsed_order_event(store: &IndexStore, event: &ParsedOrderEvent) -> Result<bool> {
     match event {
         ParsedOrderEvent::Created {
+            escrow_contract,
             order_id,
             owner,
             token_in,
@@ -178,7 +195,8 @@ pub fn apply_parsed_order_event(store: &IndexStore, event: &ParsedOrderEvent) ->
             ledger,
             updated_at,
         } => {
-            store.upsert_created(
+            store.upsert_created_for(
+                escrow_contract,
                 *order_id as i64,
                 owner,
                 token_in,
@@ -195,22 +213,32 @@ pub fn apply_parsed_order_event(store: &IndexStore, event: &ParsedOrderEvent) ->
             Ok(true)
         }
         ParsedOrderEvent::Filled {
+            escrow_contract,
             order_id,
             amount_in_remaining,
             ledger,
             updated_at,
-        } => store.apply_filled(*order_id as i64, amount_in_remaining, *ledger, *updated_at),
+        } => store.apply_filled_for(
+            escrow_contract,
+            *order_id as i64,
+            amount_in_remaining,
+            *ledger,
+            *updated_at,
+        ),
         ParsedOrderEvent::Cancelled {
+            escrow_contract,
             order_id,
             ledger,
             updated_at,
-        } => store.apply_closed(*order_id as i64, "cancelled", *ledger, *updated_at),
+        } => store.apply_closed_for(escrow_contract, *order_id as i64, "cancelled", *ledger, *updated_at),
         ParsedOrderEvent::Expired {
+            escrow_contract,
             order_id,
             ledger,
             updated_at,
-        } => store.apply_closed(*order_id as i64, "expired", *ledger, *updated_at),
+        } => store.apply_closed_for(escrow_contract, *order_id as i64, "expired", *ledger, *updated_at),
         ParsedOrderEvent::DcaCreated {
+            escrow_contract,
             order_id,
             owner,
             token_in,
@@ -224,7 +252,8 @@ pub fn apply_parsed_order_event(store: &IndexStore, event: &ParsedOrderEvent) ->
             ledger,
             updated_at,
         } => {
-            store.upsert_dca_created(
+            store.upsert_dca_created_for(
+                escrow_contract,
                 *order_id as i64,
                 owner,
                 token_in,
@@ -241,12 +270,14 @@ pub fn apply_parsed_order_event(store: &IndexStore, event: &ParsedOrderEvent) ->
             Ok(true)
         }
         ParsedOrderEvent::DcaFilled {
+            escrow_contract,
             order_id,
             amount_in_remaining,
             next_executable_ledger,
             ledger,
             updated_at,
-        } => store.apply_dca_filled(
+        } => store.apply_dca_filled_for(
+            escrow_contract,
             *order_id as i64,
             amount_in_remaining,
             *next_executable_ledger,
@@ -254,15 +285,17 @@ pub fn apply_parsed_order_event(store: &IndexStore, event: &ParsedOrderEvent) ->
             *updated_at,
         ),
         ParsedOrderEvent::DcaCancelled {
+            escrow_contract,
             order_id,
             ledger,
             updated_at,
-        } => store.apply_dca_closed(*order_id as i64, "cancelled", *ledger, *updated_at),
+        } => store.apply_dca_closed_for(escrow_contract, *order_id as i64, "cancelled", *ledger, *updated_at),
         ParsedOrderEvent::DcaExpired {
+            escrow_contract,
             order_id,
             ledger,
             updated_at,
-        } => store.apply_dca_closed(*order_id as i64, "expired", *ledger, *updated_at),
+        } => store.apply_dca_closed_for(escrow_contract, *order_id as i64, "expired", *ledger, *updated_at),
     }
 }
 
@@ -481,6 +514,7 @@ mod tests {
         assert_eq!(
             parsed,
             ParsedOrderEvent::Created {
+                escrow_contract: "CESCROW".into(),
                 order_id: 7,
                 owner: owner.clone(),
                 token_in: token_in.clone(),
@@ -505,6 +539,7 @@ mod tests {
         assert_eq!(
             parsed,
             ParsedOrderEvent::Filled {
+                escrow_contract: "CESCROW".into(),
                 order_id: 7,
                 amount_in_remaining: "300".into(),
                 ledger: 123,
@@ -639,7 +674,7 @@ mod tests {
         assert_eq!(applied, 2);
 
         let owner = Contract([1; 32]).to_string().to_string();
-        let row = store.list_by_owner(&owner, None).unwrap().pop().unwrap();
+        let row = store.list_by_owner_for("CESCROW", &owner, None).unwrap().pop().unwrap();
         assert_eq!(row.order_id, 1);
         assert_eq!(row.amount_in_remaining, "600");
     }
@@ -664,7 +699,7 @@ mod tests {
         let owner = Contract([1; 32]).to_string().to_string();
         apply_parsed_order_event(&store, &parse_escrow_order_event(&created).unwrap().unwrap()).unwrap();
 
-        let rows = store.list_by_owner(&owner, None).unwrap();
+        let rows = store.list_by_owner_for("CESCROW", &owner, None).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].order_id, 42);
         assert_eq!(rows[0].amount_in_remaining, "1000");
@@ -676,12 +711,16 @@ mod tests {
             vec![contract_address(1), i128_value(400), i128_value(800), i128_value(600)],
         );
         apply_parsed_order_event(&store, &parse_escrow_order_event(&filled).unwrap().unwrap()).unwrap();
-        let row = store.list_by_owner(&owner, None).unwrap().pop().unwrap();
+        let row = store.list_by_owner_for("CESCROW", &owner, None).unwrap().pop().unwrap();
         assert_eq!(row.amount_in_remaining, "600");
 
         let cancelled = event("order_cancelled", 42, vec![contract_address(1), i128_value(600)]);
         apply_parsed_order_event(&store, &parse_escrow_order_event(&cancelled).unwrap().unwrap()).unwrap();
-        let row = store.list_by_owner(&owner, Some("all")).unwrap().pop().unwrap();
+        let row = store
+            .list_by_owner_for("CESCROW", &owner, Some("all"))
+            .unwrap()
+            .pop()
+            .unwrap();
         assert_eq!(row.status, "cancelled");
         assert_eq!(row.amount_in_remaining, "0");
     }
