@@ -727,10 +727,7 @@ mod tests {
             "HostError: Error(Contract, #337) contract:CBEN... [Phoenix] failing with contract error",
         );
 
-        assert_eq!(
-            stats.sim_failure_breakdown(2),
-            vec![("phoenix_contract_337".into(), 1)]
-        );
+        assert_eq!(stats.sim_failure_breakdown(2), vec![("phoenix_contract_337".into(), 1)]);
     }
 
     #[test]

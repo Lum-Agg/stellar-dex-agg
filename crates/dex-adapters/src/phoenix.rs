@@ -89,11 +89,7 @@ impl PhoenixAdapter {
     }
 
     async fn pool_meets_trading_floor(&self, pair: &AdapterTradingPair) -> bool {
-        let floor = match self
-            .rpc
-            .call_no_args(&pair.pool_address, "min_trading_balances")
-            .await
-        {
+        let floor = match self.rpc.call_no_args(&pair.pool_address, "min_trading_balances").await {
             Ok(xdr::ScVal::Vec(Some(values))) if values.len() == 2 => {
                 let min_a = scval_to_i128(&values[0]).ok();
                 let min_b = scval_to_i128(&values[1]).ok();

@@ -109,9 +109,7 @@ const MAINNET_AGGREGATOR_CONTRACT: &str = "CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZX
 const TESTNET_AGGREGATOR_CONTRACT: &str = "CDJI26DXFQ4MD7VICA3Q6NEGWF53A3Z6IK7WTNMQ6UZUHL5XGQMEKJRE";
 
 fn classify_diagnostic_text(diagnostic_text: &str, fallback: &str) -> String {
-    if diagnostic_text.contains(MAINNET_AGGREGATOR_CONTRACT)
-        || diagnostic_text.contains(TESTNET_AGGREGATOR_CONTRACT)
-    {
+    if diagnostic_text.contains(MAINNET_AGGREGATOR_CONTRACT) || diagnostic_text.contains(TESTNET_AGGREGATOR_CONTRACT) {
         for (code, classified) in [
             ("Error(Contract, #1)", "AGGREGATOR_INVALID_AMOUNT"),
             ("Error(Contract, #2)", "AGGREGATOR_INVALID_MINIMUM_OUT"),
@@ -187,7 +185,10 @@ mod failure_tests {
     #[test]
     fn classifies_unreachable_code_by_venue() {
         assert_eq!(
-            classify_diagnostic_text("Error(WasmVm, InvalidAction) UnreachableCodeReached [Aquarius]", "HOST_FUNCTION_TRAPPED"),
+            classify_diagnostic_text(
+                "Error(WasmVm, InvalidAction) UnreachableCodeReached [Aquarius]",
+                "HOST_FUNCTION_TRAPPED"
+            ),
             "HOST_FUNCTION_UNREACHABLE_CODE_AQUARIUS"
         );
         assert_eq!(

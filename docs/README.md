@@ -8,6 +8,10 @@ atomic execution through the LumAgg Aggregator contract.
 
 **Complete docs:** `https://lumagg.gitbook.io/`
 
+The GitBook site is the canonical public documentation. The legacy interactive
+page at `https://lumagg.xyz/docs` remains available for compatibility, but is
+not linked from the product navigation.
+
 ## What do you want to do?
 
 ### Integrate a wallet, dApp, or bot

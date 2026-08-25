@@ -2054,8 +2054,7 @@ pub async fn build_tx(State(state): State<AppState>, Json(body): Json<BuildTxReq
                 "Swap simulation failed: the route contains no executable sub-routes. Refresh the quote and try again."
                     .to_string()
             } else if e.contains(AGGREGATOR_CONTRACT) && e.contains("Error(Contract, #4)") {
-                "Swap simulation failed: the route structure is invalid. Refresh the quote and try again."
-                    .to_string()
+                "Swap simulation failed: the route structure is invalid. Refresh the quote and try again.".to_string()
             } else if e.contains(AGGREGATOR_CONTRACT) && e.contains("Error(Contract, #5)") {
                 "Swap simulation failed: the route contains disconnected token steps. Refresh the quote and try again."
                     .to_string()

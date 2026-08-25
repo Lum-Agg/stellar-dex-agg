@@ -36,6 +36,10 @@ pub struct QuoteApiData {
     pub is_split: bool,
     pub sub_routes: Vec<QuoteApiSubRoute>,
     pub compute_time_ms: u64,
+    #[serde(default)]
+    pub snapshot_age_ms: Option<u64>,
+    #[serde(default)]
+    pub pool_state_age_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -57,6 +61,8 @@ pub struct LegQuote {
     pub route: OptimalRoute,
     pub step_sets: Vec<Vec<ArbSwapStep>>,
     pub minimum_out: u128,
+    pub snapshot_age_ms: Option<u64>,
+    pub pool_state_age_ms: Option<u64>,
 }
 
 impl QuoteApiClient {
@@ -257,6 +263,8 @@ pub fn leg_quote_from_api(data: QuoteApiData) -> Result<LegQuote> {
         },
         step_sets,
         minimum_out,
+        snapshot_age_ms: data.snapshot_age_ms,
+        pool_state_age_ms: data.pool_state_age_ms,
     })
 }
 
@@ -292,6 +300,7 @@ fn steps_from_api_sub_route(sub: &QuoteApiSubRoute) -> Result<Vec<ArbSwapStep>> 
         let source = &sub.dex_types[i];
         let dex_type = crate::invoke::source_to_dex_type(source)?.to_string();
         steps.push(ArbSwapStep {
+            venue_type: source.clone(),
             dex_type,
             pool_address: sub.pool_addresses[i].clone(),
             token_in: sub.path[i].clone(),
@@ -339,10 +348,14 @@ mod tests {
                 amount_out: "1001000000".into(),
                 percentage: 100.0,
             }],
+            snapshot_age_ms: Some(1_000),
+            pool_state_age_ms: Some(250),
         };
         let leg = leg_quote_from_api(data).unwrap();
         assert_eq!(leg.route.total_amount_in, 1_000_000_000);
         assert_eq!(leg.step_sets.len(), 1);
         assert_eq!(leg.step_sets[0][0].in_idx, 0);
+        assert_eq!(leg.snapshot_age_ms, Some(1_000));
+        assert_eq!(leg.pool_state_age_ms, Some(250));
     }
 }

@@ -26,28 +26,23 @@ const SECONDARY_LINKS = [
 export function HeaderNav() {
   const pathname = usePathname() || '/';
   const [open, setOpen] = useState(false);
-  const [docsOpen, setDocsOpen] = useState(false);
   const menuId = useId();
-  const docsMenuId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setOpen(false);
-    setDocsOpen(false);
   }, [pathname]);
 
   useEffect(() => {
-    if (!open && !docsOpen) return;
+    if (!open) return;
     const onPointerDown = (event: MouseEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) {
         setOpen(false);
-        setDocsOpen(false);
       }
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setOpen(false);
-        setDocsOpen(false);
       }
     };
     document.addEventListener('mousedown', onPointerDown);
@@ -56,9 +51,7 @@ export function HeaderNav() {
       document.removeEventListener('mousedown', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
     };
-  }, [docsOpen, open]);
-
-  const docsActive = pathname.startsWith('/docs');
+  }, [open]);
 
   return (
     <div ref={rootRef} className="relative">
@@ -80,57 +73,15 @@ export function HeaderNav() {
           );
         })}
 
-        <div className="relative">
-          <button
-            type="button"
-            className={`inline-flex items-center gap-1 transition-colors ${
-              docsActive || docsOpen
-                ? 'text-[var(--text-primary)]'
-                : 'hover:text-[var(--text-primary)]'
-            }`}
-            aria-expanded={docsOpen}
-            aria-controls={docsMenuId}
-            aria-current={docsActive ? 'page' : undefined}
-            onClick={() => setDocsOpen((value) => !value)}
-          >
-            Docs
-            <ChevronIcon open={docsOpen} />
-          </button>
-
-          {docsOpen && (
-            <div
-              id={docsMenuId}
-              className="absolute left-1/2 top-[calc(100%+0.75rem)] z-50 w-64 -translate-x-1/2 rounded-xl border border-white/10 bg-[var(--bg-0)] p-1.5 shadow-xl shadow-black/40"
-            >
-              <Link
-                href="/docs"
-                className="block rounded-lg px-3 py-2.5 hover:bg-white/[0.04] transition-colors"
-              >
-                <span className="block text-[15px] font-semibold text-[var(--text-primary)]">
-                  API Docs
-                </span>
-                <span className="mt-0.5 block text-[12px] font-normal text-[var(--text-muted)]">
-                  Quickstart and live API reference
-                </span>
-              </Link>
-              <a
-                href={DOCUMENTATION_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="block rounded-lg px-3 py-2.5 hover:bg-white/[0.04] transition-colors"
-                onClick={() => setDocsOpen(false)}
-              >
-                <span className="flex items-center gap-1 text-[15px] font-semibold text-[var(--text-primary)]">
-                  Complete Docs
-                  <ExternalLinkIcon />
-                </span>
-                <span className="mt-0.5 block text-[12px] font-normal text-[var(--text-muted)]">
-                  Integration, deployment, and operations
-                </span>
-              </a>
-            </div>
-          )}
-        </div>
+        <a
+          href={DOCUMENTATION_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 transition-colors hover:text-[var(--text-primary)]"
+        >
+          Docs
+          <ExternalLinkIcon />
+        </a>
 
         {SECONDARY_LINKS.map((link) => {
           const active = link.match(pathname);
@@ -185,33 +136,16 @@ export function HeaderNav() {
             );
           })}
 
-          <div className="border-y border-white/[0.06] py-1">
-            <span className="block px-4 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
-              Docs
-            </span>
-            <Link
-              href="/docs"
-              className={`block px-4 py-2 text-[15px] font-medium transition-colors ${
-                docsActive
-                  ? 'text-[var(--text-primary)] bg-white/[0.04]'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/[0.03]'
-              }`}
-              aria-current={docsActive ? 'page' : undefined}
-              onClick={() => setOpen(false)}
-            >
-              API Docs
-            </Link>
-            <a
-              href={DOCUMENTATION_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1 px-4 py-2 text-[15px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/[0.03] transition-colors"
-              onClick={() => setOpen(false)}
-            >
-              Complete Docs
-              <ExternalLinkIcon />
-            </a>
-          </div>
+          <a
+            href={DOCUMENTATION_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 px-4 py-2.5 text-[15px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/[0.03] transition-colors"
+            onClick={() => setOpen(false)}
+          >
+            Docs
+            <ExternalLinkIcon />
+          </a>
 
           {SECONDARY_LINKS.map((link) => {
             const active = link.match(pathname);
@@ -234,20 +168,6 @@ export function HeaderNav() {
         </nav>
       )}
     </div>
-  );
-}
-
-function ChevronIcon({ open }: { open: boolean }) {
-  return (
-    <svg
-      className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`}
-      viewBox="0 0 20 20"
-      fill="none"
-      stroke="currentColor"
-      aria-hidden
-    >
-      <path d="m5 7.5 5 5 5-5" strokeWidth="1.75" strokeLinecap="round" />
-    </svg>
   );
 }
 

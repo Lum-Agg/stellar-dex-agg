@@ -13,6 +13,32 @@ https://api.lumagg.xyz/api/v1
 
 Self-hosted deployments use the address configured by `LISTEN_ADDR`.
 
+## Quickstart
+
+The browser and bot integration flow is:
+
+```text
+/api/v1/tokens -> /api/v1/quote -> /api/v1/build_tx -> wallet sign -> Stellar RPC submit
+```
+
+Example quote for 1 XLM to USDC:
+
+```bash
+API=https://api.lumagg.xyz
+XLM=CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA
+USDC=CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75
+
+curl -sG "$API/api/v1/quote" \
+  --data-urlencode "token_in=$XLM" \
+  --data-urlencode "token_out=$USDC" \
+  --data-urlencode "amount_in=10000000" \
+  --data-urlencode "slippage=0.5"
+```
+
+Use the returned `sub_routes` with `POST /api/v1/build_tx`. The response
+contains an unsigned transaction XDR. The application wallet signs it; LumAgg
+does not receive or handle secret keys.
+
 ## Core Endpoints
 
 | Method | Path | Purpose |
@@ -44,6 +70,17 @@ Stellar RPC is preferred; `/submit_tx` is an optional convenience proxy. See the
 for request examples, amount units, slippage, maximum hops, maximum splits,
 errors, and partner API keys.
 
+## Rate Limits
+
+| Tier | Limit | Authentication |
+| --- | --- | --- |
+| Anonymous | 10 requests/second per IP | None |
+| Partner | 60 requests/second per API key | `X-API-Key` header |
+
+Partner API keys are currently issued manually. Do not hard-code a key in a
+browser application; use a server-side integration when authentication is
+required.
+
 Interactive OpenAPI browsing is also available in the published docs:
 https://lumagg.gitbook.io/lumagg/integrate/api-reference
 
@@ -62,3 +99,14 @@ DCA orders divide `amount_in` into `chunk_amount` executions separated by
 `expires_ledger` must be later than the start and within the contract's 30-day
 maximum lifetime. Set `min_out_per_in_e7` to `0` for market execution, or to a
 positive rate floor for every chunk.
+
+## Supported Liquidity
+
+LumAgg currently routes across Soroswap, Aquarius AMM, Aquarius Stable,
+Aquarius CLMM, Phoenix, Sushi V3, and Comet. Classic Stellar DEX routing is
+also available for Classic-only routes and comparison. Classic and Soroban
+legs are not mixed in one transaction.
+
+For complete request and response schemas, import the repository's
+[`openapi.yaml`](https://github.com/Lum-Agg/stellar-dex-agg/blob/main/docs/openapi.yaml)
+into Swagger UI, Postman, Insomnia, or an OpenAPI client generator.

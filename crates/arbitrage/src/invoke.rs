@@ -12,6 +12,9 @@ use {
 /// One hop encoded for the on-chain `SwapStep` struct.
 #[derive(Debug, Clone)]
 pub struct ArbSwapStep {
+    /// Original router source, retained for diagnostics. `aquarius_clmm`
+    /// intentionally encodes as the contract's shared `Aquarius` enum.
+    pub venue_type: String,
     pub dex_type: String,
     pub pool_address: String,
     pub token_in: String,
@@ -103,6 +106,7 @@ pub fn path_to_steps(path: &Path, snapshot: &MarketSnapshot, hydration: &QuoteHy
         let (in_idx, out_idx) = resolve_hop_indices(snapshot, hydration, source, pool, token_in, token_out)?;
 
         steps.push(ArbSwapStep {
+            venue_type: source.clone(),
             dex_type,
             pool_address: pool.clone(),
             token_in: token_in.canonical(),

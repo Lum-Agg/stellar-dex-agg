@@ -27,6 +27,7 @@ use {
 pub struct PreparedArbTx {
     pub route_label: String,
     pub venue_route_label: String,
+    pub pool_route_label: String,
     pub caller_public_key: String,
     pub amount_in: u128,
     /// Off-chain quoted output (quote-api).
@@ -253,6 +254,8 @@ pub async fn prepare_opportunity_tx(
                         on_chain_base_out = base_out,
                         on_chain_profit,
                         gap_bps,
+                        quote_snapshot_age_ms = quote.quote_snapshot_age_ms(),
+                        pool_state_age_ms = quote.pool_state_age_ms(),
                         tried_probe_fallback,
                         "simulated route below quoted profit — discard"
                     );
@@ -367,6 +370,7 @@ pub async fn prepare_opportunity_tx(
     Ok(Some(PreparedArbTx {
         route_label: quote.route_label(),
         venue_route_label: quote.venue_route_label(),
+        pool_route_label: quote.pool_route_label(),
         caller_public_key: caller_public_key.to_string(),
         amount_in: quote.amount_in,
         quoted_amount_out: quote.amount_out,

@@ -83,6 +83,8 @@ pub async fn quote_round_trip_with_validation(
             },
             step_sets: back_steps,
             minimum_out: total_minimum_out,
+            snapshot_age_ms: leg_out.snapshot_age_ms,
+            pool_state_age_ms: leg_out.pool_state_age_ms,
         }
     };
 
@@ -144,5 +146,90 @@ impl RoundTripQuote {
         }
 
         format!("{} → {}", leg_label(&self.leg_out), leg_label(&self.leg_back))
+    }
+
+    /// Venue and pool identity for post-submit diagnostics. Split sub-routes
+    /// are separated with `||` so the full route remains unambiguous.
+    pub fn pool_route_label(&self) -> String {
+        fn leg_label(leg: &LegQuote) -> String {
+            let routes: Vec<String> = leg
+                .step_sets
+                .iter()
+                .map(|steps| {
+                    steps
+                        .iter()
+                        .map(|step| format!("{}:{}", step.venue_type, step.pool_address))
+                        .collect::<Vec<_>>()
+                        .join(" → ")
+                })
+                .collect();
+            if routes.is_empty() {
+                "unknown".into()
+            } else {
+                routes.join(" || ")
+            }
+        }
+
+        format!("{} || {}", leg_label(&self.leg_out), leg_label(&self.leg_back))
+    }
+
+    pub fn quote_snapshot_age_ms(&self) -> Option<u64> {
+        max_age(self.leg_out.snapshot_age_ms, self.leg_back.snapshot_age_ms)
+    }
+
+    pub fn pool_state_age_ms(&self) -> Option<u64> {
+        max_age(self.leg_out.pool_state_age_ms, self.leg_back.pool_state_age_ms)
+    }
+}
+
+fn max_age(left: Option<u64>, right: Option<u64>) -> Option<u64> {
+    left.into_iter().chain(right).max()
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, crate::invoke::ArbSwapStep};
+
+    fn leg_with_step(venue_type: &str, dex_type: &str, pool_address: &str) -> LegQuote {
+        LegQuote {
+            route: OptimalRoute {
+                sub_orders: vec![],
+                total_amount_in: 0,
+                total_expected_out: 0,
+                price_impact_bps: 0,
+                is_split: false,
+                improvement_bps: 0,
+                minimum_out: 0,
+                compute_time_ms: 0,
+                debug: None,
+            },
+            step_sets: vec![vec![ArbSwapStep {
+                venue_type: venue_type.into(),
+                dex_type: dex_type.into(),
+                pool_address: pool_address.into(),
+                token_in: "A".into(),
+                token_out: "B".into(),
+                in_idx: 0,
+                out_idx: 1,
+            }]],
+            minimum_out: 0,
+            snapshot_age_ms: None,
+            pool_state_age_ms: None,
+        }
+    }
+
+    #[test]
+    fn pool_route_preserves_clmm_venue_label() {
+        let quote = RoundTripQuote {
+            base: TokenId::from_str_auto("A"),
+            bridge: TokenId::from_str_auto("B"),
+            amount_in: 0,
+            amount_out: 0,
+            minimum_out: 0,
+            leg_out: leg_with_step("aquarius_clmm", "aquarius", "CLMM_POOL"),
+            leg_back: leg_with_step("aquarius", "aquarius", "XYK_POOL"),
+        };
+
+        assert_eq!(quote.pool_route_label(), "aquarius_clmm:CLMM_POOL || aquarius:XYK_POOL");
     }
 }
