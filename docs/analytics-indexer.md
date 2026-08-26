@@ -150,6 +150,17 @@ such as DefiLlama.
 curl -s https://api.lumagg.xyz/api/v1/stats | jq .
 ```
 
+Arbitrage profit can be grouped without changing the daily `/stats` schema:
+
+```bash
+curl -s 'https://api.lumagg.xyz/api/v1/arbitrage/stats?granularity=hour' | jq .
+curl -s 'https://api.lumagg.xyz/api/v1/arbitrage/stats?granularity=week' | jq .
+```
+
+Supported granularities are `hour`, `day`, `week`, and `month`. Use `start` and
+`end` Unix-second query parameters to select a window. Buckets include XLM and
+USDC gross surplus plus successful and failed on-chain round-trip counts.
+
 ## Development
 
 The development schema currently has no migration layer. After schema changes,

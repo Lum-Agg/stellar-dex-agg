@@ -31,14 +31,36 @@ interface StatsPayload {
 }
 
 interface DailyProfit {
-  day: string;
+  start: number;
+  label: string;
   xlm: bigint;
   usdc: bigint;
   xlmTx: number;
   usdcTx: number;
+  txCount: number;
+  successCount: number;
+  failedCount: number;
 }
 
 type ProfitRange = '30D' | '90D' | 'ALL';
+type ProfitGranularity = 'hour' | 'day' | 'week' | 'month';
+
+interface ArbitrageStatsBucket {
+  start: number;
+  label: string;
+  tx_count: number;
+  success_count: number;
+  failed_count: number;
+  xlm_tx_count: number;
+  usdc_tx_count: number;
+  xlm_surplus: string;
+  usdc_surplus: string;
+}
+
+interface ArbitrageStatsPayload {
+  granularity: ProfitGranularity;
+  buckets: ArbitrageStatsBucket[];
+}
 
 interface RoundTripItem {
   tx_hash: string;
@@ -186,12 +208,6 @@ function formatSurplusSigned(raw: string | number | bigint, symbol: string): str
   return `${neg ? '' : '+'}${formatted} ${symbol}`;
 }
 
-function formatDay(day: string): string {
-  const date = new Date(`${day}T00:00:00Z`);
-  if (Number.isNaN(date.getTime())) return day;
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
-}
-
 export default function ArbitragePage() {
   const tokens = useTokenList();
   const [stats, setStats] = useState<StatsPayload | null>(null);
@@ -203,6 +219,9 @@ export default function ArbitragePage() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [profitRange, setProfitRange] = useState<ProfitRange>('30D');
+  const [profitGranularity, setProfitGranularity] = useState<ProfitGranularity>('day');
+  const [profitStats, setProfitStats] = useState<ArbitrageStatsPayload | null>(null);
+  const [profitLoading, setProfitLoading] = useState(false);
   const [showDailyTable, setShowDailyTable] = useState(false);
   const [hoveredProfitDay, setHoveredProfitDay] = useState<string | null>(null);
   const tokenLabels = useMemo(
@@ -242,6 +261,40 @@ export default function ArbitragePage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const end = Math.floor(Date.now() / 1000);
+    const rangeSeconds =
+      profitGranularity === 'hour'
+        ? 24 * 60 * 60
+        : profitRange === '30D'
+          ? 30 * 24 * 60 * 60
+          : profitRange === '90D'
+            ? 90 * 24 * 60 * 60
+            : undefined;
+    const params = new URLSearchParams({ granularity: profitGranularity, end: String(end) });
+    if (rangeSeconds != null) params.set('start', String(end - rangeSeconds));
+
+    setProfitLoading(true);
+    fetch(`${API_URL}/api/v1/arbitrage/stats?${params.toString()}`, { cache: 'no-store' })
+      .then((res) => res.json())
+      .then((payload) => {
+        if (cancelled) return;
+        if (!payload.success) throw new Error(payload.error || 'arbitrage stats request failed');
+        setProfitStats(payload.data ?? null);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => {
+        if (!cancelled) setProfitLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [profitGranularity, profitRange]);
 
   const summary = useMemo(() => {
     if (!stats) return null;
@@ -308,34 +361,20 @@ export default function ArbitragePage() {
   }, [stats]);
 
   const dailyProfit = useMemo<DailyProfit[]>(() => {
-    if (!stats) return [];
-    return stats.daily
-      .map((day) => {
-        let xlm = BigInt(0);
-        let usdc = BigInt(0);
-        let xlmTx = 0;
-        let usdcTx = 0;
-        for (const row of day.round_trip_by_token ?? []) {
-          const surplus = toRawBigInt(row.gross_surplus);
-          if (surplus == null) continue;
-          if (row.base_token === XLM_SAC) {
-            xlm += surplus;
-            xlmTx += row.tx_count;
-          } else if (row.base_token === USDC_SAC) {
-            usdc += surplus;
-            usdcTx += row.tx_count;
-          }
-        }
-        return { day: day.day, xlm, usdc, xlmTx, usdcTx };
-      })
-      .filter((day) => day.xlm !== BigInt(0) || day.usdc !== BigInt(0));
-  }, [stats]);
+    return (profitStats?.buckets ?? []).map((bucket) => ({
+      start: bucket.start,
+      label: bucket.label,
+      xlm: toRawBigInt(bucket.xlm_surplus) ?? BigInt(0),
+      usdc: toRawBigInt(bucket.usdc_surplus) ?? BigInt(0),
+      xlmTx: bucket.xlm_tx_count,
+      usdcTx: bucket.usdc_tx_count,
+      txCount: bucket.tx_count,
+      successCount: bucket.success_count,
+      failedCount: bucket.failed_count,
+    }));
+  }, [profitStats]);
 
-  const visibleDailyProfit = useMemo(() => {
-    if (profitRange === 'ALL') return dailyProfit;
-    const days = profitRange === '30D' ? 30 : 90;
-    return dailyProfit.slice(-days);
-  }, [dailyProfit, profitRange]);
+  const visibleDailyProfit = dailyProfit;
 
   const chartMax = useMemo(() => {
     const zero = BigInt(0);
@@ -345,6 +384,15 @@ export default function ArbitragePage() {
     ]);
     return values.reduce((max, value) => (value > max ? value : max), BigInt(1));
   }, [visibleDailyProfit]);
+
+  const profitHeading =
+    profitGranularity === 'hour'
+      ? 'Hourly gross surplus'
+      : profitGranularity === 'week'
+        ? 'Weekly gross surplus'
+        : profitGranularity === 'month'
+          ? 'Monthly gross surplus'
+          : 'Daily gross surplus';
 
   async function loadMore() {
     if (!nextCursor || loadingMore) return;
@@ -462,28 +510,48 @@ export default function ArbitragePage() {
         <div className="px-4 sm:px-5 pt-4 pb-3 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2">
           <div>
             <h2 className="text-[15px] font-medium text-[var(--text-primary)]">
-              Daily gross surplus
+              {profitHeading}
             </h2>
             <p className="text-[12px] text-[var(--text-muted)] mt-0.5">
-              Successful round trips · gross surplus before network fees
+              Indexed round-trip transactions · surplus is from successful transactions
             </p>
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-3 text-[11px] text-[var(--text-muted)]">
-            <div className="flex items-center rounded-lg border border-[var(--border)] bg-[var(--bg-0)]/50 p-0.5">
-              {(['30D', '90D', 'ALL'] as const).map((range) => (
-                <button
-                  key={range}
-                  type="button"
-                  onClick={() => setProfitRange(range)}
-                  className={`rounded-md px-2 py-1 transition-colors ${
-                    profitRange === range
-                      ? 'bg-[var(--surface-raised)] text-[var(--text-primary)]'
-                      : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
-                  }`}
-                >
-                  {range === 'ALL' ? 'All' : range}
-                </button>
-              ))}
+            <div className="flex flex-wrap items-center justify-between gap-3 text-[11px] text-[var(--text-muted)]">
+            <div className="flex flex-wrap items-center gap-1">
+              <div className="flex items-center rounded-lg border border-[var(--border)] bg-[var(--bg-0)]/50 p-0.5">
+                {(['hour', 'day', 'week', 'month'] as const).map((granularity) => (
+                  <button
+                    key={granularity}
+                    type="button"
+                    onClick={() => setProfitGranularity(granularity)}
+                    className={`rounded-md px-2 py-1 capitalize transition-colors ${
+                      profitGranularity === granularity
+                        ? 'bg-[var(--surface-raised)] text-[var(--text-primary)]'
+                        : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
+                    }`}
+                  >
+                    {granularity}
+                  </button>
+                ))}
+              </div>
+              {profitGranularity !== 'hour' && (
+                <div className="flex items-center rounded-lg border border-[var(--border)] bg-[var(--bg-0)]/50 p-0.5">
+                  {(['30D', '90D', 'ALL'] as const).map((range) => (
+                    <button
+                      key={range}
+                      type="button"
+                      onClick={() => setProfitRange(range)}
+                      className={`rounded-md px-2 py-1 transition-colors ${
+                        profitRange === range
+                          ? 'bg-[var(--surface-raised)] text-[var(--text-primary)]'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
+                      }`}
+                    >
+                      {range === 'ALL' ? 'All' : range}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="flex items-center gap-3">
               <span className="inline-flex items-center gap-1.5">
@@ -498,9 +566,13 @@ export default function ArbitragePage() {
           </div>
         </div>
 
-        {dailyProfit.length === 0 ? (
+        {profitLoading ? (
           <p className="border-t border-[var(--border)] px-4 sm:px-5 py-5 text-[13px] text-[var(--text-muted)]">
-            No daily surplus has been indexed yet.
+            Loading arbitrage statistics…
+          </p>
+        ) : dailyProfit.length === 0 ? (
+          <p className="border-t border-[var(--border)] px-4 sm:px-5 py-5 text-[13px] text-[var(--text-muted)]">
+            No arbitrage surplus has been indexed for this period.
           </p>
         ) : (
           <>
@@ -516,14 +588,14 @@ export default function ArbitragePage() {
                   );
                   return (
                     <div
-                      key={day.day}
+                      key={day.start}
                       className="relative min-w-0 flex-1 h-full flex flex-col justify-end gap-2 group"
-                      onMouseEnter={() => setHoveredProfitDay(day.day)}
+                      onMouseEnter={() => setHoveredProfitDay(String(day.start))}
                       onMouseLeave={() => setHoveredProfitDay(null)}
                     >
-                      {hoveredProfitDay === day.day && (
+                      {hoveredProfitDay === String(day.start) && (
                         <div className="pointer-events-none absolute bottom-8 left-1/2 z-10 w-36 -translate-x-1/2 rounded-lg border border-[var(--border-strong)] bg-[var(--surface-raised)] px-3 py-2 text-[11px] shadow-xl">
-                          <div className="font-medium text-[var(--text-primary)]">{day.day}</div>
+                          <div className="font-medium text-[var(--text-primary)]">{day.label}</div>
                           <div className="mt-1 flex justify-between gap-3 text-teal-200">
                             <span>XLM</span>
                             <span className="tabular-nums">
@@ -537,7 +609,7 @@ export default function ArbitragePage() {
                             </span>
                           </div>
                           <div className="mt-1 border-t border-[var(--border)] pt-1 text-[var(--text-muted)]">
-                            {day.xlmTx + day.usdcTx} round trips
+                            {day.successCount} success · {day.failedCount} failed · {day.txCount} total
                           </div>
                         </div>
                       )}
@@ -547,18 +619,18 @@ export default function ArbitragePage() {
                           style={{
                             height: `${Math.max(xlmHeight, day.xlm !== BigInt(0) ? 3 : 0)}%`,
                           }}
-                          title={`${day.day}: ${formatSurplusSigned(day.xlm, 'XLM')}`}
+                            title={`${day.label}: ${formatSurplusSigned(day.xlm, 'XLM')}`}
                         />
                         <div
                           className="w-full max-w-5 rounded-t bg-sky-300/85 transition-all group-hover:bg-sky-200"
                           style={{
                             height: `${Math.max(usdcHeight, day.usdc !== BigInt(0) ? 3 : 0)}%`,
                           }}
-                          title={`${day.day}: ${formatSurplusSigned(day.usdc, 'USDC')}`}
+                            title={`${day.label}: ${formatSurplusSigned(day.usdc, 'USDC')}`}
                         />
                       </div>
                       <span className="truncate text-center text-[10px] text-[var(--text-muted)]">
-                        {formatDay(day.day)}
+                        {day.label}
                       </span>
                     </div>
                   );
@@ -584,14 +656,16 @@ export default function ArbitragePage() {
                       <th className="px-4 py-2.5 font-medium">Day (UTC)</th>
                       <th className="px-4 py-2.5 font-medium text-right">XLM surplus</th>
                       <th className="px-4 py-2.5 font-medium text-right">USDC surplus</th>
-                      <th className="px-4 py-2.5 font-medium text-right">Round trips</th>
+                      <th className="px-4 py-2.5 font-medium text-right">Success</th>
+                      <th className="px-4 py-2.5 font-medium text-right">Failed</th>
+                      <th className="px-4 py-2.5 font-medium text-right">Total tx</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border)]">
                     {[...visibleDailyProfit].reverse().map((day) => (
-                      <tr key={day.day} className="text-[var(--text-secondary)]">
+                      <tr key={day.start} className="text-[var(--text-secondary)]">
                         <td className="px-4 py-2.5 whitespace-nowrap text-[var(--text-muted)]">
-                          {day.day}
+                          {day.label}
                         </td>
                         <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap text-teal-200">
                           {formatSurplusSigned(day.xlm, 'XLM')}
@@ -599,8 +673,14 @@ export default function ArbitragePage() {
                         <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap text-sky-200">
                           {formatSurplusSigned(day.usdc, 'USDC')}
                         </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap text-teal-200/90">
+                          {day.successCount.toLocaleString()}
+                        </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap text-rose-200/80">
+                          {day.failedCount.toLocaleString()}
+                        </td>
                         <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap">
-                          {(day.xlmTx + day.usdcTx).toLocaleString()}
+                          {day.txCount.toLocaleString()}
                         </td>
                       </tr>
                     ))}

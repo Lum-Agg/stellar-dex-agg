@@ -8,8 +8,13 @@ use {
         response::{IntoResponse, Response},
         Json,
     },
+    chrono::{DateTime, Datelike, Duration, TimeZone, Timelike, Utc},
     serde::{Deserialize, Serialize},
+    std::collections::BTreeMap,
 };
+
+const XLM_SAC: &str = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";
+const USDC_SAC: &str = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75";
 
 #[derive(Debug, Deserialize)]
 pub struct ArbitrageQuery {
@@ -41,6 +46,96 @@ pub struct ArbitrageData {
     pub unclassified_failed_count: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ArbitrageStatsQuery {
+    /// `hour`, `day`, `week`, or `month`.
+    pub granularity: Option<String>,
+    /// Unix seconds, inclusive. Defaults to a useful window per granularity.
+    pub start: Option<i64>,
+    /// Unix seconds, exclusive. Defaults to now.
+    pub end: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ArbitrageStatsResponse {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<ArbitrageStatsData>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ArbitrageStatsData {
+    pub granularity: String,
+    pub start: i64,
+    pub end: i64,
+    pub buckets: Vec<ArbitrageStatsBucket>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ArbitrageStatsBucket {
+    pub start: i64,
+    pub label: String,
+    pub tx_count: u64,
+    pub success_count: u64,
+    pub failed_count: u64,
+    pub xlm_tx_count: u64,
+    pub usdc_tx_count: u64,
+    pub xlm_surplus: String,
+    pub usdc_surplus: String,
+}
+
+#[derive(Default)]
+struct BucketTotals {
+    tx_count: u64,
+    success_count: u64,
+    failed_count: u64,
+    xlm_tx_count: u64,
+    usdc_tx_count: u64,
+    xlm_surplus: i128,
+    usdc_surplus: i128,
+}
+
+fn bucket_start(ts: i64, granularity: &str) -> Option<DateTime<Utc>> {
+    let dt = Utc.timestamp_opt(ts, 0).single()?;
+    let date = dt.date_naive();
+    let day = match granularity {
+        "hour" => dt
+            .with_minute(0)?
+            .with_second(0)?
+            .with_nanosecond(0)?,
+        "day" => date.and_hms_opt(0, 0, 0)?.and_utc(),
+        "week" => (date - Duration::days(i64::from(date.weekday().num_days_from_monday())))
+            .and_hms_opt(0, 0, 0)?
+            .and_utc(),
+        "month" => date.with_day(1)?.and_hms_opt(0, 0, 0)?.and_utc(),
+        _ => return None,
+    };
+    Some(day)
+}
+
+fn bucket_label(dt: DateTime<Utc>, granularity: &str) -> String {
+    match granularity {
+        "hour" => dt.format("%Y-%m-%d %H:00 UTC").to_string(),
+        "day" => dt.format("%Y-%m-%d").to_string(),
+        "week" => format!("Week of {}", dt.format("%Y-%m-%d")),
+        "month" => dt.format("%Y-%m").to_string(),
+        _ => dt.to_rfc3339(),
+    }
+}
+
+fn default_window(granularity: &str, end: i64) -> (i64, i64) {
+    let seconds = match granularity {
+        "hour" => 24 * 60 * 60,
+        "day" => 30 * 24 * 60 * 60,
+        "week" => 12 * 7 * 24 * 60 * 60,
+        "month" => 365 * 24 * 60 * 60,
+        _ => 30 * 24 * 60 * 60,
+    };
+    (end.saturating_sub(seconds), end)
 }
 
 #[derive(Debug, Serialize)]
@@ -227,6 +322,153 @@ pub async fn get_arbitrage(Query(params): Query<ArbitrageQuery>) -> Response {
                 failure_reasons,
                 unclassified_failed_count,
                 next_cursor,
+            }),
+            error: None,
+        }),
+    )
+        .into_response()
+}
+
+/// Time-bucketed arbitrage reporting. This endpoint is intentionally separate
+/// from `/api/v1/stats`, whose daily schema is consumed by DefiLlama.
+pub async fn get_arbitrage_stats(Query(params): Query<ArbitrageStatsQuery>) -> Response {
+    let granularity = params
+        .granularity
+        .as_deref()
+        .unwrap_or("day")
+        .trim()
+        .to_ascii_lowercase();
+    if !matches!(granularity.as_str(), "hour" | "day" | "week" | "month") {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ArbitrageStatsResponse {
+                success: false,
+                data: None,
+                error: Some("granularity must be hour, day, week, or month".into()),
+            }),
+        )
+            .into_response();
+    }
+
+    let end = params.end.unwrap_or_else(|| Utc::now().timestamp());
+    let (default_start, default_end) = default_window(&granularity, end);
+    let start = params.start.unwrap_or(default_start);
+    let end = params.end.unwrap_or(default_end);
+    if start >= end {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ArbitrageStatsResponse {
+                success: false,
+                data: None,
+                error: Some("start must be earlier than end".into()),
+            }),
+        )
+            .into_response();
+    }
+
+    let Some(db_path) = indexer_db_path() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ArbitrageStatsResponse {
+                success: false,
+                data: None,
+                error: Some("Analytics DB not configured (set INDEXER_DB_PATH on api-server)".into()),
+            }),
+        )
+            .into_response();
+    };
+    let store = match IndexStore::open(&db_path) {
+        Ok(s) => s,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ArbitrageStatsResponse {
+                    success: false,
+                    data: None,
+                    error: Some(format!("open indexer db: {e}")),
+                }),
+            )
+                .into_response();
+        }
+    };
+    let rows = match store.list_round_trips_between(start, end) {
+        Ok(rows) => rows,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ArbitrageStatsResponse {
+                    success: false,
+                    data: None,
+                    error: Some(format!("query arbitrage stats: {e}")),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let mut totals: BTreeMap<i64, BucketTotals> = BTreeMap::new();
+    for row in rows {
+        let Some(bucket) = bucket_start(row.created_at, &granularity) else {
+            continue;
+        };
+        let bucket_ts = bucket.timestamp();
+        let entry = totals.entry(bucket_ts).or_default();
+        entry.tx_count = entry.tx_count.saturating_add(1);
+        if row.status == "SUCCESS" {
+            entry.success_count = entry.success_count.saturating_add(1);
+            let surplus = row
+                .amount_out
+                .as_deref()
+                .and_then(|out| out.parse::<i128>().ok())
+                .zip(row.amount_in.parse::<i128>().ok())
+                .map(|(out, input)| out.saturating_sub(input));
+            match row.token_in.as_deref() {
+                Some(XLM_SAC) => {
+                    entry.xlm_tx_count = entry.xlm_tx_count.saturating_add(1);
+                    if let Some(surplus) = surplus {
+                        entry.xlm_surplus = entry.xlm_surplus.saturating_add(surplus);
+                    }
+                }
+                Some(USDC_SAC) => {
+                    entry.usdc_tx_count = entry.usdc_tx_count.saturating_add(1);
+                    if let Some(surplus) = surplus {
+                        entry.usdc_surplus = entry.usdc_surplus.saturating_add(surplus);
+                    }
+                }
+                _ => {}
+            }
+        } else if row.status == "FAILED" {
+            entry.failed_count = entry.failed_count.saturating_add(1);
+        }
+    }
+
+    let buckets = totals
+        .into_iter()
+        .filter_map(|(start, totals)| {
+            let dt = Utc.timestamp_opt(start, 0).single()?;
+            Some(ArbitrageStatsBucket {
+                start,
+                label: bucket_label(dt, &granularity),
+                tx_count: totals.tx_count,
+                success_count: totals.success_count,
+                failed_count: totals.failed_count,
+                xlm_tx_count: totals.xlm_tx_count,
+                usdc_tx_count: totals.usdc_tx_count,
+                xlm_surplus: totals.xlm_surplus.to_string(),
+                usdc_surplus: totals.usdc_surplus.to_string(),
+            })
+        })
+        .collect();
+
+    (
+        StatusCode::OK,
+        Json(ArbitrageStatsResponse {
+            success: true,
+            data: Some(ArbitrageStatsData {
+                granularity,
+                start,
+                end,
+                buckets,
             }),
             error: None,
         }),

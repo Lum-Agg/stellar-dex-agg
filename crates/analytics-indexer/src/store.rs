@@ -687,6 +687,35 @@ impl IndexStore {
         Ok(out)
     }
 
+    /// Round-trip invocations in a time range, including both terminal
+    /// success and failure rows for arbitrage reporting.
+    pub fn list_round_trips_between(&self, start_ts: i64, end_ts: i64) -> Result<Vec<RoundTripRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT tx_hash, ledger, created_at, status, user_address,
+                    token_in, token_out, bridge_token, amount_in, amount_out, is_split
+             FROM swap_invocations
+             WHERE function_name = 'round_trip_swap'
+               AND created_at >= ?1 AND created_at < ?2
+             ORDER BY created_at ASC, tx_hash ASC",
+        )?;
+        let rows = stmt.query_map(params![start_ts, end_ts], |row| {
+            Ok(RoundTripRow {
+                tx_hash: row.get(0)?,
+                ledger: row.get::<_, i64>(1)? as u32,
+                created_at: row.get(2)?,
+                status: row.get(3)?,
+                user_address: row.get(4)?,
+                token_in: row.get(5)?,
+                token_out: row.get(6)?,
+                bridge_token: row.get(7)?,
+                amount_in: row.get(8)?,
+                amount_out: row.get(9)?,
+                is_split: row.get::<_, i32>(10)? != 0,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    }
+
     /// Count indexed round-trip invocations by terminal on-chain status.
     pub fn round_trip_status_counts(&self) -> Result<(u64, u64)> {
         let mut stmt = self.conn.prepare(

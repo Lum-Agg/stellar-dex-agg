@@ -912,6 +912,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "chrono",
  "dex-adapters",
  "futures",
  "lumagg-alerts",

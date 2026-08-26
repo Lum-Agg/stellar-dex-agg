@@ -44,7 +44,7 @@ submit_tx = false
 dry_run = true
 poll_tx = true
 submit_dedup_secs = 5
-caller_cooldown_ms = 1000
+caller_cooldown_ms = 5000
 # Durable ledger for RPC-accepted transactions and final poll status.
 # submission_db_path = "/var/lib/lumagg/arb-submissions.db"
 
