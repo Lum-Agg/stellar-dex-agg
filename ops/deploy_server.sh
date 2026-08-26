@@ -2,11 +2,13 @@
 # Deploy LumAgg backend (Redis snapshot / pool-state architecture).
 #
 # Usage:
-#   ./deploy_server.sh          # same as "all"
-#   ./deploy_server.sh all      # api-server + market-data-worker
-#   ./deploy_server.sh api      # api-server only (4 instances, ports 3100-3103)
-#   ./deploy_server.sh worker   # market-data-worker only
+#   ./ops/deploy_server.sh          # same as "all"
+#   ./ops/deploy_server.sh all      # api-server + market-data-worker
+#   ./ops/deploy_server.sh api      # api-server only (4 instances, ports 3100-3103)
+#   ./ops/deploy_server.sh worker   # market-data-worker only
 set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 MODE="${1:-all}"
 case "$MODE" in
@@ -28,7 +30,7 @@ PRIMARY_PORT="${PRIMARY_PORT:-3100}"
 REMOTE_API_BASE="http://127.0.0.1:${PRIMARY_PORT}"
 # Must match deploy/lumagg-*.service (used only for post-deploy verify on server)
 REDIS_URL="${REDIS_URL:-redis://:REDISzlg153@127.0.0.1:6379/}"
-PRODUCTION_CONFIG="$(dirname "$0")/configs/production-aggregator.toml"
+PRODUCTION_CONFIG="$ROOT/configs/production-aggregator.toml"
 
 if [[ ! -f "$PRODUCTION_CONFIG" ]]; then
   echo "ERROR: Missing ${PRODUCTION_CONFIG}; create it from packaging/lumagg-aggregator.toml" >&2
@@ -47,7 +49,7 @@ rsync -az --delete \
   --exclude packages/frontend \
   --exclude configs \
   -e "ssh -o StrictHostKeyChecking=no" \
-  "$(dirname "$0")/" \
+  "$ROOT/" \
   "${SERVER}:${REMOTE_SRC}/"
 
 BUILD_PKGS=()
@@ -131,6 +133,6 @@ fi
 echo "=== Stack verify (health, Redis keys, quote) ==="
 ssh -o StrictHostKeyChecking=no "$SERVER" \
   "API_BASE=${REMOTE_API_BASE} REDIS_URL='${REDIS_URL}' bash -s" \
-  < "$(dirname "$0")/scripts/verify_redis_stack.sh"
+  < "$ROOT/scripts/verify_redis_stack.sh"
 
 echo "=== Done (mode=${MODE}) ==="

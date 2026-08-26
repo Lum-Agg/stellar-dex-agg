@@ -7,13 +7,15 @@
 #   - configs/production-arbitrage.toml generated and reviewed
 #
 # Usage:
-#   ./deploy_arb.sh              # build, install unit, restart service
-#   ./deploy_arb.sh install      # install binary + unit only (no restart)
-#   START=0 ./deploy_arb.sh        # build + install, skip systemctl restart
+#   ./ops/deploy_arb.sh              # build, install unit, restart service
+#   ./ops/deploy_arb.sh install      # install binary + unit only (no restart)
+#   START=0 ./ops/deploy_arb.sh      # build + install, skip systemctl restart
 #
 # Private config is not committed. Start from packaging/lumagg-arbitrage.toml
 # when configuring a new machine.
 set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 MODE="${1:-deploy}"
 case "$MODE" in
@@ -29,7 +31,7 @@ REMOTE_SRC="/opt/stellar-dex-aggregator-src"
 REMOTE_APP_DIR="/opt/stellar-dex-aggregator"
 REMOTE_ARB_BIN="${REMOTE_APP_DIR}/target/release/lumagg-arbitrage-bot"
 START="${START:-1}"
-PRODUCTION_CONFIG="$(dirname "$0")/configs/production-arbitrage.toml"
+PRODUCTION_CONFIG="$ROOT/configs/production-arbitrage.toml"
 
 if [[ ! -f "$PRODUCTION_CONFIG" ]]; then
   echo "ERROR: Missing ${PRODUCTION_CONFIG}; create it from packaging/lumagg-arbitrage.toml" >&2
@@ -48,7 +50,7 @@ rsync -az --delete \
   --exclude packages/frontend \
   --exclude configs \
   -e "ssh -o StrictHostKeyChecking=no" \
-  "$(dirname "$0")/" \
+  "$ROOT/" \
   "${SERVER}:${REMOTE_SRC}/"
 
 echo "=== Building lumagg-arbitrage-bot + quote-sim-probe on server ==="

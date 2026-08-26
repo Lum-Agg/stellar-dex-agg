@@ -2,7 +2,7 @@
 # Deploy the isolated Limit/DCA testnet stack without replacing mainnet binaries.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SERVER="${SERVER:-root@88.198.16.144}"
 REMOTE_SRC="${REMOTE_SRC:-/opt/stellar-dex-aggregator-src}"
 REMOTE_APP_DIR="${REMOTE_APP_DIR:-/opt/stellar-dex-aggregator}"

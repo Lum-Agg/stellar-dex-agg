@@ -34,7 +34,7 @@ User → API quote → PathFinder → QuoteEngine (local math + hydration)
 
 - API: `88.198.16.144:3100` (systemd `lumagg-api@3100`)
 - Worker: `lumagg-worker`
-- Deploy: `./deploy_server.sh [all|api|worker]` (default `all`)
+- Deploy: `./ops/deploy_server.sh [all|api|worker]` (default `all`)
 
 ## Form copy (English)
 

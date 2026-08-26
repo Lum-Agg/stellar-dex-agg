@@ -1,6 +1,7 @@
 #!/bin/bash
 set -euo pipefail
-cd "$(dirname "$0")/packages/frontend"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT/packages/frontend"
 # Prefer committed production Limit env if present; else .env.production.local
 if [[ -f .env.production.local ]]; then
   set -a

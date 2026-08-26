@@ -25,14 +25,14 @@ Living checklist — tick as evidence lands in repo or production.
 - [ ] D9 Audit report ([audit-scope.md](./audit-scope.md)) — **budget $16k**
 - [ ] D10 Demo video (~5 min) — [demo-video-script.md](./demo-video-script.md)
 - [x] D10 [maintenance-plan.md](./maintenance-plan.md)
-- [x] D10 [docker-compose.selfhost.yml](../docker-compose.selfhost.yml)
+- [x] D10 [self-host deployment guide](./deployment-overview.md)
 - [ ] D10 P27 testnet regression — [p27-testnet-regression.md](./p27-testnet-regression.md)
 - [ ] D10 Final report — [scf-final-report.md](./scf-final-report.md)
 
 ## Deploy after code changes
 
 ```bash
-./deploy_server.sh api
-./deploy_site.sh
-./deploy_indexer.sh   # if indexer binary changed
+./ops/deploy_server.sh api
+./ops/deploy_site.sh
+./ops/deploy_indexer.sh   # if indexer binary changed
 ```

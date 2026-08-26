@@ -348,7 +348,7 @@ Expected: all commands PASS without warnings.
 - [ ] **Step 1: Deploy worker and API**
 
 ```bash
-./deploy_server.sh all
+./ops/deploy_server.sh all
 ```
 
 - [ ] **Step 2: Wait for metadata republish**

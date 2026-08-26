@@ -234,7 +234,7 @@ bridges × base
 
 ```bash
 # Vault 一次性：deploy / deposit / add_caller — 见 contracts/vault/README.zh-CN.md
-./deploy_arb.sh                 # rsync、构建 arb-scanner、重启 lumagg-arb
+./ops/deploy_arb.sh             # rsync、构建 arb-scanner、重启 lumagg-arb
 # 实盘：服务器 deploy/arb.env 中 ARB_SUBMIT_TX=1
 ```
 
@@ -294,8 +294,12 @@ bridges × base
 │   └── analytics-indexer.md
 ├── thirdparty/                 # 可选：本地 clone 上游参考（不入库；见 README）
 ├── deploy/                     # systemd（lumagg-api@、lumagg-worker、lumagg-arb）
-├── deploy_server.sh            # API + worker
-├── deploy_arb.sh               # 套利扫描器
+├── ops/                        # 维护者内部部署脚本
+│   ├── deploy_server.sh        # API + worker
+│   ├── deploy_arb.sh           # 套利扫描器
+│   ├── deploy_indexer.sh       # analytics indexer
+│   ├── deploy_site.sh          # Cloudflare Pages 网站
+│   └── deploy_limit_testnet_server.sh
 └── frontend/                   # SvelteKit 演示 UI
 ```
 
@@ -346,10 +350,10 @@ DUMP_DIR=./ledger-events-dump DUMP_LEDGERS=5 \
 ## 部署
 
 ```bash
-./deploy_server.sh          # api-server（4 实例）+ worker
-./deploy_server.sh api      # 仅 api-server
-./deploy_server.sh worker   # 仅 market-data-worker
-./deploy_arb.sh             # arb-scanner（需 vault + 报价 API）
+./ops/deploy_server.sh          # api-server（4 实例）+ worker
+./ops/deploy_server.sh api      # 仅 api-server
+./ops/deploy_server.sh worker   # 仅 market-data-worker
+./ops/deploy_arb.sh             # arb-scanner（需 vault + 报价 API）
 ```
 
 Systemd 单元在 `deploy/`：

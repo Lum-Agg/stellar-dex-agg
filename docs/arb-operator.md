@@ -83,7 +83,7 @@ Copy [scripts/arb.env.example](../scripts/arb.env.example) → `deploy/arb.env` 
 Deploy:
 
 ```bash
-./deploy_arb.sh
+./ops/deploy_arb.sh
 systemctl status lumagg-arb
 ```
 
@@ -195,7 +195,7 @@ opportunities (those signals may appear in arb stats / Telegram). Path-level
 `gap_bps` is authoritative; hop `chain_out` shows where the chain path shrinks.
 
 **Scheduled (production):** systemd timer every **30 minutes** (not a resident
-process). Installed by `./deploy_arb.sh`:
+process). Installed by `./ops/deploy_arb.sh`:
 
 ```bash
 systemctl status lumagg-quote-sim-probe.timer

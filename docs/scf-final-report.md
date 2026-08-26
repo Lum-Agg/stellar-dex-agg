@@ -25,7 +25,7 @@ LumAgg delivers a production Stellar DEX aggregator with split routing across So
 | D7 | ≥2 integrator pilots | [integrator-pilots.md](./integrator-pilots.md) | ✅ |
 | D8 | Public stats API | https://lumagg.xyz/stats, `/api/v1/stats` | ✅ · ☐ 30d data |
 | D9 | Third-party audit | [audit-scope.md](./audit-scope.md), report PDF | ☐ |
-| D10 | Close-out kit | [maintenance-plan.md](./maintenance-plan.md), [docker-compose.selfhost.yml](../docker-compose.selfhost.yml), demo video | partial |
+| D10 | Close-out kit | [maintenance-plan.md](./maintenance-plan.md), [self-host deployment guide](./deployment-overview.md), demo video | partial |
 
 ---
 

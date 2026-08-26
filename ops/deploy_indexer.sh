@@ -2,15 +2,17 @@
 # Deploy LumAgg analytics-indexer to production server.
 #
 # Usage:
-#   ./deploy_indexer.sh
-#   INDEXER_START_LEDGER=63200000 ./deploy_indexer.sh   # optional backfill after deploy
+#   ./ops/deploy_indexer.sh
+#   INDEXER_START_LEDGER=63200000 ./ops/deploy_indexer.sh   # optional backfill after deploy
 set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 SERVER="root@88.198.16.144"
 REMOTE_SRC="/opt/stellar-dex-aggregator-src"
 REMOTE_APP_DIR="/opt/stellar-dex-aggregator"
 INDEXER_START_LEDGER="${INDEXER_START_LEDGER:-}"
-PRODUCTION_CONFIG="$(dirname "$0")/configs/production-aggregator.toml"
+PRODUCTION_CONFIG="$ROOT/configs/production-aggregator.toml"
 
 if [[ ! -f "$PRODUCTION_CONFIG" ]]; then
   echo "ERROR: Missing ${PRODUCTION_CONFIG}; create it from packaging/lumagg-aggregator.toml" >&2
@@ -29,7 +31,7 @@ rsync -az --delete \
   --exclude packages/frontend \
   --exclude configs \
   -e "ssh -o StrictHostKeyChecking=no" \
-  "$(dirname "$0")/" \
+  "$ROOT/" \
   "${SERVER}:${REMOTE_SRC}/"
 
 echo "=== Building analytics-indexer on server ==="

@@ -37,7 +37,7 @@ Record screen + voiceover. Target audience: SCF reviewers and integrators.
 
 ## 4:45 — Close (15s)
 
-- Self-host: `docker-compose.selfhost.yml`
+- Self-host: native release binaries and the deployment guide
 - npm SDK, maintenance plan, P27 checklist
 - **End card:** GitHub repo + api.lumagg.xyz
 

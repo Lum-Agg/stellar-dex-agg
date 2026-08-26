@@ -102,7 +102,7 @@ On the server, copy the generated env to
 start the API and indexer units. The keeper starts in dry-run mode by default:
 
 ```bash
-RESET_TESTNET_DB=1 ./deploy_limit_testnet_server.sh
+RESET_TESTNET_DB=1 ./ops/deploy_limit_testnet_server.sh
 ```
 
 The deployment uses separate `*-testnet` binary names, a Soroswap testnet
@@ -205,4 +205,4 @@ price. Its API surface is `/api/v1/dca`, `/dca/build_create`, and
 
 Wallet must be on **Testnet** when signing create/cancel. Instant still uses `NEXT_PUBLIC_API_URL` (mainnet).
 
-Local: `packages/frontend/.env.local`. Deploy UI: `./deploy_site.sh`.
+Local: `packages/frontend/.env.local`. Deploy UI: `./ops/deploy_site.sh`.
