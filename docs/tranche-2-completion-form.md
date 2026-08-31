@@ -61,7 +61,7 @@ Evidence:
 
 - Validation report: https://github.com/Lum-Agg/stellar-dex-agg/blob/main/docs/integrator-pilots.md
 - SDK evidence: https://github.com/Lum-Agg/stellar-dex-agg/tree/main/docs/evidence/d7-reference-sdk
-- External REST evidence: https://github.com/Lum-Agg/stellar-dex-agg/tree/main/docs/evidence/d2-integrator-smoke
+- External REST evidence (Tranche 1 D2 evidence reused for Tranche 2 D7 Path B): https://github.com/Lum-Agg/stellar-dex-agg/tree/main/docs/evidence/d2-integrator-smoke
 - Self-hosted quickstart: https://lumagg.gitbook.io/lumagg/deploy/self-hosted-aggregator-quickstart
 
 ## Additional Verification
@@ -73,9 +73,9 @@ Evidence:
 
 ## Submission Checklist
 
-- [ ] Regenerate `docs/arb-evidence-snapshot.md` from the production server.
-- [ ] Confirm the latest Vault and Aggregator contract IDs.
-- [ ] Re-run the SDK reference example and preserve the output evidence.
+- [x] Regenerate `docs/arb-evidence-snapshot.md` from the production server.
+- [x] Confirm the latest Vault and Aggregator contract IDs.
+- [x] Re-run the SDK reference example and preserve the output evidence.
 - [ ] Verify all GitHub, NPM, GitBook, and production URLs in a private browser.
 - [ ] Record a short public or unlisted video covering SDK, arb architecture,
   and the two integration paths.

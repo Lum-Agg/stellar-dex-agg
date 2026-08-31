@@ -1,51 +1,42 @@
 # Arb operator evidence snapshot
 
-Auto-generated summary for Tranche 2 Deliverable 6. Re-run:
+Generated: 2026-08-27T04:24Z · unit: `lumagg-arb` · since: `2026-07-13 00:00:00`
 
-```bash
-ssh root@88.198.16.144 'bash -s' < scripts/collect-arb-evidence.sh
-# or locally on server:
-./scripts/collect-arb-evidence.sh --since "2026-07-13 00:00:00"
+**SUCCESS count:** 41
+
+## Recent SUCCESS hashes
+
+- https://stellar.expert/explorer/public/tx/01234644f4444a4742ad234f9f42ea676eb32989d7478b19c6e88a03a6c6482d
+- https://stellar.expert/explorer/public/tx/cc7ddfe5e8d17e489ffed3f58c48a76913a42d8418e16ce04c3f53d82c29f2cf
+- https://stellar.expert/explorer/public/tx/8e14a23600839934c8d09d710b7c65d0d0ab7f3f93f8a00060b97fcb0e044726
+- https://stellar.expert/explorer/public/tx/ab59611f73e4837cbdd9b4599b45c41e4c080c1b48b5b7de04bf0430a1fdce25
+- https://stellar.expert/explorer/public/tx/e7d195d4d177cda22b2ffe6347a0253763657892e9512a80d2a0e8255fe2b9f8
+- https://stellar.expert/explorer/public/tx/4fb80c39b951a6fd34a27c6efb871a5a6f9da95d10daa70b94d5262392d2206d
+- https://stellar.expert/explorer/public/tx/079a5bdd31d39b424aed674127823e9d1c4149af86a3b551e76ef9c4868e7c2c
+- https://stellar.expert/explorer/public/tx/d97671a68be2cb47847516f813fe6422f896dfa6fe2fea669c021ea360aaa06d
+- https://stellar.expert/explorer/public/tx/c1895df321f9fffbbcc0d0ee7e8cdb0bfe3e708217bb96626ddd4b442bdb9f1f
+- https://stellar.expert/explorer/public/tx/c866ea24f6f57969ac264050b05fa1ea0a9ab2304cb99e46ae879697960b72e4
+- https://stellar.expert/explorer/public/tx/1fcb4455f2b9adc4ad0a9896e454a903537367e504fa5d2754cd9dda01253d28
+- https://stellar.expert/explorer/public/tx/f560d1ced1c42fd462548aa3957f6bc2372ebc8d0fa140f4caad226e52e31bd0
+- https://stellar.expert/explorer/public/tx/02b65e1d6c680a1bc158f120dc6275dd66dd9c01f61b696031669ea4229b4501
+- https://stellar.expert/explorer/public/tx/e9db2acd2ca9e169b9a320e328b6f5be05ed99db63035311d5ee49efefac27ea
+- https://stellar.expert/explorer/public/tx/719cba776591fcc2a80f0b888333cab792921de577544a84a30f57201e47bc3c
+- https://stellar.expert/explorer/public/tx/d8f3806d6c3dcfa0116f6a0ce71df58acfb49a2dcbd9e6a1eda196af0184dc5a
+- https://stellar.expert/explorer/public/tx/4439897cbd950e3659f3dd141de6953b97f69bbd79728edcef15f9f2e4449e85
+- https://stellar.expert/explorer/public/tx/566d0c3710564afe56b1ed3dde97d26d8367d5b29030a5d7d13e0d39d2cd38df
+- https://stellar.expert/explorer/public/tx/380979fac6761c3d38ce1dc29441dd952b7d39a32f72e6eda238db5fda601b13
+- https://stellar.expert/explorer/public/tx/19ffaf56f69d0b488cf577debb6ac8847e90b69e1006d30ead52edab25cf35fa
+
+## Sample log lines
+```
+Aug 27 00:21:48 hzfra-lumagg lumagg-arbitrage-bot[2018194]: 2026-08-26T22:21:48.388797Z  INFO arbitrage::submit: arb tx SUCCESS hash=d8f3806d6c3dcfa0116f6a0ce71df58acfb49a2dcbd9e6a1eda196af0184dc5a route=CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA → CD25MNVTZDL4Y3XBCPCJXGXATV5WUHHOWMYFF4YBEGU5FCPGMYTVG5JY → CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA gross_profit=1048086 estimated_fee=172952
+Aug 27 01:44:37 hzfra-lumagg lumagg-arbitrage-bot[2018194]: 2026-08-26T23:44:37.120402Z  INFO arbitrage::submit: arb tx SUCCESS hash=4439897cbd950e3659f3dd141de6953b97f69bbd79728edcef15f9f2e4449e85 route=CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA → CBH4M45TQBLDPXOK6L7VYKMEJWFITBOL64BN3WDAIIDT4LNUTWTTOCKF → CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA gross_profit=617421 estimated_fee=173727
+Aug 27 01:46:47 hzfra-lumagg lumagg-arbitrage-bot[2018194]: 2026-08-26T23:46:47.120726Z  INFO arbitrage::submit: arb tx SUCCESS hash=566d0c3710564afe56b1ed3dde97d26d8367d5b29030a5d7d13e0d39d2cd38df route=CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA → CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV → CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA gross_profit=249632 estimated_fee=143760
+Aug 27 01:47:36 hzfra-lumagg lumagg-arbitrage-bot[2018194]: 2026-08-26T23:47:36.733073Z  INFO arbitrage::submit: arb tx SUCCESS hash=380979fac6761c3d38ce1dc29441dd952b7d39a32f72e6eda238db5fda601b13 route=CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA → CD25MNVTZDL4Y3XBCPCJXGXATV5WUHHOWMYFF4YBEGU5FCPGMYTVG5JY → CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA gross_profit=354275 estimated_fee=171421
+Aug 27 03:08:41 hzfra-lumagg lumagg-arbitrage-bot[2018194]: 2026-08-27T01:08:41.179398Z  INFO arbitrage::submit: arb tx SUCCESS hash=19ffaf56f69d0b488cf577debb6ac8847e90b69e1006d30ead52edab25cf35fa route=CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA → CDFZUVS5YNLXU7VENKOUDEOHCJGKQNVUBWD7KMN6E7ZROKPYPFLRUJFG → CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA gross_profit=267854 estimated_fee=173007
 ```
 
-## Snapshot — 2026-07-14
-
-**Window:** since 2026-07-13 00:00:00 UTC  
-**Unit:** `lumagg-arb`  
-**SUCCESS count:** 26
-
-### Recent on-chain txs
-
-- https://stellar.expert/explorer/public/tx/24d15a3365ed8367340dfe6154f37e312fc6d66eaaa6dd316896422276ba4b89
-- https://stellar.expert/explorer/public/tx/2e3bd547b00c57a0f65ebe3c4b3416440ba715bc0ce2934fa008481942aafda2
-- https://stellar.expert/explorer/public/tx/06e525c42f1502e7da13cfd3d56400b86d67c37d2d2950ef4a42f27781ce3f0b
-- https://stellar.expert/explorer/public/tx/e817c8f94300495c641f3a28869b2f758e1530fee34e7fe08bc5dc01141897d0
-- https://stellar.expert/explorer/public/tx/e96e643fbedc287815577f5d3175b62f27b452434a7b42be763527de68e37c69
-- https://stellar.expert/explorer/public/tx/605c6c5315d919e1565f2524d71bd9b72465ac943141934256c985a01d993297
-- https://stellar.expert/explorer/public/tx/e809397206f1f25edfa0f1a1fdc003048e706021a52683abcdf4fa635bb0f63a
-- https://stellar.expert/explorer/public/tx/aaad601db994dd7f21b3962df1c450cd2ad677bcbc27a6f1f63eaf7a4ba29677
-- https://stellar.expert/explorer/public/tx/8aa48e93f7299be9c0550b2e25ae7be696a01a262d1f6615ab9ccf26e7f9fa57
-- https://stellar.expert/explorer/public/tx/e15f1a2425eca677427fe848c54ab6f0708b7262622544293e8530f101a49641
-- https://stellar.expert/explorer/public/tx/57132675d4897067de94380a35653cbe6829ee6c9405027f170b9fc61ac39f1e
-- https://stellar.expert/explorer/public/tx/22485b0c85fd182e368b916533d80812dd728588d77b2818a251faf970ccdd4d
-- https://stellar.expert/explorer/public/tx/2a751bfad3f25fe884c6a123d89ac7e2610b8cb88c04459d365b59a415c25bb0
-- https://stellar.expert/explorer/public/tx/8fcb65b7394f88a57c1f05021396c11b0bfa6a286eed45ee59e6f3bd79878041
-- https://stellar.expert/explorer/public/tx/794280b19148d3c62b8c3287f76fdb78a21097de9fbea537ca3d11dd6d30f9b5
-- https://stellar.expert/explorer/public/tx/651b247733eda38b160744dd1717f939af2188b0539bc4ae723a89689350316d
-- https://stellar.expert/explorer/public/tx/ae5f35023c927447262b06114cc2c0c6eff2d605fb1c64df68e49b96141ff80e
-- https://stellar.expert/explorer/public/tx/5f3d4981ce6a4ee68999c175e36ac0769155aba6af8d11488ca8c784bef7819e
-- https://stellar.expert/explorer/public/tx/41927efe3d323286e17f2c7d7ca3485c84e93e55a0f289c69a32f3aa47ec89a9
-- https://stellar.expert/explorer/public/tx/a514393e8e57e0227385d44da32c8f6e7a29bae913943459747f229735a8fba0
-
-### Sample journal lines (profit + fee)
-
-```
-Jul 13 23:30:34 arb tx SUCCESS hash=5f3d4981… gross_profit=570444 estimated_fee=267452
-Jul 14 00:03:21 arb tx SUCCESS hash=41927efe… gross_profit=674617 estimated_fee=267241
-Jul 14 02:58:10 arb tx SUCCESS hash=a514393e… gross_profit=837934 estimated_fee=309884
-```
-
-### Vault / aggregator
+## Vault / aggregator
 
 | | |
 |--|--|

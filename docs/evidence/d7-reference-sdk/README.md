@@ -1,7 +1,7 @@
 # D7 Path A: in-repo SDK validation
 
-- Date: 2026-07-31
-- SDK: `@lumagg/sdk` `0.2.0` from `packages/sdk`
+- Date: 2026-08-27
+- SDK: `@lumagg/sdk` `0.3.0` from `packages/sdk`
 - API: `https://api.lumagg.xyz`
 - Scope: `quote → build_tx`; unsigned XDR only
 - Account input: public mainnet G-address; no secret key
@@ -18,7 +18,7 @@ npx --yes tsx packages/sdk/examples/quote-build.ts
 
 ```text
 Quote OK
-  expected_out: 1761757
+  expected_out: 1870724
   is_split: true
   legs: 2
 build_tx OK

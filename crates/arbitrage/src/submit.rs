@@ -115,6 +115,7 @@ fn decode_failure_diagnostics(events: Option<Vec<soroban_client::xdr::Diagnostic
         let text = format!("{event:?}");
         let lower = text.to_ascii_lowercase();
         if lower.contains("stringm(error)") ||
+            lower.contains("error(contract, #") ||
             lower.contains("unreachablecodereached") ||
             lower.contains("invalidaction") ||
             lower.contains("exceededlimit")

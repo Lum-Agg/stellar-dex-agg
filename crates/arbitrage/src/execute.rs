@@ -312,6 +312,8 @@ pub async fn prepare_opportunity_tx(
         if net_profit < min_profit {
             warn!(
                 route = %quote.route_label(),
+                venue_route = %quote.venue_route_label(),
+                pool_route = %quote.pool_route_label(),
                 caller = %caller_public_key,
                 amount_in = quote.amount_in,
                 quoted_amount_out = quote.amount_out,
@@ -321,6 +323,8 @@ pub async fn prepare_opportunity_tx(
                 fee_in_base = fee_base,
                 net_profit,
                 min_profit,
+                quote_snapshot_age_ms = quote.quote_snapshot_age_ms(),
+                pool_state_age_ms = quote.pool_state_age_ms(),
                 "simulated net profit below min_profit after fees — discard"
             );
             stats

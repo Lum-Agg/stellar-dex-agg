@@ -67,6 +67,14 @@ emit() {
   journalctl -u "$UNIT" --since "$SINCE" --no-pager 2>/dev/null \
     | grep "arb tx SUCCESS" | tail -5
   echo '```'
+  echo
+  echo "## Vault / aggregator"
+  echo
+  echo '| | |'
+  echo '|--|--|'
+  echo '| Vault | \`CCQQ3LRFCSGOYSSD6S4MGH6RWWYVDHYPJO6KYDJYC2IDZK4OGCK6P6KN\` |'
+  echo '| Aggregator | \`CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K\` |'
+  echo '| Runbook | [arb-operator.md](./arb-operator.md) |'
 } | emit
 
 if [[ -n "$OUTPUT" ]]; then

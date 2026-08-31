@@ -99,8 +99,8 @@ run_stellar_tx() {
   return "$ec"
 }
 
-echo "=== Building aggregator WASM (release) ==="
-stellar contract build --optimize 2>/dev/null || {
+echo "=== Building aggregator WASM (contract-release) ==="
+stellar contract build --package aggregator-contract --profile contract-release --optimize 2>/dev/null || {
   echo "stellar contract build --optimize failed, trying cargo + stellar optimize..."
   cargo build -p aggregator-contract --target wasm32v1-none --profile contract-release
   WASM=""

@@ -136,7 +136,9 @@ impl ArbStats {
 
     pub fn record_sim_failure(&self, error: &str) {
         let lower = error.to_ascii_lowercase();
-        let reason = if lower.contains("trustline entry is missing") || lower.contains("trustline is missing") {
+        let reason = if let Some(reason) = aggregator_error_reason(&lower) {
+            reason
+        } else if lower.contains("trustline entry is missing") || lower.contains("trustline is missing") {
             "trustline_missing"
         } else if lower.contains("error(contract, #13)") {
             "contract_13"
@@ -172,7 +174,9 @@ impl ArbStats {
 
     pub fn record_chain_failure(&self, error: &str) {
         let lower = error.to_ascii_lowercase();
-        let reason = if lower.contains("unreachablecodereached") {
+        let reason = if let Some(reason) = aggregator_error_reason(&lower) {
+            reason
+        } else if lower.contains("unreachablecodereached") {
             unreachable_reason(&lower)
         } else if lower.contains("error(contract, #337)") && lower.contains("phoenix") {
             "phoenix_contract_337"
@@ -244,6 +248,36 @@ impl ArbStats {
         self.quote_sim_gap_bps_sum.fetch_add(gap, Ordering::Relaxed);
         self.quote_sim_gap_samples.fetch_add(1, Ordering::Relaxed);
     }
+}
+
+fn aggregator_error_reason(error: &str) -> Option<&'static str> {
+    // Contract error numbers are local to the contract that emitted them.
+    // Nested DEX/SAC errors may use the same number, so never classify a
+    // bare `Error(Contract, #N)` as an Aggregator error.
+    let from_aggregator = error.contains("17a00afd24375988c9eeee7dd274da67321f702436b37466ebef6709efa91a34")
+        || error.contains("1a51af0ee587183fd50206e1e690d62f760de7c857ed36b21ea66875f6e68308")
+        || error.contains("cc6qav7jeg5myrspo5z65e5g2m4zb64beg2zxizxl55tqt35jdi2lc6k")
+        || error.contains("cdji26dxfq4md7vica3q6negwf53a3z6ik7wtnmq6uzuhl5xgqmekjre");
+    if !from_aggregator {
+        return None;
+    }
+    let code = [
+        (1, "aggregator_invalid_amount"),
+        (2, "aggregator_invalid_minimum_out"),
+        (3, "aggregator_empty_routes"),
+        (4, "aggregator_invalid_route"),
+        (5, "aggregator_disconnected_route"),
+        (6, "aggregator_invalid_step"),
+        (7, "aggregator_zero_step_output"),
+        (8, "aggregator_output_below_minimum"),
+        (9, "aggregator_venue_not_registered"),
+        (10, "aggregator_arithmetic_overflow"),
+        (11, "aggregator_not_initialized"),
+    ]
+    .into_iter()
+    .find(|(code, _)| error.contains(&format!("error(contract, #{code})")))
+    .map(|(_, reason)| reason);
+    code
 }
 
 fn unreachable_reason(error: &str) -> &'static str {
@@ -760,5 +794,26 @@ mod tests {
                 ("unreachable_code_mixed_venues".into(), 1),
             ]
         );
+    }
+
+    #[test]
+    fn failure_breakdown_classifies_aggregator_contract_errors() {
+        let stats = ArbStats::default();
+        stats.record_chain_failure(
+            "HostError: ContractId(Hash(17a00afd24375988c9eeee7dd274da67321f702436b37466ebef6709efa91a34)) Error(Contract, #8) failing with contract error",
+        );
+
+        assert_eq!(
+            stats.chain_failure_breakdown(2),
+            vec![("aggregator_output_below_minimum".into(), 1)]
+        );
+    }
+
+    #[test]
+    fn failure_breakdown_does_not_misclassify_nested_contract_error() {
+        let stats = ArbStats::default();
+        stats.record_chain_failure("ContractId(Hash(bd0057e921bacc464f7773ee93a6d33990fb8121b59ba3375f7b384f7d48d1a5)) Error(Contract, #8)");
+
+        assert_eq!(stats.chain_failure_breakdown(2), vec![("other".into(), 1)]);
     }
 }
