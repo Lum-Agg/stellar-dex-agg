@@ -7,34 +7,27 @@ Tranche 2 deliverable: self-deploy **aggregator + vault + arb scanner** on mainn
 ## Architecture
 
 ```mermaid
-flowchart LR
+flowchart TB
   subgraph Market[Market data]
-    Pools[(Stellar DEX pools)]
-    Worker[Market data workers]
-    Redis[(Redis pool state)]
-    Pools --> Worker --> Redis
+    direction LR
+    Pools[(DEX pools)] --> Worker[Market data workers] --> Redis[(Redis state)]
   end
 
   subgraph Decision[Arbitrage decision]
-    API[Quote API x N]
-    Bot[LumAgg arbitrage bot]
-    Callers[Fee-only caller accounts]
+    direction LR
+    API[Quote API x N] --> Bot[LumAgg arbitrage bot]
+    Callers[Fee-only callers] --> Bot
     Redis --> API
-    API --> Bot
-    Callers --> Bot
   end
 
   subgraph Execution[Atomic on-chain execution]
-    Vault[Arb-only Vault]
-    Aggregator[LumAgg Aggregator]
-    Venue[Supported DEX contracts]
-    Bot -->|quote and simulate| Vault
-    Bot -->|submit| Vault
-    Vault -->|execute_round_trip| Aggregator
-    Aggregator -->|round_trip_swap| Venue
-    Venue --> Pools
-    Venue -->|output and surplus| Vault
+    direction LR
+    Vault[Arb-only Vault] -->|execute_round_trip| Aggregator[LumAgg Aggregator]
+    Aggregator -->|swap legs| Venue[Supported DEX contracts]
+    Venue -->|output + surplus| Vault
   end
+
+  Bot -->|simulate + submit| Vault
 
   classDef data fill:#102a43,stroke:#35d0ba,color:#fff
   classDef app fill:#172b3d,stroke:#55b8ff,color:#fff
