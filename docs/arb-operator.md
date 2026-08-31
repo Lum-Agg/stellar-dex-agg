@@ -13,12 +13,13 @@ quote-api (×N) ──► lumagg-arbitrage-bot ──► vault.execute_round_tri
 ```
 
 
-|     |     |
+| Component | Responsibility |
 | --- | --- |
-|     |     |
-|     |     |
-|     |     |
-|     | ·   |
+| LumAgg Aggregator contract | Executes the configured multi-DEX swap route atomically. |
+| Arb-only Vault | Holds the trading principal and invokes the Aggregator for round trips. |
+| Arbitrage bot | Finds round-trip opportunities, simulates transactions, rotates callers, and submits profitable executions. |
+| Quote API | Produces candidate routes from current market data. |
+| Redis market state | Shares refreshed pool state between quote workers and API instances. |
 
 
 Contract details: [contracts/vault/README.md](../contracts/vault/README.md).
