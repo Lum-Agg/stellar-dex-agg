@@ -2,7 +2,13 @@
 
 Generated: 2026-08-27T04:24Z · unit: `lumagg-arb` · since: `2026-07-13 00:00:00`
 
-**SUCCESS count:** 41
+**Confirmed SUCCESS count:** 2,418
+**Confirmed FAILED count:** 1,592
+
+These counts are aggregated from the analytics indexer for the period above.
+The systemd journal is used only for the recent transaction hashes and sample
+operator log lines below. See the public [arbitrage analytics](https://lumagg.xyz/arbitrage)
+for the current chain-indexed totals.
 
 ## Recent SUCCESS hashes
 

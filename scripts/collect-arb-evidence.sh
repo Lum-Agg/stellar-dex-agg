@@ -31,7 +31,18 @@ while [[ $# -gt 0 ]]; do
 done
 
 UNIT="${ARB_UNIT:-lumagg-arb}"
+STATS_URL="${ARB_STATS_URL:-https://api.lumagg.xyz/api/v1/arbitrage/stats}"
 GENERATED="$(date -u +%Y-%m-%dT%H:%MZ)"
+
+to_unix() {
+  if date -d "$1" +%s 2>/dev/null; then
+    return
+  fi
+  date -j -f "%Y-%m-%d %H:%M:%S" "$1" +%s
+}
+
+START_UNIX="$(to_unix "$SINCE")"
+END_UNIX="$(date -u +%s)"
 
 emit() {
   if [[ -n "$OUTPUT" ]]; then
@@ -47,8 +58,17 @@ emit() {
   echo "Generated: $GENERATED · unit: \`$UNIT\` · since: \`$SINCE\`"
   echo
 
-  COUNT=$(journalctl -u "$UNIT" --since "$SINCE" --no-pager 2>/dev/null | grep -c "arb tx SUCCESS" || true)
-  echo "**SUCCESS count:** $COUNT"
+  STATS_JSON=$(curl --fail --silent --show-error --get "$STATS_URL" \
+    --data-urlencode "granularity=day" \
+    --data-urlencode "start=$START_UNIX" \
+    --data-urlencode "end=$END_UNIX")
+  SUCCESS_COUNT=$(jq -r '[.data.buckets[]?.success_count // 0] | add // 0' <<<"$STATS_JSON")
+  FAILED_COUNT=$(jq -r '[.data.buckets[]?.failed_count // 0] | add // 0' <<<"$STATS_JSON")
+  echo "**Confirmed SUCCESS count:** $SUCCESS_COUNT"
+  echo "**Confirmed FAILED count:** $FAILED_COUNT"
+  echo
+  echo "Counts come from the analytics indexer via `/api/v1/arbitrage/stats`;"
+  echo "the journal below is used only for recent hashes and operator log samples."
   echo
 
   echo "## Recent SUCCESS hashes"

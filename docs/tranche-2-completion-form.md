@@ -8,7 +8,7 @@ benchmark, or analytics-indexer deliverables.
 
 ### 1. NPM TypeScript SDK and integration examples
 
-LumAgg published the typed `@lumagg/sdk` package at version `0.2.0`. The SDK
+LumAgg published the typed `@lumagg/sdk` package at version `0.3.0`. The SDK
 supports the production `quote` and `build_tx` flow, typed sub-route data, and
 wallet-facing unsigned XDR handling. The repository includes a minimal
 quote-to-build example and a browser example using an application-owned wallet
@@ -67,6 +67,8 @@ Evidence:
 ## Additional Verification
 
 - Production application: https://lumagg.xyz
+- Arbitrage monitor: https://lumagg.xyz/arbitrage
+- Public analytics dashboard: https://lumagg.xyz/stats
 - Production API health: https://api.lumagg.xyz/api/v1/health
 - Public repository: https://github.com/Lum-Agg/stellar-dex-agg
 - Canonical documentation: https://lumagg.gitbook.io/

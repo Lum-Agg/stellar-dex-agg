@@ -80,23 +80,19 @@ YouTube video, Loom video, or public Google Drive video.
 展示交易成功状态、交易操作和 round-trip 路由。这证明套利交易确实在 Stellar
 主网上执行过。
 
-### 2:35-3:20 - SDK 集成路径
-
-返回：
-
-`https://github.com/Lum-Agg/stellar-dex-agg/tree/main/docs/evidence/d7-reference-sdk`
-
-放大展示 quote 和 `build_tx OK` 的命令输出。说明应用收到未签名 XDR 后，
-使用自己的钱包进行签名。
-
-### 3:20-4:05 - REST 集成路径
+### 2:35-3:20 - 集成验证总结
 
 打开并截图：
 
 `https://github.com/Lum-Agg/stellar-dex-agg/blob/main/docs/integrator-pilots.md`
 
-展示两条验证路径，并展示说明：REST 证据来自 Tranche 1 D2，在 Tranche 2
-D7 中作为 Path B 复用。
+展示两条集成验证路径。SDK 证据页面已经在第一个 deliverable 中展示过，
+这里不需要重新打开；只需要说明第一条路径复用了刚才看到的 SDK 证据。
+
+### 3:20-4:05 - REST 集成路径
+
+从刚才的 `integrator-pilots.md` 页面继续，说明 REST 证据来自 Tranche 1
+D2，在 Tranche 2 D7 中作为 Path B 复用。
 
 然后打开并截图：
 
@@ -148,7 +144,7 @@ self-hosted binaries.
 [操作：打开 NPM 包页面或 GitHub 中的 SDK 目录。]
 
 The first deliverable is the published `@lumagg/sdk` package. The current
-package version is zero point two point zero.
+package version is zero point three point zero.
 
 The SDK provides typed methods for the quote and build transaction endpoints.
 It handles route data, split routes, and unsigned transaction XDR returned by
@@ -207,7 +203,8 @@ guaranteed returns.
 
 ## 2:55-3:55 - Third and Final Deliverable: Integration Validation
 
-[操作：返回 SDK 示例或对应的 evidence README。]
+[操作：保持刚才的 SDK 证据截图，或切换到集成验证报告：
+`https://github.com/Lum-Agg/stellar-dex-agg/blob/main/docs/integrator-pilots.md`。]
 
 The third and final deliverable is integrator integration validation.
 
@@ -239,7 +236,9 @@ own wallet adapter and its preferred Stellar RPC for signing and submission.
 
 ## 4:35-4:55 - Closing
 
-[操作：展示 GitBook、GitHub 仓库和最后的链接。]
+[操作：先打开 GitBook 首页并截图：
+`https://lumagg.gitbook.io/`；然后打开 GitHub 仓库首页并截图：
+`https://github.com/Lum-Agg/stellar-dex-agg`。最后停留在其中任意一个公开页面。]
 
 This completes the Tranche Two demonstration: the published TypeScript SDK,
 the atomic arbitrage operator stack, and two reproducible integration paths.
