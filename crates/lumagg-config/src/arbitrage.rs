@@ -70,6 +70,7 @@ pub struct Scanner {
     pub min_amount_in: Option<u128>,
     pub max_amount_in: Option<u128>,
     pub sample_count: Option<usize>,
+    pub max_quote_age_ms: Option<u64>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -151,6 +152,7 @@ impl ArbitrageConfig {
         set_option("ARB_MIN_AMOUNT_IN", &self.scanner.min_amount_in);
         set_option("ARB_MAX_AMOUNT_IN", &self.scanner.max_amount_in);
         set_option("ARB_SAMPLE_COUNT", &self.scanner.sample_count);
+        set_option("ARB_MAX_QUOTE_AGE_MS", &self.scanner.max_quote_age_ms);
 
         set_option("ARB_BUILD_TX", &self.execution.build_tx);
         set_option("ARB_SUBMIT_TX", &self.execution.submit_tx);

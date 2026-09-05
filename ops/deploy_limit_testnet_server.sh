@@ -9,7 +9,8 @@ REMOTE_APP_DIR="${REMOTE_APP_DIR:-/opt/stellar-dex-aggregator}"
 ENV_FILE="${ENV_FILE:-$ROOT/deploy/.env.limit-testnet.local}"
 RESET_TESTNET_DB="${RESET_TESTNET_DB:-0}"
 INDEXER_CONFIG="$(mktemp)"
-trap 'rm -f "$INDEXER_CONFIG"' EXIT
+KEEPER_CONFIG="$(mktemp)"
+trap 'rm -f "$INDEXER_CONFIG" "$KEEPER_CONFIG"' EXIT
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "ERROR: Missing $ENV_FILE. Run scripts/deploy-limit-testnet.sh first." >&2
@@ -65,6 +66,20 @@ log_filter = "info"
 EOF
 chmod 600 "$INDEXER_CONFIG"
 
+cat >"$KEEPER_CONFIG" <<EOF
+rpc_url = "$INDEXER_RPC_URL"
+network = "testnet"
+escrow_contract = "$ESCROW_CONTRACT"
+aggregator_contract = "$AGGREGATOR_CONTRACT"
+quote_api_url = "${QUOTE_API_URL:-http://127.0.0.1:3200}"
+poll_secs = ${KEEPER_POLL_SECS:-15}
+cursor_path = "$REMOTE_APP_DIR/data/limit-keeper-testnet.cursor"
+dry_run = true
+reclaim = false
+secret_file = "/etc/lumagg/limit-keeper-testnet.secret"
+EOF
+chmod 600 "$KEEPER_CONFIG"
+
 echo "=== Sync source to $SERVER ==="
 rsync -az --delete \
   --exclude target \
@@ -86,6 +101,8 @@ scp -o StrictHostKeyChecking=no "$ENV_FILE" \
   "${SERVER}:${REMOTE_APP_DIR}/deploy/.env.limit-testnet.local"
 scp -o StrictHostKeyChecking=no "$INDEXER_CONFIG" \
   "${SERVER}:${REMOTE_APP_DIR}/deploy/indexer-testnet.toml"
+scp -o StrictHostKeyChecking=no "$KEEPER_CONFIG" \
+  "${SERVER}:${REMOTE_APP_DIR}/deploy/limit-keeper-testnet.toml"
 
 ssh -o StrictHostKeyChecking=no "$SERVER" \
   "REMOTE_SRC='$REMOTE_SRC' REMOTE_APP_DIR='$REMOTE_APP_DIR' RESET_TESTNET_DB='$RESET_TESTNET_DB' bash -s" <<'REMOTE'
@@ -104,6 +121,7 @@ systemctl stop \
 mkdir -p "$REMOTE_APP_DIR/target/release" "$REMOTE_APP_DIR/data" "$REMOTE_APP_DIR/deploy"
 chmod 600 "$REMOTE_APP_DIR/deploy/.env.limit-testnet.local"
 chmod 600 "$REMOTE_APP_DIR/deploy/indexer-testnet.toml"
+chmod 600 "$REMOTE_APP_DIR/deploy/limit-keeper-testnet.toml"
 
 if [[ "$RESET_TESTNET_DB" == "1" ]]; then
   stamp=$(date -u +%Y%m%dT%H%M%SZ)

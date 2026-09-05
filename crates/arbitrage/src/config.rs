@@ -61,6 +61,9 @@ pub struct ArbConfig {
     pub min_amount_in: u128,
     pub max_amount_in: u128,
     pub sample_count: usize,
+    /// Maximum accepted quote snapshot age before execution (milliseconds).
+    /// A missing age remains compatible with older quote APIs.
+    pub max_quote_age_ms: u64,
     pub submit_tx: bool,
     pub dry_run: bool,
     /// Poll `get_transaction` after submit (Telegram stats). Default off.
@@ -206,6 +209,11 @@ impl ArbConfig {
             .and_then(|v| v.parse().ok())
             .unwrap_or(10);
 
+        let max_quote_age_ms = std::env::var("ARB_MAX_QUOTE_AGE_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30_000);
+
         let submit_tx = std::env::var("ARB_SUBMIT_TX")
             .ok()
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -259,6 +267,7 @@ impl ArbConfig {
             min_amount_in,
             max_amount_in,
             sample_count,
+            max_quote_age_ms,
             submit_tx,
             dry_run,
             poll_tx,

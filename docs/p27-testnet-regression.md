@@ -20,7 +20,10 @@ Run after Stellar **Protocol 27** lands on **testnet** (before mainnet upgrade).
 API=http://127.0.0.1:3100 USER_G=GYourTestnetAccount ./scripts/integrator-smoke.sh
 
 # P27-focused script (health, quote, stats if indexer mounted)
-./scripts/p27-testnet-smoke.sh
+API=https://api.lumagg.xyz/limit-testnet ./scripts/p27-testnet-smoke.sh
+
+# Limit/DCA unsigned builders and structured Escrow error check
+API=https://api.lumagg.xyz/limit-testnet ./scripts/limit-dca-testnet-smoke.sh
 ```
 
 ## Manual checklist

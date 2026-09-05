@@ -81,6 +81,7 @@ simulation success rate, and API backlog.
 | `scanner.min_amount_in` | unset | Lower bound for optimized trade size. |
 | `scanner.max_amount_in` | runtime default | Upper bound for optimized trade size. |
 | `scanner.sample_count` | runtime default | Number of samples used during amount optimization. |
+| `scanner.max_quote_age_ms` | `30000` | Maximum pool-state age accepted before execution; falls back to route snapshot age when pool-state age is unavailable. Quotes with no age metadata remain compatible. |
 
 ## Execution
 

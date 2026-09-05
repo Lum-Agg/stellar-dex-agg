@@ -84,8 +84,9 @@ sed -i 's#https://your-stellar-rpc.example.com#https://soroban-testnet.stellar.o
 
 Use `dry_run = true` while validating discovery and fillability. For live testnet
 fills, set `dry_run = false`, create the file referenced by `secret_file` with
-mode `0600`, and keep it outside Git. The environment-variable form below is
-retained for compatibility with the existing testnet deployment scripts.
+mode `0600`, and keep it outside Git. The deployed testnet systemd service uses
+the TOML configuration directly; the environment-variable form below is
+retained only for local compatibility.
 
 ```bash
 set -a && source deploy/.env.limit-testnet.local && set +a
@@ -96,6 +97,17 @@ set -a && source deploy/.env.limit-testnet.local && set +a
 ```
 
 Use **testnet** token contract ids and a user account that exists on testnet for builds.
+The currently deployed Soroswap testnet route uses `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC`
+(`native` / UI label `XLM`) and `CB3TLW74NBIOT3BUWOZ3TUM6RFDF6A4GVIRUQRQZABG5KPOUL4JJOV2F`
+(`USDC`). The intermediate bridge asset is `CCZGLAUBDKJSQK72QOZHVU7CUWKW45OZWYWCLL27AEK74U2OIBK6LXF2`
+(`XTAR`). These values are specific to the current testnet deployment and must
+not be reused on mainnet.
+
+Current testnet Escrow deployment (with structured validation errors):
+`CCI3U3P7MPZNCA5L7KWTXNS7H7KV6AIZQ6ZY2FEOZPHTJIAVCRYPKXTM`. The previous
+Escrow IDs below are retained as historical evidence only. For example,
+`create_dca` with a past start ledger now returns contract error `#17`
+(`StartLedgerInPast`) during simulation.
 
 On the server, copy the generated env to
 `/opt/stellar-dex-aggregator/deploy/.env.limit-testnet.local`, then install and
@@ -135,15 +147,35 @@ For live fills, place the funded keeper seed only on the server:
 ```bash
 sudo install -d -m 700 /etc/lumagg
 sudo sh -c 'umask 077; printf "%s\n" \
-  "KEEPER_SECRET=S..." \
-  "KEEPER_DRY_RUN=0" \
-  > /etc/lumagg/limit-keeper-testnet.env'
+  "S..." \
+  > /etc/lumagg/limit-keeper-testnet.secret'
+# Edit /opt/stellar-dex-aggregator/deploy/limit-keeper-testnet.toml:
+#   dry_run = false
 sudo systemctl restart lumagg-limit-keeper-testnet
 ```
 
 Never add `KEEPER_SECRET` to the generated shared env or repository.
 
 ## Smoke checklist
+
+The unsigned transaction builders can be checked without a wallet or chain
+write using:
+
+```bash
+API=http://127.0.0.1:3200 USER_G=G... ./scripts/limit-dca-testnet-smoke.sh
+```
+
+The script obtains the current testnet ledger, uses future ledger bounds, and
+verifies that both Limit and DCA endpoints return non-empty unsigned XDR. It
+also sends one deliberately invalid DCA request with a past start ledger and
+requires the structured `Error(Contract, #17)` response. It does not sign or
+submit any transaction.
+
+For the Protocol 27 quote regression, use the testnet reverse-proxy path:
+
+```bash
+API=https://api.lumagg.xyz/limit-testnet ./scripts/p27-testnet-smoke.sh
+```
 
 | # | Step | Expect |
 |---|------|--------|
@@ -206,3 +238,4 @@ price. Its API surface is `/api/v1/dca`, `/dca/build_create`, and
 Wallet must be on **Testnet** when signing create/cancel. Instant still uses `NEXT_PUBLIC_API_URL` (mainnet).
 
 Local: `packages/frontend/.env.local`. Deploy UI: `./ops/deploy_site.sh`.
+For the structured contract error code mapping, see [Order Escrow Errors](order-escrow-errors.md).

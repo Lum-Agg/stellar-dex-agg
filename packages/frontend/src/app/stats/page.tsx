@@ -484,6 +484,11 @@ export default function StatsPage() {
             />
           </section>
 
+          <div className="grid lg:grid-cols-2 gap-4">
+            <ExecutionOutcomeChart days={chartDays} />
+            <ActivityTrendChart days={chartDays} />
+          </div>
+
           <section className="rounded-xl border border-teal-400/20 bg-[linear-gradient(115deg,rgba(45,212,191,0.08),rgba(15,23,42,0.18))] px-4 sm:px-5 py-4">
             <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
               <div>

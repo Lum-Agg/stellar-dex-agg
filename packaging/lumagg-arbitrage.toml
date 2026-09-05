@@ -37,6 +37,9 @@ optimize_amount = true
 # min_amount_in = 100000000
 max_amount_in = 5000000000
 sample_count = 10
+# Execution skips quotes whose live pool state is older than this value.
+# Falls back to route snapshot age when live pool age is unavailable.
+max_quote_age_ms = 30000
 
 [execution]
 build_tx = false

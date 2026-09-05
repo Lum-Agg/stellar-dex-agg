@@ -8,9 +8,8 @@ Type=simple
 User=root
 WorkingDirectory=/opt/stellar-dex-aggregator
 EnvironmentFile=/opt/stellar-dex-aggregator/deploy/.env.limit-testnet.local
-EnvironmentFile=-/etc/lumagg/limit-keeper-testnet.env
 Environment=RUST_LOG=info
-ExecStart=/opt/stellar-dex-aggregator/target/release/limit-keeper-testnet
+ExecStart=/opt/stellar-dex-aggregator/target/release/limit-keeper-testnet --config /opt/stellar-dex-aggregator/deploy/limit-keeper-testnet.toml
 Restart=on-failure
 RestartSec=10
 

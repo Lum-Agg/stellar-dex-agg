@@ -161,6 +161,11 @@ Before submission, the scanner gates an opportunity using the simulated return
 minus the estimated transaction fee and the configured min profit
 (`scanner.min_profit`, or the per-base `scanner.min_profit_xlm` /
 `scanner.min_profit_usdc`).
+The execution path also rejects quotes whose pool-state age exceeds
+`scanner.max_quote_age_ms` (default: 30 seconds). It falls back to route
+snapshot age only when pool-state age is unavailable; this protects against a
+theoretical opportunity being simulated after the live pool state has changed.
+Do not disable this guard solely to increase submission count.
 The transaction's on-chain `min_amount_out` is intentionally only greater than
 the input amount, instead of encoding the entire simulated profit target. This
 reduces avoidable post-submission failures and fee loss when execution changes

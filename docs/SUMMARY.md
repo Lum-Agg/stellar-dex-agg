@@ -26,6 +26,7 @@
 - [Deploy Smart Contracts](contracts-deployment.md)
 - [Round-trip Arbitrage](round-trip-arb.md)
 - [Limit Orders on Testnet](limit-orders-testnet.md)
+- [Order Escrow Errors](order-escrow-errors.md)
 - [Limit/DCA Keeper](limit-dca-keeper.md)
 
 ## Analytics

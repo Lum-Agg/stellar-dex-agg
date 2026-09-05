@@ -23,14 +23,14 @@ export const LIMIT_NETWORK_PASSPHRASE = Networks.TESTNET;
 /** Well-known testnet SACs for the Limit panel (not mainnet TokenSelector list). */
 export const TESTNET_TOKENS: LimitToken[] = [
   {
-    id: 'CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV',
+    id: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
     symbol: 'XLM',
     name: 'Stellar Lumens (testnet)',
     decimals: 7,
     color: '#14B8A6',
   },
   {
-    id: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+    id: 'CB3TLW74NBIOT3BUWOZ3TUM6RFDF6A4GVIRUQRQZABG5KPOUL4JJOV2F',
     symbol: 'USDC',
     name: 'USD Coin (testnet)',
     decimals: 7,

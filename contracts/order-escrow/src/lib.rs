@@ -8,6 +8,10 @@ use {
     },
 };
 
+mod errors;
+
+pub use errors::EscrowError;
+
 #[contractclient(name = "AggregatorContractClient")]
 pub trait AggregatorContract {
     fn swap(
@@ -86,12 +90,10 @@ pub struct OrderEscrowContract;
 const RATE_SCALE_E7: i128 = 10_000_000;
 
 fn required_min_out(amount_in: i128, limit_out_per_in_e7: i128) -> i128 {
-    assert!(amount_in >= 0, "amount_in must not be negative");
-    assert!(limit_out_per_in_e7 > 0, "limit must be positive");
     amount_in
         .checked_mul(limit_out_per_in_e7)
-        .expect("amount and limit multiplication overflow") /
-        RATE_SCALE_E7
+        .map(|value| value / RATE_SCALE_E7)
+        .unwrap_or(i128::MAX)
 }
 
 fn authorize_swap_as_current_contract(
@@ -123,7 +125,7 @@ fn authorize_swap_as_current_contract(
 impl OrderEscrowContract {
     pub fn initialize(env: Env, admin: Address, aggregator: Address) {
         if env.storage().instance().has(&DataKey::Admin) {
-            panic!("Already initialized");
+            soroban_sdk::panic_with_error!(&env, EscrowError::AlreadyInitialized);
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
@@ -134,7 +136,9 @@ impl OrderEscrowContract {
 
     /// Upgrade the escrow WASM code. Only the configured admin can call this.
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("Not initialized");
+        let Some(admin) = env.storage().instance().get::<_, Address>(&DataKey::Admin) else {
+            soroban_sdk::panic_with_error!(&env, EscrowError::NotInitialized);
+        };
         admin.require_auth();
         env.deployer().update_current_contract_wasm(new_wasm_hash);
     }
@@ -149,23 +153,27 @@ impl OrderEscrowContract {
         expires_ledger: u32,
     ) -> u64 {
         owner.require_auth();
-        assert!(amount_in > 0, "amount_in must be positive");
-        assert!(limit_out_per_in_e7 > 0, "limit must be positive");
-        assert!(token_in != token_out, "tokens must differ");
-        assert!(
-            expires_ledger > env.ledger().sequence(),
-            "expiration must be in the future"
-        );
-        assert!(
-            expires_ledger <= env.ledger().sequence().saturating_add(MAX_ORDER_LIFETIME),
-            "expiration exceeds maximum order lifetime"
-        );
+        if amount_in <= 0 {
+            soroban_sdk::panic_with_error!(&env, EscrowError::InvalidAmount);
+        }
+        if limit_out_per_in_e7 <= 0 {
+            soroban_sdk::panic_with_error!(&env, EscrowError::InvalidLimit);
+        }
+        if token_in == token_out {
+            soroban_sdk::panic_with_error!(&env, EscrowError::SameToken);
+        }
+        if expires_ledger <= env.ledger().sequence() {
+            soroban_sdk::panic_with_error!(&env, EscrowError::ExpirationInPast);
+        }
+        if expires_ledger > env.ledger().sequence().saturating_add(MAX_ORDER_LIFETIME) {
+            soroban_sdk::panic_with_error!(&env, EscrowError::ExpirationTooFar);
+        }
 
         let order_id: u64 = env
             .storage()
             .instance()
             .get(&DataKey::NextOrderId)
-            .expect("Not initialized");
+            .unwrap_or_else(|| soroban_sdk::panic_with_error!(&env, EscrowError::NotInitialized));
         let escrow = env.current_contract_address();
         token::Client::new(&env, &token_in).transfer(&owner, &escrow, &amount_in);
 
@@ -182,7 +190,9 @@ impl OrderEscrowContract {
         env.storage().persistent().set(&key, &order);
         env.storage().instance().set(
             &DataKey::NextOrderId,
-            &order_id.checked_add(1).expect("order id overflow"),
+            &order_id
+                .checked_add(1)
+                .unwrap_or_else(|| soroban_sdk::panic_with_error!(&env, EscrowError::ArithmeticOverflow)),
         );
         env.events().publish(
             (Symbol::new(&env, "order_created"), order_id),
@@ -200,9 +210,13 @@ impl OrderEscrowContract {
 
     pub fn cancel(env: Env, order_id: u64) {
         let key = DataKey::Order(order_id);
-        let mut order: LimitOrder = env.storage().persistent().get(&key).expect("Order not found");
+        let Some(mut order) = env.storage().persistent().get::<_, LimitOrder>(&key) else {
+            soroban_sdk::panic_with_error!(&env, EscrowError::OrderNotFound);
+        };
         order.owner.require_auth();
-        assert!(order.status == OrderStatus::Open, "Order is not open");
+        if order.status != OrderStatus::Open {
+            soroban_sdk::panic_with_error!(&env, EscrowError::OrderNotOpen);
+        }
 
         let escrow = env.current_contract_address();
         let refunded_amount = order.amount_in_remaining;
@@ -218,9 +232,15 @@ impl OrderEscrowContract {
 
     pub fn reclaim_expired(env: Env, order_id: u64) {
         let key = DataKey::Order(order_id);
-        let mut order: LimitOrder = env.storage().persistent().get(&key).expect("Order not found");
-        assert!(order.status == OrderStatus::Open, "Order is not open");
-        assert!(env.ledger().sequence() > order.expires_ledger, "Order has not expired");
+        let Some(mut order) = env.storage().persistent().get::<_, LimitOrder>(&key) else {
+            soroban_sdk::panic_with_error!(&env, EscrowError::OrderNotFound);
+        };
+        if order.status != OrderStatus::Open {
+            soroban_sdk::panic_with_error!(&env, EscrowError::OrderNotOpen);
+        }
+        if env.ledger().sequence() <= order.expires_ledger {
+            soroban_sdk::panic_with_error!(&env, EscrowError::OrderNotExpired);
+        }
 
         let escrow = env.current_contract_address();
         let refunded_amount = order.amount_in_remaining;
@@ -236,29 +256,40 @@ impl OrderEscrowContract {
 
     pub fn fill(env: Env, order_id: u64, amount_in: i128, sub_routes: Vec<SubRoute>, min_amount_out: i128) -> i128 {
         let key = DataKey::Order(order_id);
-        let mut order: LimitOrder = env.storage().persistent().get(&key).expect("Order not found");
-        assert!(order.status == OrderStatus::Open, "Order is not open");
-        assert!(env.ledger().sequence() < order.expires_ledger, "Order is expired");
-        assert!(amount_in > 0, "amount_in must be positive");
-        assert!(amount_in <= order.amount_in_remaining, "amount_in exceeds remaining");
+        let Some(mut order) = env.storage().persistent().get::<_, LimitOrder>(&key) else {
+            soroban_sdk::panic_with_error!(&env, EscrowError::OrderNotFound);
+        };
+        if order.status != OrderStatus::Open {
+            soroban_sdk::panic_with_error!(&env, EscrowError::OrderNotOpen);
+        }
+        if env.ledger().sequence() >= order.expires_ledger {
+            soroban_sdk::panic_with_error!(&env, EscrowError::OrderExpired);
+        }
+        if amount_in <= 0 {
+            soroban_sdk::panic_with_error!(&env, EscrowError::InvalidAmount);
+        }
+        if amount_in > order.amount_in_remaining {
+            soroban_sdk::panic_with_error!(&env, EscrowError::AmountExceedsRemaining);
+        }
 
         let mut routed_amount = 0i128;
         for route in sub_routes.iter() {
             routed_amount = routed_amount
                 .checked_add(route.amount_in)
-                .expect("sub-route amount overflow");
+                .unwrap_or_else(|| soroban_sdk::panic_with_error!(&env, EscrowError::ArithmeticOverflow));
         }
-        assert!(routed_amount == amount_in, "sub-route amounts must equal amount_in");
-        assert!(
-            min_amount_out >= required_min_out(amount_in, order.limit_out_per_in_e7),
-            "min_amount_out below limit"
-        );
+        if routed_amount != amount_in {
+            soroban_sdk::panic_with_error!(&env, EscrowError::InvalidRouteAmount);
+        }
+        if min_amount_out < required_min_out(amount_in, order.limit_out_per_in_e7) {
+            soroban_sdk::panic_with_error!(&env, EscrowError::MinimumOutBelowLimit);
+        }
 
         let aggregator: Address = env
             .storage()
             .instance()
             .get(&DataKey::Aggregator)
-            .expect("Not initialized");
+            .unwrap_or_else(|| soroban_sdk::panic_with_error!(&env, EscrowError::NotInitialized));
         let escrow = env.current_contract_address();
         authorize_swap_as_current_contract(&env, &aggregator, &escrow, &order.token_in, amount_in);
         let amount_out = AggregatorContractClient::new(&env, &aggregator).swap_restricted(
@@ -297,23 +328,36 @@ impl OrderEscrowContract {
     ) -> u64 {
         owner.require_auth();
         let current = env.ledger().sequence();
-        assert!(amount_in > 0, "amount_in must be positive");
-        assert!(chunk_amount > 0 && chunk_amount <= amount_in, "invalid chunk amount");
-        assert!(interval_ledgers > 0, "interval must be positive");
-        assert!(start_ledger >= current, "start ledger is in the past");
-        assert!(min_out_per_in_e7 >= 0, "minimum rate must not be negative");
-        assert!(token_in != token_out, "tokens must differ");
-        assert!(expires_ledger > start_ledger, "expiration must follow start");
-        assert!(
-            expires_ledger <= current.saturating_add(MAX_ORDER_LIFETIME),
-            "expiration exceeds maximum order lifetime"
-        );
+        if amount_in <= 0 {
+            soroban_sdk::panic_with_error!(&env, EscrowError::InvalidAmount);
+        }
+        if chunk_amount <= 0 || chunk_amount > amount_in {
+            soroban_sdk::panic_with_error!(&env, EscrowError::InvalidChunk);
+        }
+        if interval_ledgers == 0 {
+            soroban_sdk::panic_with_error!(&env, EscrowError::InvalidInterval);
+        }
+        if start_ledger < current {
+            soroban_sdk::panic_with_error!(&env, EscrowError::StartLedgerInPast);
+        }
+        if min_out_per_in_e7 < 0 {
+            soroban_sdk::panic_with_error!(&env, EscrowError::InvalidMinimumRate);
+        }
+        if token_in == token_out {
+            soroban_sdk::panic_with_error!(&env, EscrowError::SameToken);
+        }
+        if expires_ledger <= start_ledger {
+            soroban_sdk::panic_with_error!(&env, EscrowError::ExpirationInPast);
+        }
+        if expires_ledger > current.saturating_add(MAX_ORDER_LIFETIME) {
+            soroban_sdk::panic_with_error!(&env, EscrowError::ExpirationTooFar);
+        }
 
         let order_id: u64 = env
             .storage()
             .instance()
             .get(&DataKey::NextDcaOrderId)
-            .expect("Not initialized");
+            .unwrap_or_else(|| soroban_sdk::panic_with_error!(&env, EscrowError::NotInitialized));
         let escrow = env.current_contract_address();
         token::Client::new(&env, &token_in).transfer(&owner, &escrow, &amount_in);
 
@@ -332,7 +376,9 @@ impl OrderEscrowContract {
         env.storage().persistent().set(&DataKey::DcaOrder(order_id), &order);
         env.storage().instance().set(
             &DataKey::NextDcaOrderId,
-            &order_id.checked_add(1).expect("DCA order id overflow"),
+            &order_id
+                .checked_add(1)
+                .unwrap_or_else(|| soroban_sdk::panic_with_error!(&env, EscrowError::ArithmeticOverflow)),
         );
         env.events().publish(
             (Symbol::new(&env, "dca_created"), order_id),
@@ -353,11 +399,19 @@ impl OrderEscrowContract {
 
     pub fn fill_dca(env: Env, order_id: u64, sub_routes: Vec<SubRoute>, min_amount_out: i128) -> i128 {
         let key = DataKey::DcaOrder(order_id);
-        let mut order: DcaOrder = env.storage().persistent().get(&key).expect("DCA order not found");
+        let Some(mut order) = env.storage().persistent().get::<_, DcaOrder>(&key) else {
+            soroban_sdk::panic_with_error!(&env, EscrowError::OrderNotFound);
+        };
         let current = env.ledger().sequence();
-        assert!(order.status == OrderStatus::Open, "DCA order is not open");
-        assert!(current < order.expires_ledger, "DCA order is expired");
-        assert!(current >= order.next_executable_ledger, "DCA chunk is not due");
+        if order.status != OrderStatus::Open {
+            soroban_sdk::panic_with_error!(&env, EscrowError::OrderNotOpen);
+        }
+        if current >= order.expires_ledger {
+            soroban_sdk::panic_with_error!(&env, EscrowError::OrderExpired);
+        }
+        if current < order.next_executable_ledger {
+            soroban_sdk::panic_with_error!(&env, EscrowError::ChunkNotDue);
+        }
 
         let amount_in = if order.amount_in_remaining < order.chunk_amount {
             order.amount_in_remaining
@@ -368,23 +422,26 @@ impl OrderEscrowContract {
         for route in sub_routes.iter() {
             routed_amount = routed_amount
                 .checked_add(route.amount_in)
-                .expect("sub-route amount overflow");
+                .unwrap_or_else(|| soroban_sdk::panic_with_error!(&env, EscrowError::ArithmeticOverflow));
         }
-        assert!(routed_amount == amount_in, "sub-route amounts must equal chunk amount");
+        if routed_amount != amount_in {
+            soroban_sdk::panic_with_error!(&env, EscrowError::InvalidRouteAmount);
+        }
         if order.min_out_per_in_e7 > 0 {
-            assert!(
-                min_amount_out >= required_min_out(amount_in, order.min_out_per_in_e7),
-                "min_amount_out below DCA floor"
-            );
+            if min_amount_out < required_min_out(amount_in, order.min_out_per_in_e7) {
+                soroban_sdk::panic_with_error!(&env, EscrowError::MinimumOutBelowLimit);
+            }
         } else {
-            assert!(min_amount_out > 0, "min_amount_out must be positive");
+            if min_amount_out <= 0 {
+                soroban_sdk::panic_with_error!(&env, EscrowError::InvalidAmount);
+            }
         }
 
         let aggregator: Address = env
             .storage()
             .instance()
             .get(&DataKey::Aggregator)
-            .expect("Not initialized");
+            .unwrap_or_else(|| soroban_sdk::panic_with_error!(&env, EscrowError::NotInitialized));
         let escrow = env.current_contract_address();
         authorize_swap_as_current_contract(&env, &aggregator, &escrow, &order.token_in, amount_in);
         let amount_out = AggregatorContractClient::new(&env, &aggregator).swap_restricted(
@@ -418,9 +475,13 @@ impl OrderEscrowContract {
 
     pub fn cancel_dca(env: Env, order_id: u64) {
         let key = DataKey::DcaOrder(order_id);
-        let mut order: DcaOrder = env.storage().persistent().get(&key).expect("DCA order not found");
+        let Some(mut order) = env.storage().persistent().get::<_, DcaOrder>(&key) else {
+            soroban_sdk::panic_with_error!(&env, EscrowError::OrderNotFound);
+        };
         order.owner.require_auth();
-        assert!(order.status == OrderStatus::Open, "DCA order is not open");
+        if order.status != OrderStatus::Open {
+            soroban_sdk::panic_with_error!(&env, EscrowError::OrderNotOpen);
+        }
         let refunded_amount = order.amount_in_remaining;
         token::Client::new(&env, &order.token_in).transfer(
             &env.current_contract_address(),
@@ -438,12 +499,15 @@ impl OrderEscrowContract {
 
     pub fn reclaim_expired_dca(env: Env, order_id: u64) {
         let key = DataKey::DcaOrder(order_id);
-        let mut order: DcaOrder = env.storage().persistent().get(&key).expect("DCA order not found");
-        assert!(order.status == OrderStatus::Open, "DCA order is not open");
-        assert!(
-            env.ledger().sequence() > order.expires_ledger,
-            "DCA order has not expired"
-        );
+        let Some(mut order) = env.storage().persistent().get::<_, DcaOrder>(&key) else {
+            soroban_sdk::panic_with_error!(&env, EscrowError::OrderNotFound);
+        };
+        if order.status != OrderStatus::Open {
+            soroban_sdk::panic_with_error!(&env, EscrowError::OrderNotOpen);
+        }
+        if env.ledger().sequence() <= order.expires_ledger {
+            soroban_sdk::panic_with_error!(&env, EscrowError::OrderNotExpired);
+        }
         let refunded_amount = order.amount_in_remaining;
         token::Client::new(&env, &order.token_in).transfer(
             &env.current_contract_address(),
@@ -464,8 +528,8 @@ impl OrderEscrowContract {
 mod tests {
     use {
         super::{
-            required_min_out, DataKey, DcaOrder, LimitOrder, OrderEscrowContract, OrderEscrowContractClient,
-            OrderStatus, MAX_ORDER_LIFETIME,
+            required_min_out, DataKey, DcaOrder, LimitOrder, OrderEscrowContract,
+            OrderEscrowContractClient, OrderStatus, MAX_ORDER_LIFETIME,
         },
         aggregator_contract::AggregatorContract,
         lumagg_contract_types::{DexType, SubRoute, SwapStep},

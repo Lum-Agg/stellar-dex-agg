@@ -119,6 +119,26 @@ async fn select_execution_quote(ctx: &ArbContext, opp: &ArbOpportunity) -> Resul
         quote = validated;
     }
 
+    // The route snapshot (topology) refreshes less often than live pool state.
+    // Prefer pool-state age so a fresh price is not rejected just because the
+    // static route graph is older.
+    let pool_state_age_ms = quote.pool_state_age_ms();
+    let route_snapshot_age_ms = quote.quote_snapshot_age_ms();
+    let freshness_age_ms = quote_freshness_age_ms(pool_state_age_ms, route_snapshot_age_ms);
+    if let Some(age_ms) = freshness_age_ms {
+        if age_ms > ctx.config.max_quote_age_ms {
+            warn!(
+                route = %quote.route_label(),
+                freshness_age_ms = age_ms,
+                max_quote_age_ms = ctx.config.max_quote_age_ms,
+                pool_state_age_ms,
+                route_snapshot_age_ms,
+                "quote state too old for execution — discard"
+            );
+            return Ok(None);
+        }
+    }
+
     Ok(Some(quote))
 }
 
@@ -501,6 +521,10 @@ pub fn execution_enabled(config: &ArbConfig) -> bool {
     config.build_tx && config.aggregator_contract.is_some()
 }
 
+fn quote_freshness_age_ms(pool_state_age_ms: Option<u64>, route_snapshot_age_ms: Option<u64>) -> Option<u64> {
+    pool_state_age_ms.or(route_snapshot_age_ms)
+}
+
 #[cfg(test)]
 mod tests {
     use {super::is_structural_sim_failure, crate::prepare::parse_base_received_from_sim_error};
@@ -510,6 +534,17 @@ mod tests {
         assert!(is_structural_sim_failure(
             "simulation missing i128 return value: HostError: Error(WasmVm, InvalidAction)"
         ));
+    }
+
+    #[test]
+    fn freshness_prefers_live_pool_state_over_route_snapshot() {
+        assert_eq!(super::quote_freshness_age_ms(Some(2_000), Some(600_000)), Some(2_000));
+    }
+
+    #[test]
+    fn freshness_falls_back_to_route_snapshot_when_pool_state_is_missing() {
+        assert_eq!(super::quote_freshness_age_ms(None, Some(600_000)), Some(600_000));
+        assert_eq!(super::quote_freshness_age_ms(None, None), None);
     }
 
     #[test]

@@ -275,7 +275,10 @@ fn aggregator_error_reason(error: &str) -> Option<&'static str> {
         (11, "aggregator_not_initialized"),
     ]
     .into_iter()
-    .find(|(code, _)| error.contains(&format!("error(contract, #{code})")))
+    .find(|(code, _)| {
+        error.contains(&format!("error(contract, #{code})")) ||
+            error.contains(&format!("error(contract({code}))"))
+    })
     .map(|(_, reason)| reason);
     code
 }
@@ -815,5 +818,18 @@ mod tests {
         stats.record_chain_failure("ContractId(Hash(bd0057e921bacc464f7773ee93a6d33990fb8121b59ba3375f7b384f7d48d1a5)) Error(Contract, #8)");
 
         assert_eq!(stats.chain_failure_breakdown(2), vec![("other".into(), 1)]);
+    }
+
+    #[test]
+    fn failure_breakdown_accepts_rpc_contract_error_format() {
+        let stats = ArbStats::default();
+        stats.record_chain_failure(
+            "ContractId(Hash(cc6qav7jeg5myrspo5z65e5g2m4zb64beg2zxizxl55tqt35jdi2lc6k)) Error(Contract(8))",
+        );
+
+        assert_eq!(
+            stats.chain_failure_breakdown(2),
+            vec![("aggregator_output_below_minimum".into(), 1)]
+        );
     }
 }
