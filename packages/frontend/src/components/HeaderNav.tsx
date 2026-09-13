@@ -4,6 +4,40 @@ import { useEffect, useId, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { DOCUMENTATION_URL } from '@/lib/site';
+import { GITHUB_REPO_URL } from '@/lib/site';
+
+const DOCS_LINKS = [
+  {
+    label: 'Integrate the Aggregator API',
+    detail: 'Quote, build_tx and SDK examples',
+    href: 'https://lumagg.gitbook.io/lumagg/integrate/api-reference',
+  },
+  {
+    label: 'Self-host the Aggregator',
+    detail: 'API, worker, Redis and routing stack',
+    href: `${GITHUB_REPO_URL}/blob/main/docs/self-hosted-aggregator-quickstart.md`,
+  },
+  {
+    label: 'Self-host Arbitrage Bot',
+    detail: 'Callers, Vault and atomic round trips',
+    href: `${GITHUB_REPO_URL}/blob/main/docs/arbitrage-deployment.md`,
+  },
+  {
+    label: 'TypeScript SDK & examples',
+    detail: 'Install the SDK and build an integration',
+    href: 'https://www.npmjs.com/package/@lumagg/sdk',
+  },
+  {
+    label: 'Contract addresses',
+    detail: 'Mainnet and testnet deployment records',
+    href: `${GITHUB_REPO_URL}/blob/main/docs/contracts-deployment.md`,
+  },
+  {
+    label: 'Public analytics',
+    detail: 'Stats and confirmed arbitrage activity',
+    href: '/stats',
+  },
+] as const;
 
 const PRIMARY_LINKS = [
   { href: '/', label: 'Swap', match: (path: string) => path === '/' },
@@ -63,7 +97,7 @@ export function HeaderNav() {
             <Link
               key={link.href}
               href={link.href}
-              className={`transition-colors ${
+              className={`nav-link transition-colors ${
                 active ? 'text-[var(--text-primary)]' : 'hover:text-[var(--text-primary)]'
               }`}
               aria-current={active ? 'page' : undefined}
@@ -72,16 +106,6 @@ export function HeaderNav() {
             </Link>
           );
         })}
-
-        <a
-          href={DOCUMENTATION_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 transition-colors hover:text-[var(--text-primary)]"
-        >
-          Docs
-          <ExternalLinkIcon />
-        </a>
 
         {SECONDARY_LINKS.map((link) => {
           const active = link.match(pathname);
@@ -89,7 +113,7 @@ export function HeaderNav() {
             <Link
               key={link.href}
               href={link.href}
-              className={`transition-colors ${
+              className={`nav-link transition-colors ${
                 active ? 'text-[var(--text-primary)]' : 'hover:text-[var(--text-primary)]'
               }`}
               aria-current={active ? 'page' : undefined}
@@ -98,6 +122,8 @@ export function HeaderNav() {
             </Link>
           );
         })}
+
+        <DocsMenu />
       </nav>
 
       {/* Mobile */}
@@ -136,16 +162,32 @@ export function HeaderNav() {
             );
           })}
 
-          <a
-            href={DOCUMENTATION_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1 px-4 py-2.5 text-[15px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/[0.03] transition-colors"
-            onClick={() => setOpen(false)}
-          >
-            Docs
-            <ExternalLinkIcon />
-          </a>
+          <div className="border-y border-white/[0.06] my-1 py-1">
+            <div className="px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
+              Docs
+            </div>
+            {DOCS_LINKS.map((link) => (
+              <a
+                key={link.label}
+                href={link.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block px-4 py-2.5 text-[15px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/[0.03] transition-colors"
+                onClick={() => setOpen(false)}
+              >
+                {link.label}
+              </a>
+            ))}
+            <a
+              href={DOCUMENTATION_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block px-4 py-2.5 text-[15px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/[0.03] transition-colors"
+              onClick={() => setOpen(false)}
+            >
+              Full documentation
+            </a>
+          </div>
 
           {SECONDARY_LINKS.map((link) => {
             const active = link.match(pathname);
@@ -171,11 +213,70 @@ export function HeaderNav() {
   );
 }
 
-function ExternalLinkIcon() {
+function DocsMenu() {
+  const [docsOpen, setDocsOpen] = useState(false);
+
   return (
-    <svg className="h-3 w-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden>
-      <path d="M6 3h7v7M13 3 6.5 9.5" strokeWidth="1.5" strokeLinecap="round" />
-      <path d="M11 9.5V13H3V5h3.5" strokeWidth="1.5" strokeLinecap="round" />
+    <div
+      className="relative"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setDocsOpen(false);
+        }
+      }}
+    >
+      <button
+        type="button"
+        className={`nav-link inline-flex items-center gap-1 transition-colors ${
+          docsOpen ? 'text-[var(--text-primary)]' : 'hover:text-[var(--text-primary)]'
+        }`}
+        aria-expanded={docsOpen}
+        aria-haspopup="menu"
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') setDocsOpen(false);
+        }}
+        onClick={() => setDocsOpen((value) => !value)}
+      >
+        Docs
+        <ChevronIcon open={docsOpen} />
+      </button>
+      {docsOpen && (
+        <div className="docs-dropdown" role="menu">
+          {DOCS_LINKS.map((link) => (
+            <a
+              key={link.label}
+              href={link.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="docs-dropdown-link"
+              role="menuitem"
+              onClick={() => setDocsOpen(false)}
+            >
+              <strong>{link.label}</strong>
+              <small>{link.detail}</small>
+            </a>
+          ))}
+          <a
+            href={DOCUMENTATION_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="docs-dropdown-link docs-dropdown-link--last"
+            role="menuitem"
+            onClick={() => setDocsOpen(false)}
+          >
+            <strong>Full documentation</strong>
+            <small>All product and contract guides</small>
+          </a>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ChevronIcon({ open }: { open: boolean }) {
+  return (
+    <svg className={`h-3 w-3 transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden>
+      <path d="m3.5 6 4.5 4 4.5-4" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

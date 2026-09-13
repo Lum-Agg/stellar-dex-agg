@@ -528,8 +528,8 @@ impl OrderEscrowContract {
 mod tests {
     use {
         super::{
-            required_min_out, DataKey, DcaOrder, LimitOrder, OrderEscrowContract,
-            OrderEscrowContractClient, OrderStatus, MAX_ORDER_LIFETIME,
+            required_min_out, DataKey, DcaOrder, LimitOrder, OrderEscrowContract, OrderEscrowContractClient,
+            OrderStatus, MAX_ORDER_LIFETIME,
         },
         aggregator_contract::AggregatorContract,
         lumagg_contract_types::{DexType, SubRoute, SwapStep},

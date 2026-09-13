@@ -37,7 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       >
         <Providers>
           <div className="min-h-screen flex flex-col">
-            <header className="sticky top-0 z-40 shrink-0 w-full bg-[var(--bg-0)]">
+            <header className="site-header sticky top-0 z-40 shrink-0 w-full">
               <div className="w-full px-6 sm:px-8 lg:px-14 h-[5rem] flex items-center justify-between gap-6">
                 <div className="flex items-center gap-6 md:gap-9 min-w-0">
                   <Link href="/" className="flex items-center gap-2.5 group shrink-0">
@@ -47,9 +47,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                       width={36}
                       height={36}
                       priority
-                      className="h-9 w-9 transition-transform duration-200 group-hover:scale-[1.04]"
+                      className="brand-mark h-9 w-9 transition-transform duration-200 group-hover:scale-[1.04]"
                     />
-                    <span className="text-[18px] sm:text-[19px] font-semibold tracking-tight text-[var(--text-primary)]">
+                    <span className="brand-wordmark text-[18px] sm:text-[19px] font-semibold text-[var(--text-primary)]">
                       LumAgg
                     </span>
                   </Link>
@@ -97,14 +97,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </div>
             </header>
 
-            <main className="relative w-full px-6 sm:px-8 lg:px-14 pt-5 md:pt-8 pb-6 min-w-0 flex-1">
+            <main className="site-main relative w-full px-6 sm:px-8 lg:px-14 pt-8 md:pt-12 pb-10 min-w-0 flex-1">
               {children}
             </main>
 
-            <footer className="relative mt-auto w-full">
+            <footer className="site-footer relative mt-auto w-full">
               <div className="w-full px-6 sm:px-8 lg:px-14 py-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-[14px] sm:text-[15px] text-[var(--text-secondary)]">
                 <span className="max-w-xl leading-relaxed">
-                  Aggregated routing across Stellar DEXs · Best-effort quotes
+                  Open-source · Self-hostable Aggregator + Arbitrage Bot
                 </span>
                 <div className="flex items-center gap-4 shrink-0">
                   <a

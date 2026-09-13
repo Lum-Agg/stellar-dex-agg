@@ -4,8 +4,10 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { NATIVE_CONTRACT } from '@/lib/tokenDisplay';
 import { useTokenList } from '@/components/TokenSelector';
+import { GITHUB_REPO_URL } from '@/lib/site';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
+const ARBITRAGE_DOCS_URL = `${GITHUB_REPO_URL}/blob/main/docs/arbitrage-deployment.md`;
 
 const XLM_SAC = NATIVE_CONTRACT;
 const USDC_SAC = 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75';
@@ -453,6 +455,19 @@ export default function ArbitragePage() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-8">
+      <section className="arb-self-host-banner" aria-label="Self-host Arbitrage">
+        <div>
+          <span className="eyebrow">Open source operator stack</span>
+          <h2>Run LumAgg Arbitrage yourself</h2>
+          <p>
+            The scanner and execution bot are self-deployable. Use your own infrastructure,
+            callers and Vault; LumAgg does not charge users for the software.
+          </p>
+        </div>
+        <a href={ARBITRAGE_DOCS_URL} target="_blank" rel="noopener noreferrer" className="btn-primary">
+          Read deployment guide ↗
+        </a>
+      </section>
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
           <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-[var(--text-primary)]">

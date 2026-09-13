@@ -254,10 +254,11 @@ fn aggregator_error_reason(error: &str) -> Option<&'static str> {
     // Contract error numbers are local to the contract that emitted them.
     // Nested DEX/SAC errors may use the same number, so never classify a
     // bare `Error(Contract, #N)` as an Aggregator error.
-    let from_aggregator = error.contains("17a00afd24375988c9eeee7dd274da67321f702436b37466ebef6709efa91a34")
-        || error.contains("1a51af0ee587183fd50206e1e690d62f760de7c857ed36b21ea66875f6e68308")
-        || error.contains("cc6qav7jeg5myrspo5z65e5g2m4zb64beg2zxizxl55tqt35jdi2lc6k")
-        || error.contains("cdji26dxfq4md7vica3q6negwf53a3z6ik7wtnmq6uzuhl5xgqmekjre");
+    let lower = error.to_ascii_lowercase();
+    let from_aggregator = lower.contains("bd0057e921bacc464f7773ee93a6d33990fb8121b59ba3375f7b384f7d48d1a5") ||
+        error.contains("1a51af0ee587183fd50206e1e690d62f760de7c857ed36b21ea66875f6e68308") ||
+        lower.contains("cc6qav7jeg5myrspo5z65e5g2m4zb64beg2zxizxl55tqt35jdi2lc6k") ||
+        lower.contains("cdji26dxfq4md7vica3q6negwf53a3z6ik7wtnmq6uzuhl5xgqmekjre");
     if !from_aggregator {
         return None;
     }
@@ -276,8 +277,7 @@ fn aggregator_error_reason(error: &str) -> Option<&'static str> {
     ]
     .into_iter()
     .find(|(code, _)| {
-        error.contains(&format!("error(contract, #{code})")) ||
-            error.contains(&format!("error(contract({code}))"))
+        lower.contains(&format!("error(contract, #{code})")) || lower.contains(&format!("error(contract({code}))"))
     })
     .map(|(_, reason)| reason);
     code
@@ -803,7 +803,7 @@ mod tests {
     fn failure_breakdown_classifies_aggregator_contract_errors() {
         let stats = ArbStats::default();
         stats.record_chain_failure(
-            "HostError: ContractId(Hash(17a00afd24375988c9eeee7dd274da67321f702436b37466ebef6709efa91a34)) Error(Contract, #8) failing with contract error",
+            "HostError: ContractId(Hash(bd0057e921bacc464f7773ee93a6d33990fb8121b59ba3375f7b384f7d48d1a5)) Error(Contract, #8) failing with contract error",
         );
 
         assert_eq!(
@@ -815,7 +815,9 @@ mod tests {
     #[test]
     fn failure_breakdown_does_not_misclassify_nested_contract_error() {
         let stats = ArbStats::default();
-        stats.record_chain_failure("ContractId(Hash(bd0057e921bacc464f7773ee93a6d33990fb8121b59ba3375f7b384f7d48d1a5)) Error(Contract, #8)");
+        stats.record_chain_failure(
+            "ContractId(Hash(42c805a70e8b8ae715fd5a7724f464ca95c78fa3235861b6f44e8565da6c1880)) Error(Contract, #8)",
+        );
 
         assert_eq!(stats.chain_failure_breakdown(2), vec![("other".into(), 1)]);
     }

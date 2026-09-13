@@ -199,9 +199,7 @@ impl AppConfig {
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*,
-    };
+    use super::*;
 
     #[test]
     fn default_config_uses_default_snapshot_redis_settings() {

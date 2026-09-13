@@ -30,7 +30,10 @@ use {
     anyhow::{anyhow, Result},
     async_trait::async_trait,
     market_snapshot::{ClmmCoverageSnapshot, ClmmPoolSnapshot},
-    std::{collections::HashMap, sync::Arc},
+    std::{
+        collections::{HashMap, HashSet},
+        sync::Arc,
+    },
     stellar_xdr::curr as xdr,
     tokio::sync::RwLock,
     tracing::{debug, info, warn},
@@ -361,17 +364,26 @@ impl SushiAdapter {
         self.discover_pools().await
     }
 
-    /// Discover pools: known addresses + brute-force fallback via factory
-    /// `get_pool`.
+    /// Discover pools from the known list and the factory, retaining both.
     async fn discover_pools(&self) -> Result<Vec<AdapterTradingPair>> {
-        let mut pools = self.check_known_pools().await;
-        info!("Sushi: {} pools from known addresses", pools.len());
+        let known_pools = self.check_known_pools().await;
+        let discovered_pools = self.discover_pools_brute_force().await?;
+        let known_count = known_pools.len();
 
-        if pools.is_empty() {
-            pools = self.discover_pools_brute_force().await?;
-            info!("Sushi: {} pools from brute-force fallback", pools.len());
+        let mut seen = HashSet::new();
+        let mut pools = Vec::with_capacity(known_pools.len() + discovered_pools.len());
+        for pool in known_pools.into_iter().chain(discovered_pools) {
+            if seen.insert(pool.pool_address.clone()) {
+                pools.push(pool);
+            }
         }
 
+        info!(
+            "Sushi: discovered {} unique pools ({} known, {} additional)",
+            pools.len(),
+            known_count,
+            pools.len().saturating_sub(known_count)
+        );
         Ok(pools)
     }
 
@@ -417,15 +429,9 @@ impl SushiAdapter {
         pools
     }
 
-    /// Fallback: brute-force discovery by trying known token pairs.
+    /// Discover additional pools by querying the factory for configured token
+    /// pairs.
     async fn discover_pools_brute_force(&self) -> Result<Vec<AdapterTradingPair>> {
-        // First try hardcoded pool addresses (fastest, always works)
-        let known_pools = self.check_known_pools().await;
-        if !known_pools.is_empty() {
-            return Ok(known_pools);
-        }
-
-        // Then try token pair enumeration
         let tokens = vec![
             "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA", // XLM
             "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75", // USDC

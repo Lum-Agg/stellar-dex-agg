@@ -107,23 +107,32 @@ pub fn classify_failure_with_diagnostics(result_xdr: Option<&str>, diagnostic_ev
 
 const MAINNET_AGGREGATOR_CONTRACT: &str = "CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K";
 const TESTNET_AGGREGATOR_CONTRACT: &str = "CDJI26DXFQ4MD7VICA3Q6NEGWF53A3Z6IK7WTNMQ6UZUHL5XGQMEKJRE";
+const MAINNET_AGGREGATOR_HASH_HEX: &str = "bd0057e921bacc464f7773ee93a6d33990fb8121b59ba3375f7b384f7d48d1a5";
+const TESTNET_AGGREGATOR_HASH_HEX: &str = "1a51af0ee587183fd50206e1e690d62f760de7c857ed36b21ea66875f6e68308";
 
 fn classify_diagnostic_text(diagnostic_text: &str, fallback: &str) -> String {
-    if diagnostic_text.contains(MAINNET_AGGREGATOR_CONTRACT) || diagnostic_text.contains(TESTNET_AGGREGATOR_CONTRACT) {
+    let lower = diagnostic_text.to_ascii_lowercase();
+    let is_aggregator = lower.contains(&MAINNET_AGGREGATOR_CONTRACT.to_ascii_lowercase()) ||
+        lower.contains(&TESTNET_AGGREGATOR_CONTRACT.to_ascii_lowercase()) ||
+        lower.contains(MAINNET_AGGREGATOR_HASH_HEX) ||
+        lower.contains(TESTNET_AGGREGATOR_HASH_HEX);
+    if is_aggregator {
         for (code, classified) in [
-            ("Error(Contract, #1)", "AGGREGATOR_INVALID_AMOUNT"),
-            ("Error(Contract, #2)", "AGGREGATOR_INVALID_MINIMUM_OUT"),
-            ("Error(Contract, #3)", "AGGREGATOR_EMPTY_ROUTES"),
-            ("Error(Contract, #4)", "AGGREGATOR_INVALID_ROUTE"),
-            ("Error(Contract, #5)", "AGGREGATOR_DISCONNECTED_ROUTE"),
-            ("Error(Contract, #6)", "AGGREGATOR_INVALID_STEP"),
-            ("Error(Contract, #7)", "AGGREGATOR_ZERO_STEP_OUTPUT"),
-            ("Error(Contract, #8)", "AGGREGATOR_OUTPUT_BELOW_MINIMUM"),
-            ("Error(Contract, #9)", "AGGREGATOR_VENUE_NOT_REGISTERED"),
-            ("Error(Contract, #10)", "AGGREGATOR_ARITHMETIC_OVERFLOW"),
-            ("Error(Contract, #11)", "AGGREGATOR_NOT_INITIALIZED"),
+            (1, "AGGREGATOR_INVALID_AMOUNT"),
+            (2, "AGGREGATOR_INVALID_MINIMUM_OUT"),
+            (3, "AGGREGATOR_EMPTY_ROUTES"),
+            (4, "AGGREGATOR_INVALID_ROUTE"),
+            (5, "AGGREGATOR_DISCONNECTED_ROUTE"),
+            (6, "AGGREGATOR_INVALID_STEP"),
+            (7, "AGGREGATOR_ZERO_STEP_OUTPUT"),
+            (8, "AGGREGATOR_OUTPUT_BELOW_MINIMUM"),
+            (9, "AGGREGATOR_VENUE_NOT_REGISTERED"),
+            (10, "AGGREGATOR_ARITHMETIC_OVERFLOW"),
+            (11, "AGGREGATOR_NOT_INITIALIZED"),
         ] {
-            if diagnostic_text.contains(code) {
+            if lower.contains(&format!("error(contract, #{code})")) ||
+                lower.contains(&format!("error(contract({code}))"))
+            {
                 return classified.to_string();
             }
         }
@@ -212,6 +221,20 @@ mod failure_tests {
                 "HOST_FUNCTION_TRAPPED"
             ),
             "AGGREGATOR_EMPTY_ROUTES"
+        );
+        assert_eq!(
+            classify_diagnostic_text(
+                "ContractId(Hash(cc6qav7jeg5myrspo5z65e5g2m4zB64beG2zxizxl55tqt35jdi2lc6k)) Error(Contract(8))",
+                "HOST_FUNCTION_TRAPPED"
+            ),
+            "AGGREGATOR_OUTPUT_BELOW_MINIMUM"
+        );
+        assert_eq!(
+            classify_diagnostic_text(
+                "ContractId(Hash(bd0057e921bacc464f7773ee93a6d33990fb8121b59ba3375f7b384f7d48d1a5)) Error(Contract, #11)",
+                "HOST_FUNCTION_TRAPPED"
+            ),
+            "AGGREGATOR_NOT_INITIALIZED"
         );
     }
 }

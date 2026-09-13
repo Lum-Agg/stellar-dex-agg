@@ -477,8 +477,8 @@ pub async fn get_arbitrage_stats(Query(params): Query<ArbitrageStatsQuery>) -> R
 mod tests {
     use {
         super::{
-            bucket_start, default_window, get_arbitrage_stats, gross_surplus, ArbitrageStatsQuery,
-            StatusCode, XLM_SAC, USDC_SAC,
+            bucket_start, default_window, get_arbitrage_stats, gross_surplus, ArbitrageStatsQuery, StatusCode,
+            USDC_SAC, XLM_SAC,
         },
         analytics_indexer::{
             parser::ParsedInvocation,
