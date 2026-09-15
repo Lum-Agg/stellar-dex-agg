@@ -57,6 +57,7 @@ export function SwapCard() {
   } = useAccountBalances();
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
   const quoteFingerprintRef = useRef('');
+  const urlSelectionReadyRef = useRef(false);
   const tokenList = useTokenList();
   const { slippage, maxHops, maxSplits } = settings;
   const quoteFingerprint = `${tokenIn.id}:${tokenOut.id}:${amountIn}:${slippage}:${maxHops}:${maxSplits}`;
@@ -80,6 +81,49 @@ export function SwapCard() {
       return `${contractId.slice(0, 4)}…${contractId.slice(-4)}`;
     };
   }, [tokenList]);
+
+  // Restore shared swap links after the async token catalog is available.
+  useEffect(() => {
+    if (urlSelectionReadyRef.current || typeof window === 'undefined') return;
+
+    const params = new URLSearchParams(window.location.search);
+    const requestedIn = params.get('token_in');
+    const requestedOut = params.get('token_out');
+    if (!requestedIn && !requestedOut) {
+      urlSelectionReadyRef.current = true;
+      return;
+    }
+
+    const nextIn = requestedIn
+      ? tokenList.find((token) => token.id.toLowerCase() === requestedIn.toLowerCase())
+      : undefined;
+    const nextOut = requestedOut
+      ? tokenList.find((token) => token.id.toLowerCase() === requestedOut.toLowerCase())
+      : undefined;
+
+    // Keep waiting for the API token catalog when a non-priority token is in the URL.
+    if ((requestedIn && !nextIn) || (requestedOut && !nextOut)) {
+      if (tokenList.length <= TOKENS.length) return;
+      urlSelectionReadyRef.current = true;
+      return;
+    }
+
+    if (nextIn && nextOut && nextIn.id !== nextOut.id) {
+      setTokenIn(nextIn);
+      setTokenOut(nextOut);
+      setQuote(null);
+    }
+    urlSelectionReadyRef.current = true;
+  }, [tokenList]);
+
+  // Keep the current pair shareable without adding history entries on every change.
+  useEffect(() => {
+    if (!urlSelectionReadyRef.current || typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    url.searchParams.set('token_in', tokenIn.id);
+    url.searchParams.set('token_out', tokenOut.id);
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+  }, [tokenIn.id, tokenOut.id]);
 
   const loadQuote = useCallback(
     async (opts?: { silent?: boolean }) => {
