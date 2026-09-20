@@ -22,9 +22,9 @@ Grant close-out deliverable — Oct 2026 baseline.
 - **Stats**: `/api/v1/stats` and `lumagg-analytics-indexer --config aggregator.toml status`
 - **Validation report**: `./scripts/operational-validation-report.sh --output docs/operational-validation-report.md`
 
-## Protocol 27+
+## Protocol 28+
 
-- Run testnet regression after network upgrade (see `deploy/upgrade_stellar_p27.sh`)
+- Run testnet regression after a network upgrade (see [p28-testnet-regression.md](./p28-testnet-regression.md))
 - Re-simulate `build_tx` + one small mainnet swap before re-enabling arb submit
 
 ## Backups

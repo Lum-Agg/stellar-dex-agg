@@ -238,13 +238,13 @@ The output is reproducible integration evidence, not guaranteed SaaS onboarding.
 
 **Budget:** $4,000 (Documentation, demo video, handoff)
 
-**Brief description:** Final SCF report; 5-minute demo (swap UI with logos/balance %, split route, analytics snapshot, arb/vault architecture); **docker-compose self-host kit** for integrators; **Protocol 27** compatibility test checklist; 6-month maintenance plan.
+**Brief description:** Final SCF report; 5-minute demo (swap UI with logos/balance %, split route, analytics snapshot, arb/vault architecture); **docker-compose self-host kit** for integrators; **Protocol 28** compatibility test checklist; 6-month maintenance plan.
 
 **How to measure completion:**
 - Final report markdown/PDF in repo with all deliverable links
 - Public demo video (quote → split → on-chain swap; arb architecture segment)
 - `docker-compose` or equivalent documented self-host path (API + worker + Redis)
-- P27 testnet regression notes after network upgrade
+- P28 testnet regression notes after network upgrade
 - Maintenance plan: RPC, monitoring, upgrade path
 
 **Estimated date of completion:** October 15, 2026

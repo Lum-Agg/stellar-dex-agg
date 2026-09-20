@@ -26,7 +26,7 @@ Living checklist — tick as evidence lands in repo or production.
 - [ ] D10 Demo video (~5 min) — [demo-video-script.md](./demo-video-script.md)
 - [x] D10 [maintenance-plan.md](./maintenance-plan.md)
 - [x] D10 [self-host deployment guide](./deployment-overview.md)
-- [ ] D10 P27 testnet regression — [p27-testnet-regression.md](./p27-testnet-regression.md)
+- [ ] D10 P28 testnet regression — [p28-testnet-regression.md](./p28-testnet-regression.md)
 - [ ] D10 Final report — [scf-final-report.md](./scf-final-report.md)
 
 ## Deploy after code changes

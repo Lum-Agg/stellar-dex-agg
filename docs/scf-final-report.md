@@ -61,9 +61,9 @@ LumAgg delivers a production Stellar DEX aggregator with split routing across So
 
 ---
 
-## Protocol 27
+## Protocol 28
 
-- Testnet regression: [p27-testnet-regression.md](./p27-testnet-regression.md)
+- Testnet regression: [p28-testnet-regression.md](./p28-testnet-regression.md)
 - Notes: _(fill after testnet upgrade)_
 
 ---

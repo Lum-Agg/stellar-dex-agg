@@ -7,8 +7,9 @@
 //! we don't control its internal routing, but we know what output it gives
 //! for a given input, and we can include it in split optimization.
 //!
-//! Execution: PathPaymentStrictSend operation in the same transaction as
-//! Soroban contract calls (Stellar supports mixed Classic + Soroban ops).
+//! Execution: PathPaymentStrictSend in an all-Classic transaction. Classic
+//! and Soroban legs are quoted separately because the current Soroban
+//! transaction path cannot execute a hybrid Classic + Soroban transaction.
 
 use {
     crate::traits::*,

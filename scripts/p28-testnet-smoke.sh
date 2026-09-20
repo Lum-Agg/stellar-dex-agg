@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Protocol 27 prep: quick API regression (health, quote, optional stats).
+# Protocol 28 prep: quick API regression (health, quote, optional stats).
 #
 # Usage:
-#   API=https://api.lumagg.xyz/limit-testnet ./scripts/p27-testnet-smoke.sh
-#   API=http://127.0.0.1:3200 ./scripts/p27-testnet-smoke.sh
+#   API=https://api.lumagg.xyz/limit-testnet ./scripts/p28-testnet-smoke.sh
+#   API=http://127.0.0.1:3200 ./scripts/p28-testnet-smoke.sh
 set -euo pipefail
 
 API="${API:-https://api.lumagg.xyz/limit-testnet}"
@@ -27,7 +27,7 @@ check_json() {
   fi
 }
 
-echo "=== P27 smoke API=$API ==="
+echo "=== P28 smoke API=$API ==="
 
 check_json "health" '.status == "ok"' curl -sf "$API/api/v1/health"
 

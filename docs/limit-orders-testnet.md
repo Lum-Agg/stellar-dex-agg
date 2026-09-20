@@ -171,10 +171,10 @@ also sends one deliberately invalid DCA request with a past start ledger and
 requires the structured `Error(Contract, #17)` response. It does not sign or
 submit any transaction.
 
-For the Protocol 27 quote regression, use the testnet reverse-proxy path:
+For the Protocol 28 quote regression, use the testnet reverse-proxy path:
 
 ```bash
-API=https://api.lumagg.xyz/limit-testnet ./scripts/p27-testnet-smoke.sh
+API=https://api.lumagg.xyz/limit-testnet ./scripts/p28-testnet-smoke.sh
 ```
 
 | # | Step | Expect |

@@ -1,6 +1,6 @@
-# Protocol 27 — testnet regression checklist
+# Protocol 28 — testnet regression checklist
 
-Run after Stellar **Protocol 27** lands on **testnet** (before mainnet upgrade). Goal: confirm quote → build_tx → simulate/submit still work with updated network caps and RPC behavior.
+Run after Stellar **Protocol 28** lands on **testnet**. Goal: confirm quote → build_tx → simulate/submit still work with updated network caps and RPC behavior.
 
 **Do not upgrade mainnet WASM** until this checklist passes and you confirm with the operator.
 
@@ -19,8 +19,8 @@ Run after Stellar **Protocol 27** lands on **testnet** (before mainnet upgrade).
 # Quote + build_tx against a running local/testnet API
 API=http://127.0.0.1:3100 USER_G=GYourTestnetAccount ./scripts/integrator-smoke.sh
 
-# P27-focused script (health, quote, stats if indexer mounted)
-API=https://api.lumagg.xyz/limit-testnet ./scripts/p27-testnet-smoke.sh
+# P28-focused script (health, quote, stats if indexer mounted)
+API=https://api.lumagg.xyz/limit-testnet ./scripts/p28-testnet-smoke.sh
 
 # Limit/DCA unsigned builders and structured Escrow error check
 API=https://api.lumagg.xyz/limit-testnet ./scripts/limit-dca-testnet-smoke.sh
@@ -43,10 +43,10 @@ API=https://api.lumagg.xyz/limit-testnet ./scripts/limit-dca-testnet-smoke.sh
 
 ## Regression notes template
 
-Fill after testnet P27 cutover:
+Fill after testnet P28 cutover:
 
 ```markdown
-## P27 testnet regression — YYYY-MM-DD
+## P28 testnet regression — YYYY-MM-DD
 
 - Network version / ledger: ___
 - RPC URL: ___
