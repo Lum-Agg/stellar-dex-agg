@@ -14,6 +14,8 @@ import { useWallet } from '@/lib/wallet-context';
 
 /** Floor for lazy `/api/v1/balance` calls per token. */
 const MIN_BALANCE_FETCH_MS = 1000;
+/** Avoid duplicate batch RPC calls when focus and visibility events fire together. */
+const PASSIVE_REFRESH_MIN_MS = 2000;
 
 export interface EnsureBalanceOptions {
   /** Bypass cache / throttle (e.g. right after ChangeTrust). */
@@ -74,6 +76,7 @@ export function AccountBalancesProvider({ children }: { children: ReactNode }) {
   const balancesRef = useRef(balances);
   const hasTrustlineRef = useRef(hasTrustline);
   const addressRef = useRef(address);
+  const lastPassiveRefreshAt = useRef(0);
   balancesRef.current = balances;
   hasTrustlineRef.current = hasTrustline;
   addressRef.current = address;
@@ -145,6 +148,27 @@ export function AccountBalancesProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    const refreshAfterExternalActivity = () => {
+      if (document.visibilityState === 'hidden' || !addressRef.current) return;
+
+      const now = Date.now();
+      if (now - lastPassiveRefreshAt.current < PASSIVE_REFRESH_MIN_MS) return;
+      lastPassiveRefreshAt.current = now;
+      void refresh();
+    };
+
+    window.addEventListener('focus', refreshAfterExternalActivity);
+    window.addEventListener('pageshow', refreshAfterExternalActivity);
+    document.addEventListener('visibilitychange', refreshAfterExternalActivity);
+
+    return () => {
+      window.removeEventListener('focus', refreshAfterExternalActivity);
+      window.removeEventListener('pageshow', refreshAfterExternalActivity);
+      document.removeEventListener('visibilitychange', refreshAfterExternalActivity);
+    };
   }, [refresh]);
 
   const getBalance = useCallback(
