@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from 'react';
 import { BuildTxCodeSample } from '@/components/BuildTxCodeSample';
+import { fetchJson } from '@/lib/fetch-json';
 import { GITHUB_REPO_URL } from '@/lib/site';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
@@ -29,6 +30,18 @@ type QuotePayload = {
   minimum_output: string;
   sub_routes: QuoteSubRoute[];
 };
+
+function amountToStroops(amount: string): string {
+  const parsed = Number(amount);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error('Amount must be a positive number');
+  }
+  return Math.round(parsed * 10_000_000).toString();
+}
+
+function errorText(error: unknown): string {
+  return `Error: ${error instanceof Error ? error.message : String(error)}`;
+}
 
 function quoteToBuildTxBody(
   userPublicKey: string,
@@ -126,11 +139,7 @@ export function ApiReference() {
             { name: 'account', type: 'string', required: true, desc: 'G... address' },
             { name: 'token', type: 'string', required: true, desc: 'SAC contract id' },
           ]}
-          tryIt={
-            <PingTryIt
-              path={`/api/v1/balance?account=${DEMO_USER}&token=${TOKENS.XLM}`}
-            />
-          }
+          tryIt={<PingTryIt path={`/api/v1/balance?account=${DEMO_USER}&token=${TOKENS.XLM}`} />}
         />
 
         <Endpoint
@@ -153,9 +162,7 @@ export function ApiReference() {
           method="GET"
           path="/api/v1/classic_asset"
           description="Resolve SAC contract to classic code/issuer."
-          params={[
-            { name: 'contract', type: 'string', required: true, desc: 'SAC C… address' },
-          ]}
+          params={[{ name: 'contract', type: 'string', required: true, desc: 'SAC C… address' }]}
           tryIt={<PingTryIt path={`/api/v1/classic_asset?contract=${TOKENS.USDC}`} />}
         />
 
@@ -365,12 +372,12 @@ function PingTryIt({ path }: { path: string }) {
   const run = async () => {
     setLoading(true);
     try {
-      const resp = await fetch(`${API_URL}${path}`);
-      setResult(JSON.stringify(await resp.json(), null, 2));
+      setResult(JSON.stringify(await fetchJson<unknown>(`${API_URL}${path}`), null, 2));
     } catch (e: unknown) {
-      setResult(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      setResult(errorText(e));
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (
@@ -378,7 +385,11 @@ function PingTryIt({ path }: { path: string }) {
       <button type="button" className="docs-btn" onClick={run} disabled={loading}>
         {loading ? '…' : 'Send'}
       </button>
-      {result && <pre className="docs-out">{result}</pre>}
+      {result && (
+        <pre className="docs-out" role="status" aria-live="polite">
+          {result}
+        </pre>
+      )}
     </>
   );
 }
@@ -395,12 +406,12 @@ function SwapsTryIt() {
     const q = new URLSearchParams({ user: user.trim() });
     if (limit.trim()) q.set('limit', limit.trim());
     try {
-      const resp = await fetch(`${API_URL}/api/v1/swaps?${q}`);
-      setResult(JSON.stringify(await resp.json(), null, 2));
+      setResult(JSON.stringify(await fetchJson<unknown>(`${API_URL}/api/v1/swaps?${q}`), null, 2));
     } catch (e: unknown) {
-      setResult(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      setResult(errorText(e));
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (
@@ -426,7 +437,11 @@ function SwapsTryIt() {
           {loading ? '…' : 'Send'}
         </button>
       </div>
-      {result && <pre className="docs-out">{result}</pre>}
+      {result && (
+        <pre className="docs-out" role="status" aria-live="polite">
+          {result}
+        </pre>
+      )}
     </>
   );
 }
@@ -441,12 +456,12 @@ function PricesTryIt() {
     setResult(null);
     const q = new URLSearchParams({ ids: ids.trim() });
     try {
-      const resp = await fetch(`${API_URL}/api/v1/prices?${q}`);
-      setResult(JSON.stringify(await resp.json(), null, 2));
+      setResult(JSON.stringify(await fetchJson<unknown>(`${API_URL}/api/v1/prices?${q}`), null, 2));
     } catch (e: unknown) {
-      setResult(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      setResult(errorText(e));
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (
@@ -464,7 +479,11 @@ function PricesTryIt() {
           {loading ? '…' : 'Send'}
         </button>
       </div>
-      {result && <pre className="docs-out">{result}</pre>}
+      {result && (
+        <pre className="docs-out" role="status" aria-live="polite">
+          {result}
+        </pre>
+      )}
     </>
   );
 }
@@ -480,12 +499,14 @@ function PriceHistoryTryIt() {
     setResult(null);
     const q = new URLSearchParams({ id: id.trim(), range });
     try {
-      const resp = await fetch(`${API_URL}/api/v1/prices/history?${q}`);
-      setResult(JSON.stringify(await resp.json(), null, 2));
+      setResult(
+        JSON.stringify(await fetchJson<unknown>(`${API_URL}/api/v1/prices/history?${q}`), null, 2),
+      );
     } catch (e: unknown) {
-      setResult(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      setResult(errorText(e));
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (
@@ -513,7 +534,11 @@ function PriceHistoryTryIt() {
           {loading ? '…' : 'Send'}
         </button>
       </div>
-      {result && <pre className="docs-out">{result}</pre>}
+      {result && (
+        <pre className="docs-out" role="status" aria-live="polite">
+          {result}
+        </pre>
+      )}
     </>
   );
 }
@@ -529,20 +554,19 @@ function QuoteTryIt() {
   const run = async () => {
     setLoading(true);
     setResult(null);
-    const stroops = (parseFloat(amount) * 10_000_000).toFixed(0);
-    const q = new URLSearchParams({
-      token_in: TOKENS[tokenIn],
-      token_out: TOKENS[tokenOut],
-      amount_in: stroops,
-      slippage,
-    });
     try {
-      const resp = await fetch(`${API_URL}/api/v1/quote?${q}`);
-      setResult(JSON.stringify(await resp.json(), null, 2));
+      const q = new URLSearchParams({
+        token_in: TOKENS[tokenIn],
+        token_out: TOKENS[tokenOut],
+        amount_in: amountToStroops(amount),
+        slippage,
+      });
+      setResult(JSON.stringify(await fetchJson<unknown>(`${API_URL}/api/v1/quote?${q}`), null, 2));
     } catch (e: unknown) {
-      setResult(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      setResult(errorText(e));
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (
@@ -592,7 +616,11 @@ function QuoteTryIt() {
           {loading ? '…' : 'Send'}
         </button>
       </div>
-      {result && <pre className="docs-out">{result}</pre>}
+      {result && (
+        <pre className="docs-out" role="status" aria-live="polite">
+          {result}
+        </pre>
+      )}
     </>
   );
 }
@@ -613,36 +641,43 @@ function BuildTxTryIt() {
     setRequestBody(null);
     const tokenInId = TOKENS[tokenIn];
     const tokenOutId = TOKENS[tokenOut];
-    const stroops = (parseFloat(amount) * 10_000_000).toFixed(0);
     try {
-      const quoteResp = await fetch(
+      const quoteJson = await fetchJson<{
+        success?: boolean;
+        error?: string;
+        data?: QuotePayload;
+      }>(
         `${API_URL}/api/v1/quote?${new URLSearchParams({
           token_in: tokenInId,
           token_out: tokenOutId,
-          amount_in: stroops,
+          amount_in: amountToStroops(amount),
           slippage,
         })}`,
       );
-      const quoteJson = await quoteResp.json();
       if (!quoteJson.success || !quoteJson.data?.sub_routes?.length) {
         setResult(JSON.stringify(quoteJson, null, 2));
-        setLoading(false);
         return;
       }
 
       const buildBody = quoteToBuildTxBody(userKey.trim(), tokenInId, tokenOutId, quoteJson.data);
       setRequestBody(JSON.stringify(buildBody, null, 2));
 
-      const buildResp = await fetch(`${API_URL}/api/v1/build_tx`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildBody),
-      });
-      setResult(JSON.stringify(await buildResp.json(), null, 2));
+      setResult(
+        JSON.stringify(
+          await fetchJson<unknown>(`${API_URL}/api/v1/build_tx`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(buildBody),
+          }),
+          null,
+          2,
+        ),
+      );
     } catch (e: unknown) {
-      setResult(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      setResult(errorText(e));
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (
@@ -709,7 +744,11 @@ function BuildTxTryIt() {
           <pre className="docs-out">{requestBody}</pre>
         </>
       )}
-      {result && <pre className="docs-out">{result}</pre>}
+      {result && (
+        <pre className="docs-out" role="status" aria-live="polite">
+          {result}
+        </pre>
+      )}
     </>
   );
 }

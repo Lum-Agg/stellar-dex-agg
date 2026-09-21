@@ -21,8 +21,29 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'LumAgg — Stellar DEX Aggregator',
-  description: 'Best swap rates across Stellar DEXes. Split orders for optimal execution.',
+  metadataBase: new URL('https://lumagg.xyz'),
+  title: {
+    default: 'LumAgg — Stellar DEX Aggregator',
+    template: '%s · LumAgg',
+  },
+  description:
+    'Open-source Stellar DEX aggregation with split routing, public analytics and self-hostable arbitrage infrastructure.',
+  alternates: {
+    canonical: '/',
+  },
+  openGraph: {
+    type: 'website',
+    siteName: 'LumAgg',
+    title: 'LumAgg — Stellar DEX Aggregator',
+    url: '/',
+    description:
+      'Find better execution across Stellar DEXes, integrate the API or run the open-source stack yourself.',
+  },
+  twitter: {
+    card: 'summary',
+    title: 'LumAgg — Stellar DEX Aggregator',
+    description: 'Open-source Stellar DEX aggregation and self-hostable arbitrage infrastructure.',
+  },
   icons: {
     icon: '/icon.svg',
     shortcut: '/icon.svg',
@@ -35,11 +56,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body
         className={`${dmSans.variable} ${jetbrains.variable} min-h-screen antialiased text-[var(--text-primary)] font-[family-name:var(--font-sans)]`}
       >
+        <a href="#main-content" className="skip-link">
+          Skip to main content
+        </a>
         <Providers>
           <div className="min-h-screen flex flex-col">
             <header className="site-header sticky top-0 z-40 shrink-0 w-full">
-              <div className="w-full px-6 sm:px-8 lg:px-14 h-[5rem] flex items-center justify-between gap-6">
-                <div className="flex items-center gap-6 md:gap-9 min-w-0">
+              <div className="w-full px-3 sm:px-8 lg:px-14 h-[4.5rem] sm:h-[5rem] flex items-center justify-between gap-2 sm:gap-6">
+                <div className="flex min-w-0 items-center gap-2 sm:gap-6 md:gap-9">
                   <Link href="/" className="flex items-center gap-2.5 group shrink-0">
                     <Image
                       src="/lumagg-mark.svg"
@@ -47,9 +71,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                       width={36}
                       height={36}
                       priority
-                      className="brand-mark h-9 w-9 transition-transform duration-200 group-hover:scale-[1.04]"
+                      className="brand-mark h-8 w-8 sm:h-9 sm:w-9 transition-transform duration-200 group-hover:scale-[1.04]"
                     />
-                    <span className="brand-wordmark text-[18px] sm:text-[19px] font-semibold text-[var(--text-primary)]">
+                    <span className="brand-wordmark text-[17px] sm:text-[19px] font-semibold text-[var(--text-primary)]">
                       LumAgg
                     </span>
                   </Link>
@@ -60,7 +84,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                     href={DISCORD_URL}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="hidden sm:inline-flex items-center gap-1.5 text-[15px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+                    className="hidden xl:inline-flex items-center gap-1.5 text-[15px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
                   >
                     <DiscordIcon className="w-4 h-4" />
                     Discord
@@ -69,7 +93,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                     href={DISCORD_URL}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="sm:hidden inline-flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+                    className="hidden lg:inline-flex xl:hidden items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
                     aria-label="Discord community"
                   >
                     <DiscordIcon className="w-5 h-5" />
@@ -78,7 +102,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                     href={GITHUB_REPO_URL}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="hidden sm:inline-flex items-center gap-1.5 text-[15px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+                    className="hidden xl:inline-flex items-center gap-1.5 text-[15px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
                   >
                     <GitHubIcon className="w-4 h-4" />
                     GitHub
@@ -87,7 +111,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                     href={GITHUB_REPO_URL}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="sm:hidden inline-flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+                    className="hidden lg:inline-flex xl:hidden items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
                     aria-label="GitHub repository"
                   >
                     <GitHubIcon className="w-5 h-5" />
@@ -96,16 +120,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                     href={X_URL}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="hidden sm:inline-flex items-center gap-1.5 text-[15px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+                    className="hidden xl:inline-flex items-center gap-1.5 text-[15px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
                   >
-                    <XIcon className="w-4 h-4" />
-                    X
+                    <XIcon className="w-4 h-4" />X
                   </a>
                   <a
                     href={X_URL}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="sm:hidden inline-flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+                    className="hidden lg:inline-flex xl:hidden items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
                     aria-label="X profile"
                   >
                     <XIcon className="w-5 h-5" />
@@ -115,16 +138,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </div>
             </header>
 
-            <main className="site-main relative w-full px-6 sm:px-8 lg:px-14 pt-8 md:pt-12 pb-10 min-w-0 flex-1">
+            <main
+              id="main-content"
+              className="site-main relative w-full px-4 sm:px-8 lg:px-14 pt-7 sm:pt-8 md:pt-12 pb-10 min-w-0 flex-1"
+            >
               {children}
             </main>
 
             <footer className="site-footer relative mt-auto w-full">
-              <div className="w-full px-6 sm:px-8 lg:px-14 py-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-[14px] sm:text-[15px] text-[var(--text-secondary)]">
+              <div className="w-full px-4 sm:px-8 lg:px-14 py-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-[14px] sm:text-[15px] text-[var(--text-secondary)]">
                 <span className="max-w-xl leading-relaxed">
                   Open-source · Self-hostable Aggregator + Arbitrage Bot
                 </span>
-                <div className="flex items-center gap-4 shrink-0">
+                <div className="flex max-w-full flex-wrap items-center gap-x-4 gap-y-2 sm:shrink-0">
                   <a
                     href={DOCUMENTATION_URL}
                     target="_blank"
@@ -157,8 +183,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1.5 text-[14px] sm:text-[15px] hover:text-[var(--text-primary)] transition-colors"
                   >
-                    <XIcon className="w-4 h-4" />
-                    X
+                    <XIcon className="w-4 h-4" />X
                   </a>
                 </div>
               </div>

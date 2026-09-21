@@ -1,16 +1,37 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import Link from 'next/link';
 import { NATIVE_CONTRACT } from '@/lib/tokenDisplay';
 import { useTokenList } from '@/components/TokenSelector';
 import { GITHUB_REPO_URL } from '@/lib/site';
+import { fetchJson } from '@/lib/fetch-json';
+import { getChartNavigationIndex } from '@/lib/chart-navigation';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
+const AUTO_REFRESH_MS = 60 * 1000;
 const ARBITRAGE_DOCS_URL = `${GITHUB_REPO_URL}/blob/main/docs/arbitrage-deployment.md`;
 
 const XLM_SAC = NATIVE_CONTRACT;
 const USDC_SAC = 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75';
+
+function navigateChartBars(
+  event: KeyboardEvent<HTMLButtonElement>,
+  index: number,
+  count: number,
+  onMove: (nextIndex: number) => void,
+) {
+  const nextIndex = getChartNavigationIndex(event.key, index, count);
+  if (nextIndex === null) return;
+
+  event.preventDefault();
+  if (nextIndex === index) return;
+  const bars = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(
+    '[data-chart-bar]',
+  );
+  onMove(nextIndex);
+  bars?.[nextIndex]?.focus();
+}
 
 interface RoundTripSurplus {
   base_token: string;
@@ -62,6 +83,21 @@ interface ArbitrageStatsBucket {
 interface ArbitrageStatsPayload {
   granularity: ProfitGranularity;
   buckets: ArbitrageStatsBucket[];
+}
+
+interface ArbitrageListPayload {
+  round_trips: RoundTripItem[];
+  success_count?: number;
+  failed_count?: number;
+  unclassified_failed_count?: number;
+  failure_reasons?: FailureReasonCount[];
+  next_cursor?: string | null;
+}
+
+interface ApiResponse<T> {
+  success: boolean;
+  data: T;
+  error?: string;
 }
 
 interface RoundTripItem {
@@ -189,6 +225,32 @@ function formatWhen(ts: number): string {
   });
 }
 
+function compactProfitLabel(label: string, granularity: ProfitGranularity): string {
+  if (granularity === 'day' && /^\d{4}-\d{2}-\d{2}$/.test(label)) {
+    const date = new Date(`${label}T00:00:00Z`);
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      timeZone: 'UTC',
+    });
+  }
+  if (granularity === 'month' && /^\d{4}-\d{2}$/.test(label)) {
+    const date = new Date(`${label}-01T00:00:00Z`);
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      year: '2-digit',
+      timeZone: 'UTC',
+    });
+  }
+  return label.length > 10 ? label.slice(5, 10) : label;
+}
+
+function showProfitAxisLabel(index: number, count: number): boolean {
+  if (count <= 8) return true;
+  if (index === 0 || index === count - 1) return true;
+  return index % Math.ceil(count / 6) === 0;
+}
+
 function toRawBigInt(raw: string | number): bigint | null {
   try {
     if (typeof raw === 'number') {
@@ -248,6 +310,8 @@ export default function ArbitragePage() {
   const [failureReasons, setFailureReasons] = useState<FailureReasonCount[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [profitError, setProfitError] = useState<string | null>(null);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [profitRange, setProfitRange] = useState<ProfitRange>('30D');
@@ -256,7 +320,9 @@ export default function ArbitragePage() {
   const [profitLoading, setProfitLoading] = useState(false);
   const [showDailyTable, setShowDailyTable] = useState(false);
   const [hoveredProfitDay, setHoveredProfitDay] = useState<string | null>(null);
+  const [focusedProfitDay, setFocusedProfitDay] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [profitRetryKey, setProfitRetryKey] = useState(0);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const tokenLabels = useMemo(
     () => new Map(tokens.map((token) => [token.id, token.symbol])),
@@ -268,10 +334,12 @@ export default function ArbitragePage() {
     (async () => {
       try {
         const [statsRes, arbRes] = await Promise.all([
-          fetch(`${API_URL}/api/v1/stats`, { cache: 'no-store' }).then((r) => r.json()),
-          fetch(`${API_URL}/api/v1/arbitrage?limit=25`, { cache: 'no-store' }).then((r) =>
-            r.json(),
-          ),
+          fetchJson<ApiResponse<StatsPayload>>(`${API_URL}/api/v1/stats`, {
+            cache: 'no-store',
+          }),
+          fetchJson<ApiResponse<ArbitrageListPayload>>(`${API_URL}/api/v1/arbitrage?limit=25`, {
+            cache: 'no-store',
+          }),
         ]);
         if (!statsRes.success) throw new Error(statsRes.error || 'stats request failed');
         if (!arbRes.success) throw new Error(arbRes.error || 'arbitrage request failed');
@@ -285,6 +353,7 @@ export default function ArbitragePage() {
         });
         setFailureReasons(arbRes.data?.failure_reasons ?? []);
         setNextCursor(arbRes.data?.next_cursor ?? null);
+        setError(null);
         setLastUpdated(new Date());
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
@@ -296,6 +365,20 @@ export default function ArbitragePage() {
       cancelled = true;
     };
   }, [refreshKey]);
+
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') {
+        setRefreshKey((value) => value + 1);
+      }
+    };
+    const interval = window.setInterval(refreshWhenVisible, AUTO_REFRESH_MS);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -312,15 +395,18 @@ export default function ArbitragePage() {
     if (rangeSeconds != null) params.set('start', String(end - rangeSeconds));
 
     setProfitLoading(true);
-    fetch(`${API_URL}/api/v1/arbitrage/stats?${params.toString()}`, { cache: 'no-store' })
-      .then((res) => res.json())
+    setProfitError(null);
+    fetchJson<ApiResponse<ArbitrageStatsPayload>>(
+      `${API_URL}/api/v1/arbitrage/stats?${params.toString()}`,
+      { cache: 'no-store' },
+    )
       .then((payload) => {
         if (cancelled) return;
         if (!payload.success) throw new Error(payload.error || 'arbitrage stats request failed');
         setProfitStats(payload.data ?? null);
       })
       .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+        if (!cancelled) setProfitError(e instanceof Error ? e.message : String(e));
       })
       .finally(() => {
         if (!cancelled) setProfitLoading(false);
@@ -329,7 +415,7 @@ export default function ArbitragePage() {
     return () => {
       cancelled = true;
     };
-  }, [profitGranularity, profitRange, refreshKey]);
+  }, [profitGranularity, profitRange, profitRetryKey, refreshKey]);
 
   const summary = useMemo(() => {
     if (!stats) return null;
@@ -410,6 +496,11 @@ export default function ArbitragePage() {
   }, [profitStats]);
 
   const visibleDailyProfit = dailyProfit;
+  const rovingProfitDay = visibleDailyProfit.some(
+    (day) => String(day.start) === focusedProfitDay,
+  )
+    ? focusedProfitDay
+    : String(visibleDailyProfit[visibleDailyProfit.length - 1]?.start ?? '');
 
   const chartMax = useMemo(() => {
     const zero = BigInt(0);
@@ -432,16 +523,17 @@ export default function ArbitragePage() {
   async function loadMore() {
     if (!nextCursor || loadingMore) return;
     setLoadingMore(true);
+    setLoadMoreError(null);
     try {
-      const res = await fetch(
+      const res = await fetchJson<ApiResponse<ArbitrageListPayload>>(
         `${API_URL}/api/v1/arbitrage?limit=25&cursor=${encodeURIComponent(nextCursor)}`,
         { cache: 'no-store' },
-      ).then((r) => r.json());
+      );
       if (!res.success) throw new Error(res.error || 'arbitrage request failed');
       setTrips((prev) => [...prev, ...(res.data?.round_trips ?? [])]);
       setNextCursor(res.data?.next_cursor ?? null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setLoadMoreError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoadingMore(false);
     }
@@ -460,11 +552,16 @@ export default function ArbitragePage() {
           <span className="eyebrow">Open source operator stack</span>
           <h2>Run LumAgg Arbitrage yourself</h2>
           <p>
-            The scanner and execution bot are self-deployable. Use your own infrastructure,
-            callers and Vault; LumAgg does not charge users for the software.
+            The scanner and execution bot are self-deployable. Use your own infrastructure, callers
+            and Vault; LumAgg does not charge users for the software.
           </p>
         </div>
-        <a href={ARBITRAGE_DOCS_URL} target="_blank" rel="noopener noreferrer" className="btn-primary">
+        <a
+          href={ARBITRAGE_DOCS_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="btn-primary"
+        >
           Read deployment guide ↗
         </a>
       </section>
@@ -479,19 +576,37 @@ export default function ArbitragePage() {
             deducted, so this is not net P&amp;L.
           </p>
         </div>
-        <div className="flex items-center gap-2 self-start sm:self-auto">
-          <button
-            type="button"
-            onClick={() => {
-              setError(null);
-              setLoading(true);
-              setRefreshKey((value) => value + 1);
-            }}
-            disabled={loading}
-            className="text-[12px] px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]/80 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] disabled:cursor-wait disabled:opacity-50 transition-colors"
-          >
-            {loading ? 'Refreshing…' : 'Refresh'}
-          </button>
+        <div className="flex self-start flex-col items-start gap-2 sm:self-auto sm:items-end">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setError(null);
+                setProfitError(null);
+                setLoadMoreError(null);
+                setLoading(true);
+                setRefreshKey((value) => value + 1);
+              }}
+              disabled={loading}
+              className="text-[12px] px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]/80 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] disabled:cursor-wait disabled:opacity-50 transition-colors"
+            >
+              {loading ? 'Refreshing…' : 'Refresh'}
+            </button>
+            <button
+              type="button"
+              onClick={() => downloadCsv(visibleDailyProfit, profitGranularity)}
+              disabled={profitLoading || visibleDailyProfit.length === 0}
+              className="text-[12px] px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]/80 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+            >
+              Export CSV
+            </button>
+            <Link
+              href="/stats"
+              className="text-[12px] px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]/80 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] transition-colors"
+            >
+              Full stats →
+            </Link>
+          </div>
           {lastUpdated && (
             <span className="text-[11px] text-[var(--text-muted)] tabular-nums">
               Updated{' '}
@@ -500,27 +615,17 @@ export default function ArbitragePage() {
                 minute: '2-digit',
                 second: '2-digit',
               })}
+              {' · '}auto-refreshes every min
             </span>
           )}
-          <button
-            type="button"
-            onClick={() => downloadCsv(visibleDailyProfit, profitGranularity)}
-            disabled={profitLoading || visibleDailyProfit.length === 0}
-            className="text-[12px] px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]/80 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-          >
-            Export CSV
-          </button>
         </div>
-        <Link
-          href="/stats"
-          className="self-start sm:self-auto text-[12px] px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]/80 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] transition-colors"
-        >
-          Full stats →
-        </Link>
       </div>
 
-      {loading && (
-        <div className="space-y-3">
+      {loading && !stats && (
+        <div role="status" className="space-y-3">
+          <p className="text-[12px] text-[var(--text-muted)]">
+            Loading confirmed arbitrage activity…
+          </p>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {Array.from({ length: 4 }).map((_, i) => (
               <div
@@ -541,9 +646,54 @@ export default function ArbitragePage() {
       )}
 
       {error && (
-        <div className="text-sm text-amber-300/90 border border-amber-500/20 bg-amber-500/5 rounded-xl px-4 py-3">
-          Arbitrage data unavailable: {error}
+        <div
+          role="alert"
+          className="flex flex-col gap-3 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-300/90 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <span>
+            {stats
+              ? `Could not refresh arbitrage data; showing the last loaded snapshot: ${error}`
+              : `Arbitrage data unavailable: ${error}`}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setError(null);
+              setLoading(true);
+              setRefreshKey((value) => value + 1);
+            }}
+            className="self-start whitespace-nowrap rounded-lg border border-amber-300/20 px-3 py-1.5 text-[12px] font-medium text-amber-100 hover:border-amber-300/40 hover:bg-amber-300/[0.06] sm:self-auto"
+          >
+            Try again
+          </button>
         </div>
+      )}
+
+      {!loading && confirmedTotal > 0 && (
+        <section aria-label="Arbitrage execution status">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <StatusCard
+              label="Confirmed success"
+              value={confirmedSuccess.toLocaleString()}
+              tone="success"
+            />
+            <StatusCard
+              label="Confirmed failed"
+              value={confirmedFailed.toLocaleString()}
+              tone="failed"
+            />
+            <StatusCard label="Success rate" value={successRate} tone="neutral" />
+            <StatusCard
+              label="Total round trips"
+              value={confirmedTotal.toLocaleString()}
+              tone="neutral"
+            />
+          </div>
+          <p className="mt-2 text-[11px] leading-relaxed text-[var(--text-muted)]">
+            Confirmed indexed on-chain round trips only. Quotes, rejected simulations and broadcasts
+            still awaiting confirmation are excluded.
+          </p>
+        </section>
       )}
 
       {summary && (
@@ -654,6 +804,20 @@ export default function ArbitragePage() {
           <p className="border-t border-[var(--border)] px-4 sm:px-5 py-5 text-[13px] text-[var(--text-muted)]">
             Loading arbitrage statistics…
           </p>
+        ) : profitError ? (
+          <div
+            role="alert"
+            className="flex items-center justify-between gap-3 border-t border-[var(--border)] px-4 py-4 text-[13px] text-amber-200/80 sm:px-5"
+          >
+            <span>Surplus chart unavailable: {profitError}</span>
+            <button
+              type="button"
+              onClick={() => setProfitRetryKey((value) => value + 1)}
+              className="shrink-0 rounded-lg border border-amber-300/20 px-3 py-1.5 text-[12px] font-medium text-amber-100 hover:border-amber-300/40 hover:bg-amber-300/[0.06]"
+            >
+              Try again
+            </button>
+          </div>
         ) : dailyProfit.length === 0 ? (
           <p className="border-t border-[var(--border)] px-4 sm:px-5 py-5 text-[13px] text-[var(--text-muted)]">
             No arbitrage surplus has been indexed for this period.
@@ -662,7 +826,7 @@ export default function ArbitragePage() {
           <>
             <div className="border-t border-[var(--border)] px-4 sm:px-5 pt-5 pb-4">
               <div className="flex items-end gap-2 sm:gap-3 h-44">
-                {visibleDailyProfit.map((day) => {
+                {visibleDailyProfit.map((day, index) => {
                   const zero = BigInt(0);
                   const xlmHeight = Number(
                     ((day.xlm < zero ? -day.xlm : day.xlm) * BigInt(100)) / chartMax,
@@ -671,14 +835,37 @@ export default function ArbitragePage() {
                     ((day.usdc < zero ? -day.usdc : day.usdc) * BigInt(100)) / chartMax,
                   );
                   return (
-                    <div
+                    <button
+                      type="button"
                       key={day.start}
-                      className="relative min-w-0 flex-1 h-full flex flex-col justify-end gap-2 group"
+                      data-chart-bar
+                      tabIndex={String(day.start) === rovingProfitDay ? 0 : -1}
+                      aria-keyshortcuts="ArrowLeft ArrowRight Home End"
+                      className="group relative flex h-full min-w-0 flex-1 flex-col justify-end gap-2 pb-5"
                       onMouseEnter={() => setHoveredProfitDay(String(day.start))}
                       onMouseLeave={() => setHoveredProfitDay(null)}
+                      onFocus={() => {
+                        setFocusedProfitDay(String(day.start));
+                        setHoveredProfitDay(String(day.start));
+                      }}
+                      onBlur={() => setHoveredProfitDay(null)}
+                      onKeyDown={(event) => {
+                        navigateChartBars(event, index, visibleDailyProfit.length, (nextIndex) => {
+                          setFocusedProfitDay(String(visibleDailyProfit[nextIndex].start));
+                        });
+                      }}
+                      aria-label={`${day.label}: ${formatSurplusSigned(day.xlm, 'XLM')}, ${formatSurplusSigned(day.usdc, 'USDC')}, ${day.successCount} success, ${day.failedCount} failed`}
                     >
                       {hoveredProfitDay === String(day.start) && (
-                        <div className="pointer-events-none absolute bottom-8 left-1/2 z-10 w-36 -translate-x-1/2 rounded-lg border border-[var(--border-strong)] bg-[var(--surface-raised)] px-3 py-2 text-[11px] shadow-xl">
+                        <div
+                          className={`pointer-events-none absolute bottom-8 z-10 w-36 rounded-lg border border-[var(--border-strong)] bg-[var(--surface-raised)] px-3 py-2 text-[11px] shadow-xl ${
+                            index === 0
+                              ? 'left-0'
+                              : index === visibleDailyProfit.length - 1
+                                ? 'right-0'
+                                : 'left-1/2 -translate-x-1/2'
+                          }`}
+                        >
                           <div className="font-medium text-[var(--text-primary)]">{day.label}</div>
                           <div className="mt-1 flex justify-between gap-3 text-teal-200">
                             <span>XLM</span>
@@ -714,10 +901,21 @@ export default function ArbitragePage() {
                           title={`${day.label}: ${formatSurplusSigned(day.usdc, 'USDC')}`}
                         />
                       </div>
-                      <span className="truncate text-center text-[10px] text-[var(--text-muted)]">
-                        {day.label}
+                      <span
+                        className={`absolute bottom-0 whitespace-nowrap text-[10px] text-[var(--text-muted)] ${
+                          index === 0
+                            ? 'left-0'
+                            : index === visibleDailyProfit.length - 1
+                              ? 'right-0'
+                              : 'left-1/2 -translate-x-1/2'
+                        }`}
+                        aria-hidden="true"
+                      >
+                        {showProfitAxisLabel(index, visibleDailyProfit.length)
+                          ? compactProfitLabel(day.label, profitGranularity)
+                          : '\u00a0'}
                       </span>
-                    </div>
+                    </button>
                   );
                 })}
               </div>
@@ -784,27 +982,6 @@ export default function ArbitragePage() {
           balance (typically XLM → bridge → XLM). Only confirmed successful transactions are shown
           here — not quotes, simulations, or rejected opportunities.
         </p>
-      </section>
-
-      <section className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <StatusCard
-          label="Confirmed success"
-          value={statusCounts.success_count?.toLocaleString() ?? '—'}
-          tone="success"
-        />
-        <StatusCard
-          label="Confirmed failed"
-          value={statusCounts.failed_count?.toLocaleString() ?? '—'}
-          tone="failed"
-        />
-        <StatusCard label="Success rate" value={successRate} tone="neutral" />
-        <div className="col-span-2 sm:col-span-1 rounded-xl border border-[var(--border)] bg-[var(--surface)]/60 px-4 py-3 text-[11px] text-[var(--text-muted)]">
-          <div className="text-[var(--text-secondary)]">Status scope</div>
-          <div className="mt-1 leading-relaxed">
-            Indexed on-chain round trips only. Bot broadcasts still awaiting confirmation are not
-            included.
-          </div>
-        </div>
       </section>
 
       {failureReasons.length > 0 && (
@@ -883,7 +1060,7 @@ export default function ArbitragePage() {
           </a>
         </div>
 
-        {loading ? (
+        {loading && trips.length === 0 ? (
           <div className="px-4 sm:px-5 pb-5 space-y-2">
             {Array.from({ length: 5 }).map((_, i) => (
               <div
@@ -960,7 +1137,7 @@ export default function ArbitragePage() {
               </table>
             </div>
             {nextCursor && (
-              <div className="px-4 sm:px-5 py-3 border-t border-[var(--border)]">
+              <div className="flex flex-wrap items-center gap-3 border-t border-[var(--border)] px-4 py-3 sm:px-5">
                 <button
                   type="button"
                   onClick={loadMore}
@@ -969,6 +1146,11 @@ export default function ArbitragePage() {
                 >
                   {loadingMore ? 'Loading…' : 'Load more'}
                 </button>
+                {loadMoreError && (
+                  <span role="alert" className="text-[12px] text-amber-200/80">
+                    Could not load more trades: {loadMoreError}
+                  </span>
+                )}
               </div>
             )}
           </>
@@ -1031,7 +1213,9 @@ function KpiCard({
       >
         {value}
       </div>
-      <div className="text-[11px] text-[var(--text-muted)] mt-1 truncate">{hint}</div>
+      <div className="mt-1 text-[10px] leading-snug text-[var(--text-muted)] sm:text-[11px]">
+        {hint}
+      </div>
     </div>
   );
 }

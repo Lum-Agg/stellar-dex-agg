@@ -1,10 +1,36 @@
 'use client';
 
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react';
 import Link from 'next/link';
 import { displayTokenSymbol } from '@/lib/tokenDisplay';
+import { fetchJson } from '@/lib/fetch-json';
+import { getChartNavigationIndex } from '@/lib/chart-navigation';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
+const AUTO_REFRESH_MS = 2 * 60 * 1000;
+
+function navigateChartBars(
+  event: KeyboardEvent<HTMLElement>,
+  index: number,
+  count: number,
+  onMove: (nextIndex: number) => void,
+) {
+  const nextIndex = getChartNavigationIndex(event.key, index, count);
+  if (nextIndex === null) return;
+
+  event.preventDefault();
+  if (nextIndex === index) return;
+  const bars = event.currentTarget.parentElement?.querySelectorAll<HTMLElement>('[data-chart-bar]');
+  onMove(nextIndex);
+  bars?.[nextIndex]?.focus();
+}
 
 interface TokenVolume {
   token: string;
@@ -95,6 +121,12 @@ interface StatsPayload {
   oldest_created_at: number | null;
   daily: DailyStats[];
   usd_pricing?: string | null;
+}
+
+interface ApiResponse<T> {
+  success: boolean;
+  data: T;
+  error?: string;
 }
 
 const DEX_COLORS: Record<string, string> = {
@@ -194,14 +226,15 @@ export default function StatsPage() {
     let cancelled = false;
     (async () => {
       try {
-        const statsRes = await fetch(`${API_URL}/api/v1/stats`, { cache: 'no-store' }).then((r) =>
-          r.json(),
-        );
+        const statsRes = await fetchJson<ApiResponse<StatsPayload>>(`${API_URL}/api/v1/stats`, {
+          cache: 'no-store',
+        });
         if (!statsRes.success) {
           throw new Error(statsRes.error || 'stats request failed');
         }
         if (!cancelled) {
           setData(statsRes.data);
+          setError(null);
           setLastUpdated(new Date());
         }
       } catch (e) {
@@ -216,9 +249,25 @@ export default function StatsPage() {
   }, [refreshKey]);
 
   useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') {
+        setRefreshKey((value) => value + 1);
+      }
+    };
+    const interval = window.setInterval(refreshWhenVisible, AUTO_REFRESH_MS);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
-    fetch(`${API_URL}/api/v1/tokens`, { cache: 'no-store' })
-      .then((r) => r.json())
+    fetchJson<{ tokens?: Array<{ id?: string; symbol?: string }> }>(
+      `${API_URL}/api/v1/tokens`,
+      { cache: 'no-store' },
+    )
       .then((payload) => {
         if (cancelled || !Array.isArray(payload.tokens)) return;
         const labels = new Map<string, string>();
@@ -303,7 +352,8 @@ export default function StatsPage() {
       routedUsd: usdCovered > 0 || routedUsd > 0 ? routedUsd : null,
       avgXlmUsd,
       txs,
-      routedPricingCoverage: routedLegs > 0 ? routedPricedLegs / routedLegs : null,
+      routedPricingCoverage:
+        routedLegs > 0 ? Math.min(1, Math.max(0, routedPricedLegs / routedLegs)) : null,
       roundTrips,
       grossSurplusUsd: surplusPricedDays > 0 ? grossSurplusUsd : null,
       averageGrossSurplusUsd:
@@ -342,7 +392,7 @@ export default function StatsPage() {
           <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-[var(--text-primary)]">
             LumAgg-routed volume
           </h1>
-          <p className="text-[13px] text-[var(--text-primary)]0 mt-2 leading-relaxed max-w-xl">
+          <p className="text-[13px] text-[var(--text-secondary)] mt-2 leading-relaxed max-w-xl">
             Aggregator contract invocations only — volume LumAgg routed onto Stellar Soroban DEXes,
             not market-wide pool volume. Routed volume sums the actual input value processed by
             every executed DEX leg. Split routes use each pool&apos;s real allocation; multi-hop and
@@ -351,19 +401,35 @@ export default function StatsPage() {
           </p>
         </div>
         {data && (
-          <div className="self-start sm:self-auto flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setError(null);
-                setLoading(true);
-                setRefreshKey((value) => value + 1);
-              }}
-              disabled={loading}
-              className="text-[12px] px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]/80 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] disabled:cursor-wait disabled:opacity-50 transition-colors"
-            >
-              {loading ? 'Refreshing…' : 'Refresh'}
-            </button>
+          <div className="flex self-start flex-col items-start gap-2 sm:self-auto sm:items-end">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  setLoading(true);
+                  setRefreshKey((value) => value + 1);
+                }}
+                disabled={loading}
+                className="text-[12px] px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]/80 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] disabled:cursor-wait disabled:opacity-50 transition-colors"
+              >
+                {loading ? 'Refreshing…' : 'Refresh'}
+              </button>
+              <a
+                href="https://defillama.com/dex-aggregators/chain/stellar"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[12px] px-3 py-1.5 rounded-lg border border-teal-400/25 bg-teal-400/5 text-teal-200 hover:border-teal-300/50 hover:bg-teal-400/10 transition-colors"
+              >
+                View on DefiLlama
+              </a>
+              <a
+                href={`${API_URL}/api/v1/stats?format=csv`}
+                className="text-[12px] px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]/80 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] transition-colors"
+              >
+                Export CSV
+              </a>
+            </div>
             {lastUpdated && (
               <span className="text-[11px] text-[var(--text-muted)] tabular-nums">
                 Updated{' '}
@@ -372,42 +438,48 @@ export default function StatsPage() {
                   minute: '2-digit',
                   second: '2-digit',
                 })}
+                {' · '}auto-refreshes every 2 min
               </span>
             )}
-            <a
-              href="https://defillama.com/dex-aggregators/chain/stellar"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[12px] px-3 py-1.5 rounded-lg border border-teal-400/25 bg-teal-400/5 text-teal-200 hover:border-teal-300/50 hover:bg-teal-400/10 transition-colors"
-            >
-              View on DefiLlama
-            </a>
-            <a
-              href={`${API_URL}/api/v1/stats?format=csv`}
-              className="text-[12px] px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]/80 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] transition-colors"
-            >
-              Export CSV
-            </a>
           </div>
         )}
       </div>
 
-      {loading && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div
-              key={i}
-              className="h-[88px] rounded-xl border border-[var(--border)] bg-[var(--surface)]/60 animate-pulse"
-            />
-          ))}
+      {loading && !data && (
+        <div role="status" className="space-y-3">
+          <p className="text-[12px] text-[var(--text-muted)]">Loading on-chain analytics…</p>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div
+                key={i}
+                className="h-[88px] rounded-xl border border-[var(--border)] bg-[var(--surface)]/60 animate-pulse"
+              />
+            ))}
+          </div>
         </div>
       )}
 
       {error && (
-        <div className="text-sm text-amber-300/90 border border-amber-500/20 bg-amber-500/5 rounded-xl px-4 py-3">
-          Stats unavailable: {error}. Configure{' '}
-          <code className="text-[var(--text-secondary)]">INDEXER_DB_PATH</code> on the API server or
-          use <code className="text-[var(--text-secondary)]">analytics-indexer export-daily</code>.
+        <div
+          role="alert"
+          className="flex flex-col gap-3 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-300/90 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <span>
+            {data
+              ? `Could not refresh stats; showing the last loaded snapshot: ${error}`
+              : `Stats are temporarily unavailable: ${error}`}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setError(null);
+              setLoading(true);
+              setRefreshKey((value) => value + 1);
+            }}
+            className="self-start whitespace-nowrap rounded-lg border border-amber-300/20 px-3 py-1.5 text-[12px] font-medium text-amber-100 hover:border-amber-300/40 hover:bg-amber-300/[0.06] sm:self-auto"
+          >
+            Try again
+          </button>
         </div>
       )}
 
@@ -456,7 +528,7 @@ export default function StatsPage() {
                   <h2 className="text-[15px] font-medium text-[var(--text-primary)]">
                     Daily volume
                   </h2>
-                  <p className="text-[12px] text-[var(--text-primary)]0 mt-0.5">
+                  <p className="text-[12px] text-[var(--text-muted)] mt-0.5">
                     Routed ≈ notional × hops (each DEX leg) · Notional = entry amount · cyan =
                     transactions
                     {chartDays.length < derived.days.length
@@ -464,7 +536,7 @@ export default function StatsPage() {
                       : ''}
                   </p>
                 </div>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--text-primary)]0">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--text-muted)]">
                   <span className="inline-flex items-center gap-1.5">
                     <span className="w-2.5 h-2.5 rounded-sm bg-[var(--accent)]/80" />
                     Routed (USD)
@@ -480,7 +552,7 @@ export default function StatsPage() {
                 </div>
               </div>
               <div
-                className="inline-flex self-start rounded-lg border border-[var(--border)] bg-[var(--bg)]/40 p-0.5"
+                className="inline-flex self-start rounded-lg border border-[var(--border)] bg-[var(--bg-0)]/40 p-0.5"
                 role="group"
                 aria-label="Chart date range"
               >
@@ -493,7 +565,7 @@ export default function StatsPage() {
                       onClick={() => setChartRange(id)}
                       className={`px-2.5 py-1 rounded-md text-[11px] tabular-nums transition-colors ${
                         active
-                          ? 'bg-[var(--surface-elevated)] text-[var(--text-primary)]'
+                          ? 'bg-[var(--surface-raised)] text-[var(--text-primary)]'
                           : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
                       }`}
                       aria-pressed={active}
@@ -522,7 +594,7 @@ export default function StatsPage() {
                 <h2 className="text-[15px] font-medium text-[var(--text-primary)]">
                   Arbitrage execution
                 </h2>
-                <p className="text-[12px] text-[var(--text-primary)]0 mt-1 max-w-2xl">
+                <p className="text-[12px] text-[var(--text-muted)] mt-1 max-w-2xl">
                   Successful on-chain round trips. Gross surplus is the actual base token returned
                   minus the base token supplied; it excludes transaction fees and is not net
                   P&amp;L. See the{' '}
@@ -591,7 +663,7 @@ export default function StatsPage() {
             />
           </div>
 
-          <div className="flex flex-wrap gap-x-5 gap-y-2 rounded-xl border border-[var(--border)] bg-[var(--bg-0)]/40 px-4 py-3 text-[12px] text-[var(--text-primary)]0">
+          <div className="flex flex-wrap gap-x-5 gap-y-2 rounded-xl border border-[var(--border)] bg-[var(--bg-0)]/40 px-4 py-3 text-[12px] text-[var(--text-muted)]">
             <OpsItem label="Cursor ledger" value={data.cursor_ledger?.toLocaleString() ?? '—'} />
             <OpsItem label="Days indexed" value={String(data.daily.length)} />
             <OpsItem label="USD pricing" value={data.usd_pricing ? 'per-token day close' : '—'} />
@@ -613,14 +685,14 @@ export default function StatsPage() {
           <details className="group rounded-xl border border-[var(--border)] bg-[var(--surface)]/50 open:bg-[var(--surface)]/60">
             <summary className="cursor-pointer list-none px-4 sm:px-5 py-3.5 flex items-center justify-between text-[14px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] [&::-webkit-details-marker]:hidden">
               <span className="font-medium">Daily rollup</span>
-              <span className="text-[12px] text-[var(--text-primary)]0">
+              <span className="text-[12px] text-[var(--text-muted)]">
                 <span className="group-open:hidden">Show table</span>
                 <span className="hidden group-open:inline">Hide</span>
               </span>
             </summary>
             <div className="overflow-x-auto border-t border-[var(--border)]">
               <table className="w-full text-[12px] text-left">
-                <thead className="bg-[var(--bg-0)]/50 text-[var(--text-primary)]0">
+                <thead className="bg-[var(--bg-0)]/50 text-[var(--text-muted)]">
                   <tr>
                     <th className="px-3 py-2 font-medium">Day</th>
                     <th className="px-3 py-2 font-medium">Transactions</th>
@@ -697,7 +769,7 @@ function KpiCard({
       className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/60 px-4 py-3.5 opacity-0 animate-[statsFadeIn_0.45s_ease_forwards]"
       style={{ animationDelay: `${delay}ms` }}
     >
-      <div className="text-[11px] uppercase tracking-wide text-[var(--text-primary)]0">{label}</div>
+      <div className="text-[11px] uppercase tracking-wide text-[var(--text-muted)]">{label}</div>
       <div
         className={`text-xl sm:text-2xl font-semibold mt-1.5 tracking-tight tabular-nums ${
           accent ? 'text-[var(--accent)]' : 'text-[var(--text-primary)]'
@@ -705,7 +777,9 @@ function KpiCard({
       >
         {value}
       </div>
-      <div className="text-[11px] text-[var(--text-muted)] mt-1 truncate">{hint}</div>
+      <div className="mt-1 text-[10px] leading-snug text-[var(--text-muted)] sm:text-[11px]">
+        {hint}
+      </div>
     </div>
   );
 }
@@ -791,6 +865,19 @@ function ExecutionOutcomeChart({ days }: { days: DailyStats[] }) {
   const visibleDays = days.slice(-31);
   const maxTotal = Math.max(...visibleDays.map((day) => day.success_count + day.failed_count), 1);
   const [hoveredDay, setHoveredDay] = useState<string | null>(null);
+  const [focusDay, setFocusDay] = useState<string | null>(null);
+  const rovingDay = visibleDays.some((day) => day.day === focusDay)
+    ? focusDay
+    : (visibleDays[visibleDays.length - 1]?.day ?? null);
+  const selectedDay =
+    visibleDays.find((day) => day.day === hoveredDay) ??
+    visibleDays[visibleDays.length - 1] ??
+    null;
+  const selectedTotal = selectedDay ? selectedDay.success_count + selectedDay.failed_count : 0;
+  const selectedRate =
+    selectedDay && selectedTotal > 0
+      ? `${((selectedDay.success_count / selectedTotal) * 100).toFixed(1)}%`
+      : '—';
 
   return (
     <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/60 px-4 sm:px-5 py-4">
@@ -810,11 +897,31 @@ function ExecutionOutcomeChart({ days }: { days: DailyStats[] }) {
           </span>
         </div>
       </div>
+      {selectedDay && (
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] tabular-nums text-[var(--text-muted)]">
+          <span className="text-[var(--text-secondary)]">{selectedDay.day}</span>
+          <span>
+            Success{' '}
+            <strong className="font-medium text-teal-200">
+              {selectedDay.success_count.toLocaleString()}
+            </strong>
+          </span>
+          <span>
+            Failed{' '}
+            <strong className="font-medium text-rose-200">
+              {selectedDay.failed_count.toLocaleString()}
+            </strong>
+          </span>
+          <span>
+            Rate <strong className="font-medium text-[var(--text-primary)]">{selectedRate}</strong>
+          </span>
+        </div>
+      )}
       {visibleDays.length === 0 ? (
         <p className="h-40 pt-14 text-center text-[13px] text-[var(--text-muted)]">No data yet</p>
       ) : (
         <div className="mt-5 flex h-40 items-end gap-1.5 sm:gap-2 border-b border-[var(--border)]">
-          {visibleDays.map((day) => {
+          {visibleDays.map((day, index) => {
             const total = day.success_count + day.failed_count;
             const totalHeight = (total / maxTotal) * 100;
             const successHeight = total > 0 ? (day.success_count / total) * totalHeight : 0;
@@ -823,14 +930,36 @@ function ExecutionOutcomeChart({ days }: { days: DailyStats[] }) {
               <div
                 key={day.day}
                 className="group relative flex min-w-0 flex-1 flex-col justify-end h-full"
+                role="button"
+                data-chart-bar
+                tabIndex={day.day === rovingDay ? 0 : -1}
+                aria-keyshortcuts="ArrowLeft ArrowRight Home End"
                 aria-label={`${day.day}: ${day.success_count} success, ${day.failed_count} failed`}
                 onMouseEnter={() => setHoveredDay(day.day)}
                 onMouseLeave={() => setHoveredDay(null)}
+                onPointerDown={() => setHoveredDay(day.day)}
+                onFocus={() => {
+                  setFocusDay(day.day);
+                  setHoveredDay(day.day);
+                }}
+                onBlur={() => setHoveredDay(null)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    setHoveredDay(day.day);
+                    return;
+                  }
+                  navigateChartBars(event, index, visibleDays.length, (nextIndex) => {
+                    setFocusDay(visibleDays[nextIndex].day);
+                  });
+                }}
               >
                 {hoveredDay === day.day && (
                   <div className="pointer-events-none absolute bottom-[calc(100%-1.5rem)] left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-lg border border-[var(--border-strong)] bg-[var(--bg-0)] px-3 py-2 text-[11px] shadow-xl">
                     <div className="font-medium text-[var(--text-primary)]">{day.day}</div>
-                    <div className="mt-1 text-teal-200">Success: {day.success_count.toLocaleString()}</div>
+                    <div className="mt-1 text-teal-200">
+                      Success: {day.success_count.toLocaleString()}
+                    </div>
                     <div className="text-rose-200">Failed: {day.failed_count.toLocaleString()}</div>
                     <div className="mt-1 border-t border-[var(--border)] pt-1 text-[var(--text-muted)]">
                       Total: {total.toLocaleString()}
@@ -863,6 +992,14 @@ function ActivityTrendChart({ days }: { days: DailyStats[] }) {
   const visibleDays = days.slice(-31);
   const maxValue = Math.max(...visibleDays.flatMap((day) => [day.tx_count, day.unique_users]), 1);
   const [hoveredDay, setHoveredDay] = useState<string | null>(null);
+  const [focusDay, setFocusDay] = useState<string | null>(null);
+  const rovingDay = visibleDays.some((day) => day.day === focusDay)
+    ? focusDay
+    : (visibleDays[visibleDays.length - 1]?.day ?? null);
+  const selectedDay =
+    visibleDays.find((day) => day.day === hoveredDay) ??
+    visibleDays[visibleDays.length - 1] ??
+    null;
 
   return (
     <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/60 px-4 sm:px-5 py-4">
@@ -882,22 +1019,61 @@ function ActivityTrendChart({ days }: { days: DailyStats[] }) {
           </span>
         </div>
       </div>
+      {selectedDay && (
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] tabular-nums text-[var(--text-muted)]">
+          <span className="text-[var(--text-secondary)]">{selectedDay.day}</span>
+          <span>
+            Transactions{' '}
+            <strong className="font-medium text-cyan-200">
+              {selectedDay.tx_count.toLocaleString()}
+            </strong>
+          </span>
+          <span>
+            Callers{' '}
+            <strong className="font-medium text-slate-200">
+              {selectedDay.unique_users.toLocaleString()}
+            </strong>
+          </span>
+        </div>
+      )}
       {visibleDays.length === 0 ? (
         <p className="h-40 pt-14 text-center text-[13px] text-[var(--text-muted)]">No data yet</p>
       ) : (
         <div className="mt-5 flex h-40 items-end gap-1.5 sm:gap-2 border-b border-[var(--border)]">
-          {visibleDays.map((day) => (
+          {visibleDays.map((day, index) => (
             <div
               key={day.day}
               className="group relative flex min-w-0 flex-1 items-end gap-0.5 h-full"
+              role="button"
+              data-chart-bar
+              tabIndex={day.day === rovingDay ? 0 : -1}
+              aria-keyshortcuts="ArrowLeft ArrowRight Home End"
               aria-label={`${day.day}: ${day.tx_count} transactions, ${day.unique_users} users`}
               onMouseEnter={() => setHoveredDay(day.day)}
               onMouseLeave={() => setHoveredDay(null)}
+              onPointerDown={() => setHoveredDay(day.day)}
+              onFocus={() => {
+                setFocusDay(day.day);
+                setHoveredDay(day.day);
+              }}
+              onBlur={() => setHoveredDay(null)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  setHoveredDay(day.day);
+                  return;
+                }
+                navigateChartBars(event, index, visibleDays.length, (nextIndex) => {
+                  setFocusDay(visibleDays[nextIndex].day);
+                });
+              }}
             >
               {hoveredDay === day.day && (
                 <div className="pointer-events-none absolute bottom-[calc(100%-1.5rem)] left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-lg border border-[var(--border-strong)] bg-[var(--bg-0)] px-3 py-2 text-[11px] shadow-xl">
                   <div className="font-medium text-[var(--text-primary)]">{day.day}</div>
-                  <div className="mt-1 text-cyan-200">Transactions: {day.tx_count.toLocaleString()}</div>
+                  <div className="mt-1 text-cyan-200">
+                    Transactions: {day.tx_count.toLocaleString()}
+                  </div>
                   <div className="text-slate-300">Users: {day.unique_users.toLocaleString()}</div>
                 </div>
               )}
