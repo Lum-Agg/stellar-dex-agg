@@ -6,33 +6,53 @@ import {
   setSubmitViaPreference,
   type SubmitNetwork,
   type SubmitVia,
-} from '@/lib/rpc';
+} from '@/lib/submit-preference';
 
-export function SubmitViaToggle({ network: _network = 'public' }: { network?: SubmitNetwork }) {
+export function SubmitViaToggle({ network = 'public' }: { network?: SubmitNetwork }) {
   const [submitVia, setSubmitVia] = useState<SubmitVia>('official');
 
   useEffect(() => {
     setSubmitVia(getSubmitViaPreference());
   }, []);
 
-  const apiHost = 'api.lumagg.xyz';
+  const setPreference = (next: SubmitVia) => {
+    setSubmitVia(next);
+    setSubmitViaPreference(next);
+  };
 
   return (
-    <label className="mt-4 flex items-start gap-2 cursor-pointer select-none text-[11px] leading-snug text-[var(--text-muted)]/70 hover:text-[var(--text-muted)]">
-      <input
-        type="checkbox"
-        className="mt-0.5 accent-[var(--accent)]"
-        checked={submitVia === 'official'}
-        onChange={(e) => {
-          const next: SubmitVia = e.target.checked ? 'official' : 'lumagg';
-          setSubmitVia(next);
-          setSubmitViaPreference(next);
-        }}
-      />
-      <span>
-        Submit via LumAgg API instead of direct RPC
-        {submitVia === 'lumagg' ? ` (${apiHost})` : ''}
-      </span>
-    </label>
+    <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-[11px] text-[var(--text-muted)]">
+      <span>Submit through</span>
+      <div
+        className="inline-flex rounded-lg border border-[var(--border)] bg-[var(--bg-0)]/40 p-0.5"
+        role="group"
+        aria-label="Transaction submission service"
+      >
+        <button
+          type="button"
+          onClick={() => setPreference('official')}
+          aria-pressed={submitVia === 'official'}
+          className={`rounded-md px-2.5 py-1 transition-colors ${
+            submitVia === 'official'
+              ? 'bg-[var(--surface-raised)] text-[var(--text-primary)]'
+              : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
+          }`}
+        >
+          {network === 'testnet' ? 'Testnet RPC' : 'Stellar RPC'}
+        </button>
+        <button
+          type="button"
+          onClick={() => setPreference('lumagg')}
+          aria-pressed={submitVia === 'lumagg'}
+          className={`rounded-md px-2.5 py-1 transition-colors ${
+            submitVia === 'lumagg'
+              ? 'bg-[var(--surface-raised)] text-[var(--text-primary)]'
+              : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
+          }`}
+        >
+          LumAgg API
+        </button>
+      </div>
+    </div>
   );
 }

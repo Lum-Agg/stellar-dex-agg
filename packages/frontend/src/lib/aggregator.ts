@@ -2,6 +2,8 @@
  * Aggregator API client for the frontend.
  */
 
+import { fetchJson } from '@/lib/fetch-json';
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
 
 export interface SubRoute {
@@ -137,10 +139,9 @@ export async function getQuote(
     params.set('max_splits', String(opts.maxSplits));
   }
 
-  const resp = await fetch(`${API_URL}/api/v1/quote?${params}`, {
+  const json = await fetchJson<QuoteResponse>(`${API_URL}/api/v1/quote?${params}`, {
     signal: opts.signal ?? signal,
   });
-  const json = (await resp.json()) as QuoteResponse;
   if (json.success && json.data) {
     json.data = normalizeQuoteData(json.data);
   }
@@ -162,7 +163,7 @@ export async function buildSwap(
     };
   }
 
-  const resp = await fetch(`${API_URL}/api/v1/build_tx`, {
+  return fetchJson(`${API_URL}/api/v1/build_tx`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -174,5 +175,4 @@ export async function buildSwap(
       sub_routes: buildTxSubRoutesFromQuote(quote.data.sub_routes),
     }),
   });
-  return resp.json();
 }

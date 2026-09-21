@@ -3,8 +3,8 @@
  * Instant swap continues to use aggregator.ts → NEXT_PUBLIC_API_URL.
  */
 
-import { Networks } from '@creit.tech/stellar-wallets-kit/types';
 import { decimalToAtomicUnits } from '@/lib/balance';
+import { fetchJson } from '@/lib/fetch-json';
 import { fetchLatestLedger as fetchLatestLedgerRpc, submitSignedTransaction } from '@/lib/rpc';
 
 /** Minimal token shape shared with TokenSelector (avoid circular imports). */
@@ -18,7 +18,7 @@ export interface LimitToken {
 }
 
 export const LIMIT_API_URL = process.env.NEXT_PUBLIC_LIMIT_API_URL?.trim() || '';
-export const LIMIT_NETWORK_PASSPHRASE = Networks.TESTNET;
+export const LIMIT_NETWORK_PASSPHRASE = 'Test SDF Network ; September 2015';
 
 /** Well-known testnet SACs for the Limit panel (not mainnet TokenSelector list). */
 export const TESTNET_TOKENS: LimitToken[] = [
@@ -59,6 +59,24 @@ export interface LimitOrder {
 export interface BuildOrderTxResult {
   unsignedTxXdr: string;
   contract?: string;
+}
+
+type BuildTxEnvelope = {
+  success?: boolean;
+  error?: string;
+  data?: Record<string, unknown>;
+};
+
+function parseBuildTxResponse(json: BuildTxEnvelope, fallbackError: string): BuildOrderTxResult {
+  if (!json.success || !json.data) throw new Error(json.error || fallbackError);
+  const unsignedTxXdr = json.data.unsigned_tx_xdr;
+  if (typeof unsignedTxXdr !== 'string' || unsignedTxXdr.trim() === '') {
+    throw new Error('The server returned an empty unsigned transaction');
+  }
+  return {
+    unsignedTxXdr,
+    contract: json.data.contract != null ? String(json.data.contract) : undefined,
+  };
 }
 
 export interface DcaOrder {
@@ -141,12 +159,11 @@ export async function fetchLatestLedger(): Promise<number> {
 export async function listOpenOrders(user: string): Promise<LimitOrder[]> {
   if (!isLimitApiConfigured()) throw new Error('Limit API not configured');
   const search = new URLSearchParams({ user, status: 'open' });
-  const resp = await fetch(`${LIMIT_API_URL}/api/v1/orders?${search}`);
-  const json = (await resp.json()) as {
+  const json = await fetchJson<{
     success?: boolean;
     error?: string;
     data?: { orders?: Record<string, unknown>[] };
-  };
+  }>(`${LIMIT_API_URL}/api/v1/orders?${search}`);
   if (!json.success) throw new Error(json.error || 'Failed to list orders');
   return (json.data?.orders || []).map((r) => ({
     orderId: Number(r.order_id ?? 0),
@@ -172,7 +189,7 @@ export async function buildCreateOrder(params: {
   expiresLedger: number;
 }): Promise<BuildOrderTxResult> {
   if (!isLimitApiConfigured()) throw new Error('Limit API not configured');
-  const resp = await fetch(`${LIMIT_API_URL}/api/v1/orders/build_create`, {
+  const json = await fetchJson<BuildTxEnvelope>(`${LIMIT_API_URL}/api/v1/orders/build_create`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -184,16 +201,7 @@ export async function buildCreateOrder(params: {
       expires_ledger: params.expiresLedger,
     }),
   });
-  const json = (await resp.json()) as {
-    success?: boolean;
-    error?: string;
-    data?: Record<string, unknown>;
-  };
-  if (!json.success || !json.data) throw new Error(json.error || 'build_create failed');
-  return {
-    unsignedTxXdr: String(json.data.unsigned_tx_xdr ?? ''),
-    contract: json.data.contract != null ? String(json.data.contract) : undefined,
-  };
+  return parseBuildTxResponse(json, 'build_create failed');
 }
 
 export async function buildCancelOrder(params: {
@@ -201,7 +209,7 @@ export async function buildCancelOrder(params: {
   orderId: number;
 }): Promise<BuildOrderTxResult> {
   if (!isLimitApiConfigured()) throw new Error('Limit API not configured');
-  const resp = await fetch(`${LIMIT_API_URL}/api/v1/orders/build_cancel`, {
+  const json = await fetchJson<BuildTxEnvelope>(`${LIMIT_API_URL}/api/v1/orders/build_cancel`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -209,22 +217,16 @@ export async function buildCancelOrder(params: {
       order_id: params.orderId,
     }),
   });
-  const json = (await resp.json()) as {
-    success?: boolean;
-    error?: string;
-    data?: Record<string, unknown>;
-  };
-  if (!json.success || !json.data) throw new Error(json.error || 'build_cancel failed');
-  return {
-    unsignedTxXdr: String(json.data.unsigned_tx_xdr ?? ''),
-    contract: json.data.contract != null ? String(json.data.contract) : undefined,
-  };
+  return parseBuildTxResponse(json, 'build_cancel failed');
 }
 
 export async function listDcaOrders(user: string): Promise<DcaOrder[]> {
   if (!isLimitApiConfigured()) throw new Error('Limit API not configured');
-  const resp = await fetch(`${LIMIT_API_URL}/api/v1/dca?${new URLSearchParams({ user })}`);
-  const json = await resp.json();
+  const json = await fetchJson<{
+    success?: boolean;
+    error?: string;
+    data?: { orders?: Record<string, unknown>[] };
+  }>(`${LIMIT_API_URL}/api/v1/dca?${new URLSearchParams({ user })}`);
   if (!json.success) throw new Error(json.error || 'Failed to list DCA orders');
   return (json.data?.orders || []).map((r: Record<string, unknown>) => ({
     orderId: Number(r.order_id),
@@ -254,7 +256,7 @@ export async function buildCreateDca(params: {
   expiresLedger: number;
 }): Promise<BuildOrderTxResult> {
   if (!isLimitApiConfigured()) throw new Error('Limit API not configured');
-  const resp = await fetch(`${LIMIT_API_URL}/api/v1/dca/build_create`, {
+  const json = await fetchJson<BuildTxEnvelope>(`${LIMIT_API_URL}/api/v1/dca/build_create`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -269,9 +271,7 @@ export async function buildCreateDca(params: {
       expires_ledger: params.expiresLedger,
     }),
   });
-  const json = await resp.json();
-  if (!json.success || !json.data) throw new Error(json.error || 'build_create DCA failed');
-  return { unsignedTxXdr: String(json.data.unsigned_tx_xdr), contract: json.data.contract };
+  return parseBuildTxResponse(json, 'build_create DCA failed');
 }
 
 export async function buildCancelDca(params: {
@@ -279,14 +279,12 @@ export async function buildCancelDca(params: {
   orderId: number;
 }): Promise<BuildOrderTxResult> {
   if (!isLimitApiConfigured()) throw new Error('Limit API not configured');
-  const resp = await fetch(`${LIMIT_API_URL}/api/v1/dca/build_cancel`, {
+  const json = await fetchJson<BuildTxEnvelope>(`${LIMIT_API_URL}/api/v1/dca/build_cancel`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ user: params.user, order_id: params.orderId }),
   });
-  const json = await resp.json();
-  if (!json.success || !json.data) throw new Error(json.error || 'build_cancel DCA failed');
-  return { unsignedTxXdr: String(json.data.unsigned_tx_xdr), contract: json.data.contract };
+  return parseBuildTxResponse(json, 'build_cancel DCA failed');
 }
 
 /** Submit signed XDR through limit api-server (or official testnet RPC if Advanced). */

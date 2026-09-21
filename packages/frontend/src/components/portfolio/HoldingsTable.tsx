@@ -1,9 +1,13 @@
 'use client';
 
+import Link from 'next/link';
 import { TokenIcon, type Token } from '@/components/TokenSelector';
 import { formatBalanceDisplay } from '@/lib/balance';
 import { Sparkline } from '@/components/Sparkline';
 import type { PriceHistoryPoint } from '@/lib/prices';
+import { NATIVE_CONTRACT } from '@/lib/tokenDisplay';
+
+const USDC_CONTRACT = 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75';
 
 export interface ValuedHolding {
   id: string;
@@ -53,6 +57,9 @@ export function HoldingsTable({ holdings }: { holdings: ValuedHolding[] }) {
               <th className="px-3 py-3 text-right font-medium">Balance</th>
               <th className="px-3 py-3 text-right font-medium">Price</th>
               <th className="px-4 py-3 text-right font-medium sm:px-5">Value</th>
+              <th className="w-20 px-4 py-3 text-right font-medium sm:px-5">
+                <span className="sr-only">Action</span>
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[var(--border)]">
@@ -89,6 +96,21 @@ export function HoldingsTable({ holdings }: { holdings: ValuedHolding[] }) {
                 </td>
                 <td className="px-4 py-3.5 text-right font-medium tabular-nums text-[var(--text-primary)] sm:px-5">
                   {formatUsd(holding.value)}
+                </td>
+                <td className="px-4 py-3.5 text-right sm:px-5">
+                  <Link
+                    href={{
+                      pathname: '/',
+                      query: {
+                        token_in: holding.id,
+                        token_out: holding.id === USDC_CONTRACT ? NATIVE_CONTRACT : USDC_CONTRACT,
+                      },
+                    }}
+                    className="inline-flex rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--text-secondary)] transition-colors hover:border-[var(--accent)]/40 hover:text-[var(--accent)]"
+                    aria-label={`Swap ${holding.symbol}`}
+                  >
+                    Swap
+                  </Link>
                 </td>
               </tr>
             ))}

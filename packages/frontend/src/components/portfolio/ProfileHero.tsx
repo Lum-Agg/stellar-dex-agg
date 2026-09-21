@@ -30,11 +30,21 @@ function formatUsd(value: number | null): string {
 export function ProfileHero({
   address,
   total,
+  holdingCount,
+  pricedHoldingCount,
   pricingLoading,
+  balancesLoading,
+  lastUpdatedAt,
+  onRefresh,
 }: {
   address: string;
   total: number | null;
+  holdingCount: number;
+  pricedHoldingCount: number;
   pricingLoading: boolean;
+  balancesLoading: boolean;
+  lastUpdatedAt: number | null;
+  onRefresh: () => void;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -79,12 +89,39 @@ export function ProfileHero({
       </div>
 
       <div>
+        <div className="mb-1 text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">
+          {pricedHoldingCount < holdingCount
+            ? 'Priced assets subtotal'
+            : 'Estimated portfolio value'}
+        </div>
         <div className="text-[36px] sm:text-[42px] font-semibold tracking-tight tabular-nums text-[var(--text-primary)]">
           {formatUsd(total)}
         </div>
-        <p className="mt-1 text-[13px] sm:text-[14px] text-[var(--text-muted)]">
-          {pricingLoading ? 'Updating prices…' : 'Valued via LumAgg quotes'}
-        </p>
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] sm:text-[14px] text-[var(--text-muted)]">
+          <span>
+            {pricingLoading
+              ? 'Updating prices…'
+              : `${pricedHoldingCount} of ${holdingCount} assets priced via LumAgg quotes`}
+          </span>
+          {lastUpdatedAt && (
+            <span className="tabular-nums">
+              Balances updated{' '}
+              {new Date(lastUpdatedAt).toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+              })}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={balancesLoading}
+            className="font-medium text-[var(--text-secondary)] hover:text-[var(--accent)] disabled:cursor-wait disabled:opacity-50 transition-colors"
+          >
+            {balancesLoading ? 'Refreshing…' : 'Refresh balances'}
+          </button>
+        </div>
       </div>
     </section>
   );

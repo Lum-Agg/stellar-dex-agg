@@ -1,3 +1,5 @@
+import { fetchJson } from '@/lib/fetch-json';
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
 
 export type UserSwap = {
@@ -27,10 +29,13 @@ export async function fetchUserSwaps(
     limit: String(opts?.limit ?? 20),
   });
   if (opts?.cursor) qs.set('cursor', opts.cursor);
-  const resp = await fetch(`${API_URL}/api/v1/swaps?${qs}`);
-  const json = await resp.json();
-  if (!resp.ok || !json.success) {
-    throw new Error(json.error || `swaps HTTP ${resp.status}`);
+  const json = await fetchJson<{
+    success?: boolean;
+    error?: string;
+    data?: { swaps?: UserSwap[]; next_cursor?: string | null };
+  }>(`${API_URL}/api/v1/swaps?${qs}`);
+  if (!json.success) {
+    throw new Error(json.error || 'Failed to fetch swaps');
   }
   return {
     swaps: json.data?.swaps ?? [],

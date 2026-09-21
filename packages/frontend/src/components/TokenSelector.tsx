@@ -1,10 +1,12 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useId, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import Image from 'next/image';
 import { displayTokenSymbol, NATIVE_CONTRACT } from '@/lib/tokenDisplay';
 import { useAccountBalances } from '@/lib/account-balances-context';
 import { formatBalanceDisplay } from '@/lib/balance';
+import { fetchJson } from '@/lib/fetch-json';
 
 export interface Token {
   id: string;
@@ -72,51 +74,101 @@ const PRIORITY_TOKENS: Token[] = [
 // Export for SwapCard default
 export const TOKENS: Token[] = PRIORITY_TOKENS;
 
-export function useTokenList() {
-  const [tokens, setTokens] = useState<Token[]>(PRIORITY_TOKENS);
-  const [loaded, setLoaded] = useState(false);
+type TokenApiResponse = {
+  tokens?: Array<{
+    id: string;
+    symbol: string;
+    name: string;
+    logo?: string | null;
+  }>;
+};
+
+let tokenCatalogCache: Token[] | null = null;
+let tokenCatalogRequest: Promise<Token[]> | null = null;
+
+function normalizeTokenCatalog(data: TokenApiResponse): Token[] {
+  if (!Array.isArray(data.tokens)) return PRIORITY_TOKENS;
+
+  const apiTokens: Token[] = data.tokens
+    .filter(
+      (token) =>
+        token &&
+        typeof token.id === 'string' &&
+        typeof token.symbol === 'string' &&
+        typeof token.name === 'string' &&
+        token.name !== 'Unknown',
+    )
+    .map((token) => ({
+      id: token.id,
+      symbol: displayTokenSymbol(token.symbol, token.id),
+      name: token.name,
+      decimals: 7,
+      color: getColor(token.symbol),
+      logo: typeof token.logo === 'string' && token.logo.length > 0 ? token.logo : undefined,
+    }));
+  const byId = new Map(apiTokens.map((token) => [token.id, token]));
+  const priorityIds = new Set(PRIORITY_TOKENS.map((token) => token.id));
+  const mergedPriority = PRIORITY_TOKENS.map((priorityToken) => {
+    const apiToken = byId.get(priorityToken.id);
+    const symbol = displayTokenSymbol(apiToken?.symbol ?? priorityToken.symbol, priorityToken.id);
+    return {
+      ...priorityToken,
+      symbol,
+      name: apiToken?.name ?? priorityToken.name,
+      color: getColor(symbol),
+      logo: apiToken?.logo,
+    };
+  });
+
+  return [...mergedPriority, ...apiTokens.filter((token) => !priorityIds.has(token.id))];
+}
+
+function loadTokenCatalog(): Promise<Token[]> {
+  if (tokenCatalogCache) return Promise.resolve(tokenCatalogCache);
+  if (tokenCatalogRequest) return tokenCatalogRequest;
+
+  tokenCatalogRequest = fetchJson<TokenApiResponse>(`${API_URL}/api/v1/tokens`)
+    .then((data) => {
+      tokenCatalogCache = normalizeTokenCatalog(data);
+      return tokenCatalogCache;
+    })
+    .finally(() => {
+      tokenCatalogRequest = null;
+    });
+
+  return tokenCatalogRequest;
+}
+
+export function useTokenCatalog(enabled = true): { tokens: Token[]; loaded: boolean } {
+  const [tokens, setTokens] = useState<Token[]>(() => tokenCatalogCache ?? PRIORITY_TOKENS);
+  const [loaded, setLoaded] = useState(() => tokenCatalogCache !== null || !enabled);
 
   useEffect(() => {
-    if (loaded) return;
-    fetch(`${API_URL}/api/v1/tokens`)
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.tokens) {
-          // Only show tokens that have a real name (not "Unknown")
-          const apiTokens: Token[] = data.tokens
-            .filter((t: any) => t.name !== 'Unknown')
-            .map((t: any) => ({
-              id: t.id,
-              symbol: displayTokenSymbol(t.symbol, t.id),
-              name: t.name,
-              decimals: 7,
-              color: getColor(t.symbol),
-              logo: typeof t.logo === 'string' && t.logo.length > 0 ? t.logo : undefined,
-            }));
-          const byId = new Map(apiTokens.map((t) => [t.id, t]));
-          const priorityIds = new Set(PRIORITY_TOKENS.map((t) => t.id));
-          // Merge API logos/names into priority rows (API used to exclude these ids entirely).
-          const mergedPriority = PRIORITY_TOKENS.map((p) => {
-            const api = byId.get(p.id);
-            const logo = api?.logo;
-            const symbol = displayTokenSymbol(api?.symbol ?? p.symbol, p.id);
-            return {
-              ...p,
-              symbol,
-              name: api?.name ?? p.name,
-              color: getColor(symbol),
-              logo,
-            };
-          });
-          const others = apiTokens.filter((t) => !priorityIds.has(t.id));
-          setTokens([...mergedPriority, ...others]);
-        }
-        setLoaded(true);
-      })
-      .catch(() => setLoaded(true));
-  }, [loaded]);
+    if (!enabled) {
+      setLoaded(true);
+      return;
+    }
 
-  return tokens;
+    let cancelled = false;
+    void loadTokenCatalog()
+      .then((catalog) => {
+        if (!cancelled) setTokens(catalog);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setLoaded(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled]);
+
+  return { tokens, loaded };
+}
+
+export function useTokenList(): Token[] {
+  return useTokenCatalog().tokens;
 }
 
 export function TokenIcon({ token, size = 28 }: { token: Token; size?: number }) {
@@ -127,11 +179,13 @@ export function TokenIcon({ token, size = 28 }: { token: Token; size?: number })
 
   if (token.logo && !imgError) {
     return (
-      <img
+      <Image
         src={token.logo}
         alt={token.symbol}
+        width={size}
+        height={size}
+        unoptimized
         className="rounded-full ring-1 ring-white/10"
-        style={{ width: size, height: size }}
         onError={() => setImgError(true)}
       />
     );
@@ -167,7 +221,10 @@ export function TokenSelector({
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
-  const mainnetTokens = useTokenList();
+  const titleId = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const { tokens: mainnetTokens } = useTokenCatalog(tokensOverride === undefined);
   const tokens = tokensOverride ?? mainnetTokens;
   const { getBalance, ready: balancesReady } = useAccountBalances();
 
@@ -176,6 +233,7 @@ export function TokenSelector({
 
   const filtered = useMemo(() => {
     const matched = tokens.filter((t) => {
+      if (t.id === exclude && !onSelectExcluded) return false;
       const matchesBasic =
         t.symbol.toLowerCase().includes(qLower) ||
         t.name.toLowerCase().includes(qLower) ||
@@ -199,22 +257,65 @@ export function TokenSelector({
       if (aOwned !== bOwned) return aOwned ? -1 : 1;
       return 0;
     });
-  }, [tokens, qLower, balancesReady, getBalance]);
+  }, [tokens, qLower, balancesReady, getBalance, exclude, onSelectExcluded]);
+
+  const closeSelector = useCallback(() => {
+    setOpen(false);
+    setSearch('');
+    queueMicrotask(() => triggerRef.current?.focus());
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const previousOverflow = document.body.style.overflow;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeSelector();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+
+      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+      );
+      if (!focusable?.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.body.style.overflow = 'hidden';
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [closeSelector, open]);
 
   const exactIdMatch =
     filtered.length === 1 && q.length > 0 && qLower === filtered[0].id.toLowerCase();
 
   const selectExactMatch = () => {
     onSelect(filtered[0]);
-    setOpen(false);
-    setSearch('');
+    closeSelector();
   };
 
   return (
     <div className="relative">
       <button
-        onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 bg-[var(--surface-raised)] hover:bg-[var(--bg-0)] border border-[var(--border)] rounded-xl px-3.5 py-2.5 transition-colors"
+        ref={triggerRef}
+        type="button"
+        onClick={() => (open ? closeSelector() : setOpen(true))}
+        className="flex items-center gap-1.5 sm:gap-2 bg-[var(--surface-raised)] hover:bg-[var(--bg-0)] border border-[var(--border)] rounded-xl px-2.5 sm:px-3.5 py-2.5 transition-colors"
+        aria-haspopup="dialog"
+        aria-expanded={open}
       >
         <TokenIcon token={selected} size={24} />
         <span className="font-medium text-[15px] text-[var(--text-primary)]">
@@ -235,27 +336,34 @@ export function TokenSelector({
         createPortal(
           <div
             className="fixed inset-0 z-[200] flex items-center justify-center bg-black/75 backdrop-blur-[2px]"
-            onClick={() => {
-              setOpen(false);
-              setSearch('');
-            }}
+            role="presentation"
+            onClick={closeSelector}
           >
             <div
-              className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl w-full max-w-md mx-4 overflow-hidden"
+              ref={dialogRef}
+              className="flex max-h-[calc(100dvh-2rem)] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] mx-4"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby={titleId}
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)]">
-                <h3 className="text-[15px] font-semibold text-[var(--text-primary)]">
+                <h3 id={titleId} className="text-[15px] font-semibold text-[var(--text-primary)]">
                   Select a token
                 </h3>
                 <button
-                  onClick={() => {
-                    setOpen(false);
-                    setSearch('');
-                  }}
+                  type="button"
+                  onClick={closeSelector}
                   className="text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                  aria-label="Close token selector"
                 >
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg
+                    className="w-5 h-5"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    aria-hidden
+                  >
                     <path
                       strokeLinecap="round"
                       strokeLinejoin="round"
@@ -297,21 +405,21 @@ export function TokenSelector({
               )}
 
               {/* Token list */}
-              <div className="max-h-[400px] overflow-y-auto px-2 pb-4">
+              <div className="min-h-0 max-h-[400px] flex-1 overflow-y-auto px-2 pb-4">
                 {filtered.slice(0, 50).map((token) => {
                   const bal = balancesReady ? getBalance(token.id) : null;
                   const isExcluded = token.id === exclude;
                   return (
                     <button
                       key={token.id}
+                      type="button"
                       onClick={() => {
                         if (isExcluded && onSelectExcluded) {
                           onSelectExcluded(token);
                         } else {
                           onSelect(token);
                         }
-                        setOpen(false);
-                        setSearch('');
+                        closeSelector();
                       }}
                       className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-colors ${
                         token.id === selected.id

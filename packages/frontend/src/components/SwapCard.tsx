@@ -1,30 +1,21 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import Link from 'next/link';
 import { getQuote, type QuoteData } from '@/lib/aggregator';
-import {
-  decimalToAtomicUnits,
-  formatBalanceDisplay,
-  percentToAmountInput,
-} from '@/lib/balance';
+import { decimalToAtomicUnits, formatBalanceDisplay, percentToAmountInput } from '@/lib/balance';
 import { useAccountBalances } from '@/lib/account-balances-context';
 import { useWallet } from '@/lib/wallet-context';
 import { RouteDisplay } from './RouteDisplay';
-import { TokenSelector, type Token, TOKENS, useTokenList } from './TokenSelector';
+import { TokenSelector, type Token, TOKENS, useTokenCatalog } from './TokenSelector';
 import { displayTokenSymbol, NATIVE_CONTRACT } from '@/lib/tokenDisplay';
 import { SWAP_SUCCESS_EVENT } from '@/lib/swaps';
-import { submitTransaction } from '@/lib/wallet';
-import { waitForTxConfirmation } from '@/lib/rpc';
-import {
-  buildChangeTrustXdr,
-  canAddTrustlineForSac,
-  resolveClassicAssetForSac,
-  type ClassicAssetRef,
-} from '@/lib/trustline';
+import type { ClassicAssetRef } from '@/lib/trustline';
 import { SubmitViaToggle } from '@/components/SubmitViaToggle';
 import { SwapSettingsModal } from '@/components/SwapSettingsModal';
 import { subRoutesForBuild } from '@/lib/routeDisplay';
-import { resolveTokenSelection } from '@/lib/swap-selection';
+import { resolveTokenSelection, resolveUrlTokenPair } from '@/lib/swap-selection';
+import { fetchJson } from '@/lib/fetch-json';
 import {
   DEFAULT_SWAP_SETTINGS,
   formatSlippageLabel,
@@ -35,6 +26,50 @@ import {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
 
+function canAddTrustlineForSac(contractId: string): boolean {
+  if (!contractId || contractId === NATIVE_CONTRACT || contractId === 'native') return false;
+  return contractId.startsWith('C') && contractId.length === 56;
+}
+
+function friendlyTransactionError(error?: string): string {
+  if (!error) return 'The transaction failed. Please refresh the quote and try again.';
+  const normalized = error.toLowerCase();
+
+  if (normalized.includes('insufficient') || normalized.includes('balance')) {
+    return 'Your wallet does not have enough balance for this transaction.';
+  }
+  if (normalized.includes('trustline') || normalized.includes('change trust')) {
+    return 'This asset needs a trustline before your wallet can receive it.';
+  }
+  if (
+    normalized.includes('out of date') ||
+    normalized.includes('expired') ||
+    normalized.includes('slippage') ||
+    normalized.includes('minimum output') ||
+    normalized.includes('output below')
+  ) {
+    return 'The quote expired or moved beyond your slippage limit. Refresh the route and try again.';
+  }
+  if (
+    normalized.includes('fetch') ||
+    normalized.includes('network') ||
+    normalized.includes('timeout') ||
+    normalized.includes('rpc') ||
+    normalized.includes('unavailable')
+  ) {
+    return 'The Stellar network or quote service is temporarily unavailable. Please try again.';
+  }
+  if (
+    normalized.includes('reject') ||
+    normalized.includes('decline') ||
+    normalized.includes('cancel')
+  ) {
+    return 'The request was cancelled or rejected in your wallet.';
+  }
+
+  return error;
+}
+
 export function SwapCard() {
   const [tokenIn, setTokenIn] = useState<Token>(TOKENS[0]);
   const [tokenOut, setTokenOut] = useState<Token>(TOKENS[1]);
@@ -42,6 +77,9 @@ export function SwapCard() {
   const [settings, setSettings] = useState<SwapSettings>(DEFAULT_SWAP_SETTINGS);
   const [settingsReady, setSettingsReady] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [urlSelectionNotice, setUrlSelectionNotice] = useState<string | null>(null);
+  const [pairLinkCopied, setPairLinkCopied] = useState(false);
+  const [urlSelectionReady, setUrlSelectionReady] = useState(false);
   const [quote, setQuote] = useState<QuoteData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -56,9 +94,9 @@ export function SwapCard() {
     refresh: refreshBalances,
   } = useAccountBalances();
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const quoteAbortRef = useRef<AbortController | null>(null);
   const quoteFingerprintRef = useRef('');
-  const urlSelectionReadyRef = useRef(false);
-  const tokenList = useTokenList();
+  const { tokens: tokenList, loaded: tokenListLoaded } = useTokenCatalog();
   const { slippage, maxHops, maxSplits } = settings;
   const quoteFingerprint = `${tokenIn.id}:${tokenOut.id}:${amountIn}:${slippage}:${maxHops}:${maxSplits}`;
   quoteFingerprintRef.current = quoteFingerprint;
@@ -84,13 +122,13 @@ export function SwapCard() {
 
   // Restore shared swap links after the async token catalog is available.
   useEffect(() => {
-    if (urlSelectionReadyRef.current || typeof window === 'undefined') return;
+    if (urlSelectionReady || typeof window === 'undefined') return;
 
     const params = new URLSearchParams(window.location.search);
     const requestedIn = params.get('token_in');
     const requestedOut = params.get('token_out');
     if (!requestedIn && !requestedOut) {
-      urlSelectionReadyRef.current = true;
+      setUrlSelectionReady(true);
       return;
     }
 
@@ -103,27 +141,47 @@ export function SwapCard() {
 
     // Keep waiting for the API token catalog when a non-priority token is in the URL.
     if ((requestedIn && !nextIn) || (requestedOut && !nextOut)) {
-      if (tokenList.length <= TOKENS.length) return;
-      urlSelectionReadyRef.current = true;
+      if (!tokenListLoaded) return;
+      const missingSides = [
+        requestedIn && !nextIn ? 'sell' : null,
+        requestedOut && !nextOut ? 'buy' : null,
+      ]
+        .filter(Boolean)
+        .join(' and ');
+      setUrlSelectionNotice(`The ${missingSides} token from this link is not available.`);
+      setUrlSelectionReady(true);
       return;
     }
 
-    if (nextIn && nextOut && nextIn.id !== nextOut.id) {
-      setTokenIn(nextIn);
-      setTokenOut(nextOut);
+    const resolved = resolveUrlTokenPair({
+      currentIn: tokenIn,
+      currentOut: tokenOut,
+      requestedIn: nextIn,
+      requestedOut: nextOut,
+      available: tokenList,
+    });
+    if (resolved.sameTokenRejected) {
+      setUrlSelectionNotice('The sell and buy token must be different. The default pair was kept.');
+    } else {
+      setTokenIn(resolved.tokenIn);
+      setTokenOut(resolved.tokenOut);
       setQuote(null);
     }
-    urlSelectionReadyRef.current = true;
-  }, [tokenList]);
+    setUrlSelectionReady(true);
+  }, [tokenIn, tokenList, tokenListLoaded, tokenOut, urlSelectionReady]);
 
   // Keep the current pair shareable without adding history entries on every change.
   useEffect(() => {
-    if (!urlSelectionReadyRef.current || typeof window === 'undefined') return;
+    if (!urlSelectionReady || typeof window === 'undefined') return;
     const url = new URL(window.location.href);
     url.searchParams.set('token_in', tokenIn.id);
     url.searchParams.set('token_out', tokenOut.id);
-    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
-  }, [tokenIn.id, tokenOut.id]);
+    window.history.replaceState(
+      window.history.state,
+      '',
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  }, [tokenIn.id, tokenOut.id, urlSelectionReady]);
 
   const loadQuote = useCallback(
     async (opts?: { silent?: boolean }) => {
@@ -131,9 +189,16 @@ export function SwapCard() {
       const requestFingerprint = `${tokenIn.id}:${tokenOut.id}:${amountIn}:${slippage}:${maxHops}:${maxSplits}`;
 
       if (!amountIn || parseFloat(amountIn) <= 0) {
+        quoteAbortRef.current?.abort();
+        quoteAbortRef.current = null;
         setQuote(null);
+        setLoading(false);
         return;
       }
+
+      quoteAbortRef.current?.abort();
+      const controller = new AbortController();
+      quoteAbortRef.current = controller;
 
       if (!silent) {
         setLoading(true);
@@ -146,6 +211,7 @@ export function SwapCard() {
           slippage,
           maxHops,
           maxSplits,
+          signal: controller.signal,
         });
 
         if (requestFingerprint !== quoteFingerprintRef.current) return;
@@ -158,12 +224,20 @@ export function SwapCard() {
           setError(result.error || 'No route found');
         }
       } catch (err) {
+        if (controller.signal.aborted) return;
         if (!silent && requestFingerprint === quoteFingerprintRef.current) {
           setQuote(null);
           setError(err instanceof Error ? err.message : 'Failed to fetch quote');
         }
       } finally {
-        if (!silent && requestFingerprint === quoteFingerprintRef.current) {
+        if (quoteAbortRef.current === controller) {
+          quoteAbortRef.current = null;
+        }
+        if (
+          !silent &&
+          !controller.signal.aborted &&
+          requestFingerprint === quoteFingerprintRef.current
+        ) {
           setLoading(false);
         }
       }
@@ -190,6 +264,8 @@ export function SwapCard() {
     };
   }, [amountIn, loadQuote, settingsReady]);
 
+  useEffect(() => () => quoteAbortRef.current?.abort(), []);
+
   useEffect(() => {
     if (!settingsReady) return;
     if (!amountIn || parseFloat(amountIn) <= 0) return;
@@ -207,6 +283,19 @@ export function SwapCard() {
     setQuote(null);
     setAmountIn('');
   };
+
+  const copyPairLink = useCallback(async () => {
+    try {
+      const shareUrl = new URL('/', window.location.origin);
+      shareUrl.searchParams.set('token_in', tokenIn.id);
+      shareUrl.searchParams.set('token_out', tokenOut.id);
+      await navigator.clipboard.writeText(shareUrl.toString());
+      setPairLinkCopied(true);
+      window.setTimeout(() => setPairLinkCopied(false), 2000);
+    } catch {
+      setUrlSelectionNotice('Could not copy the link. Copy it from your browser address bar.');
+    }
+  }, [tokenIn.id, tokenOut.id]);
 
   const handleTokenInSelect = useCallback(
     (next: Token) => {
@@ -272,9 +361,7 @@ export function SwapCard() {
   useEffect(() => {
     let cancelled = false;
     const needsResolve =
-      walletAddress !== null &&
-      outputHasTrustline === false &&
-      canAddTrustlineForSac(tokenOut.id);
+      walletAddress !== null && outputHasTrustline === false && canAddTrustlineForSac(tokenOut.id);
 
     if (!needsResolve) {
       setResolvedClassicAsset(null);
@@ -284,7 +371,8 @@ export function SwapCard() {
 
     setResolvingClassicAsset(true);
     setResolvedClassicAsset(null);
-    void resolveClassicAssetForSac(tokenOut.id)
+    void import('@/lib/trustline')
+      .then(({ resolveClassicAssetForSac }) => resolveClassicAssetForSac(tokenOut.id))
       .then((asset) => {
         if (cancelled) return;
         setResolvedClassicAsset(asset);
@@ -367,7 +455,11 @@ export function SwapCard() {
         })),
       }));
 
-      const buildResp = await fetch(`${API_URL}/api/v1/build_tx`, {
+      const buildData = await fetchJson<{
+        success: boolean;
+        data?: { unsigned_tx_xdr?: string };
+        error?: string;
+      }>(`${API_URL}/api/v1/build_tx`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -379,7 +471,6 @@ export function SwapCard() {
           sub_routes,
         }),
       });
-      const buildData = await buildResp.json();
 
       if (!buildData.success || !buildData.data?.unsigned_tx_xdr) {
         setTxResult({ success: false, error: buildData.error || 'Failed to build transaction' });
@@ -390,6 +481,10 @@ export function SwapCard() {
       const signedXdr = await signTx(buildData.data.unsigned_tx_xdr);
 
       // 3. Submit (api-server by default, or official RPC if Advanced is on)
+      const [{ submitTransaction }, { waitForTxConfirmation }] = await Promise.all([
+        import('@/lib/wallet'),
+        import('@/lib/rpc'),
+      ]);
       const submitResult = await submitTransaction(signedXdr);
 
       if (submitResult.success) {
@@ -424,7 +519,7 @@ export function SwapCard() {
     signTx,
     refreshBalances,
     getBalance,
-    ensureBalance
+    ensureBalance,
   ]);
 
   const handleAddTrustline = useCallback(async () => {
@@ -433,8 +528,13 @@ export function SwapCard() {
     setAddingTrustline(true);
     setTxResult(null);
     try {
+      const [trustline, { submitTransaction }, { waitForTxConfirmation }] = await Promise.all([
+        import('@/lib/trustline'),
+        import('@/lib/wallet'),
+        import('@/lib/rpc'),
+      ]);
       const asset =
-        resolvedClassicAsset ?? (await resolveClassicAssetForSac(tokenOut.id));
+        resolvedClassicAsset ?? (await trustline.resolveClassicAssetForSac(tokenOut.id));
       if (!asset) {
         setTxResult({
           success: false,
@@ -444,7 +544,7 @@ export function SwapCard() {
       }
       setResolvedClassicAsset(asset);
 
-      const unsignedXdr = await buildChangeTrustXdr(walletAddress, asset);
+      const unsignedXdr = await trustline.buildChangeTrustXdr(walletAddress, asset);
       const signedXdr = await signTx(unsignedXdr);
       const result = await submitTransaction(signedXdr);
       if (result.success) {
@@ -534,42 +634,69 @@ export function SwapCard() {
 
   return (
     <div className="w-full max-w-none space-y-3">
-      <div className="surface-panel p-5 sm:p-6">
-        <div className="flex items-center justify-between mb-5">
+      <div className="surface-panel p-4 sm:p-6">
+        <div className="flex items-center justify-between mb-5 gap-3">
           <h2 className="text-[17px] sm:text-[18px] font-semibold tracking-tight text-[var(--text-primary)]">
             Swap
           </h2>
-          <button
-            type="button"
-            onClick={() => setSettingsOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-strong)] bg-[var(--bg-0)]/40 px-2.5 py-1.5 text-[13px] text-[var(--text-secondary)] transition-colors hover:border-[var(--accent)]/40 hover:text-[var(--text-primary)]"
-            aria-label={`Swap settings, slippage ${formatSlippageLabel(slippage)}`}
-          >
-            <span className="tabular-nums font-medium text-[var(--text-primary)]">
-              {formatSlippageLabel(slippage)}
-            </span>
-            <svg
-              className="h-3.5 w-3.5 text-[var(--text-muted)]"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              aria-hidden
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void copyPairLink()}
+              className="rounded-full border border-[var(--border)] bg-[var(--bg-0)]/40 px-2.5 py-1.5 text-[12px] font-medium text-[var(--text-muted)] transition-colors hover:border-[var(--accent)]/40 hover:text-[var(--accent)]"
+              aria-label={pairLinkCopied ? 'Copied' : 'Copy link for this token pair'}
             >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 15.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7z"
-              />
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"
-              />
-            </svg>
-          </button>
+              {pairLinkCopied ? 'Copied' : 'Copy link'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-strong)] bg-[var(--bg-0)]/40 px-2.5 py-1.5 text-[13px] text-[var(--text-secondary)] transition-colors hover:border-[var(--accent)]/40 hover:text-[var(--text-primary)]"
+              aria-label={`Swap settings, slippage ${formatSlippageLabel(slippage)}`}
+            >
+              <span className="tabular-nums font-medium text-[var(--text-primary)]">
+                {formatSlippageLabel(slippage)}
+              </span>
+              <svg
+                className="h-3.5 w-3.5 text-[var(--text-muted)]"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                aria-hidden
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 15.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7z"
+                />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"
+                />
+              </svg>
+            </button>
+          </div>
         </div>
+
+        {urlSelectionNotice && (
+          <div
+            role="status"
+            className="mb-4 flex items-start justify-between gap-3 rounded-xl border border-amber-500/15 bg-amber-500/[0.04] px-3 py-2.5 text-[12px] text-amber-100/80"
+          >
+            <span>{urlSelectionNotice}</span>
+            <button
+              type="button"
+              onClick={() => setUrlSelectionNotice(null)}
+              className="shrink-0 text-amber-100/60 hover:text-amber-100"
+              aria-label="Dismiss message"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
 
         <SwapSettingsModal
           open={settingsOpen}
@@ -599,6 +726,7 @@ export function SwapCard() {
             <input
               type="text"
               inputMode="decimal"
+              aria-label={`Amount of ${tokenIn.symbol} to sell`}
               value={amountIn}
               onChange={(e) => {
                 const val = e.target.value;
@@ -635,14 +763,17 @@ export function SwapCard() {
 
         <div className="flex justify-center -my-2.5 relative z-10">
           <button
+            type="button"
             onClick={swapDirection}
             className="w-10 h-10 rounded-xl bg-[var(--bg-0)] border border-[var(--border)] flex items-center justify-center hover:border-[var(--border-strong)] hover:bg-[var(--surface-raised)] transition-colors group"
+            aria-label="Swap sell and buy tokens"
           >
             <svg
               className="w-4 h-4 text-[var(--text-muted)] group-hover:text-[var(--accent)] transition-colors"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
+              aria-hidden
             >
               <path
                 strokeLinecap="round"
@@ -666,7 +797,7 @@ export function SwapCard() {
                   {formatOutput(quote.expected_output)}
                 </span>
               ) : (
-                <span className="text-[var(--text-muted)]/60">0.0</span>
+                <span className="text-[var(--text-muted)]">0.0</span>
               )}
             </div>
             <TokenSelector
@@ -703,10 +834,11 @@ export function SwapCard() {
         )}
 
         {error && !loading && (
-          <div className="mt-3 text-[13px] text-red-300/90 border border-red-500/15 bg-red-500/[0.05] rounded-xl px-3 py-2.5 text-center">
-            {error === 'Failed to fetch quote'
-              ? 'Unable to load quote. Please retry in a moment.'
-              : error}
+          <div
+            role="alert"
+            className="mt-3 text-[13px] text-red-300/90 border border-red-500/15 bg-red-500/[0.05] rounded-xl px-3 py-2.5 text-center"
+          >
+            {friendlyTransactionError(error)}
           </div>
         )}
 
@@ -733,24 +865,48 @@ export function SwapCard() {
 
         {txResult && (
           <div
+            role={txResult.success ? 'status' : 'alert'}
+            aria-live="polite"
             className={`mt-3 p-3 rounded-xl text-[13px] border ${txResult.success ? 'bg-emerald-500/[0.06] border-emerald-500/20 text-emerald-300' : 'bg-red-500/[0.05] border-red-500/15 text-red-300'}`}
           >
             {txResult.success ? (
-              <div>
-                {txResult.kind === 'trustline'
-                  ? 'Trustline added. You can swap now. '
-                  : 'Swap submitted successfully. '}
-                <a
-                  href={`https://stellar.expert/explorer/public/tx/${txResult.hash}`}
-                  target="_blank"
-                  rel="noopener"
-                  className="underline"
-                >
-                  View transaction
-                </a>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <span>
+                  {txResult.kind === 'trustline'
+                    ? 'Trustline added. You can swap now.'
+                    : 'Swap confirmed successfully.'}
+                </span>
+                <div className="flex flex-wrap items-center gap-3 font-medium">
+                  <a
+                    href={`https://stellar.expert/explorer/public/tx/${txResult.hash}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline underline-offset-2 hover:text-emerald-200"
+                  >
+                    View transaction ↗
+                  </a>
+                  {txResult.kind === 'swap' && (
+                    <Link
+                      href="/portfolio"
+                      className="underline underline-offset-2 hover:text-emerald-200"
+                    >
+                      View portfolio
+                    </Link>
+                  )}
+                </div>
               </div>
             ) : (
-              <div>{txResult.error}</div>
+              <div>
+                <div>{friendlyTransactionError(txResult.error)}</div>
+                {txResult.error && friendlyTransactionError(txResult.error) !== txResult.error && (
+                  <details className="mt-2 text-[11px] text-red-200/60">
+                    <summary className="cursor-pointer">Technical details</summary>
+                    <div className="mt-1 break-words font-[family-name:var(--font-mono)]">
+                      {txResult.error}
+                    </div>
+                  </details>
+                )}
+              </div>
             )}
           </div>
         )}

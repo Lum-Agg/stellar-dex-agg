@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveTokenSelection } from './swap-selection';
+import { resolveTokenSelection, resolveUrlTokenPair } from './swap-selection';
 
 type Token = {
   id: string;
@@ -37,5 +37,53 @@ describe('resolveTokenSelection', () => {
       other: USDC,
       swapped: false,
     });
+  });
+});
+
+describe('resolveUrlTokenPair', () => {
+  it('applies a complete requested pair', () => {
+    expect(
+      resolveUrlTokenPair({
+        currentIn: XLM,
+        currentOut: USDC,
+        requestedIn: AQUA,
+        requestedOut: XLM,
+        available: [XLM, USDC, AQUA],
+      }),
+    ).toEqual({ tokenIn: AQUA, tokenOut: XLM, sameTokenRejected: false });
+  });
+
+  it('moves the current input token to output when only input would duplicate it', () => {
+    expect(
+      resolveUrlTokenPair({
+        currentIn: XLM,
+        currentOut: USDC,
+        requestedIn: USDC,
+        available: [XLM, USDC, AQUA],
+      }),
+    ).toEqual({ tokenIn: USDC, tokenOut: XLM, sameTokenRejected: false });
+  });
+
+  it('chooses another input when only output would duplicate it', () => {
+    expect(
+      resolveUrlTokenPair({
+        currentIn: XLM,
+        currentOut: USDC,
+        requestedOut: XLM,
+        available: [XLM, USDC, AQUA],
+      }),
+    ).toEqual({ tokenIn: USDC, tokenOut: XLM, sameTokenRejected: false });
+  });
+
+  it('rejects a complete same-token pair and keeps the defaults', () => {
+    expect(
+      resolveUrlTokenPair({
+        currentIn: XLM,
+        currentOut: USDC,
+        requestedIn: AQUA,
+        requestedOut: AQUA,
+        available: [XLM, USDC, AQUA],
+      }),
+    ).toEqual({ tokenIn: XLM, tokenOut: USDC, sameTokenRejected: true });
   });
 });

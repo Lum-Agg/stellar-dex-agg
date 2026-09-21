@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useWallet } from '@/lib/wallet-context';
 import {
   TESTNET_TOKENS,
@@ -27,24 +27,30 @@ export function OpenOrders({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<number | null>(null);
+  const loadRequestId = useRef(0);
 
   const configured = isLimitApiConfigured();
 
   const load = useCallback(async () => {
+    const requestId = ++loadRequestId.current;
     if (!address || !configured) {
       setOrders([]);
+      setError(null);
+      setLoading(false);
       return;
     }
     setLoading(true);
     setError(null);
     try {
       const rows = await listOpenOrders(address);
-      setOrders(rows);
+      if (requestId === loadRequestId.current) setOrders(rows);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to load orders');
-      setOrders([]);
+      if (requestId === loadRequestId.current) {
+        setError(err instanceof Error ? err.message : 'Failed to load orders');
+        setOrders([]);
+      }
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestId.current) setLoading(false);
     }
   }, [address, configured]);
 
@@ -114,7 +120,9 @@ export function OpenOrders({
           to see open limit orders.
         </p>
       ) : loading && orders.length === 0 ? (
-        <p className="text-[13px] text-[var(--text-muted)]">Loading…</p>
+        <p role="status" className="text-[13px] text-[var(--text-muted)]">
+          Loading…
+        </p>
       ) : orders.length === 0 ? (
         <p className="text-[13px] text-[var(--text-muted)]">No open orders.</p>
       ) : (
@@ -153,7 +161,10 @@ export function OpenOrders({
       )}
 
       {error && (
-        <p className="mt-3 text-[13px] text-red-300/90 border border-red-500/15 bg-red-500/[0.05] rounded-xl px-3 py-2.5">
+        <p
+          role="alert"
+          className="mt-3 text-[13px] text-red-300/90 border border-red-500/15 bg-red-500/[0.05] rounded-xl px-3 py-2.5"
+        >
           {error}
         </p>
       )}

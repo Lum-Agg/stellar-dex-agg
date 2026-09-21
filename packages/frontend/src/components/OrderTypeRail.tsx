@@ -54,12 +54,12 @@ export function OrderTypeRail({
               onClick={() => {
                 onSelect?.(item.id);
               }}
-              className={`relative flex items-center rounded-xl px-3 py-2.5 text-[15px] font-medium whitespace-nowrap text-left w-full transition-colors ${
+              className={`relative flex min-w-0 flex-1 items-center justify-center rounded-xl px-3 py-2.5 text-[15px] font-medium whitespace-nowrap text-left transition-colors sm:w-full sm:flex-none sm:justify-start ${
                 isActive
                   ? 'bg-[var(--surface-raised)] text-[var(--text-primary)] border border-[var(--border)]'
                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-transparent'
               }`}
-              aria-current={isActive ? 'page' : undefined}
+              aria-pressed={isActive}
             >
               {isActive && (
                 <span

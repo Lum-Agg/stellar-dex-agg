@@ -1,6 +1,7 @@
 /** Token balance lookup (stroops) for swap UI and pre-swap checks. */
 
 import { NATIVE_CONTRACT } from '@/lib/tokenDisplay';
+import { fetchJson } from '@/lib/fetch-json';
 
 const NATIVE_SAC = NATIVE_CONTRACT;
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
@@ -61,13 +62,11 @@ export async function fetchTokenBalance(
   if (!account || !token) return null;
   try {
     const params = new URLSearchParams({ account, token });
-    const resp = await fetch(`${API_URL}/api/v1/balance?${params}`);
-    if (!resp.ok) return null;
-    const data = (await resp.json()) as {
+    const data = await fetchJson<{
       success?: boolean;
       balance?: string;
       has_trustline?: boolean;
-    };
+    }>(`${API_URL}/api/v1/balance?${params}`);
     if (data.success && data.balance !== undefined) {
       return {
         balance: BigInt(data.balance),
@@ -94,18 +93,13 @@ export async function fetchAccountBalances(
   scope: 'common' | 'catalog' = 'catalog',
 ): Promise<AccountBalancesPayload> {
   const params = new URLSearchParams({ account: accountId, scope });
-  const resp = await fetch(`${API_URL}/api/v1/balances?${params}`);
-  if (!resp.ok) {
-    throw new Error('Failed to fetch balances');
-  }
-
-  const data = (await resp.json()) as {
+  const data = await fetchJson<{
     success?: boolean;
     scope?: string;
     tokens_queried?: string[];
     balances?: Record<string, string>;
     has_trustline?: Record<string, boolean>;
-  };
+  }>(`${API_URL}/api/v1/balances?${params}`);
 
   if (!data.success || !data.balances || !data.tokens_queried) {
     throw new Error('Invalid balances response');

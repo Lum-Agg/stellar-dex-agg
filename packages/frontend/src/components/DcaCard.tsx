@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { TokenSelector, type Token } from '@/components/TokenSelector';
 import { useWallet } from '@/lib/wallet-context';
 import {
@@ -28,7 +28,7 @@ const INTERVALS = [
 const MAX_LIFETIME_LEDGERS = 30 * 17_280;
 
 export function DcaCard() {
-  const { address, connect, signTx } = useWallet();
+  const { address, connect, connecting, signTx } = useWallet();
   const [tokenIn, setTokenIn] = useState<Token>(TESTNET_TOKENS[0] as Token);
   const [tokenOut, setTokenOut] = useState<Token>(TESTNET_TOKENS[1] as Token);
   const [total, setTotal] = useState('');
@@ -38,22 +38,29 @@ export function DcaCard() {
   const [orders, setOrders] = useState<DcaOrder[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const listRequestId = useRef(0);
   const configured = isLimitApiConfigured();
 
-  const refresh = async () => {
-    if (!address || !configured) return;
-    try {
-      setOrders(await listDcaOrders(address));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load DCA orders');
+  const refresh = useCallback(async () => {
+    const requestId = ++listRequestId.current;
+    if (!address || !configured) {
+      setOrders([]);
+      return;
     }
-  };
+    setError(null);
+    try {
+      const rows = await listDcaOrders(address);
+      if (requestId === listRequestId.current) setOrders(rows);
+    } catch (err) {
+      if (requestId === listRequestId.current) {
+        setError(err instanceof Error ? err.message : 'Failed to load DCA orders');
+      }
+    }
+  }, [address, configured]);
 
   useEffect(() => {
     void refresh();
-    // Refresh when the connected wallet changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [address]);
+  }, [refresh]);
 
   const create = async () => {
     if (!address) return connect();
@@ -148,6 +155,7 @@ export function DcaCard() {
           <div className="flex min-w-0 items-center gap-3">
             <input
               value={total}
+              aria-label={`Total ${tokenIn.symbol} amount`}
               onChange={(e) => /^\d*\.?\d*$/.test(e.target.value) && setTotal(e.target.value)}
               inputMode="decimal"
               placeholder="0.0"
@@ -171,6 +179,7 @@ export function DcaCard() {
           <div className="flex min-w-0 items-center gap-3">
             <input
               value={chunk}
+              aria-label={`${tokenIn.symbol} amount per order`}
               onChange={(e) => /^\d*\.?\d*$/.test(e.target.value) && setChunk(e.target.value)}
               inputMode="decimal"
               placeholder="0.0"
@@ -206,6 +215,7 @@ export function DcaCard() {
             Minimum price per chunk <span className="text-[var(--text-muted)]/70">(optional)</span>
             <input
               value={floor}
+              aria-label={`Minimum ${tokenOut.symbol} received per ${tokenIn.symbol}`}
               onChange={(e) => setFloor(e.target.value)}
               inputMode="decimal"
               placeholder={`1 ${tokenIn.symbol} = x ${tokenOut.symbol}`}
@@ -225,15 +235,21 @@ export function DcaCard() {
           </div>
         </div>
 
-        {error && <p className="mt-3 text-[13px] text-red-400">{error}</p>}
+        {error && (
+          <p role="alert" className="mt-3 text-[13px] text-red-400">
+            {error}
+          </p>
+        )}
         <button
           type="button"
-          disabled={!!address && (!valid || busy)}
+          disabled={connecting || (!!address && (!valid || busy))}
           onClick={() => void create()}
           className="btn-primary mt-4 h-12 w-full disabled:opacity-50"
         >
           {!address
-            ? 'Connect wallet'
+            ? connecting
+              ? 'Connecting...'
+              : 'Connect wallet'
             : busy
               ? 'Submitting...'
               : !configured

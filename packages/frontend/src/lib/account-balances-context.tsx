@@ -9,7 +9,12 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { fetchAccountBalances, fetchTokenBalance, type BalanceMap, type TrustlineMap } from '@/lib/balance';
+import {
+  fetchAccountBalances,
+  fetchTokenBalance,
+  type BalanceMap,
+  type TrustlineMap,
+} from '@/lib/balance';
 import { useWallet } from '@/lib/wallet-context';
 
 /** Floor for lazy `/api/v1/balance` calls per token. */
@@ -28,6 +33,7 @@ export interface AccountBalancesState {
   tokensQueried: string[];
   loading: boolean;
   ready: boolean;
+  lastUpdatedAt: number | null;
   refresh: () => Promise<void>;
   getBalance: (tokenId: string) => bigint | null;
   getHasTrustline: (tokenId: string) => boolean | null;
@@ -45,6 +51,7 @@ const AccountBalancesContext = createContext<AccountBalancesState>({
   tokensQueried: [],
   loading: false,
   ready: false,
+  lastUpdatedAt: null,
   refresh: async () => {},
   getBalance: () => null,
   getHasTrustline: () => null,
@@ -67,6 +74,7 @@ export function AccountBalancesProvider({ children }: { children: ReactNode }) {
   const [tokensQueried, setTokensQueried] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
   const requestId = useRef(0);
   const lazyInflight = useRef<Map<string, Promise<bigint | null>>>(new Map());
   const lastFetchAt = useRef<Map<string, number>>(new Map());
@@ -76,6 +84,7 @@ export function AccountBalancesProvider({ children }: { children: ReactNode }) {
   const balancesRef = useRef(balances);
   const hasTrustlineRef = useRef(hasTrustline);
   const addressRef = useRef(address);
+  const balanceAccountRef = useRef(address);
   const lastPassiveRefreshAt = useRef(0);
   balancesRef.current = balances;
   hasTrustlineRef.current = hasTrustline;
@@ -87,6 +96,7 @@ export function AccountBalancesProvider({ children }: { children: ReactNode }) {
       setHasTrustline({});
       setTokensQueried([]);
       setReady(false);
+      setLastUpdatedAt(null);
       lazyInflight.current.clear();
       lastFetchAt.current.clear();
       lazyDone.current.clear();
@@ -101,7 +111,9 @@ export function AccountBalancesProvider({ children }: { children: ReactNode }) {
     try {
       // Parallel: common unlocks UI fast; catalog fills the rest.
       const commonPromise = fetchAccountBalances(address, 'common');
-      const catalogPromise = fetchAccountBalances(address, 'catalog');
+      // Attach the fallback immediately so an early catalog rejection is handled
+      // while the smaller common request is still in flight.
+      const catalogPromise = fetchAccountBalances(address, 'catalog').catch(() => null);
 
       const common = await commonPromise;
       if (id !== requestId.current) return;
@@ -116,10 +128,11 @@ export function AccountBalancesProvider({ children }: { children: ReactNode }) {
       setHasTrustline(mergeTrustlines(common.hasTrustline, trustlineOverrides.current));
       setTokensQueried(common.tokensQueried);
       setReady(true);
+      setLastUpdatedAt(Date.now());
       setLoading(false);
 
       const catalog = await catalogPromise;
-      if (id !== requestId.current) return;
+      if (id !== requestId.current || catalog === null) return;
 
       for (const [tokenId, value] of Object.entries(trustlineOverrides.current)) {
         if (value === true && catalog.hasTrustline[tokenId] === true) {
@@ -135,6 +148,7 @@ export function AccountBalancesProvider({ children }: { children: ReactNode }) {
         ),
       );
       setTokensQueried(catalog.tokensQueried);
+      setLastUpdatedAt(Date.now());
     } catch {
       if (id === requestId.current) {
         setBalances({});
@@ -147,8 +161,22 @@ export function AccountBalancesProvider({ children }: { children: ReactNode }) {
   }, [address]);
 
   useEffect(() => {
+    // Every cache below is account-scoped. Reset it even when switching
+    // directly between two connected accounts without a disconnect event.
+    requestId.current += 1;
+    balanceAccountRef.current = address;
+    lazyInflight.current.clear();
+    lastFetchAt.current.clear();
+    lazyDone.current.clear();
+    trustlineOverrides.current = {};
+    setBalances({});
+    setHasTrustline({});
+    setTokensQueried([]);
+    setReady(false);
+    setLastUpdatedAt(null);
+    setLoading(false);
     void refresh();
-  }, [refresh]);
+  }, [address, refresh]);
 
   useEffect(() => {
     const refreshAfterExternalActivity = () => {
@@ -173,15 +201,17 @@ export function AccountBalancesProvider({ children }: { children: ReactNode }) {
 
   const getBalance = useCallback(
     (tokenId: string) => {
+      if (balanceAccountRef.current !== address) return null;
       if (balances[tokenId] !== undefined) return balances[tokenId];
       if (!ready) return null;
       return null;
     },
-    [balances, ready],
+    [address, balances, ready],
   );
 
   const getHasTrustline = useCallback(
     (tokenId: string) => {
+      if (balanceAccountRef.current !== address) return null;
       if (trustlineOverrides.current[tokenId] !== undefined) {
         return trustlineOverrides.current[tokenId];
       }
@@ -189,7 +219,7 @@ export function AccountBalancesProvider({ children }: { children: ReactNode }) {
       if (!ready) return null;
       return null;
     },
-    [hasTrustline, ready],
+    [address, hasTrustline, ready],
   );
 
   const markHasTrustline = useCallback((tokenId: string, value: boolean = true) => {
@@ -202,10 +232,15 @@ export function AccountBalancesProvider({ children }: { children: ReactNode }) {
     if (!account || !tokenId) return null;
 
     const force = opts?.force === true;
-    const cached = balancesRef.current[tokenId];
-    const override = trustlineOverrides.current[tokenId];
+    const cacheMatchesAccount = balanceAccountRef.current?.trim() === account;
+    const cached = cacheMatchesAccount ? balancesRef.current[tokenId] : undefined;
+    const override = cacheMatchesAccount ? trustlineOverrides.current[tokenId] : undefined;
     const cachedTrustline =
-      override !== undefined ? override : hasTrustlineRef.current[tokenId];
+      override !== undefined
+        ? override
+        : cacheMatchesAccount
+          ? hasTrustlineRef.current[tokenId]
+          : undefined;
 
     if (!force && cached !== undefined && cachedTrustline !== undefined) {
       return cached;
@@ -230,6 +265,7 @@ export function AccountBalancesProvider({ children }: { children: ReactNode }) {
 
     const task = (async () => {
       const result = await fetchTokenBalance(account, tokenId);
+      if (addressRef.current?.trim() !== account) return null;
       lazyDone.current.add(tokenId);
       if (result === null) return cached ?? null;
 
@@ -247,7 +283,9 @@ export function AccountBalancesProvider({ children }: { children: ReactNode }) {
 
       return result.balance;
     })().finally(() => {
-      lazyInflight.current.delete(tokenId);
+      if (lazyInflight.current.get(tokenId) === task) {
+        lazyInflight.current.delete(tokenId);
+      }
     });
 
     lazyInflight.current.set(tokenId, task);
@@ -262,6 +300,7 @@ export function AccountBalancesProvider({ children }: { children: ReactNode }) {
         tokensQueried,
         loading,
         ready,
+        lastUpdatedAt,
         refresh,
         getBalance,
         getHasTrustline,

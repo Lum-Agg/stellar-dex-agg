@@ -27,9 +27,11 @@ export function LimitCard() {
   const [expiry, setExpiry] = useState<ExpiryPresetId>('1d');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [txResult, setTxResult] = useState<{ success: boolean; hash?: string; error?: string } | null>(
-    null,
-  );
+  const [txResult, setTxResult] = useState<{
+    success: boolean;
+    hash?: string;
+    error?: string;
+  } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const configured = isLimitApiConfigured();
@@ -84,17 +86,7 @@ export function LimitCard() {
     } finally {
       setSubmitting(false);
     }
-  }, [
-    walletAddress,
-    connect,
-    configured,
-    amountIn,
-    limitPrice,
-    tokenIn,
-    tokenOut,
-    expiry,
-    signTx,
-  ]);
+  }, [walletAddress, connect, configured, amountIn, limitPrice, tokenIn, tokenOut, expiry, signTx]);
 
   const canSubmit =
     configured &&
@@ -104,8 +96,7 @@ export function LimitCard() {
     parseFloat(limitPrice) > 0 &&
     tokenIn.id !== tokenOut.id;
 
-  const primaryDisabled =
-    connecting || submitting || (walletAddress !== null && !canSubmit);
+  const primaryDisabled = connecting || submitting || (walletAddress !== null && !canSubmit);
 
   const primaryLabel = connecting
     ? 'Connecting...'
@@ -156,6 +147,7 @@ export function LimitCard() {
             <input
               type="text"
               inputMode="decimal"
+              aria-label={`Amount of ${tokenIn.symbol} to sell`}
               value={amountIn}
               onChange={(e) => {
                 const val = e.target.value;
@@ -225,6 +217,7 @@ export function LimitCard() {
             <input
               type="text"
               inputMode="decimal"
+              aria-label={`Limit price in ${tokenOut.symbol} per ${tokenIn.symbol}`}
               value={limitPrice}
               onChange={(e) => {
                 const val = e.target.value;
@@ -262,7 +255,10 @@ export function LimitCard() {
         </div>
 
         {error && !submitting && (
-          <div className="mt-3 text-[13px] text-red-300/90 border border-red-500/15 bg-red-500/[0.05] rounded-xl px-3 py-2.5 text-center">
+          <div
+            role="alert"
+            className="mt-3 text-[13px] text-red-300/90 border border-red-500/15 bg-red-500/[0.05] rounded-xl px-3 py-2.5 text-center"
+          >
             {error}
           </div>
         )}
@@ -280,6 +276,8 @@ export function LimitCard() {
 
         {txResult && (
           <div
+            role={txResult.success ? 'status' : 'alert'}
+            aria-live="polite"
             className={`mt-3 p-3 rounded-xl text-[13px] border ${
               txResult.success
                 ? 'bg-emerald-500/[0.06] border-emerald-500/20 text-emerald-300'

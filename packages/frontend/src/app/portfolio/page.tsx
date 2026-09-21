@@ -37,7 +37,7 @@ async function fetchHistories(ids: string[]): Promise<Map<string, PriceHistoryPo
 
 export default function PortfolioPage() {
   const { address, connect, connecting } = useWallet();
-  const { balances, ready, loading } = useAccountBalances();
+  const { balances, ready, loading, lastUpdatedAt, refresh } = useAccountBalances();
   const tokens = useTokenList();
   const [activeTab, setActiveTab] = useState<ProfileTab>('holdings');
   const [prices, setPrices] = useState<Map<string, Price>>(new Map());
@@ -115,10 +115,13 @@ export default function PortfolioPage() {
     [histories, holdings, prices],
   );
 
-  const total = valuedHoldings.reduce<number | null>(
-    (sum, holding) => (holding.value === null || sum === null ? null : sum + holding.value),
-    0,
-  );
+  const pricedHoldingCount = valuedHoldings.filter((holding) => holding.value !== null).length;
+  const total =
+    valuedHoldings.length === 0
+      ? 0
+      : pricedHoldingCount === 0
+        ? null
+        : valuedHoldings.reduce((sum, holding) => sum + (holding.value ?? 0), 0);
 
   if (!address) {
     return (
@@ -148,7 +151,16 @@ export default function PortfolioPage() {
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6 pb-12">
-      <ProfileHero address={address} total={total} pricingLoading={pricingLoading} />
+      <ProfileHero
+        address={address}
+        total={total}
+        holdingCount={valuedHoldings.length}
+        pricedHoldingCount={pricedHoldingCount}
+        pricingLoading={pricingLoading}
+        balancesLoading={loading}
+        lastUpdatedAt={lastUpdatedAt}
+        onRefresh={() => void refresh()}
+      />
 
       <ProfileTabs
         active={activeTab}

@@ -1,3 +1,5 @@
+import { fetchJson } from '@/lib/fetch-json';
+
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
 
 export interface Price {
@@ -15,15 +17,14 @@ export async function fetchPrices(ids: string[]): Promise<Map<string, Price>> {
   if (ids.length === 0) return new Map();
 
   const params = new URLSearchParams({ ids: ids.join(',') });
-  const response = await fetch(`${API_URL}/api/v1/prices?${params}`);
-  const json = (await response.json()) as {
+  const json = await fetchJson<{
     success?: boolean;
     error?: string;
     data?: { prices?: Array<{ id?: string; price_usdc?: number; ts?: number; via?: string }> };
-  };
+  }>(`${API_URL}/api/v1/prices?${params}`);
 
-  if (!response.ok || !json.success) {
-    throw new Error(json.error || `prices HTTP ${response.status}`);
+  if (!json.success) {
+    throw new Error(json.error || 'Failed to fetch prices');
   }
 
   return new Map(
@@ -51,15 +52,14 @@ export async function fetchPriceHistory(
   range: '24h' | '7d' = '24h',
 ): Promise<PriceHistoryPoint[]> {
   const params = new URLSearchParams({ id, range });
-  const response = await fetch(`${API_URL}/api/v1/prices/history?${params}`);
-  const json = (await response.json()) as {
+  const json = await fetchJson<{
     success?: boolean;
     error?: string;
     data?: { points?: Array<{ ts?: number; price_usdc?: number }> };
-  };
+  }>(`${API_URL}/api/v1/prices/history?${params}`);
 
-  if (!response.ok || !json.success) {
-    throw new Error(json.error || `price history HTTP ${response.status}`);
+  if (!json.success) {
+    throw new Error(json.error || 'Failed to fetch price history');
   }
 
   return (json.data?.points ?? [])

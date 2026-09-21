@@ -2,9 +2,17 @@
  * Build and submit classic ChangeTrust for SAC-backed assets (frontend-only).
  */
 
-import { Account, Asset, BASE_FEE, Networks, Operation, TransactionBuilder } from '@stellar/stellar-sdk';
+import {
+  Account,
+  Asset,
+  BASE_FEE,
+  Networks,
+  Operation,
+  TransactionBuilder,
+} from '@stellar/stellar-sdk/minimal';
 import { NATIVE_CONTRACT } from '@/lib/tokenDisplay';
 import { fetchAccountSequence } from '@/lib/rpc';
+import { fetchJson } from '@/lib/fetch-json';
 
 const NETWORK_PASSPHRASE = Networks.PUBLIC;
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
@@ -55,23 +63,19 @@ function parseExpertAssetField(asset: string): ClassicAssetRef | null {
 
 async function resolveViaApi(contractId: string): Promise<ClassicAssetRef | null> {
   const params = new URLSearchParams({ contract: contractId });
-  const resp = await fetch(`${API_URL}/api/v1/classic_asset?${params}`);
-  if (!resp.ok) return null;
-  const data = (await resp.json()) as {
+  const data = await fetchJson<{
     success?: boolean;
     code?: string;
     issuer?: string;
-  };
+  }>(`${API_URL}/api/v1/classic_asset?${params}`);
   if (!data.success || !data.code || !data.issuer) return null;
   return { code: data.code, issuer: data.issuer };
 }
 
 async function resolveViaExpert(contractId: string): Promise<ClassicAssetRef | null> {
-  const resp = await fetch(
+  const data = await fetchJson<{ asset?: string }>(
     `https://api.stellar.expert/explorer/public/contract/${contractId}`,
   );
-  if (!resp.ok) return null;
-  const data = (await resp.json()) as { asset?: string };
   if (!data.asset) return null;
   return parseExpertAssetField(data.asset);
 }

@@ -78,6 +78,11 @@ function InfoTip({ label, children }: { label: string; children: ReactNode }) {
 }
 
 export function SwapSettingsModal({ open, settings, onClose, onChange }: Props) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   const [customSlippage, setCustomSlippage] = useState('');
   const [customMode, setCustomMode] = useState(
     () => !SLIPPAGE_PRESETS.includes(settings.slippage as (typeof SLIPPAGE_PRESETS)[number]),
@@ -94,12 +99,40 @@ export function SwapSettingsModal({ open, settings, onClose, onChange }: Props) 
 
   useEffect(() => {
     if (!open) return;
+    previousFocusRef.current = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        onCloseRef.current();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+
+      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+      );
+      if (!focusable?.length) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
+    document.body.style.overflow = 'hidden';
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+    const focusTimer = window.setTimeout(() => closeButtonRef.current?.focus(), 0);
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = previousOverflow;
+      previousFocusRef.current?.focus();
+    };
+  }, [open]);
 
   if (!open || typeof window === 'undefined') return null;
 
@@ -114,6 +147,7 @@ export function SwapSettingsModal({ open, settings, onClose, onChange }: Props) 
       role="presentation"
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="swap-settings-title"
@@ -128,12 +162,19 @@ export function SwapSettingsModal({ open, settings, onClose, onChange }: Props) 
             Swap Settings
           </h3>
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={onClose}
             className="text-[var(--text-muted)] hover:text-[var(--text-primary)]"
             aria-label="Close settings"
           >
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg
+              className="h-5 w-5"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              aria-hidden
+            >
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -231,8 +272,8 @@ export function SwapSettingsModal({ open, settings, onClose, onChange }: Props) 
                   Max hops
                 </span>
                 <InfoTip label="About max hops">
-                  Maximum pools in a single path. Higher finds more routes but uses more compute
-                  and can raise fees.
+                  Maximum pools in a single path. Higher finds more routes but uses more compute and
+                  can raise fees.
                 </InfoTip>
               </div>
               <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">

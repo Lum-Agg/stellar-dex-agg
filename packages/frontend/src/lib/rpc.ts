@@ -3,8 +3,15 @@
  * LumAgg's submit endpoint remains available as an optional fallback.
  */
 
-import { Networks, TransactionBuilder, rpc } from '@stellar/stellar-sdk';
 import { fetchTokenBalance } from '@/lib/balance';
+import { fetchJson } from '@/lib/fetch-json';
+import {
+  getSubmitViaPreference,
+  type SubmitNetwork,
+  type SubmitVia,
+} from '@/lib/submit-preference';
+
+export type { SubmitNetwork, SubmitVia } from '@/lib/submit-preference';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
 const LIMIT_API_URL = process.env.NEXT_PUBLIC_LIMIT_API_URL?.trim() || '';
@@ -12,11 +19,6 @@ const LIMIT_API_URL = process.env.NEXT_PUBLIC_LIMIT_API_URL?.trim() || '';
 /** Whitelisted official RPCs (not user-editable). */
 export const OFFICIAL_MAINNET_RPC_URL = 'https://mainnet.sorobanrpc.com';
 export const OFFICIAL_TESTNET_RPC_URL = 'https://soroban-testnet.stellar.org';
-
-const SUBMIT_VIA_STORAGE_KEY = 'lumagg.submitViaOfficialRpc';
-
-export type SubmitVia = 'lumagg' | 'official';
-export type SubmitNetwork = 'public' | 'testnet';
 
 export interface SubmitTxOptions {
   apiUrl?: string;
@@ -26,30 +28,12 @@ export interface SubmitTxOptions {
   network?: SubmitNetwork;
 }
 
-export function getSubmitViaPreference(): SubmitVia {
-  if (typeof window === 'undefined') return 'official';
-  try {
-    return localStorage.getItem(SUBMIT_VIA_STORAGE_KEY) === 'lumagg' ? 'lumagg' : 'official';
-  } catch {
-    return 'official';
-  }
-}
-
-export function setSubmitViaPreference(via: SubmitVia): void {
-  if (typeof window === 'undefined') return;
-  try {
-    if (via === 'lumagg') localStorage.setItem(SUBMIT_VIA_STORAGE_KEY, 'lumagg');
-    else localStorage.removeItem(SUBMIT_VIA_STORAGE_KEY);
-  } catch {
-    /* ignore quota / private mode */
-  }
-}
-
 export async function fetchAccountSequence(accountId: string): Promise<string> {
   const params = new URLSearchParams({ account: accountId });
-  const resp = await fetch(`${API_URL}/api/v1/account?${params}`);
-  const data = (await resp.json()) as { success?: boolean; sequence?: string; error?: string };
-  if (!resp.ok || !data.success || !data.sequence) {
+  const data = await fetchJson<{ success?: boolean; sequence?: string; error?: string }>(
+    `${API_URL}/api/v1/account?${params}`,
+  );
+  if (!data.success || !data.sequence) {
     throw new Error(data.error || 'Failed to fetch account sequence');
   }
   return data.sequence;
@@ -57,9 +41,10 @@ export async function fetchAccountSequence(accountId: string): Promise<string> {
 
 export async function fetchLatestLedger(apiUrl?: string): Promise<number> {
   const base = apiUrl?.trim() || LIMIT_API_URL || API_URL;
-  const resp = await fetch(`${base}/api/v1/ledger/latest`);
-  const data = (await resp.json()) as { success?: boolean; sequence?: number; error?: string };
-  if (!resp.ok || !data.success || typeof data.sequence !== 'number' || data.sequence <= 0) {
+  const data = await fetchJson<{ success?: boolean; sequence?: number; error?: string }>(
+    `${base}/api/v1/ledger/latest`,
+  );
+  if (!data.success || typeof data.sequence !== 'number' || data.sequence <= 0) {
     throw new Error(data.error || 'Failed to fetch latest ledger');
   }
   return data.sequence;
@@ -74,6 +59,7 @@ async function submitViaOfficialRpc(
   signedXdr: string,
   network: SubmitNetwork,
 ): Promise<{ hash: string; success: boolean; error?: string; status?: string }> {
+  const { Networks, TransactionBuilder, rpc } = await import('@stellar/stellar-sdk/minimal');
   const isTestnet = network === 'testnet';
   const networkPassphrase = isTestnet ? Networks.TESTNET : Networks.PUBLIC;
   const rpcUrl = isTestnet ? OFFICIAL_TESTNET_RPC_URL : OFFICIAL_MAINNET_RPC_URL;
@@ -114,17 +100,20 @@ async function submitViaApiServer(
   apiUrl?: string,
 ): Promise<{ hash: string; success: boolean; error?: string; status?: string }> {
   const base = apiUrl?.trim() || API_URL;
-  const resp = await fetch(`${base}/api/v1/submit_tx`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ signed_tx_xdr: signedXdr }),
-  });
-  const data = (await resp.json()) as {
+  const data = await fetchJson<{
     success?: boolean;
     hash?: string;
     error?: string;
     status?: string;
-  };
+  }>(
+    `${base}/api/v1/submit_tx`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ signed_tx_xdr: signedXdr }),
+    },
+    20_000,
+  );
   const hash = data.hash || '';
   if (data.success && !hash) {
     return {
@@ -172,6 +161,7 @@ async function fetchTxStatusViaOfficialRpc(
   hash: string,
   network: SubmitNetwork,
 ): Promise<TxStatus> {
+  const { rpc } = await import('@stellar/stellar-sdk/minimal');
   const rpcUrl = network === 'testnet' ? OFFICIAL_TESTNET_RPC_URL : OFFICIAL_MAINNET_RPC_URL;
   const server = new rpc.Server(rpcUrl);
   try {
@@ -201,8 +191,7 @@ async function fetchTxStatusViaOfficialRpc(
 async function fetchTxStatusViaApi(hash: string, apiUrl?: string): Promise<TxStatus> {
   const base = apiUrl?.trim() || API_URL;
   const params = new URLSearchParams({ hash });
-  const resp = await fetch(`${base}/api/v1/tx_status?${params}`);
-  const data = (await resp.json()) as TxStatus;
+  const data = await fetchJson<TxStatus>(`${base}/api/v1/tx_status?${params}`);
   return {
     success: !!data.success,
     hash: data.hash,
@@ -218,8 +207,7 @@ export async function fetchTxStatus(
   opts?: FetchTxStatusOptions | string,
 ): Promise<TxStatus> {
   // Back-compat: fetchTxStatus(hash, apiUrl)
-  const options: FetchTxStatusOptions =
-    typeof opts === 'string' ? { apiUrl: opts } : (opts ?? {});
+  const options: FetchTxStatusOptions = typeof opts === 'string' ? { apiUrl: opts } : (opts ?? {});
   const via = options.via ?? getSubmitViaPreference();
   if (via === 'official') {
     return fetchTxStatusViaOfficialRpc(hash, options.network ?? 'public');
