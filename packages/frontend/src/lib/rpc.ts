@@ -161,20 +161,37 @@ async function fetchTxStatusViaOfficialRpc(
   hash: string,
   network: SubmitNetwork,
 ): Promise<TxStatus> {
-  const { rpc } = await import('@stellar/stellar-sdk/minimal');
   const rpcUrl = network === 'testnet' ? OFFICIAL_TESTNET_RPC_URL : OFFICIAL_MAINNET_RPC_URL;
-  const server = new rpc.Server(rpcUrl);
   try {
-    const result = await server.getTransaction(hash);
-    const raw = String(result.status);
-    const status =
-      result.status === rpc.Api.GetTransactionStatus.SUCCESS
-        ? 'SUCCESS'
-        : result.status === rpc.Api.GetTransactionStatus.FAILED
-          ? 'FAILED'
-          : result.status === rpc.Api.GetTransactionStatus.NOT_FOUND
-            ? 'NOT_FOUND'
-            : raw;
+    // Read only the JSON-RPC status envelope here. The SDK's getTransaction()
+    // parser also decodes every XDR field, so a protocol/XDR field it does not
+    // understand can throw even when the RPC result.status is SUCCESS.
+    const data = await fetchJson<{
+      result?: { status?: string };
+      error?: { message?: string };
+    }>(
+      rpcUrl,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getTransaction',
+          params: { hash },
+        }),
+      },
+      10_000,
+    );
+    const status = data.result?.status;
+    if (!status) {
+      return {
+        success: false,
+        hash,
+        confirmed: false,
+        error: data.error?.message || 'RPC returned no transaction status',
+      };
+    }
     return {
       success: true,
       hash,
