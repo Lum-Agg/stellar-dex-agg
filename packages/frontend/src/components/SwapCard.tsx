@@ -23,6 +23,7 @@ import {
   saveSwapSettings,
   type SwapSettings,
 } from '@/lib/swap-settings';
+import { getSubmitViaPreference } from '@/lib/submit-preference';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
 
@@ -485,10 +486,21 @@ export function SwapCard() {
         import('@/lib/wallet'),
         import('@/lib/rpc'),
       ]);
-      const submitResult = await submitTransaction(signedXdr);
+      // Keep submission and confirmation on the same path. Reading the
+      // preference twice can otherwise race with the toggle/localStorage and
+      // make an RPC-confirmed transaction appear to time out via the API.
+      const submitVia = getSubmitViaPreference();
+      const submitNetwork = 'public' as const;
+      const submitResult = await submitTransaction(signedXdr, {
+        via: submitVia,
+        network: submitNetwork,
+      });
 
       if (submitResult.success) {
-        const confirmed = await waitForTxConfirmation(submitResult.hash);
+        const confirmed = await waitForTxConfirmation(submitResult.hash, {
+          via: submitVia,
+          network: submitNetwork,
+        });
         if (!confirmed.success) {
           setTxResult({
             success: false,
