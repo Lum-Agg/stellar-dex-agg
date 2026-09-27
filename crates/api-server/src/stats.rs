@@ -13,14 +13,17 @@ use {
     redis::AsyncCommands,
     serde::{Deserialize, Serialize},
     std::{
+        fs,
+        path::PathBuf,
         sync::OnceLock,
-        time::{Duration, Instant},
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     },
     tokio::sync::RwLock,
 };
 
 const STATS_CACHE_TTL: Duration = Duration::from_secs(30);
 const SHARED_STATS_CACHE_KEY: &str = "lumagg:api:stats:full:v1";
+const SHARED_STATS_CACHE_FILE: &str = "/tmp/lumagg-stats-full-v1.json";
 
 struct CachedStats {
     created_at: Instant,
@@ -57,6 +60,41 @@ async fn write_shared_stats_cache(response: &StatsResponse) {
     let _: redis::RedisResult<()> = connection
         .set_ex(SHARED_STATS_CACHE_KEY, payload, 15)
         .await;
+}
+
+fn shared_stats_file_path() -> PathBuf {
+    std::env::var_os("STATS_CACHE_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(SHARED_STATS_CACHE_FILE))
+}
+
+fn read_file_stats_cache() -> Option<serde_json::Value> {
+    let payload = fs::read_to_string(shared_stats_file_path()).ok()?;
+    let cache: serde_json::Value = serde_json::from_str(&payload).ok()?;
+    let created_at = cache.get("created_at")?.as_u64()?;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
+    if now.saturating_sub(created_at) > 15 {
+        return None;
+    }
+    cache.get("response").cloned()
+}
+
+fn write_file_stats_cache(response: &StatsResponse) {
+    let path = shared_stats_file_path();
+    let cache = serde_json::json!({
+        "created_at": SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_secs())
+            .unwrap_or_default(),
+        "response": response,
+    });
+    let Ok(payload) = serde_json::to_vec(&cache) else {
+        return;
+    };
+    let temporary = path.with_extension(format!("json.{}", std::process::id()));
+    if fs::write(&temporary, payload).is_ok() {
+        let _ = fs::rename(temporary, path);
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,6 +164,14 @@ pub async fn get_stats(Query(params): Query<StatsQuery>) -> Response {
                 )
                 .into_response();
             }
+        }
+        if let Some(cached) = read_file_stats_cache() {
+            return (
+                StatusCode::OK,
+                [(header::CACHE_CONTROL, "public, max-age=15, stale-while-revalidate=60")],
+                Json(cached),
+            )
+                .into_response();
         }
         if let Some(cached) = read_shared_stats_cache().await {
             return (
@@ -259,6 +305,7 @@ pub async fn get_stats(Query(params): Query<StatsQuery>) -> Response {
     };
     if cacheable {
         write_shared_stats_cache(&response).await;
+        write_file_stats_cache(&response);
     }
 
     (
