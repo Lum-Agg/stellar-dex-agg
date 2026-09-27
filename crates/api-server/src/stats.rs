@@ -10,6 +10,7 @@ use {
         response::{IntoResponse, Response},
         Json,
     },
+    redis::AsyncCommands,
     serde::{Deserialize, Serialize},
     std::{
         sync::OnceLock,
@@ -19,6 +20,7 @@ use {
 };
 
 const STATS_CACHE_TTL: Duration = Duration::from_secs(30);
+const SHARED_STATS_CACHE_KEY: &str = "lumagg:api:stats:full:v1";
 
 struct CachedStats {
     created_at: Instant,
@@ -29,6 +31,32 @@ static STATS_CACHE: OnceLock<RwLock<Option<CachedStats>>> = OnceLock::new();
 
 fn stats_cache() -> &'static RwLock<Option<CachedStats>> {
     STATS_CACHE.get_or_init(|| RwLock::new(None))
+}
+
+async fn read_shared_stats_cache() -> Option<serde_json::Value> {
+    let redis_url = std::env::var("SNAPSHOT_REDIS_URL").ok()?;
+    let client = redis::Client::open(redis_url).ok()?;
+    let mut connection = client.get_multiplexed_async_connection().await.ok()?;
+    let payload: Option<String> = connection.get(SHARED_STATS_CACHE_KEY).await.ok()?;
+    serde_json::from_str(&payload?).ok()
+}
+
+async fn write_shared_stats_cache(response: &StatsResponse) {
+    let Ok(redis_url) = std::env::var("SNAPSHOT_REDIS_URL") else {
+        return;
+    };
+    let Ok(payload) = serde_json::to_string(response) else {
+        return;
+    };
+    let Ok(client) = redis::Client::open(redis_url) else {
+        return;
+    };
+    let Ok(mut connection) = client.get_multiplexed_async_connection().await else {
+        return;
+    };
+    let _: redis::RedisResult<()> = connection
+        .set_ex(SHARED_STATS_CACHE_KEY, payload, 15)
+        .await;
 }
 
 #[derive(Debug, Deserialize)]
@@ -96,8 +124,16 @@ pub async fn get_stats(Query(params): Query<StatsQuery>) -> Response {
                         error: None,
                     }),
                 )
-                    .into_response();
+                .into_response();
             }
+        }
+        if let Some(cached) = read_shared_stats_cache().await {
+            return (
+                StatusCode::OK,
+                [(header::CACHE_CONTROL, "public, max-age=15, stale-while-revalidate=60")],
+                Json(cached),
+            )
+                .into_response();
         }
     }
 
@@ -216,6 +252,15 @@ pub async fn get_stats(Query(params): Query<StatsQuery>) -> Response {
         });
     }
 
+    let response = StatsResponse {
+        success: true,
+        data: Some(data),
+        error: None,
+    };
+    if cacheable {
+        write_shared_stats_cache(&response).await;
+    }
+
     (
         StatusCode::OK,
         if cacheable {
@@ -225,11 +270,7 @@ pub async fn get_stats(Query(params): Query<StatsQuery>) -> Response {
         } else {
             None
         },
-        Json(StatsResponse {
-            success: true,
-            data: Some(data),
-            error: None,
-        }),
+        Json(response),
     )
         .into_response()
 }
