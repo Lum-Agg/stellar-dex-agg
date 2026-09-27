@@ -11,7 +11,25 @@ use {
         Json,
     },
     serde::{Deserialize, Serialize},
+    std::{
+        sync::OnceLock,
+        time::{Duration, Instant},
+    },
+    tokio::sync::RwLock,
 };
+
+const STATS_CACHE_TTL: Duration = Duration::from_secs(30);
+
+struct CachedStats {
+    created_at: Instant,
+    data: StatsData,
+}
+
+static STATS_CACHE: OnceLock<RwLock<Option<CachedStats>>> = OnceLock::new();
+
+fn stats_cache() -> &'static RwLock<Option<CachedStats>> {
+    STATS_CACHE.get_or_init(|| RwLock::new(None))
+}
 
 #[derive(Debug, Deserialize)]
 pub struct StatsQuery {
@@ -30,7 +48,7 @@ pub struct StatsResponse {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct StatsData {
     pub db_path: String,
     pub invocation_count: i64,
@@ -61,6 +79,27 @@ pub async fn get_stats(Query(params): Query<StatsQuery>) -> Response {
         )
             .into_response();
     };
+
+    // The dashboard requests the full JSON rollup repeatedly. Keep a short
+    // process-local snapshot so multiple page loads do not rerun all daily
+    // SQLite aggregates and historical price enrichment.
+    let cacheable = params.day.is_none() && params.format.is_none();
+    if cacheable {
+        if let Some(cached) = stats_cache().read().await.as_ref() {
+            if cached.created_at.elapsed() < STATS_CACHE_TTL {
+                return (
+                    StatusCode::OK,
+                    [(header::CACHE_CONTROL, "public, max-age=15")],
+                    Json(StatsResponse {
+                        success: true,
+                        data: Some(cached.data.clone()),
+                        error: None,
+                    }),
+                )
+                    .into_response();
+            }
+        }
+    }
 
     let store = match IndexStore::open(&db_path) {
         Ok(s) => s,
@@ -161,18 +200,34 @@ pub async fn get_stats(Query(params): Query<StatsQuery>) -> Response {
             .into_response();
     }
 
+    let data = StatsData {
+        db_path,
+        invocation_count,
+        cursor_ledger,
+        oldest_created_at,
+        daily,
+        usd_pricing,
+    };
+
+    if cacheable {
+        *stats_cache().write().await = Some(CachedStats {
+            created_at: Instant::now(),
+            data: data.clone(),
+        });
+    }
+
     (
         StatusCode::OK,
+        if cacheable {
+            Some([
+                (header::CACHE_CONTROL, "public, max-age=15, stale-while-revalidate=60"),
+            ])
+        } else {
+            None
+        },
         Json(StatsResponse {
             success: true,
-            data: Some(StatsData {
-                db_path,
-                invocation_count,
-                cursor_ledger,
-                oldest_created_at,
-                daily,
-                usd_pricing,
-            }),
+            data: Some(data),
             error: None,
         }),
     )

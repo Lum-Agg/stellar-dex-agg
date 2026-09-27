@@ -49,7 +49,7 @@ pub struct RoundTripBridgeStats {
     pub gross_surplus: i128,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DailyStats {
     pub day: String,
     pub tx_count: u64,

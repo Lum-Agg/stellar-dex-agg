@@ -179,6 +179,7 @@ impl IndexStore {
             CREATE INDEX IF NOT EXISTS idx_swap_invocations_user_created
               ON swap_invocations(user_address, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_swap_legs_dex ON swap_legs(dex_source);
+            CREATE INDEX IF NOT EXISTS idx_swap_legs_tx_hash ON swap_legs(tx_hash);
 
             CREATE TABLE IF NOT EXISTS limit_orders (
               escrow_contract TEXT NOT NULL,
