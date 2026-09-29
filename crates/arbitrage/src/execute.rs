@@ -25,6 +25,7 @@ use {
 
 #[derive(Debug, Clone)]
 pub struct PreparedArbTx {
+    pub base_token: String,
     pub route_label: String,
     pub venue_route_label: String,
     pub pool_route_label: String,
@@ -37,6 +38,8 @@ pub struct PreparedArbTx {
     /// Fee used for profit gates / accounting (stroops): simulated
     /// `min_resource_fee` only (declared inclusion bid is ignored here).
     pub estimated_fee_stroops: u128,
+    /// Estimated fee converted into the base token's smallest units.
+    pub fee_in_base: u128,
     pub profit_bps: i64,
     pub unsigned_tx_xdr: String,
     pub simulated: bool,
@@ -392,6 +395,7 @@ pub async fn prepare_opportunity_tx(
     );
 
     Ok(Some(PreparedArbTx {
+        base_token: base,
         route_label: quote.route_label(),
         venue_route_label: quote.venue_route_label(),
         pool_route_label: quote.pool_route_label(),
@@ -400,6 +404,7 @@ pub async fn prepare_opportunity_tx(
         quoted_amount_out: quote.amount_out,
         simulated_amount_out,
         estimated_fee_stroops,
+        fee_in_base: fee_base,
         profit_bps,
         unsigned_tx_xdr,
         simulated,
@@ -475,8 +480,8 @@ pub async fn try_execute_opportunity(
     // that an earlier transaction from this account is still pending. Immediate
     // rejection, signing failure, and transport errors do not consume the
     // sequence and should not reduce caller capacity.
-    let should_cooldown = submit_result.is_ok() ||
-        submit_result
+    let should_cooldown = submit_result.is_ok()
+        || submit_result
             .as_ref()
             .err()
             .is_some_and(|e| e.to_string().contains("TRY_AGAIN_LATER"));
@@ -493,12 +498,12 @@ pub async fn try_execute_opportunity(
 /// quote envelope is wasted work).
 fn is_structural_sim_failure(err: &str) -> bool {
     let e = err.to_ascii_lowercase();
-    e.contains("invalidaction") ||
-        e.contains("unreachablecodereached") ||
-        (e.contains("vm call trapped") && e.contains("hosterror")) ||
-        e.contains("outside of the footprint") ||
-        e.contains("exceededlimit") ||
-        (e.contains("footprint") && (e.contains("hosterror") || e.contains("trapped")))
+    e.contains("invalidaction")
+        || e.contains("unreachablecodereached")
+        || (e.contains("vm call trapped") && e.contains("hosterror"))
+        || e.contains("outside of the footprint")
+        || e.contains("exceededlimit")
+        || (e.contains("footprint") && (e.contains("hosterror") || e.contains("trapped")))
 }
 
 const SIM_ERROR_SUMMARY_LIMIT: usize = 256;

@@ -3,6 +3,7 @@
 
 use {
     crate::{
+        economics::{USDC_SAC, XLM_SAC},
         prepare::fetch_account_native_balance,
         profit::{format_xlm4, format_xlm4_u, ProfitWindow, RecentTx},
         runtime::ArbRuntime,
@@ -87,13 +88,13 @@ pub fn spawn_quiet_window_monitor(runtime: Arc<ArbRuntime>, alerter: Arc<Telegra
 
 async fn build_profit_report(runtime: &ArbRuntime) -> anyhow::Result<String> {
     let (hour, session, recent) = runtime.profit.snapshot_for_hourly_report();
-    let vault_xlm = fetch_vault_xlm(runtime).await;
+    let vault_balances = fetch_vault_balances(runtime).await;
     let caller_lines = fetch_caller_balances(runtime).await;
     let funnel = runtime.stats.snapshot();
     let bridge_breakdown = runtime.stats.bridge_breakdown();
     let sim_failure_breakdown = runtime.stats.sim_failure_breakdown(4);
     Ok(format_report(
-        vault_xlm,
+        &vault_balances,
         &caller_lines,
         &hour,
         &session,
@@ -104,12 +105,19 @@ async fn build_profit_report(runtime: &ArbRuntime) -> anyhow::Result<String> {
     ))
 }
 
-async fn fetch_vault_xlm(runtime: &ArbRuntime) -> Option<u128> {
-    let vault = runtime.config.vault_contract.as_deref()?;
-    let base = runtime.config.base_tokens.first()?;
-    fetch_token_balance_stroops(&runtime.config.rpc_url, &base.canonical(), vault)
-        .await
-        .ok()
+async fn fetch_vault_balances(runtime: &ArbRuntime) -> Vec<(String, Option<u128>)> {
+    let Some(vault) = runtime.config.vault_contract.as_deref() else {
+        return Vec::new();
+    };
+    let mut balances = Vec::with_capacity(runtime.config.base_tokens.len());
+    for base in &runtime.config.base_tokens {
+        let token = base.canonical();
+        let balance = fetch_token_balance_stroops(&runtime.config.rpc_url, &token, vault)
+            .await
+            .ok();
+        balances.push((token, balance));
+    }
+    balances
 }
 
 async fn fetch_caller_balances(runtime: &ArbRuntime) -> Vec<(usize, String, Option<u128>)> {
@@ -125,16 +133,16 @@ async fn fetch_caller_balances(runtime: &ArbRuntime) -> Vec<(usize, String, Opti
     out
 }
 
-fn format_window(label: &str, w: &ProfitWindow) -> String {
+fn format_window(label: &str, base: &str, w: &ProfitWindow) -> String {
     format!(
         "{label}\n\
          · succeeded: {}\n\
          · failed: {}\n\
          · unknown: {}\n\
          · submitted: {}\n\
-         · gross profit: `{}` XLM\n\
-         · est. fees: `{}` XLM\n\
-         · net: `{}` XLM",
+         · gross profit: `{}` {base}\n\
+         · est. fees: `{}` {base}\n\
+         · net: `{}` {base}",
         w.succeeded,
         w.failed,
         w.unknown,
@@ -153,8 +161,9 @@ fn format_recent(recent: &[RecentTx]) -> String {
     for tx in recent {
         let net = tx.gross_profit as i128 - tx.fee as i128;
         lines.push(format!(
-            "· {} XLM → net `{}` | `{}`",
+            "· {} {} → net `{}` | `{}`",
             format_xlm4_u(tx.amount_in),
+            base_label(&tx.base_token),
             format_xlm4(net),
             &tx.hash[..tx.hash.len().min(12)],
         ));
@@ -187,18 +196,29 @@ fn format_bridge_breakdown(rows: &[BridgeStatsSnapshot]) -> String {
 }
 
 pub fn format_report(
-    vault_xlm: Option<u128>,
+    vault_balances: &[(String, Option<u128>)],
     callers: &[(usize, String, Option<u128>)],
-    hour: &ProfitWindow,
-    session: &ProfitWindow,
+    hour: &std::collections::BTreeMap<String, ProfitWindow>,
+    session: &std::collections::BTreeMap<String, ProfitWindow>,
     recent: &[RecentTx],
     funnel: &crate::stats::ArbStatsSnapshot,
     bridge_breakdown: &[BridgeStatsSnapshot],
     sim_failure_breakdown: &[(String, u64)],
 ) -> String {
-    let vault_line = match vault_xlm {
-        Some(v) => format!("🏦 Vault XLM: `{}` XLM", format_xlm4_u(v)),
-        None => "🏦 Vault XLM: `(n/a)`".to_string(),
+    let vault_lines = if vault_balances.is_empty() {
+        "🏦 Vault balances: `(n/a)`".to_string()
+    } else {
+        vault_balances
+            .iter()
+            .map(|(token, balance)| {
+                let label = base_label(token);
+                match balance {
+                    Some(v) => format!("🏦 Vault {label}: `{}` {label}", format_xlm4_u(*v)),
+                    None => format!("🏦 Vault {label}: `(n/a)`"),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     };
 
     let mut caller_block = String::from("👛 Caller Accounts:\n");
@@ -214,7 +234,12 @@ pub fn format_report(
     }
     caller_block.push_str(&format!("💰 Total Caller XLM: `{}` XLM", format_xlm4_u(caller_total)));
 
-    let grand = vault_xlm.unwrap_or(0).saturating_add(caller_total);
+    let grand_xlm = vault_balances
+        .iter()
+        .find(|(token, _)| base_label(token) == "XLM")
+        .and_then(|(_, balance)| *balance)
+        .unwrap_or(0)
+        .saturating_add(caller_total);
 
     let funnel_block = format!(
         "🔎 Quote→sim funnel (session):\n\
@@ -256,7 +281,7 @@ pub fn format_report(
     format!(
         "📊 LumAgg Arb Monitor\n\
          \n\
-         {vault_line}\n\
+         {vault_lines}\n\
          \n\
          {}\n\
          \n\
@@ -271,13 +296,37 @@ pub fn format_report(
          {}\n\
          \n\
          {caller_block}\n\
-         ✅ Grand Total: `{}` XLM",
-        format_window("⏱ Last hour:", hour),
-        format_window("📈 Session:", session),
+         ✅ Grand Total XLM: `{}` XLM",
+        format_windows("⏱ Last hour:", hour),
+        format_windows("📈 Session:", session),
         format_recent(recent),
         format_bridge_breakdown(bridge_breakdown),
-        format_xlm4_u(grand),
+        format_xlm4_u(grand_xlm),
     )
+}
+
+fn format_windows(label: &str, windows: &std::collections::BTreeMap<String, ProfitWindow>) -> String {
+    if windows.is_empty() {
+        return format!("{label}\n· (no trades)");
+    }
+    windows
+        .iter()
+        .map(|(base, window)| {
+            let display_base = base_label(base);
+            format_window(&format!("{label} {display_base}"), display_base, window)
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn base_label(base: &str) -> &str {
+    if base == XLM_SAC || base == "XLM" {
+        "XLM"
+    } else if base == USDC_SAC || base == "USDC" {
+        "USDC"
+    } else {
+        base
+    }
 }
 
 #[cfg(test)]
@@ -313,23 +362,43 @@ mod tests {
 
     #[test]
     fn report_contains_sections() {
-        let hour = ProfitWindow {
-            succeeded: 2,
-            failed: 1,
-            unknown: 0,
-            submitted: 3,
-            gross_profit_stroops: 500_000,
-            fee_stroops: 1_000_000,
-        };
+        let hour = std::collections::BTreeMap::from([
+            (
+                String::from("XLM"),
+                ProfitWindow {
+                    succeeded: 2,
+                    failed: 1,
+                    unknown: 0,
+                    submitted: 3,
+                    gross_profit_stroops: 500_000,
+                    fee_stroops: 1_000_000,
+                },
+            ),
+            (
+                String::from("USDC"),
+                ProfitWindow {
+                    succeeded: 1,
+                    failed: 0,
+                    unknown: 0,
+                    submitted: 1,
+                    gross_profit_stroops: 92_342,
+                    fee_stroops: 34_547,
+                },
+            ),
+        ]);
         let session = hour.clone();
         let recent = vec![RecentTx {
             hash: "57132675d4897067".into(),
+            base_token: "XLM".into(),
             amount_in: 100_000_000,
             gross_profit: 380_000,
             fee: 1_074_562,
         }];
         let msg = format_report(
-            Some(18_000_000_000),
+            &[
+                (String::from("XLM"), Some(18_000_000_000)),
+                (String::from("USDC"), Some(2_500_000_000)),
+            ],
             &[(1, "GAAA".into(), Some(595_035_000))],
             &hour,
             &session,
@@ -339,7 +408,10 @@ mod tests {
             &[],
         );
         assert!(msg.contains("LumAgg Arb Monitor"));
+        assert!(msg.contains("Vault USDC: `250.0000` USDC"));
         assert!(msg.contains("Last hour"));
+        assert!(msg.contains("Last hour: USDC"));
+        assert!(msg.contains("gross profit: `0.0092` USDC"));
         assert!(msg.contains("57132675d489"));
         assert!(msg.contains("59.5035"));
         assert!(msg.contains("Quote→sim funnel"));

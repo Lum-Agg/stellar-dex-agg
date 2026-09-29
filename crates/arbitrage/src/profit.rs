@@ -1,6 +1,9 @@
 //! Session / hourly profit accounting for Telegram reports.
 
-use std::{collections::VecDeque, sync::Mutex};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    sync::Mutex,
+};
 
 const RECENT_TXS: usize = 5;
 
@@ -31,6 +34,7 @@ impl ProfitWindow {
 #[derive(Debug, Clone)]
 pub struct RecentTx {
     pub hash: String,
+    pub base_token: String,
     pub amount_in: u128,
     pub gross_profit: u128,
     pub fee: u128,
@@ -43,28 +47,31 @@ pub struct ProfitBook {
 
 #[derive(Debug, Default)]
 struct ProfitBookInner {
-    session: ProfitWindow,
-    hour: ProfitWindow,
+    session: BTreeMap<String, ProfitWindow>,
+    hour: BTreeMap<String, ProfitWindow>,
     recent: VecDeque<RecentTx>,
 }
 
 impl ProfitBook {
-    pub fn record_submitted(&self) {
+    pub fn record_submitted(&self, base_token: &str) {
         let mut g = self.inner.lock().unwrap();
-        g.session.submitted += 1;
-        g.hour.submitted += 1;
+        g.session.entry(base_token.to_owned()).or_default().submitted += 1;
+        g.hour.entry(base_token.to_owned()).or_default().submitted += 1;
     }
 
-    pub fn record_success(&self, hash: &str, amount_in: u128, gross_profit: u128, fee: u128) {
+    pub fn record_success(&self, base_token: &str, hash: &str, amount_in: u128, gross_profit: u128, fee: u128) {
         let mut g = self.inner.lock().unwrap();
-        g.session.succeeded += 1;
-        g.session.gross_profit_stroops = g.session.gross_profit_stroops.saturating_add(gross_profit);
-        g.session.fee_stroops = g.session.fee_stroops.saturating_add(fee);
-        g.hour.succeeded += 1;
-        g.hour.gross_profit_stroops = g.hour.gross_profit_stroops.saturating_add(gross_profit);
-        g.hour.fee_stroops = g.hour.fee_stroops.saturating_add(fee);
+        let session = g.session.entry(base_token.to_owned()).or_default();
+        session.succeeded += 1;
+        session.gross_profit_stroops = session.gross_profit_stroops.saturating_add(gross_profit);
+        session.fee_stroops = session.fee_stroops.saturating_add(fee);
+        let hour = g.hour.entry(base_token.to_owned()).or_default();
+        hour.succeeded += 1;
+        hour.gross_profit_stroops = hour.gross_profit_stroops.saturating_add(gross_profit);
+        hour.fee_stroops = hour.fee_stroops.saturating_add(fee);
         g.recent.push_front(RecentTx {
             hash: hash.to_string(),
+            base_token: base_token.to_owned(),
             amount_in,
             gross_profit,
             fee,
@@ -74,22 +81,28 @@ impl ProfitBook {
         }
     }
 
-    pub fn record_failed(&self) {
+    pub fn record_failed(&self, base_token: &str) {
         let mut g = self.inner.lock().unwrap();
-        g.session.failed += 1;
-        g.hour.failed += 1;
+        g.session.entry(base_token.to_owned()).or_default().failed += 1;
+        g.hour.entry(base_token.to_owned()).or_default().failed += 1;
     }
 
-    pub fn record_unknown(&self) {
+    pub fn record_unknown(&self, base_token: &str) {
         let mut g = self.inner.lock().unwrap();
-        g.session.unknown += 1;
-        g.hour.unknown += 1;
+        g.session.entry(base_token.to_owned()).or_default().unknown += 1;
+        g.hour.entry(base_token.to_owned()).or_default().unknown += 1;
     }
 
     /// Snapshot session + take (reset) the hourly window for a report.
-    pub fn snapshot_for_hourly_report(&self) -> (ProfitWindow, ProfitWindow, Vec<RecentTx>) {
+    pub fn snapshot_for_hourly_report(
+        &self,
+    ) -> (
+        BTreeMap<String, ProfitWindow>,
+        BTreeMap<String, ProfitWindow>,
+        Vec<RecentTx>,
+    ) {
         let mut g = self.inner.lock().unwrap();
-        let hour = g.hour.take();
+        let hour = std::mem::take(&mut g.hour);
         let session = g.session.clone();
         let recent: Vec<_> = g.recent.iter().cloned().collect();
         (hour, session, recent)
@@ -128,13 +141,14 @@ mod tests {
     #[test]
     fn hour_window_resets() {
         let book = ProfitBook::default();
-        book.record_success("abc", 100_000_000, 380_000, 1_074_562);
+        book.record_success("XLM", "abc", 100_000_000, 380_000, 1_074_562);
         let (hour, session, recent) = book.snapshot_for_hourly_report();
-        assert_eq!(hour.succeeded, 1);
-        assert_eq!(session.succeeded, 1);
+        assert_eq!(hour["XLM"].succeeded, 1);
+        assert_eq!(session["XLM"].succeeded, 1);
         assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].base_token, "XLM");
         let (hour2, session2, _) = book.snapshot_for_hourly_report();
-        assert_eq!(hour2.succeeded, 0);
-        assert_eq!(session2.succeeded, 1);
+        assert!(hour2.is_empty());
+        assert_eq!(session2["XLM"].succeeded, 1);
     }
 }

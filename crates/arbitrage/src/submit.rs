@@ -114,11 +114,11 @@ fn decode_failure_diagnostics(events: Option<Vec<soroban_client::xdr::Diagnostic
     for event in events.unwrap_or_default() {
         let text = format!("{event:?}");
         let lower = text.to_ascii_lowercase();
-        if lower.contains("stringm(error)") ||
-            lower.contains("error(contract, #") ||
-            lower.contains("unreachablecodereached") ||
-            lower.contains("invalidaction") ||
-            lower.contains("exceededlimit")
+        if lower.contains("stringm(error)")
+            || lower.contains("error(contract, #")
+            || lower.contains("unreachablecodereached")
+            || lower.contains("invalidaction")
+            || lower.contains("exceededlimit")
         {
             messages.push(text);
         }
@@ -131,12 +131,14 @@ fn decode_failure_diagnostics(events: Option<Vec<soroban_client::xdr::Diagnostic
 }
 
 struct PollContext {
+    base_token: String,
     hash: String,
     route_label: String,
     venue_route_label: String,
     amount_in: u128,
     simulated_amount_out: u128,
     estimated_fee_stroops: u128,
+    fee_in_base: u128,
     submission_ledger: Option<Arc<SubmissionLedger>>,
 }
 
@@ -152,7 +154,7 @@ fn spawn_poll_outcome(rpc_url: String, ctx: PollContext, stats: Arc<ArbStats>, p
                 }
                 stats.txs_succeeded.fetch_add(1, Ordering::Relaxed);
                 let gross = ctx.simulated_amount_out.saturating_sub(ctx.amount_in);
-                profit.record_success(&ctx.hash, ctx.amount_in, gross, ctx.estimated_fee_stroops);
+                profit.record_success(&ctx.base_token, &ctx.hash, ctx.amount_in, gross, ctx.fee_in_base);
                 info!(
                     hash = %ctx.hash,
                     route = %ctx.route_label,
@@ -165,7 +167,7 @@ fn spawn_poll_outcome(rpc_url: String, ctx: PollContext, stats: Arc<ArbStats>, p
                 if e.to_string() == "tx status poll timeout" {
                     // A Soroban RPC may not expose the final result within the
                     // short observation window. This is unknown, not failure.
-                    profit.record_unknown();
+                    profit.record_unknown(&ctx.base_token);
                     if let Some(ledger) = &ctx.submission_ledger {
                         if let Err(e) = ledger.mark_status(&ctx.hash, "UNKNOWN", Some("poll_timeout")) {
                             warn!(hash = %ctx.hash, error = %e, "failed to update submission ledger");
@@ -176,7 +178,7 @@ fn spawn_poll_outcome(rpc_url: String, ctx: PollContext, stats: Arc<ArbStats>, p
                 }
                 stats.record_failed_route(&ctx.venue_route_label);
                 stats.txs_failed.fetch_add(1, Ordering::Relaxed);
-                profit.record_failed();
+                profit.record_failed(&ctx.base_token);
                 if let Some(ledger) = &ctx.submission_ledger {
                     if let Err(update_error) = ledger.mark_status(&ctx.hash, "FAILED", Some(&e.to_string())) {
                         warn!(hash = %ctx.hash, error = %update_error, "failed to update submission ledger");
@@ -229,7 +231,7 @@ pub async fn submit_prepared(
         }
     }
     stats.txs_submitted.fetch_add(1, Ordering::Relaxed);
-    profit.record_submitted();
+    profit.record_submitted(&prepared.base_token);
     info!(
         hash = %hash,
         route = %prepared.route_label,
@@ -242,12 +244,14 @@ pub async fn submit_prepared(
         spawn_poll_outcome(
             rpc_url.to_string(),
             PollContext {
+                base_token: prepared.base_token.clone(),
                 hash,
                 route_label: prepared.route_label.clone(),
                 venue_route_label: prepared.venue_route_label.clone(),
                 amount_in: prepared.amount_in,
                 simulated_amount_out: prepared.simulated_amount_out,
                 estimated_fee_stroops: prepared.estimated_fee_stroops,
+                fee_in_base: prepared.fee_in_base,
                 submission_ledger,
             },
             stats,
