@@ -112,10 +112,10 @@ const TESTNET_AGGREGATOR_HASH_HEX: &str = "1a51af0ee587183fd50206e1e690d62f760de
 
 fn classify_diagnostic_text(diagnostic_text: &str, fallback: &str) -> String {
     let lower = diagnostic_text.to_ascii_lowercase();
-    let is_aggregator = lower.contains(&MAINNET_AGGREGATOR_CONTRACT.to_ascii_lowercase()) ||
-        lower.contains(&TESTNET_AGGREGATOR_CONTRACT.to_ascii_lowercase()) ||
-        lower.contains(MAINNET_AGGREGATOR_HASH_HEX) ||
-        lower.contains(TESTNET_AGGREGATOR_HASH_HEX);
+    let is_aggregator = lower.contains(&MAINNET_AGGREGATOR_CONTRACT.to_ascii_lowercase())
+        || lower.contains(&TESTNET_AGGREGATOR_CONTRACT.to_ascii_lowercase())
+        || lower.contains(MAINNET_AGGREGATOR_HASH_HEX)
+        || lower.contains(TESTNET_AGGREGATOR_HASH_HEX);
     if is_aggregator {
         for (code, classified) in [
             (1, "AGGREGATOR_INVALID_AMOUNT"),
@@ -130,8 +130,8 @@ fn classify_diagnostic_text(diagnostic_text: &str, fallback: &str) -> String {
             (10, "AGGREGATOR_ARITHMETIC_OVERFLOW"),
             (11, "AGGREGATOR_NOT_INITIALIZED"),
         ] {
-            if lower.contains(&format!("error(contract, #{code})")) ||
-                lower.contains(&format!("error(contract({code}))"))
+            if lower.contains(&format!("error(contract, #{code})"))
+                || lower.contains(&format!("error(contract({code}))"))
             {
                 return classified.to_string();
             }
@@ -283,6 +283,22 @@ pub fn parse_envelope(
     }
 
     Ok(None)
+}
+
+/// Read the transaction fee declared in the Stellar envelope, in stroops.
+/// For Soroban transactions this is the fee charged for execution and
+/// inclusion, so it is the XLM gas amount shown in analytics.
+pub fn transaction_fee_stroops(envelope_xdr: &str) -> Result<u64> {
+    let bytes = BASE64
+        .decode(envelope_xdr.trim())
+        .context("decode envelope xdr base64")?;
+    let envelope = xdr::TransactionEnvelope::from_xdr(&bytes, Limits::none()).context("decode transaction envelope")?;
+    let fee = match envelope {
+        xdr::TransactionEnvelope::Tx(v1) => u64::from(v1.tx.fee),
+        xdr::TransactionEnvelope::TxV0(v0) => u64::from(v0.tx.fee),
+        xdr::TransactionEnvelope::TxFeeBump(fb) => u64::try_from(fb.tx.fee).context("negative fee bump fee")?,
+    };
+    Ok(fee)
 }
 
 fn try_parse_aggregator_invoke(

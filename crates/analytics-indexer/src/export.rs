@@ -388,6 +388,7 @@ mod tests {
                 created_at: 1_784_851_200,
                 status: status.into(),
                 failure_reason: None,
+                fee_stroops: None,
                 parsed: ParsedInvocation {
                     function_name: "round_trip_swap".into(),
                     user_address: "USER".into(),
@@ -432,6 +433,7 @@ mod tests {
                 created_at: 1_784_851_200,
                 status: "SUCCESS".into(),
                 failure_reason: None,
+                fee_stroops: None,
                 parsed: ParsedInvocation {
                     function_name: "swap".into(),
                     user_address: "USER".into(),

@@ -73,6 +73,8 @@ pub struct ArbitrageStatsData {
     pub start: i64,
     pub end: i64,
     pub buckets: Vec<ArbitrageStatsBucket>,
+    /// All indexed round-trip transaction fees, denominated in XLM stroops.
+    pub total_xlm_gas_stroops: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -86,6 +88,7 @@ pub struct ArbitrageStatsBucket {
     pub usdc_tx_count: u64,
     pub xlm_surplus: String,
     pub usdc_surplus: String,
+    pub xlm_gas_stroops: String,
 }
 
 #[derive(Default)]
@@ -97,6 +100,7 @@ struct BucketTotals {
     usdc_tx_count: u64,
     xlm_surplus: i128,
     usdc_surplus: i128,
+    xlm_gas_stroops: u64,
 }
 
 fn bucket_start(ts: i64, granularity: &str) -> Option<DateTime<Utc>> {
@@ -411,6 +415,7 @@ pub async fn get_arbitrage_stats(Query(params): Query<ArbitrageStatsQuery>) -> R
         let bucket_ts = bucket.timestamp();
         let entry = totals.entry(bucket_ts).or_default();
         entry.tx_count = entry.tx_count.saturating_add(1);
+        entry.xlm_gas_stroops = entry.xlm_gas_stroops.saturating_add(row.fee_stroops.unwrap_or(0));
         if row.status == "SUCCESS" {
             entry.success_count = entry.success_count.saturating_add(1);
             let surplus = row
@@ -453,9 +458,25 @@ pub async fn get_arbitrage_stats(Query(params): Query<ArbitrageStatsQuery>) -> R
                 usdc_tx_count: totals.usdc_tx_count,
                 xlm_surplus: totals.xlm_surplus.to_string(),
                 usdc_surplus: totals.usdc_surplus.to_string(),
+                xlm_gas_stroops: totals.xlm_gas_stroops.to_string(),
             })
         })
         .collect();
+
+    let total_xlm_gas_stroops = match store.total_round_trip_fee_stroops() {
+        Ok(total) => total.to_string(),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ArbitrageStatsResponse {
+                    success: false,
+                    data: None,
+                    error: Some(format!("query arbitrage gas fees: {e}")),
+                }),
+            )
+                .into_response();
+        }
+    };
 
     (
         StatusCode::OK,
@@ -466,6 +487,7 @@ pub async fn get_arbitrage_stats(Query(params): Query<ArbitrageStatsQuery>) -> R
                 start,
                 end,
                 buckets,
+                total_xlm_gas_stroops,
             }),
             error: None,
         }),
@@ -553,6 +575,7 @@ mod tests {
                     created_at,
                     status: status.into(),
                     failure_reason: None,
+                    fee_stroops: None,
                     parsed: ParsedInvocation {
                         function_name: "round_trip_swap".into(),
                         user_address: "USER".into(),

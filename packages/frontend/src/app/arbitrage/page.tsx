@@ -83,6 +83,7 @@ interface ArbitrageStatsBucket {
 interface ArbitrageStatsPayload {
   granularity: ProfitGranularity;
   buckets: ArbitrageStatsBucket[];
+  total_xlm_gas_stroops: string;
 }
 
 interface ArbitrageListPayload {
@@ -270,6 +271,12 @@ function formatSurplusSigned(raw: string | number | bigint, symbol: string): str
   if (formatted === '—') return '—';
   const neg = asString.startsWith('-');
   return `${neg ? '' : '+'}${formatted} ${symbol}`;
+}
+
+function formatGas(raw: string | undefined): string {
+  if (!raw) return '—';
+  const formatted = formatAmount(raw);
+  return formatted === '—' ? '—' : `${formatted} XLM`;
 }
 
 function downloadCsv(rows: DailyProfit[], granularity: ProfitGranularity): void {
@@ -737,6 +744,12 @@ export default function ArbitragePage() {
               value={formatSurplusSigned(summary.usdcSurplus, 'USDC')}
               hint={`${summary.usdcTx.toLocaleString()} round trips · ${summary.daySpan} indexed days · gross`}
               delay={260}
+            />
+            <KpiCard
+              label="Total XLM gas"
+              value={formatGas(profitStats?.total_xlm_gas_stroops)}
+              hint="indexed round-trip transaction fees"
+              delay={300}
             />
           </div>
         </div>

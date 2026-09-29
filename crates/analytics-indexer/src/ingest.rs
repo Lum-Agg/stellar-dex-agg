@@ -5,7 +5,7 @@ use {
         config::{IndexerConfig, DEFAULT_LOOKBACK_LEDGERS},
         events::build_invocations_from_events,
         order_events::ingest_escrow_order_events,
-        parser::{classify_failure, classify_failure_with_diagnostics, parse_envelope},
+        parser::{classify_failure, classify_failure_with_diagnostics, parse_envelope, transaction_fee_stroops},
         store::{IndexStore, StoredInvocation},
     },
     anyhow::{Context, Result},
@@ -183,6 +183,7 @@ async fn ingest_range(
                         created_at: tx.created_at,
                         status: tx.status.clone(),
                         failure_reason,
+                        fee_stroops: transaction_fee_stroops(&tx.envelope_xdr).ok(),
                         parsed,
                     };
                     // Enrich event-derived actual leg amounts with envelope token
@@ -192,6 +193,7 @@ async fn ingest_range(
                     } else {
                         let _ = store
                             .update_invocation_failure_reason(&record.tx_hash, record.failure_reason.as_deref())?;
+                        let _ = store.update_invocation_fee(&record.tx_hash, record.fee_stroops)?;
                         let _ = store.replace_invocation_legs(&record.tx_hash, &record.parsed)?;
                     }
                 }
@@ -313,6 +315,7 @@ pub async fn repair_leg_indices(config: IndexerConfig, created_at_from: i64) -> 
                 "repaired leg indices"
             );
         }
+        let _ = store.update_invocation_fee(&tx_hash, transaction_fee_stroops(envelope_xdr).ok())?;
     }
     info!(fixed, "leg index repair complete");
     Ok(fixed)

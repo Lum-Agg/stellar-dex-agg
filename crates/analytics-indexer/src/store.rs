@@ -14,6 +14,7 @@ pub struct StoredInvocation {
     pub created_at: i64,
     pub status: String,
     pub failure_reason: Option<String>,
+    pub fee_stroops: Option<u64>,
     pub parsed: ParsedInvocation,
 }
 
@@ -82,6 +83,7 @@ pub struct RoundTripRow {
     pub amount_in: String,
     pub amount_out: Option<String>,
     pub is_split: bool,
+    pub fee_stroops: Option<u64>,
 }
 
 pub struct IndexStore {
@@ -157,7 +159,8 @@ impl IndexStore {
                 bridge_token TEXT,
                 amount_in TEXT NOT NULL,
                 amount_out TEXT,
-                is_split INTEGER NOT NULL DEFAULT 0
+                is_split INTEGER NOT NULL DEFAULT 0,
+                fee_stroops INTEGER
             );
 
             CREATE TABLE IF NOT EXISTS swap_legs (
@@ -229,6 +232,7 @@ impl IndexStore {
         self.ensure_column("swap_invocations", "bridge_token", "TEXT")?;
         self.ensure_column("swap_invocations", "failure_reason", "TEXT")?;
         self.ensure_column("swap_invocations", "is_split", "INTEGER NOT NULL DEFAULT 0")?;
+        self.ensure_column("swap_invocations", "fee_stroops", "INTEGER")?;
         self.ensure_column("swap_legs", "token_in", "TEXT")?;
         self.ensure_column("swap_legs", "token_out", "TEXT")?;
         self.ensure_column("swap_legs", "amount_out", "TEXT")?;
@@ -373,8 +377,8 @@ impl IndexStore {
         let inserted = self.conn.execute(
             "INSERT OR IGNORE INTO swap_invocations (
                 tx_hash, ledger, created_at, status, function_name, user_address,
-                token_in, token_out, bridge_token, amount_in, amount_out, is_split, failure_reason
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                token_in, token_out, bridge_token, amount_in, amount_out, is_split, failure_reason, fee_stroops
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 record.tx_hash,
                 record.ledger,
@@ -389,6 +393,7 @@ impl IndexStore {
                 p.amount_out.map(|v| v.to_string()),
                 p.is_split as i32,
                 record.failure_reason,
+                record.fee_stroops.map(|v| v as i64),
             ],
         )?;
 
@@ -400,6 +405,14 @@ impl IndexStore {
             self.insert_leg(&record.tx_hash, leg)?;
         }
         Ok(true)
+    }
+
+    pub fn update_invocation_fee(&self, tx_hash: &str, fee_stroops: Option<u64>) -> Result<bool> {
+        let changed = self.conn.execute(
+            "UPDATE swap_invocations SET fee_stroops = COALESCE(?1, fee_stroops) WHERE tx_hash = ?2",
+            params![fee_stroops.map(|v| v as i64), tx_hash],
+        )?;
+        Ok(changed > 0)
     }
 
     /// Enrich event-derived legs with envelope route metadata. Match by hop,
@@ -651,6 +664,7 @@ impl IndexStore {
                 amount_in: row.get(8)?,
                 amount_out: row.get(9)?,
                 is_split: row.get::<_, i32>(10)? != 0,
+                fee_stroops: row.get::<_, Option<i64>>(11)?.map(|v| v as u64),
             })
         };
 
@@ -658,7 +672,7 @@ impl IndexStore {
         if let Some((created_at, tx_hash)) = before {
             let mut stmt = self.conn.prepare(
                 "SELECT tx_hash, ledger, created_at, status, user_address,
-                        token_in, token_out, bridge_token, amount_in, amount_out, is_split
+                        token_in, token_out, bridge_token, amount_in, amount_out, is_split, fee_stroops
                  FROM swap_invocations
                  WHERE function_name = 'round_trip_swap'
                    AND status = 'SUCCESS'
@@ -673,7 +687,7 @@ impl IndexStore {
         } else {
             let mut stmt = self.conn.prepare(
                 "SELECT tx_hash, ledger, created_at, status, user_address,
-                        token_in, token_out, bridge_token, amount_in, amount_out, is_split
+                        token_in, token_out, bridge_token, amount_in, amount_out, is_split, fee_stroops
                  FROM swap_invocations
                  WHERE function_name = 'round_trip_swap'
                    AND status = 'SUCCESS'
@@ -693,7 +707,7 @@ impl IndexStore {
     pub fn list_round_trips_between(&self, start_ts: i64, end_ts: i64) -> Result<Vec<RoundTripRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT tx_hash, ledger, created_at, status, user_address,
-                    token_in, token_out, bridge_token, amount_in, amount_out, is_split
+                    token_in, token_out, bridge_token, amount_in, amount_out, is_split, fee_stroops
              FROM swap_invocations
              WHERE function_name = 'round_trip_swap'
                AND created_at >= ?1 AND created_at < ?2
@@ -712,9 +726,21 @@ impl IndexStore {
                 amount_in: row.get(8)?,
                 amount_out: row.get(9)?,
                 is_split: row.get::<_, i32>(10)? != 0,
+                fee_stroops: row.get::<_, Option<i64>>(11)?.map(|v| v as u64),
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    }
+
+    pub fn total_round_trip_fee_stroops(&self) -> Result<u64> {
+        let total: i64 = self.conn.query_row(
+            "SELECT COALESCE(SUM(fee_stroops), 0)
+             FROM swap_invocations
+             WHERE function_name = 'round_trip_swap' AND fee_stroops IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(total.max(0) as u64)
     }
 
     /// Count indexed round-trip invocations by terminal on-chain status.
@@ -1107,6 +1133,7 @@ mod tests {
             created_at,
             status: "SUCCESS".into(),
             failure_reason: None,
+            fee_stroops: None,
             parsed: ParsedInvocation {
                 function_name: "swap".into(),
                 user_address: user.into(),
