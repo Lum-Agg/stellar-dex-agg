@@ -7,7 +7,7 @@ an execution checklist, not a new product scope.
 
 | Area | Evidence required | Current state |
 |---|---|---|
-| D8 Analytics | Public `/stats`, CSV export, volume/tx/DEX/arb attribution, at least 30 days indexed | Dashboard is live; verify the 30-day snapshot |
+| D8 Analytics | Public `/stats`, CSV export, volume/tx/DEX/arb attribution, at least 30 days indexed | Verified 2026-10-01: 80 days indexed, public health/ready pass; see [`operational-validation-report.md`](./operational-validation-report.md) and [`evidence/tranche3-stats.csv`](./evidence/tranche3-stats.csv) |
 | D9 Audit | Signed scope or Audit Bank engagement, final report, critical/high remediation record | Scope is drafted; obtain quotes and freeze WASM versions |
 | D10 Demo | Public 5-minute video covering swap, API, analytics, arb architecture and self-hosting | Script exists; recording remains |
 | D10 Testnet | Protocol 28 quote/build/simulate/submit regression notes | Checklist is ready in `p28-testnet-regression.md` |
@@ -20,7 +20,9 @@ an execution checklist, not a new product scope.
    configuration. Do not upgrade either contract during this step.
 2. **Validate analytics.** Run the operational validation report, confirm the
    indexed date range is at least 30 days, and preserve the JSON/Markdown
-   snapshot used in the final submission.
+   snapshot used in the final submission. **Completed 2026-10-01:** 80 days,
+   8,930 aggregator invocations, 4,435 round trips, and public health/ready
+   checks passed.
 3. **Start the audit track.** Send `audit-scope.md`, the repository commit, and
    contract IDs to at least two audit candidates or the Stellar Audit Bank.
    Any critical/high remediation must be reviewed and explicitly approved

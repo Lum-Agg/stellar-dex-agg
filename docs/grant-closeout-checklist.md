@@ -21,7 +21,7 @@ Living checklist — tick as evidence lands in repo or production.
 ## Tranche 3 · Oct 15, 2026
 
 - [x] D8 `/api/v1/stats` + https://lumagg.xyz/stats (after deploy)
-- [ ] D8 ≥30 days indexed data
+- [x] D8 ≥30 days indexed data — 80 days (`2026-07-13` → `2026-10-01`); see [operational-validation-report.md](./operational-validation-report.md)
 - [ ] D9 Audit report ([audit-scope.md](./audit-scope.md)) — **budget $16k**
 - [ ] D10 Demo video (~5 min) — [demo-video-script.md](./demo-video-script.md)
 - [x] D10 [maintenance-plan.md](./maintenance-plan.md)
