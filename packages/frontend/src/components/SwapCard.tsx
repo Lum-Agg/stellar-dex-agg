@@ -82,6 +82,7 @@ export function SwapCard() {
   const [pairLinkCopied, setPairLinkCopied] = useState(false);
   const [urlSelectionReady, setUrlSelectionReady] = useState(false);
   const [quote, setQuote] = useState<QuoteData | null>(null);
+  const [quoteStale, setQuoteStale] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { address: walletAddress, signTx, connect, connecting } = useWallet();
@@ -219,15 +220,18 @@ export function SwapCard() {
 
         if (result.success && result.data) {
           setQuote(result.data);
+          setQuoteStale(false);
           setError(null);
         } else if (!silent) {
           setQuote(null);
+          setQuoteStale(false);
           setError(result.error || 'No route found');
         }
       } catch (err) {
         if (controller.signal.aborted) return;
         if (!silent && requestFingerprint === quoteFingerprintRef.current) {
           setQuote(null);
+          setQuoteStale(false);
           setError(err instanceof Error ? err.message : 'Failed to fetch quote');
         }
       } finally {
@@ -394,15 +398,31 @@ export function SwapCard() {
   const applyBalancePercent = useCallback(
     (percent: number) => {
       if (balanceStroops === null || balanceStroops === BigInt(0)) return;
-      setAmountIn(percentToAmountInput(balanceStroops, percent, tokenIn.decimals, tokenIn.id));
+      const nextAmount = percentToAmountInput(
+        balanceStroops,
+        percent,
+        tokenIn.decimals,
+        tokenIn.id,
+      );
+      setAmountIn(nextAmount);
       setQuote(null);
       setTxResult(null);
+
+      // Clicking Max repeatedly can produce the same amount, so the amount
+      // dependency will not trigger the debounced quote refresh again.
+      if (nextAmount === amountIn) {
+        void loadQuote();
+      }
     },
-    [balanceStroops, tokenIn.decimals, tokenIn.id],
+    [amountIn, balanceStroops, loadQuote, tokenIn.decimals, tokenIn.id],
   );
 
   const handleSwap = useCallback(async () => {
     if (!walletAddress || !quote) return;
+    if (quoteStale) {
+      void loadQuote();
+      return;
+    }
     if (!quote.sub_routes?.length) {
       setTxResult({ success: false, error: 'No route to execute' });
       return;
@@ -510,9 +530,8 @@ export function SwapCard() {
           return;
         }
         setTxResult({ success: true, hash: submitResult.hash, kind: 'swap' });
+        setQuoteStale(true);
         window.dispatchEvent(new Event(SWAP_SUCCESS_EVENT));
-        setAmountIn('');
-        setQuote(null);
         void refreshBalances();
       } else {
         setTxResult({ success: false, error: submitResult.error || 'Transaction failed' });
@@ -525,6 +544,8 @@ export function SwapCard() {
   }, [
     walletAddress,
     quote,
+    quoteStale,
+    loadQuote,
     tokenIn,
     tokenOut,
     amountIn,
@@ -604,8 +625,20 @@ export function SwapCard() {
       void handleAddTrustline();
       return;
     }
+    if (quoteStale) {
+      void loadQuote();
+      return;
+    }
     handleSwap();
-  }, [walletAddress, connect, handleSwap, outputHasTrustline, handleAddTrustline]);
+  }, [
+    walletAddress,
+    connect,
+    handleSwap,
+    outputHasTrustline,
+    handleAddTrustline,
+    quoteStale,
+    loadQuote,
+  ]);
 
   const needsTrustline = walletAddress !== null && outputHasTrustline === false;
   const canAutoAddTrustline = needsTrustline && resolvedClassicAsset !== null;
@@ -640,9 +673,11 @@ export function SwapCard() {
                   : `Add ${tokenOut.symbol} trustline in wallet`
                 : !amountIn
                   ? 'Enter amount'
-                  : !quote
-                    ? 'No route available'
-                    : 'Review & swap';
+                : !quote
+                  ? 'No route available'
+                    : quoteStale
+                      ? 'Refresh quote'
+                      : 'Review & swap';
 
   return (
     <div className="w-full max-w-none space-y-3">
