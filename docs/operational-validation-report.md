@@ -1,6 +1,6 @@
 # LumAgg Operational Validation Report
 
-Generated: `2026-10-01T10:48:10Z`
+Generated: `2026-10-04T02:20:51Z`
 API: [https://api.lumagg.xyz](https://api.lumagg.xyz)
 
 ## Public service
@@ -14,16 +14,16 @@ API: [https://api.lumagg.xyz](https://api.lumagg.xyz)
 
 | Metric | Value |
 | --- | --- |
-| Ledger cursor | `64713177` |
-| Days indexed | `80` |
-| Coverage | `2026-07-13` → `2026-10-01` |
-| Aggregator invocations | `8930` |
-| Successful transactions | `4493` |
-| DEX legs | `12940` |
-| Round trips | `4435` |
-| Entry notional (USD) | `$73644.02304205095` |
-| Routed DEX volume (USD) | `$252781.89298279464` |
-| Gross surplus (USD) | `$224.9385226835715` |
+| Ledger cursor | `64758927` |
+| Days indexed | `82` |
+| Coverage | `2026-07-13` → `2026-10-03` |
+| Aggregator invocations | `9168` |
+| Successful transactions | `4627` |
+| DEX legs | `13342` |
+| Round trips | `4566` |
+| Entry notional (USD) | `$75693.55692526237` |
+| Routed DEX volume (USD) | `$259831.09850840984` |
+| Gross surplus (USD) | `$226.2800184087743` |
 
 ## Acceptance
 

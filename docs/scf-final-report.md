@@ -56,7 +56,9 @@ LumAgg delivers a production Stellar DEX aggregator with split routing across So
 ## Audit
 
 - **Budget:** $16,000
-- **Scope:** [audit-scope.md](./audit-scope.md)
+- **Scope:** [audit-scope.md](./audit-scope.md) — Aggregator and Arb Vault
+- Order Escrow remains testnet-only and is outside this engagement; it requires
+  a separate audit before any future mainnet Limit/DCA deployment.
 - **Report:** _(link PDF when complete)_
 
 ---

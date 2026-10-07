@@ -1,6 +1,6 @@
 # SCF Build — Tranche 3 Completion Draft
 
-Prepared 2026-10-01 for the 2026-10-15 target. This is a submission draft;
+Prepared 2026-10-04 for the 2026-10-15 target. This is a submission draft;
 items marked pending require external evidence before filing.
 
 ## D8 — Public analytics and operational evidence
@@ -10,15 +10,15 @@ The operational snapshot generated on 2026-10-01 confirms:
 
 | Metric | Result |
 | --- | ---: |
-| Indexed coverage | 2026-07-13 → 2026-10-01 |
-| Days indexed | 80 |
-| Aggregator invocations | 8,930 |
-| Successful transactions | 4,493 |
-| DEX legs | 12,940 |
-| Round trips | 4,435 |
-| Entry notional | $73,644.02 |
-| Routed DEX volume | $252,781.89 |
-| Gross surplus | $224.94 |
+| Indexed coverage | 2026-07-13 → 2026-10-03 |
+| Days indexed | 82 |
+| Aggregator invocations | 9,168 |
+| Successful transactions | 4,627 |
+| DEX legs | 13,342 |
+| Round trips | 4,566 |
+| Entry notional | $75,693.56 |
+| Routed DEX volume | $259,831.10 |
+| Gross surplus | $226.28 |
 
 Evidence:
 
@@ -35,11 +35,13 @@ backfill.
 
 ## D9 — Third-party smart-contract audit
 
-- Scope: [`audit-scope.md`](./audit-scope.md)
+- Scope: [`audit-scope.md`](./audit-scope.md) — Aggregator and Arb Vault
 - Budget: $16,000
-- Status: **Pending external engagement and final report**
+- Status: **Pending Audit Bank confirmation/external engagement and final report**
 - Mainnet contracts: aggregator `CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K`;
-  arb vault `CCQQ3LRFCSGOYSSD6S4MGH6RWWYVDHYPJO6KYDJYC2IDZK4OGCK6P6KN`
+  arb vault `CCQQ3LRFCSGOYSSD6S4MGH6RWWYVDHYPJO6KYDJYC2IDZK4OGCK6P6KN`;
+  Order Escrow remains testnet-only and is deferred to a separate audit before
+  any future mainnet Limit/DCA deployment.
 
 No mainnet contract upgrade is authorized by this preparation document.
 
@@ -54,7 +56,7 @@ No mainnet contract upgrade is authorized by this preparation document.
 ## Submission checklist
 
 - [x] D8 public analytics and CSV snapshot
-- [x] D8 at least 30 days indexed
+- [x] D8 at least 30 days indexed (82 days; 2026-07-13 → 2026-10-03)
 - [ ] D9 audit engagement and final report
 - [ ] D10 five-minute demo video
 - [ ] D10 Protocol 28 testnet regression notes

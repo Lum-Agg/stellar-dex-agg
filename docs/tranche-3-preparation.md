@@ -7,8 +7,8 @@ an execution checklist, not a new product scope.
 
 | Area | Evidence required | Current state |
 |---|---|---|
-| D8 Analytics | Public `/stats`, CSV export, volume/tx/DEX/arb attribution, at least 30 days indexed | Verified 2026-10-01: 80 days indexed, public health/ready pass; see [`operational-validation-report.md`](./operational-validation-report.md) and [`evidence/tranche3-stats.csv`](./evidence/tranche3-stats.csv) |
-| D9 Audit | Signed scope or Audit Bank engagement, final report, critical/high remediation record | Scope is drafted; obtain quotes and freeze WASM versions |
+| D8 Analytics | Public `/stats`, CSV export, volume/tx/DEX/arb attribution, at least 30 days indexed | Refreshed 2026-10-04: 82 days indexed (2026-07-13 → 2026-10-03), public health/ready pass; see [`operational-validation-report.md`](./operational-validation-report.md) and [`evidence/tranche3-stats.csv`](./evidence/tranche3-stats.csv) |
+| D9 Audit | Signed scope or Audit Bank engagement, final report, critical/high remediation record | Scope covers Aggregator + Arb Vault; Order Escrow remains deferred to a separate pre-mainnet audit; obtain Audit Bank confirmation/quotes and freeze WASM versions |
 | D10 Demo | Public 5-minute video covering swap, API, analytics, arb architecture and self-hosting | Script exists; recording remains |
 | D10 Testnet | Protocol 28 quote/build/simulate/submit regression notes | Checklist is ready in `p28-testnet-regression.md` |
 | D10 Final report | Final report with links, metrics, transactions and audit outcome | Draft exists; fill after evidence is frozen |
@@ -20,16 +20,16 @@ an execution checklist, not a new product scope.
    configuration. Do not upgrade either contract during this step.
 2. **Validate analytics.** Run the operational validation report, confirm the
    indexed date range is at least 30 days, and preserve the JSON/Markdown
-   snapshot used in the final submission. **Completed 2026-10-01:** 80 days,
-   8,930 aggregator invocations, 4,435 round trips, and public health/ready
+   snapshot used in the final submission. **Refreshed 2026-10-04:** 82 days,
+   9,168 aggregator invocations, 4,566 round trips, and public health/ready
    checks passed.
 3. **Start the audit track.** Send `audit-scope.md`, the repository commit, and
    contract IDs to at least two audit candidates or the Stellar Audit Bank.
    Any critical/high remediation must be reviewed and explicitly approved
    before a contract upgrade is attempted.
 4. **Run Protocol 28 testnet regression.** Complete every row in
-   `p28-testnet-regression.md`; keep Order Escrow testnet-only unless its scope
-   is separately approved and reviewed.
+   `p28-testnet-regression.md`; keep Order Escrow testnet-only until its separate
+   audit is complete and any critical/high findings are remediated.
 5. **Record the demo.** Use `demo-video-script.md`; show real URLs, one
    reproducible API command, the stats export, arb evidence, and self-host
    deployment links.

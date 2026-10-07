@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-01T10:48:10Z",
+  "generated_at": "2026-10-04T02:20:51Z",
   "api_url": "https://api.lumagg.xyz",
   "health": {
     "ok": true,
@@ -12,28 +12,28 @@
     "pools": 544
   },
   "indexer": {
-    "cursor_ledger": 64713177,
-    "invocation_count": 8930,
-    "days_indexed": 80,
+    "cursor_ledger": 64758927,
+    "invocation_count": 9168,
+    "days_indexed": 82,
     "oldest_day": "2026-07-13",
-    "newest_day": "2026-10-01",
-    "transaction_count": 4493,
-    "unique_users_sum": 678,
-    "routed_leg_count": 12940,
-    "round_trip_count": 4435,
-    "total_amount_in_usd": 73644.02304205095,
-    "routed_volume_usd": 252781.89298279464,
-    "gross_surplus_usd": 224.9385226835715,
+    "newest_day": "2026-10-03",
+    "transaction_count": 4627,
+    "unique_users_sum": 696,
+    "routed_leg_count": 13342,
+    "round_trip_count": 4566,
+    "total_amount_in_usd": 75693.55692526237,
+    "routed_volume_usd": 259831.09850840984,
+    "gross_surplus_usd": 226.2800184087743,
     "by_function": {
-      "round_trip_swap": 37,
-      "swap": 8
+      "round_trip_swap": 14,
+      "swap": 1
     },
     "by_dex": {
-      "aquarius": 114,
+      "aquarius": 39,
       "comet": 1,
-      "soroswap": 1,
+      "soroswap": 2,
       "sushi": 4,
-      "phoenix": 10
+      "phoenix": 5
     }
   },
   "acceptance": {
