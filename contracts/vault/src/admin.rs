@@ -1,9 +1,10 @@
 use {
-    crate::{auth, storage},
+    crate::{auth, errors::VaultError, storage},
     soroban_sdk::{token, Address, BytesN, Env},
 };
 
 pub fn initialize(env: Env, admin: Address) {
+    admin.require_auth();
     if storage::has_admin(&env) {
         panic!("Already initialized");
     }
@@ -35,7 +36,7 @@ pub fn is_caller(env: Env, caller: Address) -> bool {
 
 pub fn admin_withdraw(env: Env, token: Address, to: Address, amount: i128) {
     let _admin = auth::require_admin(&env);
-    assert!(amount > 0, "amount must be positive");
+    soroban_sdk::assert_with_error!(&env, amount > 0, VaultError::InvalidAmount);
     let vault = env.current_contract_address();
     token::Client::new(&env, &token).transfer(&vault, &to, &amount);
 }

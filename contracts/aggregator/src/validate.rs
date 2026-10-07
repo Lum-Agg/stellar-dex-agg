@@ -20,19 +20,25 @@ pub(crate) fn validate_sub_routes(
             .unwrap_or_else(|| soroban_sdk::panic_with_error!(env, AggregatorError::ArithmeticOverflow));
         soroban_sdk::assert_with_error!(env, !sr.steps.is_empty(), AggregatorError::InvalidRoute);
 
-        let first_step = sr.steps.first().unwrap();
-        let last_step = sr.steps.last().unwrap();
+        let first_step = sr
+            .steps
+            .first()
+            .unwrap_or_else(|| soroban_sdk::panic_with_error!(env, AggregatorError::InvalidRoute));
+        let last_step = sr
+            .steps
+            .last()
+            .unwrap_or_else(|| soroban_sdk::panic_with_error!(env, AggregatorError::InvalidRoute));
         soroban_sdk::assert_with_error!(env, first_step.token_in == *token_in, AggregatorError::InvalidRoute);
         soroban_sdk::assert_with_error!(env, last_step.token_out == *token_out, AggregatorError::InvalidRoute);
 
-        for i in 1..sr.steps.len() {
-            let previous = sr.steps.get(i - 1).unwrap();
-            let current = sr.steps.get(i).unwrap();
+        let mut previous = first_step;
+        for current in sr.steps.iter().skip(1) {
             soroban_sdk::assert_with_error!(
                 env,
                 previous.token_out == current.token_in,
                 AggregatorError::DisconnectedRoute
             );
+            previous = current;
         }
     }
     total_in

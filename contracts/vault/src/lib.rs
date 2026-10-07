@@ -29,6 +29,7 @@
 
 mod admin;
 mod auth;
+mod errors;
 mod execute;
 mod storage;
 mod types;
@@ -36,6 +37,7 @@ mod types;
 #[cfg(test)]
 mod tests;
 
+pub use errors::VaultError;
 pub use types::AggregatorContract;
 use {
     lumagg_contract_types::SubRoute,

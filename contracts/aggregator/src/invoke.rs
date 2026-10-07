@@ -11,7 +11,7 @@ use {
 /// sequence mismatch.
 pub(crate) fn comet_approval_ledger(env: &Env) -> u32 {
     let seq = env.ledger().sequence();
-    (seq / 100_000 + 1) * 100_000
+    (seq / 100_000).saturating_add(1).saturating_mul(100_000)
 }
 
 /// Execute a path (sequence of swap steps) and return the final output
@@ -30,10 +30,11 @@ pub(crate) fn execute_path(
     for (i, step) in steps.iter().enumerate() {
         soroban_sdk::assert_with_error!(env, step.token_in != step.token_out, AggregatorError::InvalidStep);
         soroban_sdk::assert_with_error!(env, step.in_idx != step.out_idx, AggregatorError::InvalidStep);
-        let hop_idx = path_base + i as u32;
+        let hop_offset = u32::try_from(i).unwrap_or(u32::MAX);
+        let hop_idx = path_base.saturating_add(hop_offset);
         current_amount = execute_step(env, &step, current_amount, my_address, hop_idx);
         soroban_sdk::assert_with_error!(env, current_amount > 0, AggregatorError::ZeroStepOutput);
-        let depth = (i as u32) + 1;
+        let depth = hop_offset.saturating_add(1);
         if depth > *max_depth {
             *max_depth = depth;
         }
@@ -145,7 +146,9 @@ pub(crate) fn execute_step_inner(env: &Env, step: &SwapStep, amount_in: i128, my
             let _: Val = env.invoke_contract(&step.dex_id, &Symbol::new(env, "swap"), swap_args);
 
             let balance_after = token_out_client.balance(my_address);
-            balance_after - balance_before
+            balance_after
+                .checked_sub(balance_before)
+                .unwrap_or_else(|| soroban_sdk::panic_with_error!(env, AggregatorError::ArithmeticUnderflow))
         }
 
         DexType::Phoenix => {
@@ -186,7 +189,9 @@ pub(crate) fn execute_step_inner(env: &Env, step: &SwapStep, amount_in: i128, my
             let _: Val = env.invoke_contract(&step.dex_id, &Symbol::new(env, "swap"), swap_args);
 
             let balance_after = token_out_client.balance(my_address);
-            balance_after - balance_before
+            balance_after
+                .checked_sub(balance_before)
+                .unwrap_or_else(|| soroban_sdk::panic_with_error!(env, AggregatorError::ArithmeticUnderflow))
         }
 
         DexType::Sushi => {
@@ -253,7 +258,9 @@ pub(crate) fn execute_step_inner(env: &Env, step: &SwapStep, amount_in: i128, my
             let _: Val = env.invoke_contract(&step.dex_id, &Symbol::new(env, "swap"), swap_args);
 
             let balance_after = token_out_client.balance(my_address);
-            balance_after - balance_before
+            balance_after
+                .checked_sub(balance_before)
+                .unwrap_or_else(|| soroban_sdk::panic_with_error!(env, AggregatorError::ArithmeticUnderflow))
         }
 
         DexType::CometDex => {

@@ -1,12 +1,12 @@
 use {
-    crate::{auth, types::AggregatorContractClient},
+    crate::{auth, errors::VaultError, types::AggregatorContractClient},
     lumagg_contract_types::SubRoute,
     soroban_sdk::{token, Address, Env, Vec},
 };
 
 pub fn deposit(env: Env, from: Address, token: Address, amount: i128) {
     from.require_auth();
-    assert!(amount > 0, "amount must be positive");
+    soroban_sdk::assert_with_error!(&env, amount > 0, VaultError::InvalidAmount);
     let vault = env.current_contract_address();
     token::Client::new(&env, &token).transfer(&from, &vault, &amount);
 }
@@ -24,11 +24,12 @@ pub fn execute_round_trip(
     allowance_expiration_ledger: u32,
 ) -> i128 {
     auth::require_caller(&env, &caller);
-    assert!(amount_in > 0, "amount_in must be positive");
-    assert!(min_amount_out >= amount_in, "min_amount_out below principal");
-    assert!(
+    soroban_sdk::assert_with_error!(&env, amount_in > 0, VaultError::InvalidAmount);
+    soroban_sdk::assert_with_error!(&env, min_amount_out >= amount_in, VaultError::InvalidMinimumOut);
+    soroban_sdk::assert_with_error!(
+        &env,
         allowance_expiration_ledger >= env.ledger().sequence(),
-        "allowance expiration in the past"
+        VaultError::InvalidAllowanceExpiry
     );
 
     let vault = env.current_contract_address();

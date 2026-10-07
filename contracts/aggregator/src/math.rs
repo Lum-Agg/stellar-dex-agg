@@ -9,7 +9,11 @@ pub(crate) fn soroswap_fee(amount_in: i128) -> i128 {
     if amount_in <= 0 {
         return 0;
     }
-    (amount_in * 3 + 999) / 1000
+    amount_in
+        .checked_mul(3)
+        .and_then(|value| value.checked_add(999))
+        .unwrap_or(i128::MAX)
+        / 1000
 }
 
 /// Soroswap library `get_amount_out` (floor division on output).
@@ -17,11 +21,13 @@ pub(crate) fn soroswap_get_amount_out(amount_in: i128, reserve_in: i128, reserve
     if amount_in <= 0 || reserve_in <= 0 || reserve_out <= 0 {
         return 0;
     }
-    let in_less = amount_in - soroswap_fee(amount_in);
+    let in_less = amount_in.checked_sub(soroswap_fee(amount_in)).unwrap_or(0);
     if in_less <= 0 {
         return 0;
     }
-    in_less * reserve_out / (reserve_in + in_less)
+    let numerator = in_less.checked_mul(reserve_out).unwrap_or(i128::MAX);
+    let denominator = reserve_in.checked_add(in_less).unwrap_or(i128::MAX);
+    numerator / denominator
 }
 
 /// Treat each `SubRoute.amount_in` as a positive weight and allocate
@@ -43,15 +49,19 @@ pub(crate) fn scale_sub_routes_to_total(env: &Env, routes: &Vec<SubRoute>, targe
     let mut out: Vec<SubRoute> = Vec::new(env);
     let mut allocated: i128 = 0;
     for i in 0..n {
-        let sr = routes.get(i).unwrap();
-        let amount = if i + 1 == n {
-            target_total - allocated
+        let sr = routes
+            .get(i)
+            .unwrap_or_else(|| soroban_sdk::panic_with_error!(env, AggregatorError::InvalidRoute));
+        let amount = if i == n.saturating_sub(1) {
+            target_total
+                .checked_sub(allocated)
+                .unwrap_or_else(|| soroban_sdk::panic_with_error!(env, AggregatorError::ArithmeticUnderflow))
         } else {
             let scaled = sr
                 .amount_in
                 .checked_mul(target_total)
-                .unwrap_or_else(|| soroban_sdk::panic_with_error!(env, AggregatorError::ArithmeticOverflow)) /
-                weight_sum;
+                .unwrap_or_else(|| soroban_sdk::panic_with_error!(env, AggregatorError::ArithmeticOverflow))
+                / weight_sum;
             allocated = allocated
                 .checked_add(scaled)
                 .unwrap_or_else(|| soroban_sdk::panic_with_error!(env, AggregatorError::ArithmeticOverflow));

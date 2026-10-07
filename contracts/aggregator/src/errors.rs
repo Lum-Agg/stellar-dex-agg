@@ -18,4 +18,5 @@ pub enum AggregatorError {
     VenueNotRegistered = 9,
     ArithmeticOverflow = 10,
     NotInitialized = 11,
+    ArithmeticUnderflow = 12,
 }

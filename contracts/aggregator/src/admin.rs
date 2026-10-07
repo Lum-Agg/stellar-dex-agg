@@ -7,6 +7,7 @@ use {
 /// Initialize the contract with an admin address.
 /// Must be called once after deployment.
 pub fn initialize(env: Env, admin: Address) {
+    admin.require_auth();
     if storage::has_admin(&env) {
         panic!("Already initialized");
     }
