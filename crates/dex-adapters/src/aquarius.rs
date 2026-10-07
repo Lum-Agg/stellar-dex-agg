@@ -364,9 +364,9 @@ impl AquariusAdapter {
         let meta_map = self.pool_meta.read().await;
         let mut out = Vec::new();
         for (pool_address, meta) in meta_map.iter() {
-            if meta.all_tokens.is_empty() ||
-                meta.all_reserves.len() != meta.all_tokens.len() ||
-                meta.all_reserves.iter().all(|&r| r == 0)
+            if meta.all_tokens.is_empty()
+                || meta.all_reserves.len() != meta.all_tokens.len()
+                || meta.all_reserves.iter().all(|&r| r == 0)
             {
                 continue;
             }
@@ -509,9 +509,9 @@ impl AquariusAdapter {
             meta_map.insert(addr.clone(), meta);
             for (pair, _) in edges {
                 let exists = pairs.iter().any(|p| {
-                    p.pool_address == pair.pool_address &&
-                        p.token_a.canonical() == pair.token_a.canonical() &&
-                        p.token_b.canonical() == pair.token_b.canonical()
+                    p.pool_address == pair.pool_address
+                        && p.token_a.canonical() == pair.token_a.canonical()
+                        && p.token_b.canonical() == pair.token_b.canonical()
                 });
                 if !exists {
                     pairs.push(pair);
@@ -619,9 +619,9 @@ impl DexAdapter for AquariusAdapter {
         });
         drop(meta_map);
 
-        if meta.all_tokens.len() >= 2 &&
-            meta.all_reserves.len() == meta.all_tokens.len() &&
-            meta.all_reserves.iter().any(|&r| r > 0)
+        if meta.all_tokens.len() >= 2
+            && meta.all_reserves.len() == meta.all_tokens.len()
+            && meta.all_reserves.iter().any(|&r| r > 0)
         {
             let state = AquariusPoolQuoteState {
                 pool_address: pool_address.to_string(),

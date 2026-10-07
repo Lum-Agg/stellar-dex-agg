@@ -127,11 +127,11 @@ pub async fn path_amount_out_on_chain(
     amount_in: u128,
 ) -> Result<Option<u128>> {
     let hops = sources.len();
-    if hops == 0 ||
-        pool_addresses.len() != hops ||
-        tokens.len() != hops + 1 ||
-        in_indices.len() != hops ||
-        out_indices.len() != hops
+    if hops == 0
+        || pool_addresses.len() != hops
+        || tokens.len() != hops + 1
+        || in_indices.len() != hops
+        || out_indices.len() != hops
     {
         return Ok(None);
     }

@@ -181,9 +181,9 @@ fn mul_div_u128(a: u128, b: u128, c: u128) -> u128 {
 
     // Approximate: use f64 for the division (loses some precision but doesn't
     // overflow)
-    let product_f64 = (high as f64) * (1u128 << 64) as f64 * (1u128 << 64) as f64 +
-        (mid1 as f64 + mid2 as f64) * (1u128 << 64) as f64 +
-        low as f64;
+    let product_f64 = (high as f64) * (1u128 << 64) as f64 * (1u128 << 64) as f64
+        + (mid1 as f64 + mid2 as f64) * (1u128 << 64) as f64
+        + low as f64;
 
     (product_f64 / c as f64) as u128
 }

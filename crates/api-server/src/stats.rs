@@ -57,9 +57,7 @@ async fn write_shared_stats_cache(response: &StatsResponse) {
     let Ok(mut connection) = client.get_multiplexed_async_connection().await else {
         return;
     };
-    let _: redis::RedisResult<()> = connection
-        .set_ex(SHARED_STATS_CACHE_KEY, payload, 15)
-        .await;
+    let _: redis::RedisResult<()> = connection.set_ex(SHARED_STATS_CACHE_KEY, payload, 15).await;
 }
 
 fn shared_stats_file_path() -> PathBuf {
@@ -162,7 +160,7 @@ pub async fn get_stats(Query(params): Query<StatsQuery>) -> Response {
                         error: None,
                     }),
                 )
-                .into_response();
+                    .into_response();
             }
         }
         if let Some(cached) = read_file_stats_cache() {
@@ -311,9 +309,7 @@ pub async fn get_stats(Query(params): Query<StatsQuery>) -> Response {
     (
         StatusCode::OK,
         if cacheable {
-            Some([
-                (header::CACHE_CONTROL, "public, max-age=15, stale-while-revalidate=60"),
-            ])
+            Some([(header::CACHE_CONTROL, "public, max-age=15, stale-while-revalidate=60")])
         } else {
             None
         },

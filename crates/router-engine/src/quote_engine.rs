@@ -157,9 +157,9 @@ impl QuoteEngine {
         let in_key = token_in.canonical();
         let out_key = token_out.canonical();
         pools.iter().find(|p| {
-            p.pool_address == pool_address &&
-                ((p.token_a.canonical() == in_key && p.token_b.canonical() == out_key) ||
-                    (p.token_b.canonical() == in_key && p.token_a.canonical() == out_key))
+            p.pool_address == pool_address
+                && ((p.token_a.canonical() == in_key && p.token_b.canonical() == out_key)
+                    || (p.token_b.canonical() == in_key && p.token_a.canonical() == out_key))
         })
     }
 
@@ -642,10 +642,10 @@ impl QuoteEngine {
             return None;
         };
 
-        if reserve_in == 0 ||
-            reserve_out == 0 ||
-            reserve_in < MIN_XYK_RESERVE_STROOPS ||
-            reserve_out < MIN_XYK_RESERVE_STROOPS
+        if reserve_in == 0
+            || reserve_out == 0
+            || reserve_in < MIN_XYK_RESERVE_STROOPS
+            || reserve_out < MIN_XYK_RESERVE_STROOPS
         {
             return None;
         }

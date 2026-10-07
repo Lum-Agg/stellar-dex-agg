@@ -93,8 +93,8 @@ impl AquariusClmmAdapter {
             Some({
                 let range = loaded_tick_range(&pool.tick_store, pool.tick_spacing);
                 ClmmCoverageSnapshot {
-                    is_complete: !pool.bitmap_truncated &&
-                        range
+                    is_complete: !pool.bitmap_truncated
+                        && range
                             .map(|(min_tick, max_tick)| !tick_outside_loaded_range(pool.tick, min_tick, max_tick))
                             .unwrap_or(false),
                     min_loaded_tick: range.map(|(min_tick, _)| min_tick),
@@ -293,8 +293,8 @@ impl AquariusClmmAdapter {
         ClmmCoverageInput {
             pool_tick: pool.tick,
             tick_spacing: pool.tick_spacing,
-            is_complete: !pool.bitmap_truncated &&
-                range
+            is_complete: !pool.bitmap_truncated
+                && range
                     .map(|(min_tick, max_tick)| !tick_outside_loaded_range(pool.tick, min_tick, max_tick))
                     .unwrap_or(false),
             min_loaded_tick: range.map(|(min_tick, _)| min_tick),

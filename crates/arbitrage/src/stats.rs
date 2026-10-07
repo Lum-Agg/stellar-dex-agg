@@ -255,10 +255,10 @@ fn aggregator_error_reason(error: &str) -> Option<&'static str> {
     // Nested DEX/SAC errors may use the same number, so never classify a
     // bare `Error(Contract, #N)` as an Aggregator error.
     let lower = error.to_ascii_lowercase();
-    let from_aggregator = lower.contains("bd0057e921bacc464f7773ee93a6d33990fb8121b59ba3375f7b384f7d48d1a5") ||
-        error.contains("1a51af0ee587183fd50206e1e690d62f760de7c857ed36b21ea66875f6e68308") ||
-        lower.contains("cc6qav7jeg5myrspo5z65e5g2m4zb64beg2zxizxl55tqt35jdi2lc6k") ||
-        lower.contains("cdji26dxfq4md7vica3q6negwf53a3z6ik7wtnmq6uzuhl5xgqmekjre");
+    let from_aggregator = lower.contains("bd0057e921bacc464f7773ee93a6d33990fb8121b59ba3375f7b384f7d48d1a5")
+        || error.contains("1a51af0ee587183fd50206e1e690d62f760de7c857ed36b21ea66875f6e68308")
+        || lower.contains("cc6qav7jeg5myrspo5z65e5g2m4zb64beg2zxizxl55tqt35jdi2lc6k")
+        || lower.contains("cdji26dxfq4md7vica3q6negwf53a3z6ik7wtnmq6uzuhl5xgqmekjre");
     if !from_aggregator {
         return None;
     }

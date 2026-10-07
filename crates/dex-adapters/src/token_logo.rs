@@ -268,10 +268,10 @@ pub fn detect_image_ext(bytes: &[u8], content_type: &str) -> Option<&'static str
 fn looks_like_html(bytes: &[u8]) -> bool {
     let head = trim_leading_whitespace(bytes);
     let lower: Vec<u8> = head.iter().take(64).map(u8::to_ascii_lowercase).collect();
-    lower.starts_with(b"<!doctype html") ||
-        lower.starts_with(b"<html") ||
-        lower.starts_with(b"<head") ||
-        lower.starts_with(b"<body")
+    lower.starts_with(b"<!doctype html")
+        || lower.starts_with(b"<html")
+        || lower.starts_with(b"<head")
+        || lower.starts_with(b"<body")
 }
 
 fn looks_like_svg(bytes: &[u8]) -> bool {
@@ -356,8 +356,8 @@ fn skip_dangerous_element(lower: &[u8], start: usize) -> Option<usize> {
     };
 
     for name in DANGEROUS {
-        if lower[name_start..].starts_with(name) &&
-            lower
+        if lower[name_start..].starts_with(name)
+            && lower
                 .get(name_start + name.len())
                 .map(|c| !c.is_ascii_alphanumeric() && *c != b':' && *c != b'-')
                 .unwrap_or(true)
@@ -367,8 +367,8 @@ fn skip_dangerous_element(lower: &[u8], start: usize) -> Option<usize> {
             let close_bytes = close.as_bytes();
             let mut j = name_start + name.len();
             while j + close_bytes.len() <= lower.len() {
-                if lower[j..].starts_with(close_bytes) &&
-                    lower
+                if lower[j..].starts_with(close_bytes)
+                    && lower
                         .get(j + close_bytes.len())
                         .map(|c| !c.is_ascii_alphanumeric())
                         .unwrap_or(true)
@@ -468,11 +468,11 @@ fn scrub_tag_attributes(tag: &str) -> String {
 
         // Attribute name
         let name_start = i;
-        while i < bytes.len() &&
-            !(bytes[i] as char).is_ascii_whitespace() &&
-            bytes[i] != b'=' &&
-            bytes[i] != b'>' &&
-            bytes[i] != b'/'
+        while i < bytes.len()
+            && !(bytes[i] as char).is_ascii_whitespace()
+            && bytes[i] != b'='
+            && bytes[i] != b'>'
+            && bytes[i] != b'/'
         {
             i += 1;
         }
@@ -502,10 +502,10 @@ fn scrub_tag_attributes(tag: &str) -> String {
                     }
                 } else {
                     let v_start = i;
-                    while i < bytes.len() &&
-                        !(bytes[i] as char).is_ascii_whitespace() &&
-                        bytes[i] != b'>' &&
-                        bytes[i] != b'/'
+                    while i < bytes.len()
+                        && !(bytes[i] as char).is_ascii_whitespace()
+                        && bytes[i] != b'>'
+                        && bytes[i] != b'/'
                     {
                         i += 1;
                     }

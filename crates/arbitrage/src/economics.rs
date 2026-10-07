@@ -26,8 +26,8 @@ pub fn fee_in_base_units(fee_xlm_stroops: u128, base_token: &str, xlm_usdc_price
         // Round up so we never understate gas in USDC terms.
         return fee_xlm_stroops
             .saturating_mul(xlm_usdc_price_e7)
-            .saturating_add(UNIT_E7 - 1) /
-            UNIT_E7;
+            .saturating_add(UNIT_E7 - 1)
+            / UNIT_E7;
     }
     fee_xlm_stroops
 }

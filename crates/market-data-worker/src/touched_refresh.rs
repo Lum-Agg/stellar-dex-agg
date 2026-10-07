@@ -262,9 +262,9 @@ async fn refresh_comet_touched(
         if let Some(existing) = sources.iter_mut().find(|s| s.source == COMET_SOURCE) {
             for pair in refreshed {
                 if let Some(snap) = existing.pairs.iter_mut().find(|p| {
-                    p.pool_address == pair.pool_address &&
-                        p.token_a == pair.token_a.canonical() &&
-                        p.token_b == pair.token_b.canonical()
+                    p.pool_address == pair.pool_address
+                        && p.token_a == pair.token_a.canonical()
+                        && p.token_b == pair.token_b.canonical()
                 }) {
                     snap.fee_bps = pair.fee_bps;
                 }

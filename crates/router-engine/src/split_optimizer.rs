@@ -427,9 +427,9 @@ impl SplitOptimizer {
                     let candidate = active_indices[*position];
                     let amount_in_bps = split_amount_in_fraction_bps(*amount, total_amount);
                     let out_bps = (*out * 10_000 / total_out) as u32;
-                    amount_in_bps >= self.config.min_split_amount_in_bps &&
-                        out_bps >= self.config.min_split_fraction_bps &&
-                        leg_rate_matches_full_quote(
+                    amount_in_bps >= self.config.min_split_amount_in_bps
+                        && out_bps >= self.config.min_split_fraction_bps
+                        && leg_rate_matches_full_quote(
                             candidates[candidate],
                             *amount,
                             *out,

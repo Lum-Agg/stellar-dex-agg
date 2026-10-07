@@ -175,11 +175,11 @@ async fn compare_quote_leg(
         .filter_map(|value| value.as_u64().and_then(|number| number.try_into().ok()))
         .collect();
 
-    if sources.is_empty() ||
-        pools.len() != sources.len() ||
-        tokens.len() != sources.len() + 1 ||
-        in_indices.len() != sources.len() ||
-        out_indices.len() != sources.len()
+    if sources.is_empty()
+        || pools.len() != sources.len()
+        || tokens.len() != sources.len() + 1
+        || in_indices.len() != sources.len()
+        || out_indices.len() != sources.len()
     {
         return Ok(error_report(
             token_in,

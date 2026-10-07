@@ -701,8 +701,8 @@ mod tests {
             if contract != *escrow_id || topics.len() < 2 {
                 return false;
             }
-            Symbol::try_from_val(env, &topics.get(0).unwrap()) == Ok(expected_topic.clone()) &&
-                u64::try_from_val(env, &topics.get(1).unwrap()) == Ok(order_id)
+            Symbol::try_from_val(env, &topics.get(0).unwrap()) == Ok(expected_topic.clone())
+                && u64::try_from_val(env, &topics.get(1).unwrap()) == Ok(order_id)
         })
     }
 

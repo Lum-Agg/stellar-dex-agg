@@ -149,8 +149,8 @@ async fn main() -> anyhow::Result<()> {
                         e.topic.as_deref(),
                         event_value_xdr(e.value.as_ref()),
                     ),
-                    in_touched_set: index.lookup_contract(&e.contract_id).is_some() ||
-                        pools_from_router_event(
+                    in_touched_set: index.lookup_contract(&e.contract_id).is_some()
+                        || pools_from_router_event(
                             &e.contract_id,
                             e.topic.as_deref(),
                             event_value_xdr(e.value.as_ref()),

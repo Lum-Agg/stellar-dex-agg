@@ -126,9 +126,9 @@ impl PathFinder {
         let cache_key = (token_in.canonical(), token_out.canonical());
         let now = chrono::Utc::now().timestamp_millis() as u64;
 
-        let use_cache = max_hops == self.config.max_hops &&
-            max_multi_hop_paths == self.config.max_multi_hop_paths &&
-            max_direct_paths == self.config.max_direct_paths;
+        let use_cache = max_hops == self.config.max_hops
+            && max_multi_hop_paths == self.config.max_multi_hop_paths
+            && max_direct_paths == self.config.max_direct_paths;
         if use_cache {
             if let Ok(cache) = self.cache.lock() {
                 if let Some(cached) = cache.get(&cache_key) {

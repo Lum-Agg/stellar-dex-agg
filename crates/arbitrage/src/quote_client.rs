@@ -168,8 +168,8 @@ impl QuoteApiClient {
         for sub in &leg.route.sub_orders {
             let first = sub.path.tokens.first().map(TokenId::canonical);
             let last = sub.path.tokens.last().map(TokenId::canonical);
-            if first.as_deref() != Some(token_in.canonical().as_str()) ||
-                last.as_deref() != Some(token_out.canonical().as_str())
+            if first.as_deref() != Some(token_in.canonical().as_str())
+                || last.as_deref() != Some(token_out.canonical().as_str())
             {
                 return Err(anyhow!("quote-api sub_route token endpoints mismatch"));
             }

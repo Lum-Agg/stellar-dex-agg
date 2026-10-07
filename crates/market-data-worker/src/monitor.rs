@@ -126,13 +126,13 @@ async fn build_heartbeat_message(
 
     let snapshot_ok = pool_store.is_some();
 
-    let stale = last_pub > 0 &&
-        std::time::SystemTime::now()
+    let stale = last_pub > 0
+        && std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0)
-            .saturating_sub(last_pub) >
-            120;
+            .saturating_sub(last_pub)
+            > 120;
 
     let rpc_line = format_rpc_block_height(rpc_url).await;
 
