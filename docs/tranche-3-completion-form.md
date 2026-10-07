@@ -1,24 +1,24 @@
 # SCF Build — Tranche 3 Completion Draft
 
-Prepared 2026-10-04 for the 2026-10-15 target. This is a submission draft;
+Prepared 2026-10-08 for the 2026-10-15 target. This is a submission draft;
 items marked pending require external evidence before filing.
 
 ## D8 — Public analytics and operational evidence
 
 LumAgg exposes public analytics through the production API and dashboard.
-The operational snapshot generated on 2026-10-01 confirms:
+The operational snapshot generated on 2026-10-07 confirms:
 
 | Metric | Result |
 | --- | ---: |
-| Indexed coverage | 2026-07-13 → 2026-10-03 |
-| Days indexed | 82 |
-| Aggregator invocations | 9,168 |
-| Successful transactions | 4,627 |
-| DEX legs | 13,342 |
-| Round trips | 4,566 |
-| Entry notional | $75,693.56 |
-| Routed DEX volume | $259,831.10 |
-| Gross surplus | $226.28 |
+| Indexed coverage | 2026-07-13 → 2026-10-07 |
+| Days indexed | 86 |
+| Aggregator invocations | 9,473 |
+| Successful transactions | 4,786 |
+| DEX legs | 13,727 |
+| Round trips | 4,700 |
+| Entry notional | $77,521.40 |
+| Routed DEX volume | $265,332.42 |
+| Gross surplus | $227.47 |
 
 Evidence:
 
@@ -56,7 +56,7 @@ No mainnet contract upgrade is authorized by this preparation document.
 ## Submission checklist
 
 - [x] D8 public analytics and CSV snapshot
-- [x] D8 at least 30 days indexed (82 days; 2026-07-13 → 2026-10-03)
+- [x] D8 at least 30 days indexed (86 days; 2026-07-13 → 2026-10-07)
 - [ ] D9 audit engagement and final report
 - [ ] D10 five-minute demo video
 - [ ] D10 Protocol 28 testnet regression notes
