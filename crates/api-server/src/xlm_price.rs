@@ -1,12 +1,61 @@
 //! Historical XLM/USD for analytics stats (day-level).
 
-use {analytics_indexer::export::DailyStats, serde::Deserialize, std::collections::HashMap, tracing::warn};
+use {
+    analytics_indexer::export::DailyStats, reqwest::Client, serde::Deserialize, std::collections::HashMap,
+    std::time::Duration, tracing::warn,
+};
 
 /// Well-known mainnet SAC → USD price source for stats enrichment.
 const XLM_SAC: &str = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";
 const USDC_SAC: &str = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75";
 /// Stellar classic SACs use 7 decimals.
 const TOKEN_DECIMALS: f64 = 1e7;
+const COINPAPRIKA_TICKER_URL: &str = "https://api.coinpaprika.com/v1/tickers/xlm-stellar";
+
+#[derive(Debug, Deserialize)]
+struct LiveTicker {
+    quotes: LiveQuotes,
+}
+
+#[derive(Debug, Deserialize)]
+struct LiveQuotes {
+    #[serde(rename = "USD")]
+    usd: LiveUsd,
+}
+
+#[derive(Debug, Deserialize)]
+struct LiveUsd {
+    price: f64,
+}
+
+/// Fetch the current XLM/USD reference price used by public marks and the
+/// historical enrichment fallback. DEX quotes remain a separate fallback for
+/// tokens without an external reference price.
+pub async fn fetch_current_xlm_usd() -> Result<f64, String> {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(3))
+        .user_agent("LumAgg/1.0 (+https://lumagg.xyz)")
+        .build()
+        .map_err(|error| format!("CoinPaprika client: {error}"))?;
+    let ticker: LiveTicker = client
+        .get(COINPAPRIKA_TICKER_URL)
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|error| format!("CoinPaprika request failed: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("CoinPaprika HTTP error: {error}"))?
+        .json()
+        .await
+        .map_err(|error| format!("CoinPaprika JSON: {error}"))?;
+
+    let price = ticker.quotes.usd.price;
+    if price.is_finite() && price > 0.0 {
+        Ok(price)
+    } else {
+        Err(format!("CoinPaprika returned invalid XLM price: {price}"))
+    }
+}
 
 /// Attach day-level USD using per-token pricing (not “everything is XLM”).
 pub async fn enrich_daily_with_historical_usd(daily: &mut [DailyStats]) {

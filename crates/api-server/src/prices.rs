@@ -1,7 +1,11 @@
 //! Latest and sampled USDC price endpoints.
 
 use {
-    crate::{price_mark::mark_token_usdc, price_store::PriceTick, state::AppState},
+    crate::{
+        price_mark::{mark_token_usdc, XLM_SAC},
+        price_store::PriceTick,
+        state::AppState,
+    },
     axum::{
         extract::{Query, State},
         http::StatusCode,
@@ -77,10 +81,13 @@ pub async fn get_prices(State(state): State<AppState>, Query(params): Query<Pric
     for id in ids {
         if let Some(store) = &state.price_store {
             match store.latest(&id) {
-                Ok(Some(tick)) => {
+                Ok(Some(tick))
+                    if id != XLM_SAC || (tick.via == "oracle" && unix_timestamp().saturating_sub(tick.ts) < 600) =>
+                {
                     prices.push(price_item(tick));
                     continue;
                 }
+                Ok(Some(_)) => {}
                 Ok(None) => {}
                 Err(error) => {
                     tracing::warn!(token = %id, %error, "price store lookup failed");

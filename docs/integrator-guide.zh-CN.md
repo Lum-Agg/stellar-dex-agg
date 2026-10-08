@@ -262,7 +262,7 @@ curl -sG "https://api.lumagg.xyz/api/v1/prices/history" \
   --data-urlencode "range=7d" | jq .
 ```
 
-`GET /prices` 返回 `data.prices[]`，字段包括 `id`、`price_usdc`、`ts`、`via`（`usdc` 或 `xlm`）。无历史 tick 时会按需报价一次。无法定价的 Token 不会出现在结果中。
+`GET /prices` 返回 `data.prices[]`，字段包括 `id`、`price_usdc`、`ts`、`via`（XLM 外部参考价为 `oracle`，直接 DEX 路由为 `usdc`，经 XLM 路由为 `xlm`）。没有可用 tick 时会按需获取标价。XLM 优先使用外部参考价，只有外部来源不可用时才回退到 DEX quote。无法定价的 Token 不会出现在结果中。
 
 `GET /prices/history` 返回 `data.points[]`（`ts`、`price_usdc`）。无数据时仍返回 `200`，`points` 为空数组。`range` 仅支持 `24h` 或 `7d`。
 

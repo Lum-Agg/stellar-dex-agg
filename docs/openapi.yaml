@@ -1449,8 +1449,8 @@ components:
           description: Unix timestamp (seconds) when the mark was recorded
         via:
           type: string
-          enum: [usdc, xlm]
-          description: Route used for the mark (`usdc` direct or via XLM)
+          enum: [oracle, usdc, xlm]
+          description: Price source (`oracle` external XLM/USD reference, `usdc` direct DEX route, or `xlm` route via XLM)
     PriceHistoryResponse:
       type: object
       properties:

@@ -277,7 +277,7 @@ curl -sG "https://api.lumagg.xyz/api/v1/prices/history" \
   --data-urlencode "range=7d" | jq .
 ```
 
-`GET /prices` returns `data.prices[]` with `id`, `price_usdc`, `ts`, and `via` (`usdc` or `xlm`). Missing ticks trigger a one-shot on-demand quote. Unpriceable tokens are omitted.
+`GET /prices` returns `data.prices[]` with `id`, `price_usdc`, `ts`, and `via` (`oracle` for the external XLM/USD reference, `usdc` for a direct DEX route, or `xlm` for a route through XLM). Missing ticks trigger a one-shot on-demand mark. XLM uses the external reference first and falls back to a DEX quote only when that source is unavailable. Unpriceable tokens are omitted.
 
 `GET /prices/history` returns `data.points[]` with `ts` and `price_usdc`. Empty history is `200` with `"points": []`. Range must be `24h` or `7d`.
 

@@ -6,13 +6,32 @@ use {
         quote_client::QuoteApiClient,
     },
     anyhow::{anyhow, Result},
+    serde::Deserialize,
     std::sync::atomic::{AtomicU64, Ordering},
+    std::time::Duration,
     tracing::{info, warn},
 };
 
 /// Reject marks outside this band (USDC units per 1.0 XLM, 7 decimals).
 const MIN_PRICE_E7: u128 = 500_000; // $0.05
 const MAX_PRICE_E7: u128 = 10_000_000; // $1.00
+const COINPAPRIKA_TICKER_URL: &str = "https://api.coinpaprika.com/v1/tickers/xlm-stellar";
+
+#[derive(Debug, Deserialize)]
+struct LiveTicker {
+    quotes: LiveQuotes,
+}
+
+#[derive(Debug, Deserialize)]
+struct LiveQuotes {
+    #[serde(rename = "USD")]
+    usd: LiveUsd,
+}
+
+#[derive(Debug, Deserialize)]
+struct LiveUsd {
+    price: f64,
+}
 
 /// Shared XLM/USDC price used by USDC-base fee gates.
 #[derive(Debug)]
@@ -38,9 +57,16 @@ impl XlmUsdcPrice {
         self.fallback_e7 as u128
     }
 
-    /// Quote 1.0 XLM → USDC and update the cached mark.
+    /// Refresh the cached mark from an external XLM/USD reference, falling
+    /// back to a 1.0 XLM DEX quote when the reference is unavailable.
     pub async fn refresh(&self, client: &QuoteApiClient) -> Result<u128> {
-        let out = client.quote_expected_output(XLM_SAC, USDC_SAC, UNIT_E7).await?;
+        let out = match fetch_external_xlm_usd().await {
+            Ok(price) => price_to_e7(price)?,
+            Err(error) => {
+                warn!(%error, "external XLM price unavailable; falling back to DEX quote");
+                client.quote_expected_output(XLM_SAC, USDC_SAC, UNIT_E7).await?
+            }
+        };
         if !(MIN_PRICE_E7..=MAX_PRICE_E7).contains(&out) {
             warn!(
                 quoted_e7 = out,
@@ -61,6 +87,36 @@ impl XlmUsdcPrice {
         }
         Ok(out)
     }
+}
+
+async fn fetch_external_xlm_usd() -> Result<f64> {
+    let ticker: LiveTicker = reqwest::Client::builder()
+        .timeout(Duration::from_secs(3))
+        .user_agent("LumAgg/1.0 (+https://lumagg.xyz)")
+        .build()?
+        .get(COINPAPRIKA_TICKER_URL)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let price = ticker.quotes.usd.price;
+    if price.is_finite() && price > 0.0 {
+        Ok(price)
+    } else {
+        Err(anyhow!("CoinPaprika returned invalid XLM price: {price}"))
+    }
+}
+
+fn price_to_e7(price: f64) -> Result<u128> {
+    if !price.is_finite() || price <= 0.0 {
+        return Err(anyhow!("invalid XLM/USD price: {price}"));
+    }
+    let scaled = price * UNIT_E7 as f64;
+    if scaled > u128::MAX as f64 {
+        return Err(anyhow!("XLM/USD price is too large: {price}"));
+    }
+    Ok(scaled.round() as u128)
 }
 
 fn clamp_u64(v: u128) -> u64 {

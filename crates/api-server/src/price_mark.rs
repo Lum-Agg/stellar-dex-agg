@@ -1,7 +1,7 @@
-//! Quote-engine backed USDC price marks.
+//! USDC price marks with an external XLM reference and DEX fallbacks.
 
 use {
-    crate::state::AppState,
+    crate::{state::AppState, xlm_price::fetch_current_xlm_usd},
     router_engine::{RouteRequest, TokenId},
 };
 
@@ -13,6 +13,13 @@ pub const TOKEN_UNITS: u128 = 10_000_000;
 pub async fn mark_token_usdc(state: &AppState, token: &str) -> Option<(f64, &'static str)> {
     if token == USDC_SAC {
         return Some((1.0, "usdc"));
+    }
+
+    if token == XLM_SAC {
+        match fetch_current_xlm_usd().await {
+            Ok(price) => return Some((price, "oracle")),
+            Err(error) => tracing::warn!(%error, "external XLM price unavailable; falling back to DEX quote"),
+        }
     }
 
     if let Some(price) = quote_price(state, token, USDC_SAC).await {
