@@ -28,9 +28,16 @@ html[data-theme='light'] {
   --text-primary: #17212b;
   --text-secondary: #52606d;
   --text-muted: #718096;
-  --accent: #0f9f91;
-  --accent-hover: #0b887c;
+  --accent: #08786d;
+  --accent-hover: #06685f;
   --accent-contrast: #ffffff;
+}
+
+/* Several analytics labels use fixed Tailwind teal utilities. Keep them
+   readable on the light surface instead of relying on the dark-theme shades. */
+html[data-theme='light'] [class*='text-teal-200'],
+html[data-theme='light'] [class*='text-teal-300'] {
+  color: #08786d !important;
 }
 
 html {
