@@ -1,11 +1,13 @@
 import type { Metadata } from 'next';
 import Image from 'next/image';
 import Link from 'next/link';
+import Script from 'next/script';
 import { DM_Sans, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import { Providers } from './providers';
 import { HeaderWallet } from '@/components/HeaderWallet';
 import { HeaderNav } from '@/components/HeaderNav';
+import { ThemeToggle } from '@/components/ThemeToggle';
 import { DISCORD_URL, DOCUMENTATION_URL, GITHUB_REPO_URL, X_URL } from '@/lib/site';
 
 const dmSans = DM_Sans({
@@ -52,7 +54,12 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="dark" suppressHydrationWarning>
+    <html lang="en" data-theme="dark" suppressHydrationWarning>
+      <head>
+        <Script id="theme-init" strategy="beforeInteractive">
+          {`(() => { try { const stored = localStorage.getItem('lumagg-theme'); const theme = stored === 'light' || stored === 'dark' ? stored : (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'); document.documentElement.dataset.theme = theme; document.documentElement.style.colorScheme = theme; } catch (_) {} })();`}
+        </Script>
+      </head>
       <body
         className={`${dmSans.variable} ${jetbrains.variable} min-h-screen antialiased text-[var(--text-primary)] font-[family-name:var(--font-sans)]`}
       >
@@ -79,7 +86,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   </Link>
                   <HeaderNav />
                 </div>
-                <div className="flex items-center gap-3 shrink-0">
+                <div className="flex items-center gap-2 sm:gap-3 shrink-0">
                   <a
                     href={DISCORD_URL}
                     target="_blank"
@@ -133,6 +140,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   >
                     <XIcon className="w-5 h-5" />
                   </a>
+                  <ThemeToggle />
                   <HeaderWallet />
                 </div>
               </div>
