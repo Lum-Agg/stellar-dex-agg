@@ -2,8 +2,9 @@ use {
     crate::{soroban_prepare::prepare_transaction_xdr, state::AppState},
     axum::{
         extract::{Query, State},
-        http::StatusCode,
-        response::IntoResponse,
+        http::{HeaderMap, StatusCode},
+        middleware::Next,
+        response::{IntoResponse, Response},
         Json,
     },
     router_engine::{
@@ -16,6 +17,47 @@ use {
         curr::{Limits, WriteXdr},
     },
 };
+
+/// Reject clients that explicitly request a different Stellar network than
+/// this API deployment. Missing headers remain accepted for direct REST
+/// callers that predate network negotiation.
+pub async fn network_guard(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    request: axum::http::Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    let Some(requested) = headers.get("x-stellar-network").and_then(|value| value.to_str().ok()) else {
+        return next.run(request).await;
+    };
+
+    let requested = requested.trim().to_ascii_lowercase();
+    if requested != "mainnet" && requested != "testnet" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "success": false,
+                "error": "INVALID_NETWORK",
+                "message": "X-Stellar-Network must be mainnet or testnet"
+            })),
+        )
+            .into_response();
+    }
+
+    if requested != state.config.network_name() {
+        return (
+            StatusCode::NOT_IMPLEMENTED,
+            Json(serde_json::json!({
+                "success": false,
+                "error": "NETWORK_UNSUPPORTED",
+                "message": format!("This API deployment supports {} only", state.config.network_name())
+            })),
+        )
+            .into_response();
+    }
+
+    next.run(request).await
+}
 
 /// GET / — human-friendly landing when reviewers open the API host in a
 /// browser.
@@ -1600,6 +1642,7 @@ pub async fn get_tx_status(State(state): State<AppState>, Query(query): Query<Tx
 #[derive(Serialize)]
 pub struct HealthResponse {
     pub status: String,
+    pub network: String,
     pub adapters: Vec<AdapterHealth>,
 }
 
@@ -1609,9 +1652,10 @@ pub struct AdapterHealth {
     pub healthy: bool,
 }
 
-pub async fn health_check(State(_state): State<AppState>) -> impl IntoResponse {
+pub async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
     Json(HealthResponse {
         status: "ok".to_string(),
+        network: state.config.network_name().to_string(),
         adapters: vec![],
     })
 }

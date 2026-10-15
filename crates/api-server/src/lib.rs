@@ -66,6 +66,10 @@ fn build_router(app_state: AppState, rate_limit: RateLimitState, logo_dir: PathB
             rate_limit,
             rate_limit::rate_limit_middleware,
         ))
+        .layer(middleware::from_fn_with_state(
+            app_state.clone(),
+            handlers::network_guard,
+        ))
         .with_state(app_state);
 
     // Logos are static assets and must not consume API rate-limit quota.

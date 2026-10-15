@@ -4,10 +4,12 @@
 export class LumAggClient {
     constructor(options) {
         this.baseUrl = options.apiUrl.replace(/\/$/, "");
+        this.network = options.network ?? "mainnet";
         this.apiKey = options.apiKey;
     }
     headers(json = false) {
         const h = { Accept: "application/json" };
+        h["X-Stellar-Network"] = this.network;
         if (json)
             h["Content-Type"] = "application/json";
         if (this.apiKey)

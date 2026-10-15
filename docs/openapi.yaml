@@ -6,6 +6,8 @@ info:
     (Soroswap, Aquarius, Phoenix, Sushi V3, Comet) and optionally Classic SDEX.
 
     **Rate limits:** 10 req/s per IP; 60 req/s with valid `X-API-Key` (partner keys).
+    Clients may send `X-Stellar-Network: mainnet` or `X-Stellar-Network: testnet`.
+    The deployment is authoritative; a network mismatch returns `501 NETWORK_UNSUPPORTED`.
     See [integrator-guide.md](./integrator-guide.md).
   version: 1.1.0
   license:
@@ -40,6 +42,10 @@ paths:
                   status:
                     type: string
                     example: ok
+                  network:
+                    type: string
+                    enum: [mainnet, testnet]
+                    example: mainnet
   /api/v1/ready:
     get:
       tags: [health]
@@ -159,6 +165,8 @@ paths:
                 $ref: '#/components/schemas/BuildTxResponse'
         '400':
           description: Invalid body or unsupported route mix
+        '501':
+          description: Requested Stellar network is not supported by this API deployment
         '429':
           description: Rate limit exceeded
   /api/v1/stats:

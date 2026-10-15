@@ -124,6 +124,17 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
+    /// Return the network name used by API clients and diagnostics.
+    pub fn network_name(&self) -> &'static str {
+        if self.network_passphrase == "Test SDF Network ; September 2015"
+            || self.network_passphrase.eq_ignore_ascii_case("testnet")
+        {
+            "testnet"
+        } else {
+            "mainnet"
+        }
+    }
+
     /// Load config from environment variables, falling back to defaults.
     pub fn from_env() -> Self {
         Self {
@@ -215,6 +226,18 @@ mod tests {
         assert_eq!(LumaggMode::parse("embedded"), Some(LumaggMode::Embedded));
         assert_eq!(LumaggMode::parse("all-in-one"), Some(LumaggMode::Embedded));
         assert_eq!(LumaggMode::parse("cluster"), Some(LumaggMode::Cluster));
+    }
+
+    #[test]
+    fn network_name_matches_stellar_passphrase() {
+        let mainnet = AppConfig::default();
+        assert_eq!(mainnet.network_name(), "mainnet");
+
+        let testnet = AppConfig {
+            network_passphrase: "Test SDF Network ; September 2015".into(),
+            ..mainnet
+        };
+        assert_eq!(testnet.network_name(), "testnet");
     }
 
     #[test]

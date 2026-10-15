@@ -4,9 +4,13 @@
 
 export interface ClientOptions {
   apiUrl: string;
+  /** Stellar network expected by the API deployment. Defaults to mainnet. */
+  network?: StellarNetwork;
   /** Partner key for 60 req/s (optional). */
   apiKey?: string;
 }
+
+export type StellarNetwork = "mainnet" | "testnet";
 
 export interface QuoteParams {
   tokenIn: string;
@@ -283,15 +287,18 @@ export interface TokenInfo {
 
 export class LumAggClient {
   private baseUrl: string;
+  private network: StellarNetwork;
   private apiKey?: string;
 
   constructor(options: ClientOptions) {
     this.baseUrl = options.apiUrl.replace(/\/$/, "");
+    this.network = options.network ?? "mainnet";
     this.apiKey = options.apiKey;
   }
 
   private headers(json = false): Record<string, string> {
     const h: Record<string, string> = { Accept: "application/json" };
+    h["X-Stellar-Network"] = this.network;
     if (json) h["Content-Type"] = "application/json";
     if (this.apiKey) h["X-API-Key"] = this.apiKey;
     return h;

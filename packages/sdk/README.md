@@ -15,7 +15,10 @@ cd packages/sdk && npm run build
 ```typescript
 import { LumAggClient } from '@lumagg/sdk';
 
-const client = new LumAggClient({ apiUrl: 'https://api.lumagg.xyz' });
+const client = new LumAggClient({
+  apiUrl: 'https://api.lumagg.xyz',
+  network: 'mainnet', // 'testnet' is rejected until a testnet API is available
+});
 
 const quote = await client.quote({
   tokenIn: 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA', // XLM
@@ -72,6 +75,11 @@ contract. For DCA, `minOutPerInE7` is optional and defaults to `"0"` (market
 execution). All token amounts and rate fields are integer strings.
 
 Partner rate limit: pass `apiKey` in constructor → `X-API-Key` header (60 req/s).
+
+`network` defaults to `"mainnet"`. The SDK sends `X-Stellar-Network` with every
+request. The API deployment remains authoritative: selecting `"testnet"` against
+a mainnet-only endpoint returns `NETWORK_UNSUPPORTED` rather than using mainnet
+data or contracts.
 
 `quote()` also accepts `preferSoroban`, `maxHops`, and `maxSplits`. These map
 to the REST parameters `prefer_soroban`, `max_hops`, and `max_splits`. Omit

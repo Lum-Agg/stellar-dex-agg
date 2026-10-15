@@ -3,9 +3,12 @@
  */
 export interface ClientOptions {
     apiUrl: string;
+    /** Stellar network expected by the API deployment. Defaults to mainnet. */
+    network?: StellarNetwork;
     /** Partner key for 60 req/s (optional). */
     apiKey?: string;
 }
+export type StellarNetwork = "mainnet" | "testnet";
 export interface QuoteParams {
     tokenIn: string;
     tokenOut: string;
@@ -250,6 +253,7 @@ export interface TokenInfo {
 }
 export declare class LumAggClient {
     private baseUrl;
+    private network;
     private apiKey?;
     constructor(options: ClientOptions);
     private headers;
