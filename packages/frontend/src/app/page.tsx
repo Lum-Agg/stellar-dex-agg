@@ -7,7 +7,7 @@ import { SwapCard } from '@/components/SwapCard';
 import { DisclaimerBanner } from '@/components/DisclaimerBanner';
 import { SwapHistory } from '@/components/SwapHistory';
 import { OrderTypeRail } from '@/components/OrderTypeRail';
-import { GITHUB_REPO_URL } from '@/lib/site';
+import { DOCUMENTATION_URL, GITHUB_REPO_URL } from '@/lib/site';
 
 const SELF_HOST_URL = `${GITHUB_REPO_URL}/blob/main/docs/self-hosted-aggregator-quickstart.md`;
 
@@ -48,12 +48,14 @@ export default function Home() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3 text-[13px] font-medium">
-          <Link
-            href="/docs"
+          <a
+            href={`${DOCUMENTATION_URL}/integrate/api-reference`}
+            target="_blank"
+            rel="noopener noreferrer"
             className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3.5 py-2 text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] transition-colors"
           >
             Integrate the API
-          </Link>
+          </a>
           <a
             href={SELF_HOST_URL}
             target="_blank"

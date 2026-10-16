@@ -67,7 +67,7 @@ emit() {
   echo "**Confirmed SUCCESS count:** $SUCCESS_COUNT"
   echo "**Confirmed FAILED count:** $FAILED_COUNT"
   echo
-  echo "Counts come from the analytics indexer via `/api/v1/arbitrage/stats`;"
+  echo 'Counts come from the analytics indexer via `/api/v1/arbitrage/stats`;'
   echo "the journal below is used only for recent hashes and operator log samples."
   echo
 
@@ -92,8 +92,8 @@ emit() {
   echo
   echo '| | |'
   echo '|--|--|'
-  echo '| Vault | \`CCQQ3LRFCSGOYSSD6S4MGH6RWWYVDHYPJO6KYDJYC2IDZK4OGCK6P6KN\` |'
-  echo '| Aggregator | \`CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K\` |'
+  echo '| Vault | `CCQQ3LRFCSGOYSSD6S4MGH6RWWYVDHYPJO6KYDJYC2IDZK4OGCK6P6KN` |'
+  echo '| Aggregator | `CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K` |'
   echo '| Runbook | [arb-operator.md](./arb-operator.md) |'
 } | emit
 

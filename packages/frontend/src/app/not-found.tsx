@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { DOCUMENTATION_URL } from '@/lib/site';
 
 export default function NotFound() {
   return (
@@ -15,12 +16,14 @@ export default function NotFound() {
           <Link href="/" className="btn-primary min-h-11 px-5">
             Open Swap
           </Link>
-          <Link
-            href="/docs"
+          <a
+            href={DOCUMENTATION_URL}
+            target="_blank"
+            rel="noopener noreferrer"
             className="inline-flex min-h-11 items-center justify-center rounded-[0.65rem] border border-[var(--border-strong)] px-5 font-semibold text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-raised)]"
           >
             Read the docs
-          </Link>
+          </a>
         </div>
       </div>
     </section>

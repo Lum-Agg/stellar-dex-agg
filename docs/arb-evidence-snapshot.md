@@ -1,45 +1,37 @@
 # Arb operator evidence snapshot
 
-Generated: 2026-08-27T04:24Z · unit: `lumagg-arb` · since: `2026-07-13 00:00:00`
+Generated: 2026-10-16T17:09Z · unit: `lumagg-arb` · since: `2026-07-13 00:00:00`
 
-**Confirmed SUCCESS count:** 2,418
-**Confirmed FAILED count:** 1,592
+**Confirmed SUCCESS count:** 4858
+**Confirmed FAILED count:** 5026
 
-These counts are aggregated from the analytics indexer for the period above.
-The systemd journal is used only for the recent transaction hashes and sample
-operator log lines below. See the public [arbitrage analytics](https://lumagg.xyz/arbitrage)
-for the current chain-indexed totals.
+Counts come from the analytics indexer via `/api/v1/arbitrage/stats`;
+the journal below is used only for recent hashes and operator log samples.
 
 ## Recent SUCCESS hashes
 
-- https://stellar.expert/explorer/public/tx/01234644f4444a4742ad234f9f42ea676eb32989d7478b19c6e88a03a6c6482d
-- https://stellar.expert/explorer/public/tx/cc7ddfe5e8d17e489ffed3f58c48a76913a42d8418e16ce04c3f53d82c29f2cf
-- https://stellar.expert/explorer/public/tx/8e14a23600839934c8d09d710b7c65d0d0ab7f3f93f8a00060b97fcb0e044726
-- https://stellar.expert/explorer/public/tx/ab59611f73e4837cbdd9b4599b45c41e4c080c1b48b5b7de04bf0430a1fdce25
-- https://stellar.expert/explorer/public/tx/e7d195d4d177cda22b2ffe6347a0253763657892e9512a80d2a0e8255fe2b9f8
-- https://stellar.expert/explorer/public/tx/4fb80c39b951a6fd34a27c6efb871a5a6f9da95d10daa70b94d5262392d2206d
-- https://stellar.expert/explorer/public/tx/079a5bdd31d39b424aed674127823e9d1c4149af86a3b551e76ef9c4868e7c2c
-- https://stellar.expert/explorer/public/tx/d97671a68be2cb47847516f813fe6422f896dfa6fe2fea669c021ea360aaa06d
-- https://stellar.expert/explorer/public/tx/c1895df321f9fffbbcc0d0ee7e8cdb0bfe3e708217bb96626ddd4b442bdb9f1f
-- https://stellar.expert/explorer/public/tx/c866ea24f6f57969ac264050b05fa1ea0a9ab2304cb99e46ae879697960b72e4
-- https://stellar.expert/explorer/public/tx/1fcb4455f2b9adc4ad0a9896e454a903537367e504fa5d2754cd9dda01253d28
-- https://stellar.expert/explorer/public/tx/f560d1ced1c42fd462548aa3957f6bc2372ebc8d0fa140f4caad226e52e31bd0
-- https://stellar.expert/explorer/public/tx/02b65e1d6c680a1bc158f120dc6275dd66dd9c01f61b696031669ea4229b4501
-- https://stellar.expert/explorer/public/tx/e9db2acd2ca9e169b9a320e328b6f5be05ed99db63035311d5ee49efefac27ea
-- https://stellar.expert/explorer/public/tx/719cba776591fcc2a80f0b888333cab792921de577544a84a30f57201e47bc3c
-- https://stellar.expert/explorer/public/tx/d8f3806d6c3dcfa0116f6a0ce71df58acfb49a2dcbd9e6a1eda196af0184dc5a
-- https://stellar.expert/explorer/public/tx/4439897cbd950e3659f3dd141de6953b97f69bbd79728edcef15f9f2e4449e85
-- https://stellar.expert/explorer/public/tx/566d0c3710564afe56b1ed3dde97d26d8367d5b29030a5d7d13e0d39d2cd38df
-- https://stellar.expert/explorer/public/tx/380979fac6761c3d38ce1dc29441dd952b7d39a32f72e6eda238db5fda601b13
-- https://stellar.expert/explorer/public/tx/19ffaf56f69d0b488cf577debb6ac8847e90b69e1006d30ead52edab25cf35fa
+- https://stellar.expert/explorer/public/tx/6fd1211892a44f15d205d6d7f7e085e235544c64f095318c56a40ade8b339c75
+- https://stellar.expert/explorer/public/tx/bfe77edec803892f893ed39b228a8f3489c78dd9c06f1a31a1377333c9dd388e
+- https://stellar.expert/explorer/public/tx/ca68d9fa3512bd75a1afd0768f7aa7ccacd821d6d682b746a1bfe222e564e57b
+- https://stellar.expert/explorer/public/tx/bcd38481f88450e7f976a8b8b32456e2ec68cc97bcb6822113a52f5091109e36
+- https://stellar.expert/explorer/public/tx/916e4324f5bc5c77d9ad749877ccdbbd719de194b17c24bfa51d9d2311662bc4
+- https://stellar.expert/explorer/public/tx/811a626921f81a56f8cb9c33250acbd3cc1c6a311d577f2c81ff1ae0aa17e023
+- https://stellar.expert/explorer/public/tx/0cacacb3dd66571305da11ccba8cdb804c0ed04ab2531b5371a0b0a0dfcafb8a
+- https://stellar.expert/explorer/public/tx/3c632eea7c52e501af2568a6fb170a0af14c5e3015add965038ba86df5497815
+- https://stellar.expert/explorer/public/tx/9a80c589799cdafcebeddb0f1b9a7c8d3d4fc28e2b5cdeabdfd2cecfb98acc77
+- https://stellar.expert/explorer/public/tx/2ed2946e64294ff787caa58ceb520262bac55be1751965b186e095b1ec7e9ed8
+- https://stellar.expert/explorer/public/tx/0df041114e51e15d6383a48cd48ad52f229b903805f7b2ac11975faa35fd1c67
+- https://stellar.expert/explorer/public/tx/e137f3af43d2064eaaea5a2b5c9eb46390d7e34c6f408176fa474a378113bb75
+- https://stellar.expert/explorer/public/tx/b5517d1b554740913378f510035316eb7f49151b784c8db2e28dc20d80cefae3
+- https://stellar.expert/explorer/public/tx/8d6916ae17d2d5be29e27e45d8302926f1312286cce176977381b4e47ff3065f
 
 ## Sample log lines
 ```
-Aug 27 00:21:48 hzfra-lumagg lumagg-arbitrage-bot[2018194]: 2026-08-26T22:21:48.388797Z  INFO arbitrage::submit: arb tx SUCCESS hash=d8f3806d6c3dcfa0116f6a0ce71df58acfb49a2dcbd9e6a1eda196af0184dc5a route=CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA → CD25MNVTZDL4Y3XBCPCJXGXATV5WUHHOWMYFF4YBEGU5FCPGMYTVG5JY → CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA gross_profit=1048086 estimated_fee=172952
-Aug 27 01:44:37 hzfra-lumagg lumagg-arbitrage-bot[2018194]: 2026-08-26T23:44:37.120402Z  INFO arbitrage::submit: arb tx SUCCESS hash=4439897cbd950e3659f3dd141de6953b97f69bbd79728edcef15f9f2e4449e85 route=CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA → CBH4M45TQBLDPXOK6L7VYKMEJWFITBOL64BN3WDAIIDT4LNUTWTTOCKF → CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA gross_profit=617421 estimated_fee=173727
-Aug 27 01:46:47 hzfra-lumagg lumagg-arbitrage-bot[2018194]: 2026-08-26T23:46:47.120726Z  INFO arbitrage::submit: arb tx SUCCESS hash=566d0c3710564afe56b1ed3dde97d26d8367d5b29030a5d7d13e0d39d2cd38df route=CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA → CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV → CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA gross_profit=249632 estimated_fee=143760
-Aug 27 01:47:36 hzfra-lumagg lumagg-arbitrage-bot[2018194]: 2026-08-26T23:47:36.733073Z  INFO arbitrage::submit: arb tx SUCCESS hash=380979fac6761c3d38ce1dc29441dd952b7d39a32f72e6eda238db5fda601b13 route=CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA → CD25MNVTZDL4Y3XBCPCJXGXATV5WUHHOWMYFF4YBEGU5FCPGMYTVG5JY → CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA gross_profit=354275 estimated_fee=171421
-Aug 27 03:08:41 hzfra-lumagg lumagg-arbitrage-bot[2018194]: 2026-08-27T01:08:41.179398Z  INFO arbitrage::submit: arb tx SUCCESS hash=19ffaf56f69d0b488cf577debb6ac8847e90b69e1006d30ead52edab25cf35fa route=CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA → CDFZUVS5YNLXU7VENKOUDEOHCJGKQNVUBWD7KMN6E7ZROKPYPFLRUJFG → CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA gross_profit=267854 estimated_fee=173007
+Oct 16 13:27:55 hzfra-lumagg lumagg-arbitrage-bot[3131721]: 2026-10-16T11:27:55.948928Z  INFO arbitrage::submit: arb tx SUCCESS hash=2ed2946e64294ff787caa58ceb520262bac55be1751965b186e095b1ec7e9ed8 route=CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA → CDFZUVS5YNLXU7VENKOUDEOHCJGKQNVUBWD7KMN6E7ZROKPYPFLRUJFG → CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA gross_profit=269781 estimated_fee=160395
+Oct 16 14:49:01 hzfra-lumagg lumagg-arbitrage-bot[3131721]: 2026-10-16T12:49:01.013855Z  INFO arbitrage::submit: arb tx SUCCESS hash=0df041114e51e15d6383a48cd48ad52f229b903805f7b2ac11975faa35fd1c67 route=CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA → CDFZUVS5YNLXU7VENKOUDEOHCJGKQNVUBWD7KMN6E7ZROKPYPFLRUJFG → CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA gross_profit=285322 estimated_fee=183129
+Oct 16 17:06:19 hzfra-lumagg lumagg-arbitrage-bot[3131721]: 2026-10-16T15:06:19.576490Z  INFO arbitrage::submit: arb tx SUCCESS hash=e137f3af43d2064eaaea5a2b5c9eb46390d7e34c6f408176fa474a378113bb75 route=CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75 → CAESLMGW5LYTIEJI7FJHK6SFSWRELLNVX5Q4WR4UZEALMTRWQDBKDPAG → CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75 gross_profit=78549 estimated_fee=187219
+Oct 16 17:22:31 hzfra-lumagg lumagg-arbitrage-bot[3131721]: 2026-10-16T15:22:31.248809Z  INFO arbitrage::submit: arb tx SUCCESS hash=b5517d1b554740913378f510035316eb7f49151b784c8db2e28dc20d80cefae3 route=CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA → CDFZUVS5YNLXU7VENKOUDEOHCJGKQNVUBWD7KMN6E7ZROKPYPFLRUJFG → CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA gross_profit=253120 estimated_fee=154972
+Oct 16 18:51:44 hzfra-lumagg lumagg-arbitrage-bot[3131721]: 2026-10-16T16:51:44.702753Z  INFO arbitrage::submit: arb tx SUCCESS hash=8d6916ae17d2d5be29e27e45d8302926f1312286cce176977381b4e47ff3065f route=CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA → CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV → CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA gross_profit=309857 estimated_fee=191636
 ```
 
 ## Vault / aggregator

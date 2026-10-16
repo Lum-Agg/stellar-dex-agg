@@ -4,38 +4,37 @@ import { useEffect, useId, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { DOCUMENTATION_URL } from '@/lib/site';
-import { GITHUB_REPO_URL } from '@/lib/site';
 
 const DOCS_LINKS = [
   {
     label: 'Quickstart',
     detail: 'Quote, build and sign your first swap',
-    href: '/docs',
+    href: DOCUMENTATION_URL,
   },
   {
     label: 'Interactive API reference',
     detail: 'Try quote and build_tx endpoints',
-    href: '/docs/api',
+    href: `${DOCUMENTATION_URL}/integrate/api-reference`,
   },
   {
     label: 'Self-host the Aggregator',
     detail: 'API, worker, Redis and routing stack',
-    href: `${GITHUB_REPO_URL}/blob/main/docs/self-hosted-aggregator-quickstart.md`,
+    href: `${DOCUMENTATION_URL}/deploy/self-hosted-aggregator-quickstart`,
   },
   {
     label: 'Self-host Arbitrage Bot',
     detail: 'Callers, Vault and atomic round trips',
-    href: `${GITHUB_REPO_URL}/blob/main/docs/arbitrage-deployment.md`,
+    href: `${DOCUMENTATION_URL}/deploy/arbitrage-deployment`,
   },
   {
     label: 'TypeScript SDK & examples',
     detail: 'Install the SDK and build an integration',
-    href: 'https://www.npmjs.com/package/@lumagg/sdk',
+    href: `${DOCUMENTATION_URL}/integrate/javascript-integration-example`,
   },
   {
     label: 'Contract addresses',
     detail: 'Mainnet and testnet deployment records',
-    href: `${GITHUB_REPO_URL}/blob/main/docs/contracts-deployment.md`,
+    href: `${DOCUMENTATION_URL}/on-chain-products/contracts-deployment`,
   },
   {
     label: 'Public analytics',

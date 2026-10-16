@@ -8,4 +8,4 @@ export const X_URL = 'https://x.com/lum_agg';
 export const DISCORD_URL = 'https://discord.gg/wJDuj6tTCp';
 
 /** Full product, integration, and self-hosting documentation. */
-export const DOCUMENTATION_URL = 'https://lumagg.gitbook.io/';
+export const DOCUMENTATION_URL = 'https://lumagg.gitbook.io/lumagg';

@@ -549,6 +549,10 @@ html[data-theme='light'] .site-header {
   white-space: pre;
 }
 
+html[data-theme='light'] .docs-code-block {
+  color: #08786d;
+}
+
 .docs-actions {
   display: flex;
   flex-wrap: wrap;
@@ -839,6 +843,35 @@ html[data-theme='light'] [class~='text-slate-500'] {
   color: var(--text-secondary) !important;
 }
 
+/* Semantic utility colors need darker light-theme variants too. The original
+   palette is tuned for dark surfaces and becomes low-contrast on white. */
+html[data-theme='light'] [class*='text-teal-'],
+html[data-theme='light'] [class*='text-emerald-'] {
+  color: #08786d !important;
+}
+
+html[data-theme='light'] [class*='text-cyan-'],
+html[data-theme='light'] [class*='text-sky-'] {
+  color: #0e7490 !important;
+}
+
+html[data-theme='light'] [class*='text-amber-'] {
+  color: #92400e !important;
+}
+
+html[data-theme='light'] [class*='text-rose-'],
+html[data-theme='light'] [class*='text-red-'] {
+  color: #b4233c !important;
+}
+
+html[data-theme='light'] [class*='text-zinc-100'],
+html[data-theme='light'] [class*='text-zinc-200'],
+html[data-theme='light'] [class*='text-zinc-300'],
+html[data-theme='light'] [class*='text-slate-200'],
+html[data-theme='light'] [class*='text-slate-300'] {
+  color: var(--text-primary) !important;
+}
+
 html[data-theme='light'] [class*='border-white/'],
 html[data-theme='light'] [class*='divide-white/'] {
   border-color: var(--border) !important;
@@ -856,6 +889,33 @@ html[data-theme='light'] [class~='bg-slate-800\/80'] {
 html[data-theme='light'] .surface-panel,
 html[data-theme='light'] .surface-panel-raised {
   box-shadow: 0 16px 40px rgba(15, 23, 42, 0.06);
+}
+
+html[data-theme='light'] .btn-primary:disabled {
+  background: #dce3e8;
+  color: #52606d;
+}
+
+html[data-theme='light'] .docs-sidebar-link:hover {
+  background: rgba(15, 23, 42, 0.04);
+}
+
+html[data-theme='light'] .docs-param + .docs-param {
+  border-top-color: rgba(15, 23, 42, 0.06);
+}
+
+html[data-theme='light'] .docs-ref code,
+html[data-theme='light'] .docs-extra button,
+html[data-theme='light'] .docs-extra pre {
+  color: var(--text-primary);
+}
+
+html[data-theme='light'] .docs-extra button {
+  background: var(--surface-raised);
+}
+
+html[data-theme='light'] .docs-out {
+  color: #08786d;
 }
 
 .docs-btn {
