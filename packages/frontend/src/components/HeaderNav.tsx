@@ -22,8 +22,8 @@ const DOCS_LINKS = [
     href: `${DOCUMENTATION_URL}/deploy/self-hosted-aggregator-quickstart`,
   },
   {
-    label: 'Self-host Arbitrage Bot',
-    detail: 'Callers, Vault and atomic round trips',
+    label: 'Arbitrage Deployment',
+    detail: 'Self-host the bot, callers, Vault and execution stack',
     href: `${DOCUMENTATION_URL}/deploy/arbitrage-deployment`,
   },
   {
