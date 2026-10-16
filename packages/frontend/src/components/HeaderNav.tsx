@@ -27,6 +27,11 @@ const DOCS_LINKS = [
     href: `${DOCUMENTATION_URL}/deploy/arbitrage-deployment`,
   },
   {
+    label: 'Arbitrage Configuration',
+    detail: 'Configure callers, routes and execution settings',
+    href: `${DOCUMENTATION_URL}/deploy/arbitrage-deployment/arbitrage-configuration`,
+  },
+  {
     label: 'TypeScript SDK & examples',
     detail: 'Install the SDK and build an integration',
     href: `${DOCUMENTATION_URL}/integrate/javascript-integration-example`,

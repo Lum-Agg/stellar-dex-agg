@@ -19,7 +19,7 @@
 - [Production Aggregator](aggregator-deployment.md)
   - [Configuration Reference](aggregator-configuration.md)
 - [Arbitrage Deployment](arbitrage-deployment.md)
-  - [Arbitrage Configuration](arbitrage-configuration.md)
+- [Arbitrage Configuration](arbitrage-configuration.md)
 
 ## On-chain Products
 
