@@ -909,13 +909,24 @@ components:
         data:
           type: object
           properties:
-            xdr:
+            unsigned_tx_xdr:
               type: string
+              description: Unsigned transaction envelope XDR (base64). Soroban transactions are already simulated and carry sorobanData/auth.
+            fee:
+              type: string
+              description: Estimated fee in stroops
             execution:
               type: string
               enum: [soroban, classic]
-            hash:
+              description: |
+                `soroban` — single aggregator invoke; `classic` — PathPaymentStrictSend over SDEX only.
+                Routes mixing classic_dex and Soroban sub-routes are rejected with an error.
+            num_operations:
+              type: integer
+              description: Number of operations in the transaction
+            contract:
               type: string
+              description: Aggregator contract id (C…), or `classic_dex` for PathPayment-only transactions
         error:
           type: string
     StatsResponse:
