@@ -1,7 +1,8 @@
-# SCF Build — Tranche 3 Completion Draft
+# SCF Build — Tranche 3 Completion Record
 
-Prepared 2026-10-08 for the 2026-10-15 target. This is a submission draft;
-items marked pending require external evidence before filing.
+Submitted through the SCF dashboard on 2026-10-17 for the Pre-Launch #3 —
+Mainnet stage. This file records the evidence package; the dashboard remains
+the source of truth for the submitted video and links.
 
 ## D8 — Public analytics and operational evidence
 
@@ -44,7 +45,7 @@ separate metrics rather than added together.
 
 - Scope: [`audit-scope.md`](./audit-scope.md) — Aggregator and Arb Vault only
 - Budget: $16,000
-- Status: **Pending Audit Bank confirmation/external engagement and final report**
+- Status: **Audit Bank application submitted; external engagement and final report pending**
 - Mainnet contracts: aggregator `CC6QAV7JEG5MYRSPO5Z65E5G2M4ZB64BEG2ZXIZXL55TQT35JDI2LC6K`;
   arb vault `CCQQ3LRFCSGOYSSD6S4MGH6RWWYVDHYPJO6KYDJYC2IDZK4OGCK6P6KN`;
   Order Escrow remains testnet-only, is outside this audit scope, and is
@@ -54,17 +55,17 @@ No mainnet contract upgrade is authorized by this preparation document.
 
 ## D10 — Demo, Protocol 28 regression, and close-out
 
-- Demo video: **Pending recording and upload**; use [`demo-video-script.md`](./demo-video-script.md).
-- Protocol 28 testnet regression: **Pending execution**; use [`p28-testnet-regression.md`](./p28-testnet-regression.md).
+- Demo video: **Submitted with the SCF form**; source script remains in [`demo-video-script.md`](./demo-video-script.md).
+- Protocol 28 testnet regression: **Not confirmed in the submitted form; local notes remain in** [`p28-testnet-regression.md`](./p28-testnet-regression.md).
 - Maintenance plan: [`maintenance-plan.md`](./maintenance-plan.md)
 - Self-host deployment guide: [`deployment-overview.md`](./deployment-overview.md)
-- Final report: [`scf-final-report.md`](./scf-final-report.md), to be updated with the video and audit links.
+- Final report: [`scf-final-report.md`](./scf-final-report.md); local draft retained while Audit Bank status and final links remain pending.
 
 ## Submission checklist
 
 - [x] D8 public analytics and CSV snapshot
 - [x] D8 at least 30 days indexed (86 days; 2026-07-13 → 2026-10-07)
 - [ ] D9 audit engagement and final report
-- [ ] D10 five-minute demo video
+- [x] D10 five-minute demo video submitted with the form
 - [ ] D10 Protocol 28 testnet regression notes
 - [ ] D10 final report with all external links

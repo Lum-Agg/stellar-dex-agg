@@ -1,17 +1,19 @@
-# Tranche 3 Preparation
+# Tranche 3 Preparation and Submission Record
 
 SCF #44 close-out work plan for the 15 October 2026 target. This document is
-an execution checklist, not a new product scope.
+an execution checklist, not a new product scope. The Tranche 3 submission was
+filed through the SCF dashboard on 2026-10-17; remaining items below are
+post-submission review and close-out work.
 
 ## Acceptance targets
 
 | Area | Evidence required | Current state |
 |---|---|---|
 | D8 Analytics | Public `/stats`, CSV export, volume/tx/DEX/arb attribution, at least 30 days indexed | Refreshed 2026-10-07: 86 days indexed (2026-07-13 → 2026-10-07), public health/ready pass; see [`operational-validation-report.md`](./operational-validation-report.md) and [`evidence/tranche3-stats.csv`](./evidence/tranche3-stats.csv) |
-| D9 Audit | Signed scope or Audit Bank engagement, final report, critical/high remediation record | Scope covers Aggregator + Arb Vault; Order Escrow remains deferred to a separate pre-mainnet audit; obtain Audit Bank confirmation/quotes and freeze WASM versions |
-| D10 Demo | Public 5-minute video covering swap, API, analytics, arb architecture and self-hosting | Script exists; recording remains |
-| D10 Testnet | Protocol 28 quote/build/simulate/submit regression notes | Checklist is ready in `p28-testnet-regression.md` |
-| D10 Final report | Final report with links, metrics, transactions and audit outcome | Draft exists; fill after evidence is frozen |
+| D9 Audit | Signed scope or Audit Bank engagement, final report, critical/high remediation record | Audit Bank application submitted; scope covers Aggregator + Arb Vault; Order Escrow remains deferred to a separate pre-mainnet audit |
+| D10 Demo | Public 5-minute video covering swap, API, analytics, arb architecture and self-hosting | Video submitted with the Tranche 3 form; source script retained |
+| D10 Testnet | Protocol 28 quote/build/simulate/submit regression notes | Not confirmed in the submitted form; local checklist remains open |
+| D10 Final report | Final report with links, metrics, transactions and audit outcome | Local draft retained; external audit status and final links remain pending |
 
 ## Execution order
 

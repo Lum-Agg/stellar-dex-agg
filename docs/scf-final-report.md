@@ -1,8 +1,8 @@
-# LumAgg SCF Grant — Final Report (draft)
+# LumAgg SCF Grant — Final Report (submitted evidence record)
 
 **Project:** Stellar DEX Aggregator (LumAgg)  
 **Grant total:** $90,000 · Tranches Jul–Oct 2026  
-**Status:** Draft — fill evidence links before submission
+**Status:** Tranche 3 evidence submitted through the SCF dashboard on 2026-10-17. This repository copy remains a working report until Audit Bank engagement and final external links are available.
 
 ---
 
@@ -23,7 +23,7 @@ LumAgg delivers a production Stellar DEX aggregator with split routing across So
 | D5 | npm SDK | [packages/sdk](../packages/sdk), npm: [`@lumagg/sdk`](https://www.npmjs.com/package/@lumagg/sdk) `0.2.0` | ✅ |
 | D6 | Vault + arb mainnet | [arb-operator.md](./arb-operator.md), [arb-evidence-snapshot.md](./arb-evidence-snapshot.md) | ✅ |
 | D7 | ≥2 integrator pilots | [integrator-pilots.md](./integrator-pilots.md) | ✅ |
-| D8 | Public stats API | https://lumagg.xyz/stats, `/api/v1/stats` | ✅ · ☐ 30d data |
+| D8 | Public stats API | https://lumagg.xyz/stats, `/api/v1/stats` | ✅ · ✅ 30d data |
 | D9 | Third-party audit | [audit-scope.md](./audit-scope.md), report PDF | ☐ |
 | D10 | Close-out kit | [maintenance-plan.md](./maintenance-plan.md), [self-host deployment guide](./deployment-overview.md), demo video | partial |
 
@@ -48,7 +48,7 @@ LumAgg delivers a production Stellar DEX aggregator with split routing across So
 
 ## Demo video
 
-- **URL:** _(add after recording — see [demo-video-script.md](./demo-video-script.md))_
+- **URL:** Submitted in the SCF dashboard; see [demo-video-script.md](./demo-video-script.md) for the source script.
 - **Duration:** ~5 minutes
 
 ---

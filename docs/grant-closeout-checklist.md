@@ -2,6 +2,12 @@
 
 Living checklist — tick as evidence lands in repo or production.
 
+## Tranche 3 submission status
+
+The Pre-Launch #3 — Mainnet submission was filed through the SCF dashboard on
+2026-10-17. The checklist below distinguishes submitted evidence from items
+that still require external review or a final report.
+
 ## Tranche 1 · Jul 31, 2026
 
 - [x] D1 Benchmark matrix + refresh ([scf-benchmark-results.md](./scf-benchmark-results.md) — **2026-07-21** fair `prefer_soroban` run; split + parity rows in “Tranche 1 reviewer highlights”)
@@ -23,10 +29,10 @@ Living checklist — tick as evidence lands in repo or production.
 - [x] D8 `/api/v1/stats` + https://lumagg.xyz/stats (after deploy)
 - [x] D8 ≥30 days indexed data — 86 days (`2026-07-13` → `2026-10-07`); see [operational-validation-report.md](./operational-validation-report.md)
 - [ ] D9 Audit report ([audit-scope.md](./audit-scope.md)) — **budget $16k**
-- [ ] D10 Demo video (~5 min) — [demo-video-script.md](./demo-video-script.md)
+- [x] D10 Demo video (~5 min) — submitted with the SCF form; source: [demo-video-script.md](./demo-video-script.md)
 - [x] D10 [maintenance-plan.md](./maintenance-plan.md)
 - [x] D10 [self-host deployment guide](./deployment-overview.md)
-- [ ] D10 P28 testnet regression — [p28-testnet-regression.md](./p28-testnet-regression.md)
+- [ ] D10 P28 testnet regression — not confirmed in the submitted form; notes: [p28-testnet-regression.md](./p28-testnet-regression.md)
 - [ ] D10 Final report — [scf-final-report.md](./scf-final-report.md)
 
 ## Deploy after code changes
