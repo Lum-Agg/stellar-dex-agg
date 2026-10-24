@@ -6,6 +6,7 @@ use {
         callers::{CallerPool, DEFAULT_CALLER_COOLDOWN_MS},
         config::ArbConfig,
         context::ArbContext,
+        diagnostics::SimOutcome,
         invoke::{
             build_execute_round_trip_op, build_raw_envelope_xdr, build_round_trip_swap_op, min_amount_out_break_even,
         },
@@ -176,6 +177,7 @@ pub async fn prepare_opportunity_tx(
     let mut simulated_amount_out = 0u128;
     let mut estimated_fee_stroops = 0u128;
     let mut tried_probe_fallback = false;
+    let mut simulation_ms = 0;
 
     // Up to 2 sims: sized quote → optional probe-size fallback on phantom profit.
     for _attempt in 0..2 {
@@ -189,15 +191,17 @@ pub async fn prepare_opportunity_tx(
             allowance_expiration,
         )?;
 
-        match prepare_transaction_xdr(
+        let simulation_started = std::time::Instant::now();
+        let preparation = prepare_transaction_xdr(
             &ctx.config.rpc_url,
             caller_public_key,
             seq as u64,
             std::slice::from_ref(&op),
             fee,
         )
-        .await
-        {
+        .await;
+        simulation_ms = simulation_started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+        match preparation {
             Ok(prepared) => {
                 unsigned_tx_xdr = prepared.unsigned_tx_xdr;
                 simulated = true;
@@ -214,6 +218,14 @@ pub async fn prepare_opportunity_tx(
                     aggregator,
                     caller_public_key,
                 );
+                let outcome = if recovered_base_out.is_some() {
+                    SimOutcome::EconomicFailure
+                } else if is_structural_sim_failure(&err_str) {
+                    SimOutcome::StructuralFailure
+                } else {
+                    SimOutcome::PrepareError
+                };
+                stats.record_simulation(&quote, outcome, recovered_base_out, simulation_ms);
 
                 // Legs ran but break-even assert failed → quote-api phantom profit.
                 // Fall back to probe size so small real opportunities are not skipped.
@@ -224,7 +236,6 @@ pub async fn prepare_opportunity_tx(
                         stats
                             .discard_size_unprofitable
                             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        stats.record_quote_sim_gap(quote.amount_in, quote.amount_out, base_out);
                         warn!(
                             route = %quote.route_label(),
                             amount_in = quote.amount_in,
@@ -269,7 +280,6 @@ pub async fn prepare_opportunity_tx(
                     stats
                         .discard_below_quoted
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    stats.record_quote_sim_gap(quote.amount_in, quote.amount_out, base_out);
                     warn!(
                         route = %quote.route_label(),
                         caller = %caller_public_key,
@@ -333,6 +343,16 @@ pub async fn prepare_opportunity_tx(
         // Gas covered by fee_base (XLM fee converted when base is USDC);
         // ARB_MIN_PROFIT_* is a post-fee race/slippage buffer in base units.
         let net_profit = sim_profit.saturating_sub(fee_base);
+        stats.record_simulation(
+            &quote,
+            if net_profit < min_profit {
+                SimOutcome::FeeRejected
+            } else {
+                SimOutcome::Ready
+            },
+            Some(simulated_amount_out),
+            simulation_ms,
+        );
         if net_profit < min_profit {
             warn!(
                 route = %quote.route_label(),

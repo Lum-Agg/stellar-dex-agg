@@ -59,6 +59,7 @@ impl SubmissionLedger {
              CREATE INDEX IF NOT EXISTS idx_submissions_status ON submissions(status);
              CREATE INDEX IF NOT EXISTS idx_submissions_submitted_at ON submissions(submitted_at);",
         )?;
+        crate::diagnostics::initialize(&connection)?;
         // Keep existing production ledgers readable after adding venue-level
         // diagnostics. SQLite has no ADD COLUMN IF NOT EXISTS.
         let has_venue_route: bool = connection
@@ -106,6 +107,16 @@ impl SubmissionLedger {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub(crate) fn persist_simulation_metrics(
+        &self,
+        rows: &[(crate::diagnostics::Dimension, crate::diagnostics::Aggregate)],
+        now: i64,
+        max_rows: usize,
+    ) -> Result<()> {
+        let mut connection = self.connection.lock().expect("submission ledger mutex poisoned");
+        crate::diagnostics::persist(&mut connection, rows, now, max_rows)
     }
 
     pub fn record_submitted(

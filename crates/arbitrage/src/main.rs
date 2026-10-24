@@ -18,22 +18,35 @@ use {
 fn print_help() {
     println!(
         "lumagg-arbitrage-bot {}\n\n\
-         Usage: lumagg-arbitrage-bot --config <FILE> [--check-config]\n\n\
+         Usage: lumagg-arbitrage-bot --config <FILE> [--check-config]\n\
+         Read diagnostics: lumagg-arbitrage-bot --diagnostics-db <FILE>\n\n\
          Options:\n  --config <FILE>  LumAgg Arbitrage TOML configuration\n  \
-         --check-config  Validate configuration and exit\n  -h, --help      Show this help\n  \
+         --check-config  Validate configuration and exit\n  \
+         --diagnostics-db <FILE>  Read persisted 7-day simulation diagnostics and exit\n  -h, --help      Show this help\n  \
          -V, --version   Show version",
         env!("CARGO_PKG_VERSION")
     );
 }
 
-fn parse_args() -> Result<Option<(Option<PathBuf>, bool)>> {
-    let mut args = std::env::args().skip(1);
+#[derive(Debug)]
+struct CliArgs {
+    config: Option<PathBuf>,
+    check: bool,
+    diagnostics_db: Option<PathBuf>,
+}
+
+fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<Option<CliArgs>> {
+    let mut args = args.into_iter();
     let mut config = None;
     let mut check = false;
+    let mut diagnostics_db = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--config" => config = Some(args.next().context("--config requires a file path")?.into()),
             "--check-config" => check = true,
+            "--diagnostics-db" => {
+                diagnostics_db = Some(args.next().context("--diagnostics-db requires a file path")?.into())
+            }
             "-h" | "--help" => {
                 print_help();
                 return Ok(None);
@@ -45,15 +58,28 @@ fn parse_args() -> Result<Option<(Option<PathBuf>, bool)>> {
             _ => bail!("unknown argument: {arg}"),
         }
     }
-    Ok(Some((config, check)))
+    if diagnostics_db.is_some() && (config.is_some() || check) {
+        bail!("--diagnostics-db is a standalone read-only command; do not combine with --config or --check-config");
+    }
+    Ok(Some(CliArgs {
+        config,
+        check,
+        diagnostics_db,
+    }))
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let Some((path, check)) = parse_args()? else {
+    let Some(args) = parse_args_from(std::env::args().skip(1))? else {
         return Ok(());
     };
-    if let Some(path) = path {
+    if let Some(path) = args.diagnostics_db {
+        let report = arbitrage::diagnostics::read_report(&path)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+    let check = args.check;
+    if let Some(path) = args.config {
         let config: ArbitrageConfig = lumagg_config::load(&path)?;
         config.validate()?;
         config.apply();
@@ -83,4 +109,30 @@ async fn main() -> Result<()> {
     }
 
     engine::start_bot(runtime).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(values: &[&str]) -> Result<Option<CliArgs>> {
+        parse_args_from(values.iter().map(|v| (*v).to_owned()))
+    }
+
+    #[test]
+    fn diagnostics_is_standalone_and_requires_a_path() {
+        assert_eq!(
+            args(&["--diagnostics-db", "test.db"]).unwrap().unwrap().diagnostics_db,
+            Some("test.db".into())
+        );
+        assert!(args(&["--diagnostics-db"]).is_err());
+        assert!(args(&["--diagnostics-db", "test.db", "--config", "test.toml"]).is_err());
+        assert!(args(&["--check-config", "--diagnostics-db", "test.db"]).is_err());
+        assert!(
+            args(&["--config", "test.toml", "--check-config"])
+                .unwrap()
+                .unwrap()
+                .check
+        );
+    }
 }

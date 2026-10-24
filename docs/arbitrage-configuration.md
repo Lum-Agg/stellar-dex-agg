@@ -140,6 +140,10 @@ bot is running; copying only the database file may omit committed WAL data.
 
 ## Monitoring
 
+See [Arbitrage Diagnostics](arbitrage-diagnostics.md) for persisted daily
+quote/simulation gaps by pair, venue, pool, and raw input-size bucket, plus the
+standalone read-only `--diagnostics-db` report command.
+
 | TOML key | Program default | Description |
 | --- | --- | --- |
 | `monitoring.log_filter` | `info` | Rust tracing filter. |

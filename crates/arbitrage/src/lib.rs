@@ -5,6 +5,7 @@ pub mod callers;
 pub mod config;
 pub mod context;
 pub mod dedup;
+pub mod diagnostics;
 pub mod economics;
 pub mod execute;
 pub mod invoke;

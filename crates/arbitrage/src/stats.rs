@@ -10,7 +10,7 @@ use {
         collections::BTreeMap,
         sync::{
             atomic::{AtomicI64, AtomicU64, Ordering},
-            Mutex,
+            Arc, Mutex,
         },
         time::Duration,
     },
@@ -19,6 +19,7 @@ use {
 
 #[derive(Debug, Default)]
 pub struct ArbStats {
+    pub simulations: Arc<crate::diagnostics::SimulationBook>,
     /// Per-bridge funnel counters. Kept separate from the scalar snapshot so
     /// the hot-path reporter remains cheap and backwards-compatible.
     pub bridge: Mutex<BTreeMap<String, BridgeStats>>,
@@ -76,6 +77,18 @@ pub struct BridgeStatsSnapshot {
 }
 
 impl ArbStats {
+    pub fn record_simulation(
+        &self,
+        quote: &crate::bridge::RoundTripQuote,
+        outcome: crate::diagnostics::SimOutcome,
+        output: Option<u128>,
+        elapsed_ms: u64,
+    ) {
+        self.simulations.record(quote, outcome, output, elapsed_ms);
+        if let Some(output) = output {
+            self.record_quote_sim_gap(quote.amount_in, quote.amount_out, output);
+        }
+    }
     fn with_bridge(&self, bridge: &str, update: impl FnOnce(&mut BridgeStats)) {
         let mut by_bridge = self.bridge.lock().expect("arb bridge stats mutex poisoned");
         update(by_bridge.entry(bridge.to_owned()).or_default());
@@ -588,6 +601,7 @@ pub fn spawn_stats_reporter(runtime: SharedRuntime, interval: Duration) {
                 sim_failure_breakdown = ?runtime.stats.sim_failure_breakdown(6),
                 chain_failure_breakdown = ?runtime.stats.chain_failure_breakdown(6),
                 failed_route_breakdown = ?runtime.stats.failed_route_breakdown(5),
+                diagnostic_dropped_dimensions = runtime.stats.simulations.dropped_dimensions.load(Ordering::Relaxed),
                 "arb stats summary"
             );
         }

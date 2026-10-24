@@ -20,6 +20,7 @@
   - [Configuration Reference](aggregator-configuration.md)
 - [Arbitrage Deployment](arbitrage-deployment.md)
 - [Arbitrage Configuration](arbitrage-configuration.md)
+- [Arbitrage Diagnostics](arbitrage-diagnostics.md)
 
 ## On-chain Products
 

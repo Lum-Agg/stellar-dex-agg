@@ -32,6 +32,7 @@ pub async fn start_bot(runtime: SharedRuntime) -> Result<()> {
 
     spawn_xlm_usdc_price_refresher(runtime.clone());
     crate::settlement::spawn_reconciler(runtime.clone());
+    crate::diagnostics::spawn_persistence(runtime.clone());
 
     let mut engine = Engine::default();
 
