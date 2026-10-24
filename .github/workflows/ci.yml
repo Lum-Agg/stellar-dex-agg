@@ -51,6 +51,20 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Install browser for regression tests
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser regression tests
+        run: npm run test:e2e
+
+      - name: Upload browser test evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-browser-test-results
+          path: packages/frontend/test-results/
+          retention-days: 7
+
   sdk:
     name: SDK checks
     runs-on: ubuntu-24.04

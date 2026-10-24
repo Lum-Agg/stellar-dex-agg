@@ -7,6 +7,9 @@ packages/sdk/node_modules/
 *.tsbuildinfo
 packages/frontend/.next/
 packages/frontend/out/
+packages/frontend/out-e2e/
+packages/frontend/playwright-report/
+packages/frontend/test-results/
 justfile
 data
 contracts/vault/.mainnet-vault-id

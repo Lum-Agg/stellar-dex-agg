@@ -3,6 +3,8 @@ import type { NextConfig } from 'next';
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   output: 'export',
+  // Keep mocked E2E exports separate from deployable production output.
+  distDir: process.env.LUMAGG_E2E === '1' ? 'out-e2e' : '.next',
   images: {
     unoptimized: true,
     remotePatterns: [
