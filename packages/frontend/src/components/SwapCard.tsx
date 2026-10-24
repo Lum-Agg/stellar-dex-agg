@@ -24,6 +24,12 @@ import {
   type SwapSettings,
 } from '@/lib/swap-settings';
 import { getSubmitViaPreference } from '@/lib/submit-preference';
+import {
+  readPendingSwap,
+  savePendingSwap,
+  clearPendingSwap,
+  type PendingSwap,
+} from '@/lib/pending-swap';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.lumagg.xyz';
 
@@ -339,6 +345,61 @@ export function SwapCard() {
   };
 
   const [swapping, setSwapping] = useState(false);
+  const [pendingSwap, setPendingSwap] = useState<PendingSwap | null>(null);
+  const [checkingPending, setCheckingPending] = useState(false);
+  const [pendingNotice, setPendingNotice] = useState<string | null>(null);
+  const pendingRef = useRef<PendingSwap | null>(null);
+  const pendingCheckRef = useRef(false);
+  const [pendingReady, setPendingReady] = useState(false);
+
+  useEffect(() => {
+    const restored = readPendingSwap();
+    pendingRef.current = restored;
+    setPendingSwap(restored);
+    setPendingReady(true);
+  }, []);
+
+  const finishPending = useCallback(
+    (tx: PendingSwap, success: boolean, error?: string) => {
+      // Ignore a late lookup for a transaction the user stopped tracking.
+      if (pendingRef.current?.hash !== tx.hash) return;
+      pendingRef.current = null;
+      setPendingSwap(null);
+      clearPendingSwap(tx.hash);
+      setPendingNotice(null);
+      setTxResult({ success, hash: tx.hash, kind: 'swap', error });
+      setQuoteStale(true);
+      if (success) window.dispatchEvent(new Event(SWAP_SUCCESS_EVENT));
+      void refreshBalances();
+    },
+    [refreshBalances],
+  );
+
+  const checkPending = useCallback(async () => {
+    const tx = pendingRef.current;
+    if (!tx || pendingCheckRef.current || swapping) return;
+    pendingCheckRef.current = true;
+    setCheckingPending(true);
+    try {
+      const { fetchTxStatus } = await import('@/lib/rpc');
+      const result = await fetchTxStatus(tx.hash, { via: tx.via, network: tx.network });
+      if (pendingRef.current?.hash !== tx.hash) return;
+      if (result.confirmed || result.status === 'SUCCESS') finishPending(tx, true);
+      else if (result.status === 'FAILED')
+        finishPending(tx, false, result.error || 'Transaction failed on-chain');
+      else
+        setPendingNotice(
+          'Still awaiting confirmation. Check the transaction before submitting again.',
+        );
+    } catch {
+      if (pendingRef.current?.hash === tx.hash) {
+        setPendingNotice('Status is temporarily unavailable. The transaction may still confirm.');
+      }
+    } finally {
+      pendingCheckRef.current = false;
+      setCheckingPending(false);
+    }
+  }, [finishPending, swapping]);
   const [addingTrustline, setAddingTrustline] = useState(false);
   const [resolvedClassicAsset, setResolvedClassicAsset] = useState<ClassicAssetRef | null>(null);
   const [resolvingClassicAsset, setResolvingClassicAsset] = useState(false);
@@ -418,7 +479,7 @@ export function SwapCard() {
   );
 
   const handleSwap = useCallback(async () => {
-    if (!walletAddress || !quote) return;
+    if (!walletAddress || !quote || pendingRef.current || !pendingReady) return;
     if (quoteStale) {
       void loadQuote();
       return;
@@ -517,27 +578,37 @@ export function SwapCard() {
       });
 
       if (submitResult.success) {
+        const tracked: PendingSwap = {
+          hash: submitResult.hash,
+          account: walletAddress,
+          via: submitVia,
+          network: submitNetwork,
+        };
+        pendingRef.current = tracked;
+        setPendingSwap(tracked);
+        savePendingSwap(tracked);
         const confirmed = await waitForTxConfirmation(submitResult.hash, {
           via: submitVia,
           network: submitNetwork,
         });
         if (!confirmed.success) {
-          setTxResult({
-            success: false,
-            hash: submitResult.hash,
-            error: confirmed.error || 'Transaction not confirmed',
-          });
+          if (confirmed.status === 'FAILED') finishPending(tracked, false, confirmed.error);
+          else
+            setPendingNotice(
+              'Submitted, but confirmation is still pending. Do not submit this swap again.',
+            );
           return;
         }
-        setTxResult({ success: true, hash: submitResult.hash, kind: 'swap' });
-        setQuoteStale(true);
-        window.dispatchEvent(new Event(SWAP_SUCCESS_EVENT));
-        void refreshBalances();
+        finishPending(tracked, true);
       } else {
         setTxResult({ success: false, error: submitResult.error || 'Transaction failed' });
       }
     } catch (err: any) {
-      setTxResult({ success: false, error: err.message || 'Swap failed' });
+      if (pendingRef.current)
+        setPendingNotice(
+          'Confirmation is temporarily unavailable. Check the transaction before retrying.',
+        );
+      else setTxResult({ success: false, error: err.message || 'Swap failed' });
     } finally {
       setSwapping(false);
     }
@@ -550,9 +621,10 @@ export function SwapCard() {
     tokenOut,
     amountIn,
     signTx,
-    refreshBalances,
     getBalance,
     ensureBalance,
+    finishPending,
+    pendingReady,
   ]);
 
   const handleAddTrustline = useCallback(async () => {
@@ -648,6 +720,8 @@ export function SwapCard() {
     needsTrustline && !resolvingClassicAsset && resolvedClassicAsset === null;
 
   const primaryDisabled =
+    !pendingReady ||
+    pendingSwap !== null ||
     connecting ||
     swapping ||
     addingTrustline ||
@@ -663,21 +737,23 @@ export function SwapCard() {
         ? 'Looking up trustline...'
         : swapping
           ? 'Submitting...'
-          : loading && walletAddress && !needsTrustline
-            ? 'Finding best route...'
-            : !walletAddress
-              ? 'Connect wallet to swap'
-              : needsTrustline
-                ? canAutoAddTrustline
-                  ? `Add ${tokenOut.symbol} trustline`
-                  : `Add ${tokenOut.symbol} trustline in wallet`
-                : !amountIn
-                  ? 'Enter amount'
-                : !quote
-                  ? 'No route available'
-                    : quoteStale
-                      ? 'Refresh quote'
-                      : 'Review & swap';
+          : pendingSwap
+            ? 'Awaiting confirmation'
+            : loading && walletAddress && !needsTrustline
+              ? 'Finding best route...'
+              : !walletAddress
+                ? 'Connect wallet to swap'
+                : needsTrustline
+                  ? canAutoAddTrustline
+                    ? `Add ${tokenOut.symbol} trustline`
+                    : `Add ${tokenOut.symbol} trustline in wallet`
+                  : !amountIn
+                    ? 'Enter amount'
+                    : !quote
+                      ? 'No route available'
+                      : quoteStale
+                        ? 'Refresh quote'
+                        : 'Review & swap';
 
   return (
     <div className="w-full max-w-none space-y-3">
@@ -910,6 +986,59 @@ export function SwapCard() {
           </button>
         </div>
 
+        {pendingSwap && !swapping && (
+          <div
+            role="status"
+            className="mt-3 rounded-xl border border-[var(--border-strong)] bg-[var(--surface-raised)] p-3 text-[13px] text-[var(--text-primary)]"
+          >
+            <p>
+              {pendingNotice ??
+                'A submitted swap is awaiting confirmation. Check its status before submitting another swap.'}
+            </p>
+            <p className="mt-1 break-all font-mono text-[11px] text-[var(--text-muted)]">
+              {pendingSwap.hash}
+            </p>
+            <div className="mt-2 flex flex-wrap gap-3">
+              <a
+                href={`https://stellar.expert/explorer/public/tx/${pendingSwap.hash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline"
+              >
+                View pending transaction
+              </a>
+              <button
+                type="button"
+                disabled={checkingPending}
+                onClick={() => void checkPending()}
+                className="underline disabled:opacity-50"
+              >
+                {checkingPending ? 'Checking status...' : 'Check transaction status'}
+              </button>
+              <button
+                type="button"
+                disabled={checkingPending}
+                className="text-[var(--text-muted)] underline"
+                onClick={() => {
+                  if (
+                    !window.confirm(
+                      'Stop tracking this swap? This does not cancel the transaction. It may still execute. Verify the hash before submitting again.',
+                    )
+                  )
+                    return;
+                  clearPendingSwap(pendingSwap.hash);
+                  pendingRef.current = null;
+                  setPendingSwap(null);
+                  setPendingNotice(null);
+                  setQuoteStale(true);
+                }}
+              >
+                Stop tracking
+              </button>
+            </div>
+          </div>
+        )}
+
         {txResult && (
           <div
             role={txResult.success ? 'status' : 'alert'}
@@ -945,6 +1074,16 @@ export function SwapCard() {
             ) : (
               <div>
                 <div>{friendlyTransactionError(txResult.error)}</div>
+                {txResult.hash && (
+                  <a
+                    href={`https://stellar.expert/explorer/public/tx/${txResult.hash}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-2 inline-block underline"
+                  >
+                    View transaction
+                  </a>
+                )}
                 {txResult.error && friendlyTransactionError(txResult.error) !== txResult.error && (
                   <details className="mt-2 text-[11px] text-red-200/60">
                     <summary className="cursor-pointer">Technical details</summary>
