@@ -32,7 +32,7 @@ pub fn spawn_hourly_profit_report(runtime: Arc<ArbRuntime>, alerter: Arc<Telegra
             interval.tick().await;
             match build_profit_report(&runtime).await {
                 Ok(msg) => {
-                    if let Err(e) = alerter.send(&msg).await {
+                    if let Err(e) = send_report(&alerter, &msg).await {
                         warn!(error = %e, "arb telegram profit report failed");
                     } else {
                         info!("arb telegram profit report sent");
@@ -42,6 +42,40 @@ pub fn spawn_hourly_profit_report(runtime: Arc<ArbRuntime>, alerter: Arc<Telegra
             }
         }
     });
+}
+
+async fn send_report(alerter: &TelegramAlerter, text: &str) -> anyhow::Result<()> {
+    for part in report_parts(text) {
+        alerter.send(&part).await?;
+    }
+    Ok(())
+}
+
+/// Leave headroom below the message limit; preserve lines where possible and
+/// count UTF-16 units so non-BMP characters cannot exceed the per-part budget.
+fn report_parts(text: &str) -> Vec<String> {
+    const BUDGET: usize = 3500;
+    let mut parts = Vec::new();
+    let mut part = String::new();
+    let mut units = 0;
+    for line in text.split_inclusive('\n') {
+        if !part.is_empty() && units + line.encode_utf16().count() > BUDGET {
+            parts.push(std::mem::take(&mut part));
+            units = 0;
+        }
+        for ch in line.chars() {
+            if units + ch.len_utf16() > BUDGET {
+                parts.push(std::mem::take(&mut part));
+                units = 0;
+            }
+            part.push(ch);
+            units += ch.len_utf16();
+        }
+    }
+    if !part.is_empty() {
+        parts.push(part);
+    }
+    parts
 }
 
 /// Alert when opportunities keep arriving but nothing prepares (quote/sim gap).
@@ -113,6 +147,16 @@ async fn build_profit_report(runtime: &ArbRuntime) -> anyhow::Result<String> {
                 report.push_str("\n\nReconciliation: unavailable (database error)");
             }
         }
+    }
+    let dropped = runtime
+        .stats
+        .simulations
+        .dropped_dimensions
+        .load(std::sync::atomic::Ordering::Relaxed);
+    if dropped > 0 {
+        report.push_str(&format!(
+            "\nDiagnostics: {dropped} dimension observations dropped (session capacity limit)"
+        ));
     }
     Ok(report)
 }
@@ -381,6 +425,31 @@ mod tests {
             txs_failed: 0,
             txs_dedup_skipped: 0,
             caller_busy: 0,
+        }
+    }
+
+    #[test]
+    fn report_parts_preserve_lines_and_all_content() {
+        let line = format!("{}\n", "x".repeat(79));
+        let message = line.repeat(200);
+        let parts = report_parts(&message);
+        assert!(parts.len() > 1);
+        assert_eq!(parts.concat(), message);
+        assert!(parts
+            .iter()
+            .all(|part| part.ends_with('\n') && part.encode_utf16().count() <= 3500));
+        assert_eq!(report_parts("short"), vec!["short"]);
+        assert!(report_parts("").is_empty());
+    }
+
+    #[test]
+    fn report_parts_handle_long_lines_and_non_bmp_text() {
+        for message in ["x".repeat(9000), "\u{1f680}".repeat(5000)] {
+            let parts = report_parts(&message);
+            assert_eq!(parts.concat(), message);
+            assert!(parts
+                .iter()
+                .all(|part| !part.is_empty() && part.encode_utf16().count() <= 3500));
         }
     }
 
