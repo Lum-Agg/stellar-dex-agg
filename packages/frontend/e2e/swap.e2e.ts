@@ -139,6 +139,45 @@ test('a confirmed chain failure is terminal, not a pending timeout', async ({ pa
   expect(await page.evaluate(() => sessionStorage.getItem('lumagg.pendingSwap'))).toBeNull();
 });
 
+for (const response of ['lost', 'missing-hash'] as const) {
+  test(`a ${response} broadcast response keeps the local hash and never resubmits`, async ({
+    page,
+    app,
+  }) => {
+    app.submitResponse = response;
+    await readySwap(page);
+    await page.getByRole('button', { name: 'Review & swap', exact: true }).click();
+    await expect(
+      page.getByRole('button', { name: 'Awaiting confirmation', exact: true }),
+    ).toBeDisabled();
+    await expect(page.getByRole('main').getByRole('alert')).toHaveCount(0);
+    expect(
+      await page.evaluate(() => JSON.parse(sessionStorage.getItem('lumagg.pendingSwap')!).hash),
+    ).toBe(HASH);
+    await page.reload();
+    await page.getByRole('button', { name: 'Check transaction status', exact: true }).click();
+    await expect(page.getByText('Swap confirmed successfully.')).toBeVisible();
+    expect(app.submissions).toHaveLength(1);
+    expect(await page.evaluate(() => window.__mockWallet.signCalls)).toBe(0);
+  });
+}
+
+test('a lost official RPC response also retains the local hash', async ({ page, app }) => {
+  app.submitResponse = 'lost';
+  await readySwap(page);
+  await page.evaluate(() => localStorage.removeItem('lumagg.submitViaOfficialRpc'));
+  await page.getByRole('button', { name: 'Review & swap', exact: true }).click();
+  await expect(
+    page.getByRole('button', { name: 'Awaiting confirmation', exact: true }),
+  ).toBeDisabled();
+  await expect(page.getByRole('main').getByRole('alert')).toHaveCount(0);
+  await page.reload();
+  await page.getByRole('button', { name: 'Check transaction status', exact: true }).click();
+  await expect(page.getByText('Swap confirmed successfully.')).toBeVisible();
+  expect(app.rpcSubmissions).toBe(1);
+  expect(app.submissions).toHaveLength(0);
+});
+
 test('official RPC confirmation tolerates unrelated unsupported XDR fields', async ({
   page,
   app,

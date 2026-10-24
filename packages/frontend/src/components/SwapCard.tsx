@@ -28,6 +28,7 @@ import {
   readPendingSwap,
   savePendingSwap,
   clearPendingSwap,
+  signedSwapHash,
   type PendingSwap,
 } from '@/lib/pending-swap';
 
@@ -572,22 +573,24 @@ export function SwapCard() {
       // make an RPC-confirmed transaction appear to time out via the API.
       const submitVia = getSubmitViaPreference();
       const submitNetwork = 'public' as const;
+      // Persist before broadcasting: a lost response does not mean the node
+      // rejected the transaction. Derive the hash from the signed envelope.
+      const tracked: PendingSwap = {
+        hash: await signedSwapHash(signedXdr),
+        account: walletAddress,
+        via: submitVia,
+        network: submitNetwork,
+      };
+      pendingRef.current = tracked;
+      setPendingSwap(tracked);
+      savePendingSwap(tracked);
       const submitResult = await submitTransaction(signedXdr, {
         via: submitVia,
         network: submitNetwork,
       });
 
       if (submitResult.success) {
-        const tracked: PendingSwap = {
-          hash: submitResult.hash,
-          account: walletAddress,
-          via: submitVia,
-          network: submitNetwork,
-        };
-        pendingRef.current = tracked;
-        setPendingSwap(tracked);
-        savePendingSwap(tracked);
-        const confirmed = await waitForTxConfirmation(submitResult.hash, {
+        const confirmed = await waitForTxConfirmation(tracked.hash, {
           via: submitVia,
           network: submitNetwork,
         });
@@ -601,12 +604,22 @@ export function SwapCard() {
         }
         finishPending(tracked, true);
       } else {
-        setTxResult({ success: false, error: submitResult.error || 'Transaction failed' });
+        if (submitResult.status === 'ERROR') {
+          finishPending(
+            tracked,
+            false,
+            submitResult.error || 'Transaction rejected by the network',
+          );
+        } else {
+          setPendingNotice(
+            'Broadcast outcome is unknown. Check the transaction before submitting again.',
+          );
+        }
       }
     } catch (err: any) {
       if (pendingRef.current)
         setPendingNotice(
-          'Confirmation is temporarily unavailable. Check the transaction before retrying.',
+          'Broadcast or confirmation is temporarily unavailable. Check the transaction before retrying.',
         );
       else setTxResult({ success: false, error: err.message || 'Swap failed' });
     } finally {

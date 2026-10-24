@@ -4,6 +4,9 @@
 
 From `packages/frontend`:
 
+Use Node.js 24.21.0 and npm 11.19.0, matching the frontend CI toolchain.
+Older npm versions can resolve optional peers differently and reject the lockfile.
+
 ```bash
 npm ci
 npx playwright install --with-deps chromium
@@ -42,6 +45,8 @@ operational validation.
   potentially unsupported XDR fields.
 - Confirmation timeout is pending, not failed. Pending hash and submission
   channel survive reload; checking status never signs or submits again.
+- Lost broadcast responses and accepted responses without a hash preserve the
+  locally computed envelope hash. Recovery never broadcasts a second swap.
 - Confirmed on-chain failure is terminal and keeps an explorer link.
 - Explicitly stopping tracking requires acknowledgement that this does not
   cancel the transaction or prove it was never included.
@@ -53,7 +58,7 @@ not production liquidity, quotes, balances, or transaction validity.
 
 ## Pending swap behavior
 
-After accepted submission, only the public hash, account, network, and selected
+Before broadcasting, only the locally computed public hash, account, network, and selected
 submission channel are stored in `sessionStorage`. No signed XDR or secret is
 stored. Tracking survives navigation/reload in that tab, but is not a global
 cross-tab or cross-device submission lock. The swap form blocks a new submission
@@ -64,6 +69,11 @@ toggle later. `NOT_FOUND`, timeout, and status-service errors do not mean chain
 failure. Recovery is an explicit, one-shot **Check transaction status** action;
 the page does not silently broadcast again or poll indefinitely. The explorer
 link remains available when historical RPC data is no longer retained.
+
+A transport error, invalid response, or missing response hash is also treated
+conservatively as unknown, not as proof of rejection. An explicit RPC `ERROR`
+response ends tracking; ambiguous API/HTTP errors keep tracking until checked
+or explicitly dismissed. A locally invalid envelope is rejected before broadcast.
 
 Closing the tab or clearing session storage can remove the tracking record;
 verify an outstanding transaction on the explorer before initiating another.

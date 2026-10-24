@@ -3,8 +3,17 @@ import {
   clearPendingSwap,
   readPendingSwap,
   savePendingSwap,
+  signedSwapHash,
   type PendingSwap,
 } from './pending-swap';
+import {
+  Account,
+  Asset,
+  Networks,
+  Operation,
+  StrKey,
+  TransactionBuilder,
+} from '@stellar/stellar-sdk/minimal';
 
 const pending: PendingSwap = {
   hash: 'ab'.repeat(32),
@@ -24,6 +33,25 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('pending swap recovery', () => {
+  it('derives the mainnet envelope hash locally, including fee-bump envelopes', async () => {
+    const address = StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 7));
+    const tx = new TransactionBuilder(new Account(address, '1'), {
+      fee: '100',
+      networkPassphrase: Networks.PUBLIC,
+    })
+      .addOperation(Operation.payment({ destination: address, asset: Asset.native(), amount: '1' }))
+      .setTimeout(60)
+      .build();
+    expect(await signedSwapHash(tx.toXDR())).toBe(tx.hash().toString('hex'));
+    const feeBump = TransactionBuilder.buildFeeBumpTransaction(address, '200', tx, Networks.PUBLIC);
+    expect(await signedSwapHash(feeBump.toXDR())).toBe(feeBump.hash().toString('hex'));
+    expect(await signedSwapHash(feeBump.toXDR())).not.toBe(tx.hash().toString('hex'));
+  });
+
+  it('rejects invalid envelopes before broadcasting', async () => {
+    await expect(signedSwapHash('invalid')).rejects.toThrow();
+  });
+
   it('keeps the hash, account and original submission channel', () => {
     savePendingSwap(pending);
     expect(readPendingSwap()).toEqual(pending);

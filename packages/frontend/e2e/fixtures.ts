@@ -12,15 +12,15 @@ export const XLM = 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA';
 export const USDC = 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75';
 export const CUSTOM = `C${'B'.repeat(55)}`;
 export const ADDRESS = StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 7));
-export const HASH = 'ab'.repeat(32);
-const XDR = new TransactionBuilder(new Account(ADDRESS, '1'), {
+const transaction = new TransactionBuilder(new Account(ADDRESS, '1'), {
   fee: '100',
   networkPassphrase: Networks.PUBLIC,
 })
   .addOperation(Operation.payment({ destination: ADDRESS, asset: Asset.native(), amount: '1' }))
   .setTimeout(60)
-  .build()
-  .toXDR();
+  .build();
+export const HASH = transaction.hash().toString('hex');
+const XDR = transaction.toXDR();
 
 declare global {
   interface Window {
@@ -32,6 +32,7 @@ export interface MockApp {
   balance: string;
   status: 'SUCCESS' | 'FAILED' | 'NOT_FOUND';
   statusErrors: number;
+  submitResponse: 'accepted' | 'lost' | 'missing-hash';
   balanceCalls: number;
   statusCalls: number;
   rpcCalls: number;
@@ -49,6 +50,7 @@ export const test = base.extend<{ app: MockApp; connected: boolean }>({
         balance: '1000000000',
         status: 'SUCCESS',
         statusErrors: 0,
+        submitResponse: 'accepted',
         balanceCalls: 0,
         statusCalls: 0,
         rpcCalls: 0,
@@ -137,6 +139,7 @@ export const test = base.extend<{ app: MockApp; connected: boolean }>({
             });
           if (body.method === 'sendTransaction') {
             app.rpcSubmissions++;
+            if (app.submitResponse === 'lost') return route.abort('failed');
             return json({
               jsonrpc: '2.0',
               id: body.id,
@@ -205,6 +208,9 @@ export const test = base.extend<{ app: MockApp; connected: boolean }>({
               return json({ success: true, data: { unsigned_tx_xdr: XDR } });
             case '/api/v1/submit_tx':
               app.submissions.push(request.postDataJSON());
+              if (app.submitResponse === 'lost') return route.abort('failed');
+              if (app.submitResponse === 'missing-hash')
+                return json({ success: true, status: 'PENDING' });
               return json({ success: true, hash: HASH, status: 'PENDING' });
             case '/api/v1/tx_status':
               app.statusCalls++;

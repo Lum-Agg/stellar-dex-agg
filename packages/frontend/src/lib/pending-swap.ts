@@ -1,5 +1,10 @@
 import type { SubmitVia } from './submit-preference';
 
+export async function signedSwapHash(signedXdr: string): Promise<string> {
+  const { Networks, TransactionBuilder } = await import('@stellar/stellar-sdk/minimal');
+  return TransactionBuilder.fromXDR(signedXdr, Networks.PUBLIC).hash().toString('hex');
+}
+
 const KEY = 'lumagg.pendingSwap';
 
 export interface PendingSwap {

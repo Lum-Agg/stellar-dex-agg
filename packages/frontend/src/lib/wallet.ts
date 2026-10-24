@@ -32,6 +32,7 @@ export async function submitTransaction(
   hash: string;
   success: boolean;
   error?: string;
+  status?: string;
 }> {
   return submitSignedTransaction(signedXdr, opts);
 }
