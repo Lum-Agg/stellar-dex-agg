@@ -90,12 +90,53 @@ simulation success rate, and API backlog.
 | `execution.build_tx` | `false` in template | Build and simulate candidate round-trip transactions. |
 | `execution.submit_tx` | `false` in template | Submit signed transactions after simulation passes. |
 | `execution.dry_run` | `true` in template | Prevent live execution behavior during quote-only or simulation-only testing. |
-| `execution.poll_tx` | runtime default | Poll submitted transaction status. |
+| `execution.poll_tx` | runtime default | Enable the short foreground status poll. Persistent recovery still runs when `submission_db_path` is configured, even if this is false. |
+| `execution.submission_db_path` | unset; enabled in release template | SQLite submission ledger. Required for restart recovery and durable chain-result accounting; the service must have write access to its parent directory. |
 | `execution.submit_dedup_secs` | runtime default | Time window used to avoid submitting duplicate opportunities. |
 | `execution.caller_cooldown_ms` | runtime default | Cooldown after a caller is used, protecting sequence-number safety. |
 
 Use the rollout stages in [Arbitrage Deployment](arbitrage-deployment.md):
 quote-only, build-and-simulate, then live submission.
+
+### Transaction reconciliation and accounting
+
+- The bot saves the signed transaction's hash before broadcasting. If the RPC
+  request fails after acceptance, recovery can still look up that hash. No
+  caller secrets or signed envelopes are stored in this ledger. An ambiguous
+  send error retains the normal caller cooldown and route dedup reservation,
+  rather than treating the attempt as definitely unsent.
+- With `submission_db_path` configured, a bounded worker checks unresolved
+  transactions every 30 seconds, including after restart. It handles at most
+  50 records per pass, with a 10-second pass budget and 5-second request timeout.
+  Records are ordered by next-check time so an old backlog cannot monopolize
+  the worker. It never re-broadcasts a transaction.
+- `NOT_FOUND` and RPC errors are not chain failures. When the RPC's oldest
+  retained ledger is newer than submission, the record becomes
+  `HISTORY_REQUIRED`, with hourly retries. This means historical verification
+  is required, not that the transaction failed, expired, or was never included.
+- `SUCCESS` and `FAILED` record the actual ledger and total XLM fee from
+  `TransactionResult.feeCharged`. Successful output comes from the actual
+  contract return in transaction metadata (V3/V4), not the simulation result.
+  Explicit RPC rejection is recorded as `REJECTED`, separately from on-chain
+  failure; unconfirmed transactions are never assigned an estimated actual fee.
+- Confirmation is idempotent: fast polling and background recovery cannot
+  account for the same hash twice. Successful and failed on-chain fees both
+  reduce reported net profit. Original quoted/simulated output and estimated
+  resource fee remain separate for comparison.
+- XLM fees remain exact in XLM. USDC fee value/net use the XLM/USDC mark saved
+  at submission and are explicitly marked valuations, not an actual conversion
+  trade. Missing marks for old USDC records, unsupported base tokens, or missing
+  result metadata make net accounting incomplete; simulation values are never
+  substituted for missing actuals.
+- Hour/session reports count outcomes when reconciled, including recovered
+  submissions from before restart; they are not historical trading-day reports.
+  Poll timeouts are cumulative observations, while the separate reconciliation
+  line shows the current durable unresolved/history-required counts. In-memory
+  report windows reset on restart; chain results remain in SQLite. Existing
+  already-terminal rows are not automatically rewritten/backfilled.
+
+Back up the SQLite file with SQLite's online backup API or `.backup` while the
+bot is running; copying only the database file may omit committed WAL data.
 
 ## Monitoring
 

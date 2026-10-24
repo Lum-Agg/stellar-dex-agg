@@ -84,6 +84,9 @@ impl ArbRuntime {
     }
 
     pub fn log_startup(&self) {
+        if self.submission_ledger.is_none() {
+            tracing::warn!("submission_db_path unset: restart recovery and durable accounting are disabled");
+        }
         let callers = self.caller_pool.as_ref().map(|p| p.len()).unwrap_or(0);
         info!(
             build_tx = self.build_enabled(),

@@ -93,7 +93,7 @@ async fn build_profit_report(runtime: &ArbRuntime) -> anyhow::Result<String> {
     let funnel = runtime.stats.snapshot();
     let bridge_breakdown = runtime.stats.bridge_breakdown();
     let sim_failure_breakdown = runtime.stats.sim_failure_breakdown(4);
-    Ok(format_report(
+    let mut report = format_report(
         &vault_balances,
         &caller_lines,
         &hour,
@@ -102,7 +102,19 @@ async fn build_profit_report(runtime: &ArbRuntime) -> anyhow::Result<String> {
         &funnel,
         &bridge_breakdown,
         &sim_failure_breakdown,
-    ))
+    );
+    if let Some(ledger) = &runtime.submission_ledger {
+        match ledger.unresolved_counts() {
+            Ok((pending, history)) => report.push_str(&format!(
+                "\n\nReconciliation: {pending} unresolved ({history} need historical verification)"
+            )),
+            Err(error) => {
+                warn!(%error, "submission ledger counts unavailable");
+                report.push_str("\n\nReconciliation: unavailable (database error)");
+            }
+        }
+    }
+    Ok(report)
 }
 
 async fn fetch_vault_balances(runtime: &ArbRuntime) -> Vec<(String, Option<u128>)> {
@@ -134,22 +146,34 @@ async fn fetch_caller_balances(runtime: &ArbRuntime) -> Vec<(usize, String, Opti
 }
 
 fn format_window(label: &str, base: &str, w: &ProfitWindow) -> String {
+    let net = if w.incomplete > 0 {
+        "n/a (incomplete accounting)".to_owned()
+    } else {
+        format_xlm4(w.net_profit_stroops())
+    };
     format!(
         "{label}\n\
          · succeeded: {}\n\
          · failed: {}\n\
-         · unknown: {}\n\
+         · poll timeouts (observed): {}\n\
          · submitted: {}\n\
-         · gross profit: `{}` {base}\n\
-         · est. fees: `{}` {base}\n\
-         · net: `{}` {base}",
+         · actual gross profit: `{}` {base}\n\
+         · actual fees (success + failed): `{}` XLM\n\
+         · fee value at submission mark: `{}` {base}\n\
+         · net (marked for non-XLM): `{}` {base}\n\
+         · incomplete accounting: {}\n\
+         · simulated gross / est. resource fees: `{}` {base} / `{}` XLM",
         w.succeeded,
         w.failed,
         w.unknown,
         w.submitted,
-        format_xlm4_u(w.gross_profit_stroops),
+        format_xlm4(w.gross_profit_stroops),
+        format_xlm4_u(w.actual_fee_xlm_stroops),
         format_xlm4_u(w.fee_stroops),
-        format_xlm4(w.net_profit_stroops()),
+        net,
+        w.incomplete,
+        format_xlm4(w.estimated_gross),
+        format_xlm4_u(w.estimated_fee_xlm_stroops),
     )
 }
 
@@ -157,9 +181,9 @@ fn format_recent(recent: &[RecentTx]) -> String {
     if recent.is_empty() {
         return "Recent SUCCESS: (none)".to_string();
     }
-    let mut lines = vec!["Recent SUCCESS:".to_string()];
+    let mut lines = vec!["Recent SUCCESS (net marked for non-XLM):".to_string()];
     for tx in recent {
-        let net = tx.gross_profit as i128 - tx.fee as i128;
+        let net = tx.gross_profit.saturating_sub(tx.fee.min(i128::MAX as u128) as i128);
         lines.push(format!(
             "· {} {} → net `{}` | `{}`",
             format_xlm4_u(tx.amount_in),
@@ -361,6 +385,20 @@ mod tests {
     }
 
     #[test]
+    fn incomplete_accounting_has_no_numeric_net() {
+        let window = ProfitWindow {
+            incomplete: 1,
+            succeeded: 1,
+            actual_fee_xlm_stroops: 100_000,
+            ..Default::default()
+        };
+        let text = format_window("Last hour", "USDC", &window);
+        assert!(text.contains("n/a (incomplete accounting)"));
+        assert!(text.contains("actual fees (success + failed): `0.0100` XLM"));
+        assert!(!text.contains("est. fees:"));
+    }
+
+    #[test]
     fn report_contains_sections() {
         let hour = std::collections::BTreeMap::from([
             (
@@ -372,6 +410,7 @@ mod tests {
                     submitted: 3,
                     gross_profit_stroops: 500_000,
                     fee_stroops: 1_000_000,
+                    ..Default::default()
                 },
             ),
             (
@@ -383,6 +422,7 @@ mod tests {
                     submitted: 1,
                     gross_profit_stroops: 92_342,
                     fee_stroops: 34_547,
+                    ..Default::default()
                 },
             ),
         ]);

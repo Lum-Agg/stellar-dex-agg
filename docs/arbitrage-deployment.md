@@ -75,6 +75,13 @@ Edit `arbitrage.toml` and set the quote URLs, RPC, contract IDs, and bridge
 tokens. Start with conservative trade limits. Amounts are integer token units;
 XLM uses seven decimal places.
 
+Keep `execution.submission_db_path` enabled (the release template uses
+`./data/arb-submissions.db`) and put it on persistent, writable storage. This
+enables restart recovery of unconfirmed transactions and records actual chain
+output/fees separately from estimates. See the
+[accounting behavior](arbitrage-configuration.md#transaction-reconciliation-and-accounting)
+for retention gaps and report-window semantics.
+
 See [Arbitrage Configuration](arbitrage-configuration.md) for every supported
 field and its operational meaning.
 

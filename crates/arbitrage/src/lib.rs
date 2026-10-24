@@ -17,6 +17,7 @@ pub mod profit;
 pub mod quote_client;
 pub mod runtime;
 pub mod scanner;
+pub mod settlement;
 pub mod stats;
 pub mod submission_ledger;
 pub mod submit;

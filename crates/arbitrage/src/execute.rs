@@ -40,6 +40,7 @@ pub struct PreparedArbTx {
     pub estimated_fee_stroops: u128,
     /// Estimated fee converted into the base token's smallest units.
     pub fee_in_base: u128,
+    pub xlm_price_e7: u128,
     pub profit_bps: i64,
     pub unsigned_tx_xdr: String,
     pub simulated: bool,
@@ -405,6 +406,7 @@ pub async fn prepare_opportunity_tx(
         simulated_amount_out,
         estimated_fee_stroops,
         fee_in_base: fee_base,
+        xlm_price_e7: ctx.xlm_usdc_price.get(),
         profit_bps,
         unsigned_tx_xdr,
         simulated,
@@ -476,17 +478,25 @@ pub async fn try_execute_opportunity(
     )
     .await;
 
-    // Only reserve the caller when the RPC accepted the transaction or told us
-    // that an earlier transaction from this account is still pending. Immediate
-    // rejection, signing failure, and transport errors do not consume the
-    // sequence and should not reduce caller capacity.
+    // A send transport error may happen after acceptance. Preserve the caller
+    // cooldown and route reservation while reconciliation checks its hash.
+    let uncertain = submit_result
+        .as_ref()
+        .err()
+        .is_some_and(|e| e.is::<crate::submit::BroadcastUncertain>());
     let should_cooldown = submit_result.is_ok()
+        || uncertain
         || submit_result
             .as_ref()
             .err()
             .is_some_and(|e| e.to_string().contains("TRY_AGAIN_LATER"));
     if should_cooldown {
         guard.mark_in_flight(cooldown_ms);
+    }
+
+    if uncertain {
+        warn!(route = %prepared.route_label, "broadcast uncertain; retaining route reservation, do not resubmit");
+        return Ok(true);
     }
 
     submit_result?;
