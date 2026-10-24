@@ -29,6 +29,20 @@ Grant close-out deliverable — Oct 2026 baseline.
 
 ## Backups
 
+### October 24, 2026 node upgrade
+
+- Hosted RPC, Horizon, and both captive Core processes now run `30.0.0`.
+- Both nodes resumed synchronization on Mainnet Protocol 29. Live quote,
+  unsigned swap construction, swap simulation, event queries, and arbitrage
+  simulation were checked before resuming the arbitrage bot.
+- Configuration backups and previous package versions are retained on each
+  host. A stopped-state RPC SQLite backup was also retained before upgrading.
+- The RPC systemd override uses `KillMode=mixed`: allow graceful parent shutdown,
+  then terminate remaining processes in the service group on stop timeout.
+- Application SDK/XDR upgrades and Protocol 30 regression testing are still
+  required before network activation; upgrading the node binaries alone does
+  not complete that work.
+
 ```bash
 # Indexer DB (daily cron example)
 cp /opt/stellar-dex-aggregator/data/analytics-indexer.db \
