@@ -72,6 +72,9 @@ pub struct AppConfig {
     pub path_finder_max_multi_hop_paths: usize,
     /// Path finder: cap on 1-hop pools (`0` = all direct pools in graph).
     pub path_finder_max_direct_paths: usize,
+    /// Operator exclusions applied to endpoints and all intermediate tokens.
+    #[serde(default)]
+    pub routing_excluded_tokens: Vec<String>,
     /// Allow API to RPC-fetch xy=k pool misses (default false — worker writes
     /// Redis).
     pub quote_rpc_hydrate_enabled: bool,
@@ -110,6 +113,7 @@ impl Default for AppConfig {
             path_finder_max_hops: 3,
             path_finder_max_multi_hop_paths: 50,
             path_finder_max_direct_paths: 0,
+            routing_excluded_tokens: vec![],
             quote_rpc_hydrate_enabled: false,
             quote_hydrate_max_pools: 12,
             lumagg_mode: LumaggMode::Cluster,
@@ -184,6 +188,13 @@ impl AppConfig {
                 .ok()
                 .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
                 .unwrap_or(Self::default().quote_rpc_hydrate_enabled),
+            routing_excluded_tokens: std::env::var("ROUTING_EXCLUDED_TOKENS")
+                .unwrap_or_default()
+                .split(',')
+                .map(str::trim)
+                .filter(|token| !token.is_empty())
+                .map(str::to_owned)
+                .collect(),
             quote_hydrate_max_pools: std::env::var("QUOTE_HYDRATE_MAX_POOLS")
                 .ok()
                 .and_then(|s| s.parse().ok())
@@ -219,6 +230,24 @@ mod tests {
         assert_eq!(config.snapshot_redis_channel, "lumagg:snapshot:events");
         assert_eq!(config.snapshot_redis_keep_latest, 10);
         assert_eq!(config.lumagg_mode, LumaggMode::Cluster);
+        assert!(config.routing_excluded_tokens.is_empty());
+    }
+
+    #[test]
+    fn routing_exclusions_parse_csv_and_allow_explicit_clear() {
+        let _guard = crate::test_env_lock().lock().unwrap();
+        let old = std::env::var("ROUTING_EXCLUDED_TOKENS").ok();
+        std::env::set_var("ROUTING_EXCLUDED_TOKENS", " token-a, ,token-b,token-a ");
+        assert_eq!(
+            AppConfig::from_env().routing_excluded_tokens,
+            vec!["token-a", "token-b", "token-a"]
+        );
+        std::env::set_var("ROUTING_EXCLUDED_TOKENS", "");
+        assert!(AppConfig::from_env().routing_excluded_tokens.is_empty());
+        match old {
+            Some(value) => std::env::set_var("ROUTING_EXCLUDED_TOKENS", value),
+            None => std::env::remove_var("ROUTING_EXCLUDED_TOKENS"),
+        }
     }
 
     #[test]

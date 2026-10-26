@@ -11,6 +11,11 @@ pub fn path_finder_config_from_app(config: &AppConfig) -> PathFinderConfig {
         max_multi_hop_paths: config.path_finder_max_multi_hop_paths,
         max_direct_paths: config.path_finder_max_direct_paths,
         bridge_tokens: PathFinderConfig::default().bridge_tokens,
+        excluded_tokens: config
+            .routing_excluded_tokens
+            .iter()
+            .map(|token| router_engine::TokenId::from_str_auto(token.trim()))
+            .collect(),
     }
 }
 
@@ -73,6 +78,30 @@ mod tests {
                 }],
             }],
         )
+    }
+
+    #[tokio::test]
+    async fn snapshot_rebuilds_keep_operator_token_exclusions() {
+        let config = AppConfig {
+            routing_excluded_tokens: vec!["token-a".into()],
+            ..AppConfig::default()
+        };
+        for _ in 0..2 {
+            let engine = build_engine_from_snapshot(&config, &sample_snapshot()).await.unwrap();
+            assert!(engine
+                .find_candidate_paths(&router_engine::RouteRequest {
+                    token_in: TokenId::from_str_auto("token-a"),
+                    token_out: TokenId::from_str_auto("token-b"),
+                    amount_in: 100,
+                    slippage_bps: None,
+                    max_hops: None,
+                    max_splits: None,
+                    prefer_soroban: None,
+                })
+                .await
+                .is_empty());
+            assert_eq!(engine.cached_pool_edges().await.len(), 1);
+        }
     }
 
     fn sample_clmm_pool_state() -> ClmmPoolSnapshot {

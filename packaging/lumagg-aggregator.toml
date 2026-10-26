@@ -42,6 +42,8 @@ instruction_leeway = 100000000
 quote_on_chain_validate = false
 
 [routing]
+# Applies to endpoints and every intermediate hop. Empty preserves all routes.
+excluded_tokens = []
 split_threshold_bps = 5
 split_competitive_delta_bps = 50
 min_split_fraction_bps = 5

@@ -81,8 +81,31 @@ every binary.
 | `routing.max_hops` | `3` | Maximum hops per route. |
 | `routing.max_multi_hop_paths` | `50` | Candidate cap for multi-hop routes. |
 | `routing.max_direct_paths` | `0` | Direct-pool cap; zero means all. |
+| `routing.excluded_tokens` | `[]` | Token IDs excluded from all route positions, including endpoints and intermediate hops. Environment: `ROUTING_EXCLUDED_TOKENS` (comma-separated). |
 | `routing.quote_rpc_hydrate_enabled` | `false` | Allows API-side RPC hydration after Redis misses. |
 | `routing.quote_hydrate_max_pools` | `12` | Maximum pools hydrated through RPC per quote. |
+
+### Excluding non-executable tokens
+
+After confirming a token cannot be transferred through the intended route,
+operators can exclude its canonical ID in their deployment configuration:
+
+```toml
+[routing]
+excluded_tokens = ["CBAPZAZNNB4X3VPXV2LYA5RMV7XHXIVREES2GG7R5GUXDZ4R4CKOY4EU"] # HITZ
+```
+
+This example is an operator policy, not a built-in global blocklist. Restart
+every quote API instance after changing the list. Cluster snapshot rebuilds,
+embedded discovery, and cache refreshes preserve the exclusion. Edges touching
+an excluded token are removed before path enumeration, so unusable routes do
+not consume candidate limits or hide executable alternatives. Excluded tokens
+cannot be quoted as input/output either; they remain visible in token metadata
+and balances. An explicit empty list clears an inherited environment list.
+
+The policy controls quotes, not contract permissions: it does not invalidate
+already-built/signed transactions or prevent manual contract calls. It does not
+automatically disable a token based on a single failed simulation.
 
 ## DEX adapters
 

@@ -56,6 +56,17 @@ mod tests {
     }
 
     #[test]
+    fn routing_exclusions_are_optional_and_empty_ids_are_rejected() {
+        let config: AggregatorConfig = toml::from_str(EMBEDDED).unwrap();
+        assert!(config.routing.excluded_tokens.is_none());
+        for (list, valid) in [("[]", true), ("[\"token-a\"]", true), ("[\"  \"]", false)] {
+            let config: AggregatorConfig =
+                toml::from_str(&format!("{EMBEDDED}\n[routing]\nexcluded_tokens = {list}")).unwrap();
+            assert_eq!(config.validate_embedded().is_ok(), valid);
+        }
+    }
+
+    #[test]
     fn cluster_config_requires_redis() {
         let config: AggregatorConfig = toml::from_str(EMBEDDED).unwrap();
         assert_eq!(

@@ -306,22 +306,25 @@ impl QuoteEngine {
     ) -> OptimalRoute {
         let start = std::time::Instant::now();
         let slippage_bps = request.slippage_bps.unwrap_or(50);
-
         // Never return mixed classic+Soroban hops — they cannot form one tx.
         // prefer_soroban: Soroban AMMs only (no classic / no Horizon).
         // Default: pure classic OR pure Soroban compete; Horizon only for classic.
         let prefer_soroban = request.prefer_soroban.unwrap_or(false);
-        let paths: Vec<Path> = paths
-            .iter()
-            .filter(|path| {
-                if prefer_soroban {
-                    !Self::path_contains_classic(path)
-                } else {
-                    Self::path_is_executable(path)
-                }
-            })
-            .cloned()
-            .collect();
+        let paths: Vec<Path> = {
+            let finder = self.path_finder.read().await;
+            paths
+                .iter()
+                .filter(|path| {
+                    finder.path_allowed(path)
+                        && if prefer_soroban {
+                            !Self::path_contains_classic(path)
+                        } else {
+                            Self::path_is_executable(path)
+                        }
+                })
+                .cloned()
+                .collect()
+        };
 
         if paths.is_empty() {
             debug!(
@@ -505,6 +508,9 @@ impl QuoteEngine {
         adapters: &[Arc<dyn DexAdapter>],
         hydration: Option<&QuoteHydration>,
     ) -> Option<Quote> {
+        if !self.path_finder.read().await.path_allowed(path) {
+            return None;
+        }
         let mut current_amount = amount_in;
         let mut total_fee_bps: u32 = 0;
         let mut max_impact_bps: u32 = 0;
@@ -876,6 +882,55 @@ mod tests {
             reserve_a: Some(reserve_a),
             reserve_b: Some(reserve_b),
         }
+    }
+
+    #[tokio::test]
+    async fn exclusions_block_precomputed_paths_but_keep_safe_quotes_and_metadata() {
+        let engine = QuoteEngine::new(
+            PathFinderConfig {
+                excluded_tokens: vec![token("blocked")],
+                ..PathFinderConfig::default()
+            },
+            SplitConfig::default(),
+        );
+        engine
+            .update_pairs_from_cache(
+                "soroswap",
+                &[
+                    pair_with_tokens("soroswap", "bad-1", "a", "blocked", 1_000_000_000, 2_000_000_000),
+                    pair_with_tokens("soroswap", "bad-2", "blocked", "b", 1_000_000_000, 2_000_000_000),
+                    pair_with_tokens("soroswap", "safe", "a", "b", 1_000_000_000, 1_000_000_000),
+                ],
+            )
+            .await;
+        let stale = Path {
+            tokens: vec![token("a"), token("blocked"), token("b")],
+            sources: vec!["soroswap".into(); 2],
+            pool_addresses: vec!["bad-1".into(), "bad-2".into()],
+            hops: 2,
+        };
+        let request = RouteRequest {
+            token_in: token("a"),
+            token_out: token("b"),
+            amount_in: 1_000_000,
+            slippage_bps: None,
+            max_hops: Some(3),
+            max_splits: Some(3),
+            prefer_soroban: Some(true),
+        };
+        assert!(engine
+            .quote_path_at_amount(&stale, request.amount_in, None)
+            .await
+            .is_none());
+        assert!(engine
+            .get_route_with_paths(&request, &[stale], None)
+            .await
+            .sub_orders
+            .is_empty());
+        let route = engine.get_route(&request).await;
+        assert_eq!(route.sub_orders.len(), 1);
+        assert_eq!(route.sub_orders[0].path.pool_addresses, vec!["safe"]);
+        assert!(engine.get_all_tokens().await.contains(&"blocked".to_string()));
     }
 
     fn clmm_pair(source: &str, pool: &str) -> TradingPair {

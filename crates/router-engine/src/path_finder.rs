@@ -5,7 +5,10 @@ use {
         graph::TokenGraph,
         types::{Path, TokenId, TradingPair},
     },
-    std::{collections::HashMap, sync::Mutex},
+    std::{
+        collections::{HashMap, HashSet},
+        sync::Mutex,
+    },
     tracing::info,
 };
 
@@ -23,6 +26,8 @@ pub struct PathFinderConfig {
     /// Bridge tokens used to improve multi-hop discovery
     /// (high-liquidity tokens like XLM, USDC that connect many pairs)
     pub bridge_tokens: Vec<TokenId>,
+    /// Tokens excluded from every route position, not just bridge discovery.
+    pub excluded_tokens: Vec<TokenId>,
 }
 
 impl Default for PathFinderConfig {
@@ -31,6 +36,7 @@ impl Default for PathFinderConfig {
             max_hops: 3,
             max_multi_hop_paths: 50,
             max_direct_paths: 0,
+            excluded_tokens: vec![],
             bridge_tokens: vec![
                 TokenId::Native, // XLM
                 TokenId::Classic {
@@ -46,6 +52,7 @@ impl Default for PathFinderConfig {
 pub struct PathFinder {
     graph: TokenGraph,
     config: PathFinderConfig,
+    excluded_tokens: HashSet<String>,
     /// Path cache — separate mutex so `find_paths` only needs a read lock on
     /// the finder.
     cache: Mutex<HashMap<(String, String), CachedPaths>>,
@@ -61,9 +68,11 @@ const CACHE_TTL_MS: u64 = 30_000;
 
 impl PathFinder {
     pub fn new(config: PathFinderConfig) -> Self {
+        let excluded_tokens = config.excluded_tokens.iter().map(TokenId::canonical).collect();
         Self {
             graph: TokenGraph::new(),
             config,
+            excluded_tokens,
             cache: Mutex::new(HashMap::new()),
         }
     }
@@ -74,8 +83,13 @@ impl PathFinder {
         // Remove old edges from this source
         self.graph.remove_source(source);
 
-        // Add new edges
+        // Exclude before enumeration so dead paths cannot consume candidate caps.
+        let mut excluded_pairs = 0;
         for pair in pairs {
+            if !self.token_allowed(&pair.token_a) || !self.token_allowed(&pair.token_b) {
+                excluded_pairs += 1;
+                continue;
+            }
             self.graph
                 .add_pair(&pair.token_a, &pair.token_b, source, &pair.pool_address, pair.fee_bps);
         }
@@ -86,10 +100,19 @@ impl PathFinder {
         info!(
             source = source,
             pairs = pairs.len(),
+            excluded_pairs,
             total_tokens = self.graph.token_count(),
             total_edges = self.graph.edge_count(),
             "Token graph updated"
         );
+    }
+
+    fn token_allowed(&self, token: &TokenId) -> bool {
+        self.excluded_tokens.is_empty() || !self.excluded_tokens.contains(&token.canonical())
+    }
+
+    pub(crate) fn path_allowed(&self, path: &Path) -> bool {
+        path.tokens.iter().all(|token| self.token_allowed(token))
     }
 
     /// Find all valid paths from token_in to token_out.
@@ -190,6 +213,54 @@ mod tests {
         }
     }
 
+    fn pair(a: &str, b: &str, pool: &str) -> TradingPair {
+        TradingPair {
+            token_a: contract_token(a),
+            token_b: contract_token(b),
+            source: "soroswap".into(),
+            pool_address: pool.into(),
+            fee_bps: 30,
+            reserve_a: Some(1_000_000),
+            reserve_b: Some(1_000_000),
+        }
+    }
+
+    #[test]
+    fn exclusions_apply_before_candidate_limits_and_survive_refreshes() {
+        let mut finder = PathFinder::new(PathFinderConfig {
+            max_multi_hop_paths: 1,
+            excluded_tokens: vec![contract_token("blocked")],
+            ..PathFinderConfig::default()
+        });
+        let pairs = vec![
+            pair("a", "blocked", "bad-1"),
+            pair("blocked", "b", "bad-2"),
+            pair("a", "safe", "good-1"),
+            pair("safe", "b", "good-2"),
+        ];
+        for _ in 0..2 {
+            finder.update_from_source("soroswap", &pairs);
+            for (a, b) in [("a", "b"), ("b", "a")] {
+                let paths = finder.find_paths(&contract_token(a), &contract_token(b));
+                assert_eq!(paths.len(), 1);
+                assert_eq!(paths[0].tokens[1], contract_token("safe"));
+            }
+            assert!(finder
+                .find_paths(&contract_token("a"), &contract_token("blocked"))
+                .is_empty());
+            assert!(finder
+                .find_paths(&contract_token("blocked"), &contract_token("b"))
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn empty_exclusions_preserve_all_routes() {
+        let mut finder = PathFinder::new(PathFinderConfig::default());
+        finder.update_from_source("soroswap", &[pair("a", "b", "pool")]);
+        assert_eq!(finder.find_paths(&contract_token("a"), &contract_token("b")).len(), 1);
+    }
+
     #[test]
     fn includes_comet_edges_in_routing_graph() {
         let mut finder = PathFinder::new(PathFinderConfig {
@@ -197,6 +268,7 @@ mod tests {
             max_multi_hop_paths: 10,
             max_direct_paths: 0,
             bridge_tokens: vec![],
+            excluded_tokens: vec![],
         });
         let blnd = contract_token("CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV");
         let usdc = contract_token("CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75");

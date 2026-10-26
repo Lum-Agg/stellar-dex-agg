@@ -81,6 +81,7 @@ pub struct Api {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Routing {
+    pub excluded_tokens: Option<Vec<String>>,
     pub split_threshold_bps: Option<u32>,
     pub split_competitive_delta_bps: Option<u32>,
     pub min_split_fraction_bps: Option<u32>,
@@ -166,6 +167,14 @@ impl AggregatorConfig {
         if self.network.rpc_url.trim().is_empty() {
             bail!("network.rpc_url must not be empty");
         }
+        if self
+            .routing
+            .excluded_tokens
+            .as_ref()
+            .is_some_and(|tokens| tokens.iter().any(|token| token.trim().is_empty()))
+        {
+            bail!("routing.excluded_tokens must not contain empty token IDs");
+        }
         Ok(())
     }
 
@@ -246,6 +255,7 @@ impl AggregatorConfig {
         set_option("QUOTE_ON_CHAIN_VALIDATE", &self.api.quote_on_chain_validate);
 
         set_option("SPLIT_THRESHOLD_BPS", &self.routing.split_threshold_bps);
+        set_list("ROUTING_EXCLUDED_TOKENS", &self.routing.excluded_tokens);
         set_option("SPLIT_COMPETITIVE_DELTA_BPS", &self.routing.split_competitive_delta_bps);
         set_option("MIN_SPLIT_FRACTION_BPS", &self.routing.min_split_fraction_bps);
         set_option("MAX_SPLITS", &self.routing.max_splits);
