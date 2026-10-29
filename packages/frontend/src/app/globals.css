@@ -13,6 +13,10 @@
   --accent: #3dd6c6;
   --accent-hover: #2fc4b4;
   --accent-contrast: #041312;
+  --chart-blue: #85aaf5;
+  --chart-rose: #ed8d9c;
+  --chart-neutral: #8a95a5;
+  --chart-hover: rgba(148, 163, 184, 0.08);
   --docs-gap: 1.75rem;
   --docs-card-pad: 1.5rem;
 }
@@ -31,6 +35,10 @@ html[data-theme='light'] {
   --accent: #08786d;
   --accent-hover: #06685f;
   --accent-contrast: #ffffff;
+  --chart-blue: #3e64ba;
+  --chart-rose: #bc435e;
+  --chart-neutral: #69778b;
+  --chart-hover: rgba(15, 23, 42, 0.045);
 }
 
 /* Several analytics labels use fixed Tailwind teal utilities. Keep them

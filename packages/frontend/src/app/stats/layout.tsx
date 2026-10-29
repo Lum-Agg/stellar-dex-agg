@@ -3,14 +3,14 @@ import type { Metadata } from 'next';
 export const metadata: Metadata = {
   title: 'Public Analytics',
   description:
-    'Explore LumAgg-routed volume, DEX participation, execution outcomes and network activity.',
+    'See user swaps and arbitrage separately, alongside combined routed volume and execution outcomes.',
   alternates: {
     canonical: '/stats',
   },
   openGraph: {
     title: 'Public Analytics · LumAgg',
     description:
-      'Explore LumAgg-routed volume, DEX participation, execution outcomes and network activity.',
+      'See user swaps and arbitrage separately, alongside combined routed volume and execution outcomes.',
     url: '/stats',
   },
 };

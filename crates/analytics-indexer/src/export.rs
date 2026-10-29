@@ -61,9 +61,10 @@ pub struct DailyStats {
     pub total_routed_dex_volume: i128,
     /// Successful legs with event-derived actual input amounts.
     pub routed_leg_count: u64,
-    /// Legs included in the USD routed-volume subtotal.
+    /// Actual-amount legs included in the USD routed-volume subtotal.
     pub routed_priced_leg_count: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Priced actual-amount legs divided by all observed legs (`by_dex`).
     pub routed_pricing_coverage: Option<f64>,
     /// Entry notional grouped by invocation `token_in`. Kept stable for
     /// external consumers including DefiLlama.

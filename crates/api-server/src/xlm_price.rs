@@ -87,6 +87,11 @@ pub async fn enrich_daily_with_historical_usd(daily: &mut [DailyStats]) {
 
 /// Sync USD fields for one daily row (testable without network).
 fn enrich_row_with_usd(row: &mut DailyStats, xlm_px: Option<f64>) {
+    let xlm_px = xlm_px.filter(|p| p.is_finite() && *p > 0.0);
+    row.xlm_usd = xlm_px;
+    row.total_amount_in_usd = None;
+    row.total_routed_dex_volume_usd = None;
+    row.round_trip_gross_surplus_usd = None;
     let mut notional_usd = 0.0;
     let mut gross_surplus_usd = 0.0;
     let mut notional_priced_any = false;
@@ -102,58 +107,30 @@ fn enrich_row_with_usd(row: &mut DailyStats, xlm_px: Option<f64>) {
         }
     }
 
-    // Hop-scaled routed volume: each successful DEX leg moves ~the same USD
-    // notional as the entry (efficient swaps). 2-leg round trips → ~2×; 4-hop
-    // routes → ~4×. This avoids mis-pricing polluted intermediate amounts
-    // (e.g. AQUA units copied onto a USDC leg after envelope enrichment).
-    let hop_legs: u64 = row.by_dex.values().copied().sum();
-    let hop_routed_usd = if notional_priced_any && row.tx_count > 0 && hop_legs > 0 {
-        Some(notional_usd * (hop_legs as f64 / row.tx_count as f64))
-    } else {
-        None
-    };
-
-    // Fallback when DEX legs are missing: base_in + base_out for round trips (~2×).
-    let mut rt_routed_usd = 0.0;
-    let mut rt_priced_any = false;
-    for surplus in &row.round_trip_by_token {
-        let Some(usd_per_token) = usd_price_for_token(&surplus.base_token, xlm_px) else {
+    // Only event-derived amounts with a known input token can contribute.
+    // Average hop counts and round-trip principal are not actual leg volume.
+    let mut routed_usd = 0.0;
+    let mut routed_priced_leg_count = 0;
+    for volume in &row.routed_by_token {
+        let Some(price) = usd_price_for_token(&volume.token, xlm_px) else {
             continue;
         };
-        let amount_out = surplus.amount_in.saturating_add(surplus.gross_surplus);
-        rt_routed_usd += ((surplus.amount_in as f64 + amount_out as f64) / TOKEN_DECIMALS) * usd_per_token;
-        rt_priced_any = true;
+        routed_usd += volume.routed_volume as f64 / TOKEN_DECIMALS * price;
+        routed_priced_leg_count += volume.routed_leg_count;
     }
-
-    let (routed_usd, routed_priced_any, routed_priced_leg_count) = if let Some(hop) = hop_routed_usd {
-        (hop, true, hop_legs)
-    } else if rt_priced_any {
-        let rt_legs = row
-            .round_trip_by_token
-            .iter()
-            .map(|s| s.tx_count.saturating_mul(2))
-            .sum::<u64>();
-        (rt_routed_usd, true, rt_legs)
-    } else {
-        (0.0, false, 0)
-    };
 
     if notional_priced_any {
         row.total_amount_in_usd = Some(notional_usd);
     }
-    if routed_priced_any {
+    if routed_priced_leg_count > 0 {
         row.total_routed_dex_volume_usd = Some(routed_usd);
     }
     row.routed_priced_leg_count = routed_priced_leg_count;
-    if hop_legs > 0 {
-        row.routed_pricing_coverage = Some(1.0);
-    } else if row.routed_leg_count > 0 {
-        row.routed_pricing_coverage = Some(routed_priced_leg_count as f64 / row.routed_leg_count as f64);
-    } else if rt_priced_any {
-        row.routed_pricing_coverage = Some(1.0);
-    }
+    let observed_legs: u64 = row.by_dex.values().copied().sum();
+    row.routed_pricing_coverage = (observed_legs > 0).then(|| routed_priced_leg_count as f64 / observed_legs as f64);
 
     for surplus in &mut row.round_trip_by_token {
+        surplus.gross_surplus_usd = None;
         let Some(usd_per_token) = usd_price_for_token(&surplus.base_token, xlm_px) else {
             continue;
         };
@@ -333,7 +310,7 @@ fn days_from_civil(y: i32, m: u32, d: u32) -> Option<i64> {
 mod tests {
     use {
         super::*,
-        analytics_indexer::export::{DailyStats, RoundTripSurplus, TokenVolume},
+        analytics_indexer::export::{DailyStats, RoundTripSurplus, RoutedTokenVolume, TokenVolume},
         std::collections::BTreeMap,
     };
 
@@ -350,10 +327,10 @@ mod tests {
     }
 
     #[test]
-    fn round_trip_routed_scales_with_hop_count() {
+    fn routed_volume_prices_actual_token_amounts_not_average_hops() {
         let xlm = XLM_SAC.to_string();
         let mut by_dex = BTreeMap::new();
-        // 2 txs × 4 hops = 8 legs → routed ≈ 4× notional
+        // Eight observed legs, but only five have a supported token price.
         by_dex.insert("aquarius".into(), 8);
 
         let mut row = DailyStats {
@@ -371,7 +348,23 @@ mod tests {
                 routed_volume: 0,
                 routed_leg_count: 0,
             }],
-            routed_by_token: vec![],
+            routed_by_token: vec![
+                RoutedTokenVolume {
+                    token: xlm.clone(),
+                    routed_volume: 120_000_000,
+                    routed_leg_count: 3,
+                },
+                RoutedTokenVolume {
+                    token: USDC_SAC.into(),
+                    routed_volume: 40_000_000,
+                    routed_leg_count: 2,
+                },
+                RoutedTokenVolume {
+                    token: "UNPRICED".into(),
+                    routed_volume: 900_000_000,
+                    routed_leg_count: 3,
+                },
+            ],
             by_function: BTreeMap::new(),
             by_dex,
             round_trip_count: 2,
@@ -397,11 +390,23 @@ mod tests {
         let notional = row.total_amount_in_usd.unwrap();
         let routed = row.total_routed_dex_volume_usd.unwrap();
         assert!((notional - 4.0).abs() < 1e-6, "notional={notional}");
-        assert!((routed - 16.0).abs() < 1e-6, "routed={routed}");
+        assert!((routed - 6.4).abs() < 1e-6, "routed={routed}");
+        assert_eq!(row.routed_priced_leg_count, 5);
+        assert_eq!(row.routed_pricing_coverage, Some(5.0 / 8.0));
+
+        // Re-enrichment without XLM pricing must not retain stale XLM values.
+        enrich_row_with_usd(&mut row, None);
+        assert_eq!(row.xlm_usd, None);
+        assert_eq!(row.total_amount_in_usd, None);
+        assert_eq!(row.round_trip_gross_surplus_usd, None);
+        assert_eq!(row.round_trip_by_token[0].gross_surplus_usd, None);
+        assert_eq!(row.total_routed_dex_volume_usd, Some(4.0));
+        assert_eq!(row.routed_priced_leg_count, 2);
+        assert_eq!(row.routed_pricing_coverage, Some(2.0 / 8.0));
     }
 
     #[test]
-    fn round_trip_without_legs_falls_back_to_2x_base() {
+    fn missing_actual_legs_do_not_fabricate_routed_volume() {
         let xlm = XLM_SAC.to_string();
         let mut row = DailyStats {
             day: "2026-07-21".into(),
@@ -442,9 +447,16 @@ mod tests {
         enrich_row_with_usd(&mut row, Some(0.2));
 
         let notional = row.total_amount_in_usd.unwrap();
-        let routed = row.total_routed_dex_volume_usd.unwrap();
         assert!((notional - 4.0).abs() < 1e-6, "notional={notional}");
-        assert!(routed > notional * 1.99, "routed={routed} notional={notional}");
-        assert!(routed < notional * 2.01, "routed={routed} notional={notional}");
+        assert_eq!(row.total_routed_dex_volume_usd, None);
+        assert_eq!(row.routed_priced_leg_count, 0);
+        assert_eq!(row.routed_pricing_coverage, None);
+
+        // Envelope-only routes may have hop counts, but no actual amounts.
+        row.by_dex.insert("aquarius".into(), 8);
+        enrich_row_with_usd(&mut row, Some(0.2));
+        assert_eq!(row.total_routed_dex_volume_usd, None);
+        assert_eq!(row.routed_priced_leg_count, 0);
+        assert_eq!(row.routed_pricing_coverage, Some(0.0));
     }
 }
