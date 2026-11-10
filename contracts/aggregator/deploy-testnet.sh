@@ -42,24 +42,13 @@ fi
 WASM=$(build_contract_wasm "aggregator-contract" "aggregator_contract" \
   "$ROOT/contracts/aggregator" "$ROOT")
 
-CONTRACT_ID=$(deploy_wasm "$WASM")
+CONTRACT_ID=$(deploy_wasm "$WASM" -- --admin "$ADMIN_G")
 echo ""
 echo "=== Aggregator deployed ==="
 echo "AGGREGATOR=$CONTRACT_ID"
 echo "  https://stellar.expert/explorer/testnet/contract/$CONTRACT_ID"
 echo "$CONTRACT_ID" > "$ID_FILE"
 echo "(saved to $ID_FILE)"
-
-echo "=== initialize(admin=$ADMIN_G) ==="
-run_stellar_tx "initialize" stellar contract invoke \
-  --id "$CONTRACT_ID" \
-  --source-account "$ADMIN" \
-  --rpc-url "$RPC_URL" \
-  --network-passphrase "$NETWORK_PASSPHRASE" \
-  --resource-fee "$INVOKE_RESOURCE_FEE" \
-  --inclusion-fee "$INCLUSION_FEE" \
-  -- \
-  initialize --admin "$ADMIN_G"
 
 echo ""
 echo "=== Done ==="

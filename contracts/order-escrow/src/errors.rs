@@ -27,4 +27,7 @@ pub enum EscrowError {
     ChunkNotDue = 19,
     ArithmeticOverflow = 20,
     UnexpectedTokenBalance = 21,
+    AssetNotAllowed = 22,
+    InsufficientOrderTtl = 23,
+    ScheduleExceedsExpiry = 24,
 }

@@ -111,7 +111,7 @@ async fn main() -> Result<()> {
         }
 
         for order in book.iter().cloned().collect::<Vec<_>>() {
-            if latest > order.expires_ledger {
+            if latest >= order.expires_ledger {
                 if config.reclaim {
                     if config.dry_run {
                         info!(order_id = order.order_id, kind = ?order.kind, "dry-run: would reclaim expired escrow order");
@@ -137,10 +137,6 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
-                continue;
-            }
-            // The contract requires latest < expires_ledger for fills.
-            if latest == order.expires_ledger {
                 continue;
             }
             if order.next_executable_ledger.is_some_and(|due| latest < due) {

@@ -467,6 +467,11 @@ fn build_create_dca_operation(contract: &str, request: &BuildCreateDcaRequest) -
     if request.expires_ledger <= request.start_ledger {
         return Err("expires_ledger must follow start_ledger".into());
     }
+    if !lumagg_contract_types::dca_schedule_fits(
+        amount_in, chunk, request.interval_ledgers, request.start_ledger, request.expires_ledger,
+    ) {
+        return Err("DCA schedule cannot finish before expires_ledger".into());
+    }
     let min_rate = parse_positive_i128(&request.min_out_per_in_e7, "min_out_per_in_e7")?;
     if lumagg_contract_types::required_min_out(chunk, min_rate).is_none() {
         return Err("minimum output per chunk exceeds the supported range".into());
@@ -834,6 +839,27 @@ mod tests {
 
     async fn dummy_app_state() -> AppState {
         AppState::new(AppConfig::default()).await.unwrap()
+    }
+
+    #[test]
+    fn dca_builder_requires_final_chunk_before_expiry() {
+        let mut request = BuildCreateDcaRequest {
+            user: TEST_USER.into(),
+            token_in: TEST_TOKEN_IN.into(),
+            token_out: TEST_TOKEN_OUT.into(),
+            amount_in: "5000".into(),
+            chunk_amount: "2000".into(),
+            interval_ledgers: 10,
+            start_ledger: 10,
+            min_out_per_in_e7: "9000000".into(),
+            expires_ledger: 30,
+        };
+        assert_eq!(
+            build_create_dca_operation(TEST_ESCROW, &request).unwrap_err(),
+            "DCA schedule cannot finish before expires_ledger"
+        );
+        request.expires_ledger = 31;
+        assert!(build_create_dca_operation(TEST_ESCROW, &request).is_ok());
     }
 
     #[tokio::test]

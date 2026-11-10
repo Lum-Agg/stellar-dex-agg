@@ -7,10 +7,6 @@ pub enum DataKey {
     Venue(u32, Address),
 }
 
-pub fn has_admin(env: &Env) -> bool {
-    env.storage().instance().has(&DataKey::Admin)
-}
-
 pub fn set_admin(env: &Env, admin: &Address) {
     env.storage().instance().set(&DataKey::Admin, admin);
 }

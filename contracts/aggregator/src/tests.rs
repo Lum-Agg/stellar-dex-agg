@@ -23,9 +23,8 @@ fn create_token(env: &Env) -> (Address, StellarAssetClient<'static>, TokenClient
 
 fn setup_agg(env: &Env) -> (Address, AggregatorContractClient<'_>) {
     let admin = gen_addr(env);
-    let id = env.register(AggregatorContract, ());
+    let id = env.register(AggregatorContract, (admin.clone(),));
     let agg = AggregatorContractClient::new(env, &id);
-    agg.initialize(&admin);
     (admin, agg)
 }
 

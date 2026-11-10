@@ -37,10 +37,10 @@ pub struct AggregatorContract;
 
 #[contractimpl]
 impl AggregatorContract {
-    /// Initialize the contract with an admin address.
-    /// Must be called once after deployment.
-    pub fn initialize(env: Env, admin: Address) {
-        admin::initialize(env, admin);
+    /// Set the administrator atomically when creating a new instance.
+    pub fn __constructor(env: Env, admin: Address) {
+        admin.require_auth();
+        storage::set_admin(&env, &admin);
     }
 
     /// Upgrade the contract WASM code. Only admin can call.

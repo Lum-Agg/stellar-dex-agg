@@ -2,6 +2,15 @@
 
 use soroban_sdk::{contracttype, Address, Vec};
 
+/// Whether every chunk could execute on time, with expiry exclusive.
+pub fn dca_schedule_fits(amount: i128, chunk: i128, interval: u32, start: u32, expiry: u32) -> bool {
+    if amount <= 0 || chunk <= 0 || chunk > amount || interval == 0 || expiry <= start {
+        return false;
+    }
+    // Compare interval counts instead of multiplying a potentially large chunk count.
+    (amount - 1) / chunk <= i128::from((expiry - start - 1) / interval)
+}
+
 /// Minimum output in atomic units, rounded up so the limit is never weakened.
 pub fn required_min_out(amount: i128, rate_e7: i128) -> Option<i128> {
     const SCALE: i128 = 10_000_000;

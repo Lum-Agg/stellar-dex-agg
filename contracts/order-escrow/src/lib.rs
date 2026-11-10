@@ -1,7 +1,7 @@
 #![no_std]
 
 use {
-    lumagg_contract_types::{required_min_out, SubRoute},
+    lumagg_contract_types::{dca_schedule_fits, required_min_out, SubRoute},
     soroban_sdk::{
         auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
         contract, contractclient, contractimpl, contracttype, token, Address, BytesN, Env, IntoVal, Symbol, Vec,
@@ -42,10 +42,12 @@ pub enum DataKey {
     NextDcaOrderId,
     Order(u64),
     DcaOrder(u64),
+    AllowedAsset(Address),
 }
 
 const LEDGERS_PER_DAY: u32 = 17_280;
 const MAX_ORDER_LIFETIME: u32 = 30 * LEDGERS_PER_DAY;
+const REFUND_GRACE_LEDGERS: u32 = 7 * LEDGERS_PER_DAY;
 
 #[contracttype]
 #[derive(Clone, PartialEq, Eq)]
@@ -87,6 +89,34 @@ pub struct DcaOrder {
 #[contract]
 pub struct OrderEscrowContract;
 
+fn require_allowed_assets(env: &Env, token_in: &Address, token_out: &Address) {
+    for asset in [token_in, token_out] {
+        if !env.storage().instance().has(&DataKey::AllowedAsset(asset.clone())) {
+            soroban_sdk::panic_with_error!(env, EscrowError::AssetNotAllowed);
+        }
+    }
+}
+
+fn order_ttl(env: &Env, expires_ledger: u32) -> u32 {
+    let ttl = expires_ledger - env.ledger().sequence() + REFUND_GRACE_LEDGERS;
+    if ttl > env.storage().max_ttl() {
+        soroban_sdk::panic_with_error!(env, EscrowError::InsufficientOrderTtl);
+    }
+    ttl
+}
+
+fn extend_order_ttl(env: &Env, key: &DataKey, ttl: u32) {
+    env.storage().persistent().extend_ttl(key, ttl, ttl);
+    env.storage().instance().extend_ttl(ttl, ttl);
+}
+
+fn require_admin(env: &Env) {
+    let Some(admin) = env.storage().instance().get::<_, Address>(&DataKey::Admin) else {
+        soroban_sdk::panic_with_error!(env, EscrowError::NotInitialized);
+    };
+    admin.require_auth();
+}
+
 fn transfer_exact(env: &Env, asset: &Address, from: &Address, to: &Address, amount: i128) {
     let client = token::Client::new(env, asset);
     let from_before = client.balance(from);
@@ -108,6 +138,7 @@ fn settle_swap(
     sub_routes: &Vec<SubRoute>,
     min_amount_out: i128,
 ) -> i128 {
+    require_allowed_assets(env, token_in, token_out);
     let aggregator: Address = env
         .storage()
         .instance()
@@ -170,11 +201,19 @@ impl OrderEscrowContract {
 
     /// Upgrade the escrow WASM code. Only the configured admin can call this.
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
-        let Some(admin) = env.storage().instance().get::<_, Address>(&DataKey::Admin) else {
-            soroban_sdk::panic_with_error!(&env, EscrowError::NotInitialized);
-        };
-        admin.require_auth();
+        require_admin(&env);
         env.deployer().update_current_contract_wasm(new_wasm_hash);
+    }
+
+    /// Revoking an asset pauses new orders and fills, but never blocks refunds.
+    pub fn set_asset(env: Env, asset: Address, allowed: bool) {
+        require_admin(&env);
+        let key = DataKey::AllowedAsset(asset);
+        if allowed {
+            env.storage().instance().set(&key, &true);
+        } else {
+            env.storage().instance().remove(&key);
+        }
     }
 
     pub fn create_limit(
@@ -202,6 +241,8 @@ impl OrderEscrowContract {
         if expires_ledger > env.ledger().sequence().saturating_add(MAX_ORDER_LIFETIME) {
             soroban_sdk::panic_with_error!(&env, EscrowError::ExpirationTooFar);
         }
+        require_allowed_assets(&env, &token_in, &token_out);
+        let ttl = order_ttl(&env, expires_ledger);
 
         let order_id: u64 = env
             .storage()
@@ -222,6 +263,7 @@ impl OrderEscrowContract {
         };
         let key = DataKey::Order(order_id);
         env.storage().persistent().set(&key, &order);
+        extend_order_ttl(&env, &key, ttl);
         env.storage().instance().set(
             &DataKey::NextOrderId,
             &order_id
@@ -272,7 +314,7 @@ impl OrderEscrowContract {
         if order.status != OrderStatus::Open {
             soroban_sdk::panic_with_error!(&env, EscrowError::OrderNotOpen);
         }
-        if env.ledger().sequence() <= order.expires_ledger {
+        if env.ledger().sequence() < order.expires_ledger {
             soroban_sdk::panic_with_error!(&env, EscrowError::OrderNotExpired);
         }
 
@@ -377,9 +419,14 @@ impl OrderEscrowContract {
         if expires_ledger <= start_ledger {
             soroban_sdk::panic_with_error!(&env, EscrowError::ExpirationInPast);
         }
+        if !dca_schedule_fits(amount_in, chunk_amount, interval_ledgers, start_ledger, expires_ledger) {
+            soroban_sdk::panic_with_error!(&env, EscrowError::ScheduleExceedsExpiry);
+        }
         if expires_ledger > current.saturating_add(MAX_ORDER_LIFETIME) {
             soroban_sdk::panic_with_error!(&env, EscrowError::ExpirationTooFar);
         }
+        require_allowed_assets(&env, &token_in, &token_out);
+        let ttl = order_ttl(&env, expires_ledger);
 
         let order_id: u64 = env
             .storage()
@@ -401,7 +448,9 @@ impl OrderEscrowContract {
             expires_ledger,
             status: OrderStatus::Open,
         };
-        env.storage().persistent().set(&DataKey::DcaOrder(order_id), &order);
+        let key = DataKey::DcaOrder(order_id);
+        env.storage().persistent().set(&key, &order);
+        extend_order_ttl(&env, &key, ttl);
         env.storage().instance().set(
             &DataKey::NextDcaOrderId,
             &order_id
@@ -526,7 +575,7 @@ impl OrderEscrowContract {
         if order.status != OrderStatus::Open {
             soroban_sdk::panic_with_error!(&env, EscrowError::OrderNotOpen);
         }
-        if env.ledger().sequence() <= order.expires_ledger {
+        if env.ledger().sequence() < order.expires_ledger {
             soroban_sdk::panic_with_error!(&env, EscrowError::OrderNotExpired);
         }
         let refunded_amount = order.amount_in_remaining;
@@ -549,6 +598,8 @@ impl OrderEscrowContract {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
     use {
         super::{
             required_min_out, DataKey, DcaOrder, LimitOrder, OrderEscrowContract, OrderEscrowContractClient,
@@ -571,6 +622,12 @@ mod tests {
         let admin = gen_addr(env);
         let address = env.register_stellar_asset_contract_v2(admin).address();
         let sac = token::StellarAssetClient::new(env, &address);
+        (address, sac)
+    }
+
+    fn create_approved_token(env: &Env, escrow: &OrderEscrowContractClient) -> (Address, token::StellarAssetClient<'static>) {
+        let (address, sac) = create_token(env);
+        escrow.set_asset(&address, &true);
         (address, sac)
     }
 
@@ -650,27 +707,44 @@ mod tests {
         (escrow_id, escrow)
     }
 
-    fn setup_fill<'a>(
-        env: &'a Env,
-    ) -> (
+    type FillFixture<'a> = (
         Address,
         OrderEscrowContractClient<'a>,
         Address,
         Address,
         token::StellarAssetClient<'a>,
         Address,
-    ) {
-        let owner = gen_addr(env);
-        let aggregator_id = env.register(AggregatorContract, ());
-        let aggregator_admin = gen_addr(env);
-        let aggregator = aggregator_contract::AggregatorContractClient::new(env, &aggregator_id);
-        aggregator.initialize(&aggregator_admin);
+    );
 
-        let escrow_id = env.register(OrderEscrowContract, (gen_addr(env), aggregator_id));
+    fn setup_fill(env: &Env) -> FillFixture<'_> {
+        setup_fill_contracts(env, None)
+    }
+
+    fn setup_fill_contracts<'a>(env: &'a Env, wasm: Option<(&[u8], &[u8])>) -> FillFixture<'a> {
+        if wasm.is_some() {
+            // The host runs WASM constructors below the create-contract frame.
+            env.mock_all_auths_allowing_non_root_auth();
+        }
+        let owner = gen_addr(env);
+        let aggregator_admin = gen_addr(env);
+        let aggregator_id = match wasm {
+            Some((aggregator, _)) => env.register(aggregator, (aggregator_admin,)),
+            None => env.register(AggregatorContract, (aggregator_admin,)),
+        };
+        let aggregator = aggregator_contract::AggregatorContractClient::new(env, &aggregator_id);
+
+        let args = (gen_addr(env), aggregator_id);
+        let escrow_id = match wasm {
+            Some((_, escrow)) => env.register(escrow, args),
+            None => env.register(OrderEscrowContract, args),
+        };
+        if wasm.is_some() {
+            env.mock_all_auths();
+        }
         let escrow = OrderEscrowContractClient::new(env, &escrow_id);
 
-        let (token_in, token_in_sac) = create_token(env);
-        let (token_out, token_out_sac) = create_token(env);
+        let (token_in, token_in_sac) = create_approved_token(env, &escrow);
+        let (token_out, token_out_sac) = create_approved_token(env, &escrow);
         token_in_sac.mint(&owner, &10_000);
 
         let pool_id = env.register(aq_mock::AqPool, ());
@@ -679,6 +753,34 @@ mod tests {
         aggregator.set_venue(&DexType::Aquarius, &pool_id, &true);
 
         (owner, escrow, token_in, token_out, token_in_sac, pool_id)
+    }
+
+    #[test]
+    #[ignore = "run scripts/limit-dca-wasm-smoke.sh to build and supply the WASM artifacts"]
+    fn wasm_limit_dca_lifecycle() {
+        let read_wasm = |key| std::fs::read(std::env::var_os(key).expect("missing WASM path")).expect("read WASM");
+        let aggregator = read_wasm("LUMAGG_AGGREGATOR_WASM");
+        let escrow_wasm = read_wasm("LUMAGG_ESCROW_WASM");
+        let env = test_env();
+        env.mock_all_auths();
+        let (owner, escrow, token_in, token_out, _, pool_id) =
+            setup_fill_contracts(&env, Some((&aggregator, &escrow_wasm)));
+        let limit = escrow.create_limit(&owner, &token_in, &token_out, &5_000, &10_000_000, &100);
+        let dca = escrow.create_dca(&owner, &token_in, &token_out, &5_000, &2_000, &10, &10, &10_000_000, &100);
+
+        env.set_auths(&[]);
+        env.ledger().set_sequence_number(10);
+        let routes = route(&env, &pool_id, &token_in, &token_out, 2_000);
+        assert_eq!(escrow.fill(&limit, &2_000, &routes, &2_000), 2_000);
+        assert_eq!(escrow.fill_dca(&dca, &routes, &2_000), 2_000);
+
+        env.ledger().set_sequence_number(100);
+        escrow.reclaim_expired(&limit);
+        escrow.reclaim_expired_dca(&dca);
+        let input = token::Client::new(&env, &token_in);
+        assert_eq!(input.balance(&owner), 6_000);
+        assert_eq!(input.balance(&escrow.address), 0);
+        assert_eq!(token::Client::new(&env, &token_out).balance(&owner), 4_000);
     }
 
     fn route(env: &Env, pool_id: &Address, token_in: &Address, token_out: &Address, amount_in: i128) -> Vec<SubRoute> {
@@ -736,8 +838,8 @@ mod tests {
         env.mock_all_auths();
         let owner = gen_addr(&env);
         let (escrow_id, escrow) = setup_escrow(&env);
-        let (token_in, token_in_sac) = create_token(&env);
-        let (token_out, _) = create_token(&env);
+        let (token_in, token_in_sac) = create_approved_token(&env, &escrow);
+        let (token_out, _) = create_approved_token(&env, &escrow);
         token_in_sac.mint(&owner, &5_000_000);
 
         let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000_000, &20_000_000, &100);
@@ -751,8 +853,8 @@ mod tests {
         env.mock_all_auths();
         let owner = gen_addr(&env);
         let (_, escrow) = setup_escrow(&env);
-        let (token_in, token_in_sac) = create_token(&env);
-        let (token_out, _) = create_token(&env);
+        let (token_in, token_in_sac) = create_approved_token(&env, &escrow);
+        let (token_out, _) = create_approved_token(&env, &escrow);
         token_in_sac.mint(&owner, &5_000);
         let expires = env.ledger().sequence().saturating_add(MAX_ORDER_LIFETIME + 1);
 
@@ -768,8 +870,8 @@ mod tests {
         env.mock_all_auths();
         let owner = gen_addr(&env);
         let (escrow_id, escrow) = setup_escrow(&env);
-        let (token_in, token_in_sac) = create_token(&env);
-        let (token_out, _) = create_token(&env);
+        let (token_in, token_in_sac) = create_approved_token(&env, &escrow);
+        let (token_out, _) = create_approved_token(&env, &escrow);
         token_in_sac.mint(&owner, &5_000_000);
         let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000_000, &20_000_000, &100);
 
@@ -784,8 +886,8 @@ mod tests {
         env.mock_all_auths();
         let owner = gen_addr(&env);
         let (escrow_id, escrow) = setup_escrow(&env);
-        let (token_in, token_in_sac) = create_token(&env);
-        let (token_out, _) = create_token(&env);
+        let (token_in, token_in_sac) = create_approved_token(&env, &escrow);
+        let (token_out, _) = create_approved_token(&env, &escrow);
         token_in_sac.mint(&owner, &5_000_000);
         let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000_000, &20_000_000, &100);
         env.ledger().set(LedgerInfo {
@@ -810,8 +912,8 @@ mod tests {
         env.mock_all_auths();
         let owner = gen_addr(&env);
         let (escrow_id, escrow) = setup_escrow(&env);
-        let (token_in, token_in_sac) = create_token(&env);
-        let (token_out, _) = create_token(&env);
+        let (token_in, token_in_sac) = create_approved_token(&env, &escrow);
+        let (token_out, _) = create_approved_token(&env, &escrow);
         token_in_sac.mint(&owner, &5_000_000);
 
         let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000_000, &20_000_000, &100);
@@ -827,8 +929,8 @@ mod tests {
         env.mock_all_auths();
         let owner = gen_addr(&env);
         let (escrow_id, escrow) = setup_escrow(&env);
-        let (token_in, token_in_sac) = create_token(&env);
-        let (token_out, _) = create_token(&env);
+        let (token_in, token_in_sac) = create_approved_token(&env, &escrow);
+        let (token_out, _) = create_approved_token(&env, &escrow);
         token_in_sac.mint(&owner, &5_000_000);
         let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000_000, &20_000_000, &100);
 
@@ -844,8 +946,8 @@ mod tests {
         env.mock_all_auths();
         let owner = gen_addr(&env);
         let (escrow_id, escrow) = setup_escrow(&env);
-        let (token_in, token_in_sac) = create_token(&env);
-        let (token_out, _) = create_token(&env);
+        let (token_in, token_in_sac) = create_approved_token(&env, &escrow);
+        let (token_out, _) = create_approved_token(&env, &escrow);
         token_in_sac.mint(&owner, &5_000_000);
         let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000_000, &20_000_000, &100);
         env.ledger().set(LedgerInfo {
@@ -874,8 +976,8 @@ mod tests {
         env.mock_all_auths();
         let owner = gen_addr(&env);
         let (_, escrow) = setup_escrow(&env);
-        let (token_in, token_in_sac) = create_token(&env);
-        let (token_out, _) = create_token(&env);
+        let (token_in, token_in_sac) = create_approved_token(&env, &escrow);
+        let (token_out, _) = create_approved_token(&env, &escrow);
         token_in_sac.mint(&owner, &5_000_000);
         let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000_000, &20_000_000, &100);
         env.ledger().set(LedgerInfo {
@@ -901,8 +1003,8 @@ mod tests {
         env.mock_all_auths();
         let owner = gen_addr(&env);
         let (escrow_id, escrow) = setup_escrow(&env);
-        let (token_in, token_in_sac) = create_token(&env);
-        let (token_out, _) = create_token(&env);
+        let (token_in, token_in_sac) = create_approved_token(&env, &escrow);
+        let (token_out, _) = create_approved_token(&env, &escrow);
         token_in_sac.mint(&owner, &5_000_000);
         let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000_000, &20_000_000, &100);
 
@@ -919,8 +1021,8 @@ mod tests {
         env.mock_all_auths();
         let owner = gen_addr(&env);
         let (escrow_id, escrow) = setup_escrow(&env);
-        let (token_in, token_in_sac) = create_token(&env);
-        let (token_out, _) = create_token(&env);
+        let (token_in, token_in_sac) = create_approved_token(&env, &escrow);
+        let (token_out, _) = create_approved_token(&env, &escrow);
         token_in_sac.mint(&owner, &5_000_000);
         let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000_000, &20_000_000, &100);
 
@@ -1015,24 +1117,56 @@ mod tests {
     }
 
     #[test]
-    fn legacy_dca_without_floor_can_cancel_but_cannot_fill() {
+    fn revoked_asset_blocks_fill_but_not_refund() {
         let env = test_env();
         env.mock_all_auths();
         let (owner, escrow, token_in, token_out, _, pool_id) = setup_fill(&env);
         let order_id = escrow.create_dca(&owner, &token_in, &token_out, &5_000, &2_000, &10, &10, &9_000_000, &100);
-        let mut legacy = dca_order(&env, &escrow.address, order_id);
-        legacy.min_out_per_in_e7 = 0;
-        env.as_contract(&escrow.address, || {
-            env.storage().persistent().set(&DataKey::DcaOrder(order_id), &legacy);
-        });
+        escrow.set_asset(&token_in, &false);
         env.ledger().set_sequence_number(10);
         let result = escrow.try_fill_dca(&order_id, &route(&env, &pool_id, &token_in, &token_out, 2_000), &2_000);
         assert_eq!(
             result,
-            Err(Ok(soroban_sdk::Error::from_contract_error(crate::EscrowError::InvalidMinimumRate as u32)))
+            Err(Ok(soroban_sdk::Error::from_contract_error(crate::EscrowError::AssetNotAllowed as u32)))
         );
         escrow.cancel_dca(&order_id);
         assert_eq!(token::Client::new(&env, &token_in).balance(&owner), 10_000);
+    }
+
+    #[test]
+    fn unapproved_asset_cannot_be_deposited() {
+        let env = test_env();
+        env.mock_all_auths();
+        let owner = gen_addr(&env);
+        let (_, escrow) = setup_escrow(&env);
+        let (token_in, sac) = create_token(&env);
+        let (token_out, _) = create_approved_token(&env, &escrow);
+        sac.mint(&owner, &5_000);
+        assert_eq!(
+            escrow.try_create_limit(&owner, &token_in, &token_out, &5_000, &10_000_000, &100),
+            Err(Ok(soroban_sdk::Error::from_contract_error(crate::EscrowError::AssetNotAllowed as u32)))
+        );
+        assert_eq!(token::Client::new(&env, &token_in).balance(&owner), 5_000);
+        env.set_auths(&[]);
+        assert!(escrow.try_set_asset(&token_in, &true).is_err());
+    }
+
+    #[test]
+    fn order_ttl_covers_expiration_and_refund_grace() {
+        use soroban_sdk::testutils::storage::{Instance, Persistent};
+
+        let env = test_env();
+        env.mock_all_auths();
+        let (owner, escrow, token_in, token_out, _, _) = setup_fill(&env);
+        let expires = env.ledger().sequence() + MAX_ORDER_LIFETIME;
+        let limit_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000, &10_000_000, &expires);
+        let dca_id = escrow.create_dca(&owner, &token_in, &token_out, &5_000, &2_000, &10, &10, &9_000_000, &expires);
+        let target = MAX_ORDER_LIFETIME + super::REFUND_GRACE_LEDGERS;
+        env.as_contract(&escrow.address, || {
+            assert!(env.storage().persistent().get_ttl(&DataKey::Order(limit_id)) >= target);
+            assert!(env.storage().persistent().get_ttl(&DataKey::DcaOrder(dca_id)) >= target);
+            assert!(env.storage().instance().get_ttl() >= target);
+        });
     }
 
     #[test]
@@ -1149,13 +1283,43 @@ mod tests {
     }
 
     #[test]
+    fn dca_rejects_final_chunk_at_expiry_before_deposit() {
+        let env = test_env();
+        env.mock_all_auths();
+        let (owner, escrow, token_in, token_out, _, _) = setup_fill(&env);
+        assert_eq!(
+            escrow.try_create_dca(&owner, &token_in, &token_out, &5_000, &2_000, &10, &10, &9_000_000, &30),
+            Err(Ok(soroban_sdk::Error::from_contract_error(crate::EscrowError::ScheduleExceedsExpiry as u32)))
+        );
+        assert_eq!(token::Client::new(&env, &token_in).balance(&owner), 10_000);
+        escrow.create_dca(&owner, &token_in, &token_out, &5_000, &2_000, &10, &10, &9_000_000, &31);
+    }
+
+    #[test]
+    fn both_order_types_can_refund_at_expiry_without_owner_auth() {
+        let env = test_env();
+        env.mock_all_auths();
+        let (owner, escrow, token_in, token_out, _, _) = setup_fill(&env);
+        let limit = escrow.create_limit(&owner, &token_in, &token_out, &5_000, &10_000_000, &100);
+        let dca = escrow.create_dca(&owner, &token_in, &token_out, &5_000, &2_000, &10, &10, &9_000_000, &100);
+        env.set_auths(&[]);
+        env.ledger().set_sequence_number(99);
+        assert!(escrow.try_reclaim_expired(&limit).is_err());
+        assert!(escrow.try_reclaim_expired_dca(&dca).is_err());
+        env.ledger().set_sequence_number(100);
+        escrow.reclaim_expired(&limit);
+        escrow.reclaim_expired_dca(&dca);
+        assert_eq!(token::Client::new(&env, &token_in).balance(&owner), 10_000);
+    }
+
+    #[test]
     fn dca_cancel_refunds_unspent_principal() {
         let env = test_env();
         env.mock_all_auths();
         let owner = gen_addr(&env);
         let (escrow_id, escrow) = setup_escrow(&env);
-        let (token_in, token_in_sac) = create_token(&env);
-        let (token_out, _) = create_token(&env);
+        let (token_in, token_in_sac) = create_approved_token(&env, &escrow);
+        let (token_out, _) = create_approved_token(&env, &escrow);
         token_in_sac.mint(&owner, &5_000);
 
         let order_id = escrow.create_dca(&owner, &token_in, &token_out, &5_000, &1_000, &10, &10, &9_000_000, &100);

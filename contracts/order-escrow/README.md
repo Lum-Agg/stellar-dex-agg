@@ -18,6 +18,12 @@ orders. Only the configured admin may call it. Upgrade the Aggregator first
 when the new escrow depends on a new Aggregator entrypoint such as
 `swap_restricted`.
 
+### `set_asset(asset, allowed)`
+
+Only the admin may approve or revoke an asset. The list starts empty. Both
+input and output assets must be approved for order creation and fills.
+Revoking an asset does not disable cancellation or expiry refunds.
+
 ### `create_limit(owner, token_in, token_out, amount_in, limit_out_per_in_e7, expires_ledger) -> order_id`
 
 Creates an open limit order and transfers `amount_in` from `owner` into this
@@ -51,7 +57,7 @@ returned to the owner and the order status becomes `Cancelled`.
 
 ### `reclaim_expired(order_id)`
 
-Refunds the remaining `token_in` from an open order after its expiry. Anyone
+Refunds the remaining `token_in` from an open order at or after its expiry ledger. Anyone
 may call it once `current_ledger > expires_ledger`; no caller authorization is
 required. The order becomes `Expired`, so it cannot be reclaimed or filled
 again.
@@ -95,17 +101,19 @@ ADMIN=admin ADMIN_G=G... ./scripts/deploy-limit-testnet.sh
 
 Smoke checklist: [docs/limit-orders-testnet.md](../../docs/limit-orders-testnet.md).
 
-To upgrade an existing testnet escrow without changing its address:
-
-```bash
-ESCROW=C... ADMIN=admin ./contracts/order-escrow/upgrade-testnet.sh
-```
+Use a fresh escrow for this version. Pass `ESCROW_ASSETS` as a comma-separated
+list of vetted asset contract IDs to approve them after deployment. No prior
+orders are migrated. New order entries and the escrow instance stay live at
+least until expiry plus 120,960 ledgers (about seven days at five seconds per
+ledger). After archival, restore the affected entries before refunding if the
+RPC cannot include restoration in the invocation.
 
 ## DCA orders
 
 `create_dca` locks a total input amount and stores a chunk size, interval,
-next executable ledger, mandatory positive E7 price floor, and expiry. Legacy
-zero-floor orders cannot fill after upgrade but can still be cancelled or reclaimed.
+next executable ledger, mandatory positive E7 price floor, and expiry.
+The earliest possible final chunk must fall strictly before expiry; execution
+can still be delayed by market conditions.
 `fill_dca` is permissionless and executes at most one
 chunk after the due ledger; the final fill uses the remaining amount when it is
 smaller than the configured chunk.
@@ -117,5 +125,5 @@ the refund to the owner. DCA orders share the 30-day lifetime ceiling.
 
 Deposits and payouts require exact balance changes, and each fill verifies actual
 input spent and output received independently of the aggregator's return value.
-This assumes truthful token balance reporting; restrict mainnet support to vetted
-assets before launch.
+This assumes truthful token balance reporting. Only approve vetted assets that
+support exact transfers.

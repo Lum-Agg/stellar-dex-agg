@@ -1414,7 +1414,7 @@ components:
         expires_ledger:
           type: integer
           format: int32
-          description: Must follow start_ledger and be within the contract's 30-day maximum lifetime
+          description: Must be after the earliest possible final chunk and within the contract's 30-day maximum lifetime
     OrderBuildTxResponse:
       type: object
       properties:

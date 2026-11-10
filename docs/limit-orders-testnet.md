@@ -26,7 +26,16 @@ ADMIN=admin ADMIN_G=G... ./contracts/aggregator/deploy-testnet.sh
 AGGREGATOR=C... ADMIN=admin ADMIN_G=G... ./contracts/order-escrow/deploy-testnet.sh
 ```
 
-### Register venues before enabling fills
+### Approve escrow assets and register venues
+
+Before deployment, run `bash scripts/limit-dca-wasm-smoke.sh` to validate
+constructors, fills, and refunds against the compiled WASM in the local Soroban
+test host. This does not use RPC or submit transactions.
+
+Deploy a fresh escrow. Set `ESCROW_ASSETS` to a comma-separated list of vetted
+testnet token contract IDs when deploying, or approve them afterward via
+`set_asset --asset C... --allowed true` with the escrow admin. An empty
+allowlist blocks order creation and fills.
 
 The patched escrow calls `aggregator.swap_restricted`. Register every pool
 address that the keeper may use, together with its exact `DexType`, before

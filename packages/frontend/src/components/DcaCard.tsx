@@ -74,6 +74,7 @@ export function DcaCard() {
       if (amountInUnits <= BigInt(0) || chunkUnits <= BigInt(0)) {
         throw new Error('Amount and chunk must be positive');
       }
+      if (chunkUnits > amountInUnits) throw new Error('Chunk must not exceed the total amount');
       const chunksBig = ceilDiv(amountInUnits, chunkUnits);
       if (chunksBig > BigInt(Number.MAX_SAFE_INTEGER)) {
         throw new Error('Too many DCA chunks');
@@ -81,13 +82,15 @@ export function DcaCard() {
       const chunks = Number(chunksBig);
       // The final chunk executes after (chunks - 1) intervals, not chunks intervals.
       const duration = interval * Math.max(0, chunks - 1);
-      if (duration + 720 > MAX_LIFETIME_LEDGERS) {
+      const startDelay = 12;
+      const executionBuffer = 720;
+      if (startDelay + duration + executionBuffer > MAX_LIFETIME_LEDGERS) {
         throw new Error('Schedule exceeds the 30-day testnet limit');
       }
       if (!floor.trim()) throw new Error('Enter a minimum execution price');
       const minOutPerInE7 = priceHumanToE7(floor, tokenIn.decimals, tokenOut.decimals);
       const latest = await fetchLatestLedger();
-      const startLedger = latest + 12;
+      const startLedger = latest + startDelay;
       const built = await buildCreateDca({
         user: address,
         tokenIn: tokenIn.id,
@@ -97,7 +100,7 @@ export function DcaCard() {
         intervalLedgers: interval,
         startLedger,
         minOutPerInE7,
-        expiresLedger: startLedger + duration + 720,
+        expiresLedger: startLedger + duration + executionBuffer,
       });
       const signed = await signTx(built.unsignedTxXdr, {
         networkPassphrase: LIMIT_NETWORK_PASSPHRASE,

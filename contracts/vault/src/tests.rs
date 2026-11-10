@@ -17,10 +17,8 @@ fn create_token(env: &Env) -> (Address, soroban_sdk::token::StellarAssetClient<'
 }
 
 fn setup_agg(env: &Env) -> aggregator_contract::AggregatorContractClient<'_> {
-    let id = env.register(AggregatorContract, ());
-    let agg = aggregator_contract::AggregatorContractClient::new(env, &id);
-    agg.initialize(&gen_addr(env));
-    agg
+    let id = env.register(AggregatorContract, (gen_addr(env),));
+    aggregator_contract::AggregatorContractClient::new(env, &id)
 }
 
 fn setup_vault<'a>(env: &'a Env, admin: &Address) -> (Address, VaultContractClient<'a>) {

@@ -38,6 +38,7 @@ fi
 echo ""
 echo "=== 2/2 Order escrow (testnet) ==="
 ADMIN="$ADMIN" ADMIN_G="$ADMIN_G" AGGREGATOR="$AGGREGATOR" \
+  ESCROW_ASSETS="${ESCROW_ASSETS:-}" \
   NETWORK_PASSPHRASE="$NETWORK_PASSPHRASE" RPC_URL="$RPC_URL" \
   bash "$ESCROW_SCRIPT"
 
