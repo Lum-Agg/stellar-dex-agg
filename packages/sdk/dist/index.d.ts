@@ -117,7 +117,7 @@ export interface BuildCreateDcaParams {
     chunkAmount: string;
     intervalLedgers: number;
     startLedger: number;
-    minOutPerInE7?: string;
+    minOutPerInE7: string;
     expiresLedger: number;
 }
 export interface DailyStats {

@@ -98,8 +98,8 @@ missing, the listing endpoints return `503` instead of an empty result.
 DCA orders divide `amount_in` into `chunk_amount` executions separated by
 `interval_ledgers`. `start_ledger` cannot be in the past, and
 `expires_ledger` must be later than the start and within the contract's 30-day
-maximum lifetime. Set `min_out_per_in_e7` to `0` for market execution, or to a
-positive rate floor for every chunk.
+maximum lifetime. Set `min_out_per_in_e7` to a positive rate floor for every
+chunk. Minimum output rounds up to the next atomic unit when needed.
 
 ## Supported Liquidity
 

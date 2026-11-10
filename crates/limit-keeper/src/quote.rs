@@ -146,7 +146,7 @@ pub fn is_fillable(order: &OpenOrder, expected_out: i128) -> bool {
 }
 
 pub fn is_fillable_for(order: &OpenOrder, amount_in: i128, expected_out: i128) -> bool {
-    order.limit_out_per_in_e7 == 0 || expected_out >= required_min_out(amount_in, order.limit_out_per_in_e7)
+    required_min_out(amount_in, order.limit_out_per_in_e7).is_some_and(|floor| expected_out >= floor)
 }
 
 #[cfg(test)]

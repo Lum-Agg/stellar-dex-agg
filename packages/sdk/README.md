@@ -71,8 +71,8 @@ const { unsignedTxXdr } = await client.buildTx({
 | `listSwaps()` / orders / prices | see OpenAPI | |
 
 Order build methods return unsigned XDR for the configured Order Escrow
-contract. For DCA, `minOutPerInE7` is optional and defaults to `"0"` (market
-execution). All token amounts and rate fields are integer strings.
+contract. DCA creation requires a positive `minOutPerInE7`. All token amounts
+and rate fields are integer strings.
 
 Partner rate limit: pass `apiKey` in constructor → `X-API-Key` header (60 req/s).
 

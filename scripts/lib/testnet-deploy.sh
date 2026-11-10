@@ -152,6 +152,7 @@ build_contract_wasm() {
 
 deploy_wasm() {
   local wasm="$1"
+  shift
   local admin="${ADMIN:-admin}"
   local deploy_log
   deploy_log=$(mktemp)
@@ -163,7 +164,7 @@ deploy_wasm() {
     --source-account "$admin" \
     --resource-fee "$RESOURCE_FEE" \
     --inclusion-fee "$INCLUSION_FEE" \
-    --wasm "$wasm" 2>&1 | tee "$deploy_log" >&2
+    --wasm "$wasm" "$@" 2>&1 | tee "$deploy_log" >&2
   local deploy_ec=${PIPESTATUS[0]}
   set -e
 

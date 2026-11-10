@@ -6,10 +6,10 @@ unfilled input; it is not an order book or a price oracle.
 
 ## ABI
 
-### `initialize(admin, aggregator)`
+### `__constructor(admin, aggregator)`
 
-Initializes the contract once. `admin` must authorize initialization.
-`aggregator` is the deployed LumAgg aggregator contract used by fills.
+Initializes the contract in the deployment transaction. `admin` must authorize.
+`aggregator` must be a trusted, already initialized LumAgg aggregator.
 
 ### `upgrade(new_wasm_hash)`
 
@@ -62,7 +62,7 @@ again.
 scaled by `10_000_000`. For each fill:
 
 ```text
-required_min_out = floor(amount_in * limit_out_per_in_e7 / 10_000_000)
+required_min_out = ceil(amount_in * limit_out_per_in_e7 / 10_000_000)
 ```
 
 For example, a rate of `20_000_000` means at least two output stroops for each
@@ -104,8 +104,9 @@ ESCROW=C... ADMIN=admin ./contracts/order-escrow/upgrade-testnet.sh
 ## DCA orders
 
 `create_dca` locks a total input amount and stores a chunk size, interval,
-next executable ledger, optional E7 price floor, and expiry. A zero price floor
-means market execution. `fill_dca` is permissionless and executes at most one
+next executable ledger, mandatory positive E7 price floor, and expiry. Legacy
+zero-floor orders cannot fill after upgrade but can still be cancelled or reclaimed.
+`fill_dca` is permissionless and executes at most one
 chunk after the due ledger; the final fill uses the remaining amount when it is
 smaller than the configured chunk.
 
@@ -113,3 +114,8 @@ After a fill, the next due ledger is `current + interval`, preventing repeated
 catch-up fills in one ledger. `cancel_dca` requires owner authorization and
 refunds unspent input; `reclaim_expired_dca` is permissionless but always sends
 the refund to the owner. DCA orders share the 30-day lifetime ceiling.
+
+Deposits and payouts require exact balance changes, and each fill verifies actual
+input spent and output received independently of the aggregator's return value.
+This assumes truthful token balance reporting; restrict mainnet support to vetted
+assets before launch.

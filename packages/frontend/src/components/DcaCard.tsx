@@ -84,6 +84,8 @@ export function DcaCard() {
       if (duration + 720 > MAX_LIFETIME_LEDGERS) {
         throw new Error('Schedule exceeds the 30-day testnet limit');
       }
+      if (!floor.trim()) throw new Error('Enter a minimum execution price');
+      const minOutPerInE7 = priceHumanToE7(floor, tokenIn.decimals, tokenOut.decimals);
       const latest = await fetchLatestLedger();
       const startLedger = latest + 12;
       const built = await buildCreateDca({
@@ -94,7 +96,7 @@ export function DcaCard() {
         chunkAmount,
         intervalLedgers: interval,
         startLedger,
-        minOutPerInE7: floor ? priceHumanToE7(floor, tokenIn.decimals, tokenOut.decimals) : '0',
+        minOutPerInE7,
         expiresLedger: startLedger + duration + 720,
       });
       const signed = await signTx(built.unsignedTxXdr, {
@@ -212,7 +214,7 @@ export function DcaCard() {
             </div>
           </div>
           <label className="block min-w-0 text-[13px] text-[var(--text-muted)]">
-            Minimum price per chunk <span className="text-[var(--text-muted)]/70">(optional)</span>
+            Minimum execution price (required)
             <input
               value={floor}
               aria-label={`Minimum ${tokenOut.symbol} received per ${tokenIn.symbol}`}

@@ -9,6 +9,7 @@ name = "lumagg-api-server"
 path = "src/main.rs"
 
 [dependencies]
+lumagg-contract-types = { path = "../../contracts/shared-types" }
 analytics-indexer = { path = "../analytics-indexer" }
 market-snapshot = { path = "../market-snapshot" }
 market-data-worker = { path = "../market-data-worker" }

@@ -226,7 +226,7 @@ export class LumAggClient {
                 chunk_amount: params.chunkAmount,
                 interval_ledgers: params.intervalLedgers,
                 start_ledger: params.startLedger,
-                min_out_per_in_e7: params.minOutPerInE7 ?? "0",
+                min_out_per_in_e7: params.minOutPerInE7,
                 expires_ledger: params.expiresLedger,
             }),
         });

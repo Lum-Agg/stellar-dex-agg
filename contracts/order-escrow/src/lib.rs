@@ -1,7 +1,7 @@
 #![no_std]
 
 use {
-    lumagg_contract_types::SubRoute,
+    lumagg_contract_types::{required_min_out, SubRoute},
     soroban_sdk::{
         auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
         contract, contractclient, contractimpl, contracttype, token, Address, BytesN, Env, IntoVal, Symbol, Vec,
@@ -78,7 +78,7 @@ pub struct DcaOrder {
     pub chunk_amount: i128,
     pub interval_ledgers: u32,
     pub next_executable_ledger: u32,
-    /// Optional per-chunk rate floor. Zero means market execution.
+    /// Required positive per-chunk rate floor.
     pub min_out_per_in_e7: i128,
     pub expires_ledger: u32,
     pub status: OrderStatus,
@@ -87,13 +87,50 @@ pub struct DcaOrder {
 #[contract]
 pub struct OrderEscrowContract;
 
-const RATE_SCALE_E7: i128 = 10_000_000;
+fn transfer_exact(env: &Env, asset: &Address, from: &Address, to: &Address, amount: i128) {
+    let client = token::Client::new(env, asset);
+    let from_before = client.balance(from);
+    let to_before = client.balance(to);
+    client.transfer(from, to, &amount);
+    if from_before.checked_sub(client.balance(from)) != Some(amount)
+        || client.balance(to).checked_sub(to_before) != Some(amount)
+    {
+        soroban_sdk::panic_with_error!(env, EscrowError::UnexpectedTokenBalance);
+    }
+}
 
-fn required_min_out(amount_in: i128, limit_out_per_in_e7: i128) -> i128 {
-    amount_in
-        .checked_mul(limit_out_per_in_e7)
-        .map(|value| value / RATE_SCALE_E7)
-        .unwrap_or(i128::MAX)
+fn settle_swap(
+    env: &Env,
+    owner: &Address,
+    token_in: &Address,
+    token_out: &Address,
+    amount_in: i128,
+    sub_routes: &Vec<SubRoute>,
+    min_amount_out: i128,
+) -> i128 {
+    let aggregator: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Aggregator)
+        .unwrap_or_else(|| soroban_sdk::panic_with_error!(env, EscrowError::NotInitialized));
+    let escrow = env.current_contract_address();
+    let input = token::Client::new(env, token_in);
+    let output = token::Client::new(env, token_out);
+    let input_before = input.balance(&escrow);
+    let output_before = output.balance(&escrow);
+    authorize_swap_as_current_contract(env, &aggregator, &escrow, token_in, amount_in);
+    let reported = AggregatorContractClient::new(env, &aggregator)
+        .swap_restricted(&escrow, token_in, token_out, sub_routes, &min_amount_out);
+    if input_before.checked_sub(input.balance(&escrow)) != Some(amount_in)
+        || output.balance(&escrow).checked_sub(output_before) != Some(reported)
+    {
+        soroban_sdk::panic_with_error!(env, EscrowError::UnexpectedTokenBalance);
+    }
+    if reported < min_amount_out {
+        soroban_sdk::panic_with_error!(env, EscrowError::MinimumOutBelowLimit);
+    }
+    transfer_exact(env, token_out, &escrow, owner, reported);
+    reported
 }
 
 fn authorize_swap_as_current_contract(
@@ -123,10 +160,7 @@ fn authorize_swap_as_current_contract(
 
 #[contractimpl]
 impl OrderEscrowContract {
-    pub fn initialize(env: Env, admin: Address, aggregator: Address) {
-        if env.storage().instance().has(&DataKey::Admin) {
-            soroban_sdk::panic_with_error!(&env, EscrowError::AlreadyInitialized);
-        }
+    pub fn __constructor(env: Env, admin: Address, aggregator: Address) {
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Aggregator, &aggregator);
@@ -156,7 +190,7 @@ impl OrderEscrowContract {
         if amount_in <= 0 {
             soroban_sdk::panic_with_error!(&env, EscrowError::InvalidAmount);
         }
-        if limit_out_per_in_e7 <= 0 {
+        if required_min_out(amount_in, limit_out_per_in_e7).is_none() {
             soroban_sdk::panic_with_error!(&env, EscrowError::InvalidLimit);
         }
         if token_in == token_out {
@@ -175,7 +209,7 @@ impl OrderEscrowContract {
             .get(&DataKey::NextOrderId)
             .unwrap_or_else(|| soroban_sdk::panic_with_error!(&env, EscrowError::NotInitialized));
         let escrow = env.current_contract_address();
-        token::Client::new(&env, &token_in).transfer(&owner, &escrow, &amount_in);
+        transfer_exact(&env, &token_in, &owner, &escrow, amount_in);
 
         let order = LimitOrder {
             owner,
@@ -220,7 +254,7 @@ impl OrderEscrowContract {
 
         let escrow = env.current_contract_address();
         let refunded_amount = order.amount_in_remaining;
-        token::Client::new(&env, &order.token_in).transfer(&escrow, &order.owner, &refunded_amount);
+        transfer_exact(&env, &order.token_in, &escrow, &order.owner, refunded_amount);
         order.amount_in_remaining = 0;
         order.status = OrderStatus::Cancelled;
         env.storage().persistent().set(&key, &order);
@@ -244,7 +278,7 @@ impl OrderEscrowContract {
 
         let escrow = env.current_contract_address();
         let refunded_amount = order.amount_in_remaining;
-        token::Client::new(&env, &order.token_in).transfer(&escrow, &order.owner, &refunded_amount);
+        transfer_exact(&env, &order.token_in, &escrow, &order.owner, refunded_amount);
         order.amount_in_remaining = 0;
         order.status = OrderStatus::Expired;
         env.storage().persistent().set(&key, &order);
@@ -281,25 +315,19 @@ impl OrderEscrowContract {
         if routed_amount != amount_in {
             soroban_sdk::panic_with_error!(&env, EscrowError::InvalidRouteAmount);
         }
-        if min_amount_out < required_min_out(amount_in, order.limit_out_per_in_e7) {
+        if !required_min_out(amount_in, order.limit_out_per_in_e7).is_some_and(|floor| min_amount_out >= floor) {
             soroban_sdk::panic_with_error!(&env, EscrowError::MinimumOutBelowLimit);
         }
 
-        let aggregator: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Aggregator)
-            .unwrap_or_else(|| soroban_sdk::panic_with_error!(&env, EscrowError::NotInitialized));
-        let escrow = env.current_contract_address();
-        authorize_swap_as_current_contract(&env, &aggregator, &escrow, &order.token_in, amount_in);
-        let amount_out = AggregatorContractClient::new(&env, &aggregator).swap_restricted(
-            &escrow,
+        let amount_out = settle_swap(
+            &env,
+            &order.owner,
             &order.token_in,
             &order.token_out,
+            amount_in,
             &sub_routes,
-            &min_amount_out,
+            min_amount_out,
         );
-        token::Client::new(&env, &order.token_out).transfer(&escrow, &order.owner, &amount_out);
 
         order.amount_in_remaining -= amount_in;
         if order.amount_in_remaining == 0 {
@@ -340,7 +368,7 @@ impl OrderEscrowContract {
         if start_ledger < current {
             soroban_sdk::panic_with_error!(&env, EscrowError::StartLedgerInPast);
         }
-        if min_out_per_in_e7 < 0 {
+        if required_min_out(chunk_amount, min_out_per_in_e7).is_none() {
             soroban_sdk::panic_with_error!(&env, EscrowError::InvalidMinimumRate);
         }
         if token_in == token_out {
@@ -359,7 +387,7 @@ impl OrderEscrowContract {
             .get(&DataKey::NextDcaOrderId)
             .unwrap_or_else(|| soroban_sdk::panic_with_error!(&env, EscrowError::NotInitialized));
         let escrow = env.current_contract_address();
-        token::Client::new(&env, &token_in).transfer(&owner, &escrow, &amount_in);
+        transfer_exact(&env, &token_in, &owner, &escrow, amount_in);
 
         let order = DcaOrder {
             owner,
@@ -427,31 +455,22 @@ impl OrderEscrowContract {
         if routed_amount != amount_in {
             soroban_sdk::panic_with_error!(&env, EscrowError::InvalidRouteAmount);
         }
-        if order.min_out_per_in_e7 > 0 {
-            if min_amount_out < required_min_out(amount_in, order.min_out_per_in_e7) {
-                soroban_sdk::panic_with_error!(&env, EscrowError::MinimumOutBelowLimit);
-            }
-        } else {
-            if min_amount_out <= 0 {
-                soroban_sdk::panic_with_error!(&env, EscrowError::InvalidAmount);
-            }
+        if order.min_out_per_in_e7 <= 0 {
+            soroban_sdk::panic_with_error!(&env, EscrowError::InvalidMinimumRate);
+        }
+        if !required_min_out(amount_in, order.min_out_per_in_e7).is_some_and(|floor| min_amount_out >= floor) {
+            soroban_sdk::panic_with_error!(&env, EscrowError::MinimumOutBelowLimit);
         }
 
-        let aggregator: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Aggregator)
-            .unwrap_or_else(|| soroban_sdk::panic_with_error!(&env, EscrowError::NotInitialized));
-        let escrow = env.current_contract_address();
-        authorize_swap_as_current_contract(&env, &aggregator, &escrow, &order.token_in, amount_in);
-        let amount_out = AggregatorContractClient::new(&env, &aggregator).swap_restricted(
-            &escrow,
+        let amount_out = settle_swap(
+            &env,
+            &order.owner,
             &order.token_in,
             &order.token_out,
+            amount_in,
             &sub_routes,
-            &min_amount_out,
+            min_amount_out,
         );
-        token::Client::new(&env, &order.token_out).transfer(&escrow, &order.owner, &amount_out);
 
         order.amount_in_remaining -= amount_in;
         if order.amount_in_remaining == 0 {
@@ -483,10 +502,12 @@ impl OrderEscrowContract {
             soroban_sdk::panic_with_error!(&env, EscrowError::OrderNotOpen);
         }
         let refunded_amount = order.amount_in_remaining;
-        token::Client::new(&env, &order.token_in).transfer(
+        transfer_exact(
+            &env,
+            &order.token_in,
             &env.current_contract_address(),
             &order.owner,
-            &refunded_amount,
+            refunded_amount,
         );
         order.amount_in_remaining = 0;
         order.status = OrderStatus::Cancelled;
@@ -509,10 +530,12 @@ impl OrderEscrowContract {
             soroban_sdk::panic_with_error!(&env, EscrowError::OrderNotExpired);
         }
         let refunded_amount = order.amount_in_remaining;
-        token::Client::new(&env, &order.token_in).transfer(
+        transfer_exact(
+            &env,
+            &order.token_in,
             &env.current_contract_address(),
             &order.owner,
-            &refunded_amount,
+            refunded_amount,
         );
         order.amount_in_remaining = 0;
         order.status = OrderStatus::Expired;
@@ -610,18 +633,20 @@ mod tests {
     #[test]
     fn min_out_scales_with_fill_size() {
         // A limit of 2e7 means two output stroops per input stroop.
-        assert_eq!(required_min_out(5_000_000, 20_000_000), 10_000_000);
+        assert_eq!(required_min_out(5_000_000, 20_000_000), Some(10_000_000));
+        assert_eq!(required_min_out(3, 5_000_000), Some(2));
     }
 
     #[test]
     fn min_out_zero_and_overflow_guards() {
-        assert_eq!(required_min_out(0, 20_000_000), 0);
+        assert_eq!(required_min_out(0, 20_000_000), None);
+        assert_eq!(required_min_out(i128::MAX, 10_000_000), Some(i128::MAX));
+        assert_eq!(required_min_out(i128::MAX, 10_000_001), None);
     }
 
     fn setup_escrow<'a>(env: &'a Env) -> (Address, OrderEscrowContractClient<'a>) {
-        let escrow_id = env.register(OrderEscrowContract, ());
+        let escrow_id = env.register(OrderEscrowContract, (gen_addr(env), gen_addr(env)));
         let escrow = OrderEscrowContractClient::new(env, &escrow_id);
-        escrow.initialize(&gen_addr(env), &gen_addr(env));
         (escrow_id, escrow)
     }
 
@@ -641,9 +666,8 @@ mod tests {
         let aggregator = aggregator_contract::AggregatorContractClient::new(env, &aggregator_id);
         aggregator.initialize(&aggregator_admin);
 
-        let escrow_id = env.register(OrderEscrowContract, ());
+        let escrow_id = env.register(OrderEscrowContract, (gen_addr(env), aggregator_id));
         let escrow = OrderEscrowContractClient::new(env, &escrow_id);
-        escrow.initialize(&gen_addr(env), &aggregator_id);
 
         let (token_in, token_in_sac) = create_token(env);
         let (token_out, token_out_sac) = create_token(env);
@@ -974,7 +998,7 @@ mod tests {
         let env = test_env();
         env.mock_all_auths();
         let (owner, escrow, token_in, token_out, _, _) = setup_fill(&env);
-        let order_id = escrow.create_dca(&owner, &token_in, &token_out, &5_000, &2_000, &10, &10, &0, &100);
+        let order_id = escrow.create_dca(&owner, &token_in, &token_out, &5_000, &2_000, &10, &10, &9_000_000, &100);
         let unregistered_pool = gen_addr(&env);
         env.set_auths(&[]);
 
@@ -988,6 +1012,27 @@ mod tests {
         assert!(matches!(result, Ok(Err(_)) | Err(_)), "{result:?}");
         assert_eq!(token::Client::new(&env, &token_in).balance(&escrow.address), 5_000);
         assert_eq!(dca_order(&env, &escrow.address, order_id).amount_in_remaining, 5_000);
+    }
+
+    #[test]
+    fn legacy_dca_without_floor_can_cancel_but_cannot_fill() {
+        let env = test_env();
+        env.mock_all_auths();
+        let (owner, escrow, token_in, token_out, _, pool_id) = setup_fill(&env);
+        let order_id = escrow.create_dca(&owner, &token_in, &token_out, &5_000, &2_000, &10, &10, &9_000_000, &100);
+        let mut legacy = dca_order(&env, &escrow.address, order_id);
+        legacy.min_out_per_in_e7 = 0;
+        env.as_contract(&escrow.address, || {
+            env.storage().persistent().set(&DataKey::DcaOrder(order_id), &legacy);
+        });
+        env.ledger().set_sequence_number(10);
+        let result = escrow.try_fill_dca(&order_id, &route(&env, &pool_id, &token_in, &token_out, 2_000), &2_000);
+        assert_eq!(
+            result,
+            Err(Ok(soroban_sdk::Error::from_contract_error(crate::EscrowError::InvalidMinimumRate as u32)))
+        );
+        escrow.cancel_dca(&order_id);
+        assert_eq!(token::Client::new(&env, &token_in).balance(&owner), 10_000);
     }
 
     #[test]
@@ -1069,7 +1114,11 @@ mod tests {
         env.mock_all_auths();
         let (owner, escrow, token_in, token_out, _, pool_id) = setup_fill(&env);
         let escrow_id = escrow.address.clone();
-        let order_id = escrow.create_dca(&owner, &token_in, &token_out, &5_000, &2_000, &10, &10, &0, &100);
+        assert_eq!(
+            escrow.try_create_dca(&owner, &token_in, &token_out, &5_000, &2_000, &10, &10, &0, &100),
+            Err(Ok(soroban_sdk::Error::from_contract_error(crate::EscrowError::InvalidMinimumRate as u32)))
+        );
+        let order_id = escrow.create_dca(&owner, &token_in, &token_out, &5_000, &2_000, &10, &10, &9_000_000, &100);
         assert_eq!(token::Client::new(&env, &token_in).balance(&escrow_id), 5_000);
         env.set_auths(&[]);
 
@@ -1109,7 +1158,7 @@ mod tests {
         let (token_out, _) = create_token(&env);
         token_in_sac.mint(&owner, &5_000);
 
-        let order_id = escrow.create_dca(&owner, &token_in, &token_out, &5_000, &1_000, &10, &10, &0, &100);
+        let order_id = escrow.create_dca(&owner, &token_in, &token_out, &5_000, &1_000, &10, &10, &9_000_000, &100);
         escrow.cancel_dca(&order_id);
 
         assert_eq!(token::Client::new(&env, &token_in).balance(&owner), 5_000);

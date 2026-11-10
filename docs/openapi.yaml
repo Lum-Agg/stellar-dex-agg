@@ -460,8 +460,8 @@ paths:
       summary: Build unsigned create-DCA transaction
       description: |
         Simulates and prepares wallet-ready XDR invoking `order-escrow.create_dca`.
-        Requires `ESCROW_CONTRACT` on the API server. Set `min_out_per_in_e7` to
-        `0` for market execution or a positive value for a per-chunk rate floor.
+        Requires `ESCROW_CONTRACT` on the API server and a positive
+        `min_out_per_in_e7` per-chunk rate floor.
       requestBody:
         required: true
         content:
@@ -1357,7 +1357,7 @@ components:
           format: int32
         min_out_per_in_e7:
           type: string
-          description: Per-chunk minimum output per 1e7 input units; `0` means market execution
+          description: Per-chunk minimum output per 1e7 input units; legacy orders may show zero
         expires_ledger:
           type: integer
           format: int32
@@ -1409,7 +1409,7 @@ components:
           description: First executable ledger; cannot be in the past
         min_out_per_in_e7:
           type: string
-          description: Per-chunk minimum output per 1e7 input units; use `0` for market execution
+          description: Required positive per-chunk minimum output per 1e7 input units
           default: "0"
         expires_ledger:
           type: integer

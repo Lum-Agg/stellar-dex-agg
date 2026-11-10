@@ -20,19 +20,17 @@ use {
 const BASE_FEE: u32 = 100_000;
 
 pub fn fill_amount(order: &OpenOrder, max_fill: Option<i128>) -> i128 {
-    let requested = order.chunk_amount.unwrap_or(order.amount_in_remaining);
-    max_fill
-        .filter(|cap| *cap > 0)
-        .map_or(requested, |cap| requested.min(cap))
-        .min(order.amount_in_remaining)
+    let cap = max_fill.filter(|cap| *cap > 0);
+    if let Some(chunk) = order.chunk_amount {
+        let due = chunk.min(order.amount_in_remaining);
+        return if cap.is_some_and(|cap| due > cap) { 0 } else { due };
+    }
+    cap
+        .map_or(order.amount_in_remaining, |cap| order.amount_in_remaining.min(cap))
 }
 
-pub fn fill_min_amount_out(order: &OpenOrder, amount_in: i128, quote: &Quote) -> i128 {
-    if order.limit_out_per_in_e7 > 0 {
-        required_min_out(amount_in, order.limit_out_per_in_e7).max(quote.minimum_output)
-    } else {
-        quote.minimum_output
-    }
+pub fn fill_min_amount_out(order: &OpenOrder, amount_in: i128, quote: &Quote) -> Option<i128> {
+    required_min_out(amount_in, order.limit_out_per_in_e7).map(|floor| floor.max(quote.minimum_output))
 }
 
 /// Simulate, sign, submit, and wait briefly for an escrow `fill`.
@@ -57,7 +55,8 @@ pub async fn execute_fill(
         order.order_id,
         amount_in,
         &quote.sub_routes,
-        fill_min_amount_out(order, amount_in, quote),
+        fill_min_amount_out(order, amount_in, quote)
+            .ok_or_else(|| anyhow!("invalid minimum output for order {}", order.order_id))?,
     )?;
     let keypair = Keypair::from_secret(secret).map_err(|e| anyhow!("invalid KEEPER_SECRET: {e:?}"))?;
     let public_key = keypair.public_key();
@@ -402,7 +401,7 @@ mod tests {
         };
 
         assert_eq!(fill_amount(&order(), Some(300)), 300);
-        assert_eq!(fill_min_amount_out(&order(), 300, &quote), 650);
+        assert_eq!(fill_min_amount_out(&order(), 300, &quote), Some(650));
     }
 
     #[test]

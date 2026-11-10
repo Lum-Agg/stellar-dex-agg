@@ -2,6 +2,21 @@
 
 use soroban_sdk::{contracttype, Address, Vec};
 
+/// Minimum output in atomic units, rounded up so the limit is never weakened.
+pub fn required_min_out(amount: i128, rate_e7: i128) -> Option<i128> {
+    const SCALE: i128 = 10_000_000;
+    if amount <= 0 || rate_e7 <= 0 {
+        return None;
+    }
+    // Split both factors to avoid overflow in the unscaled product.
+    let remainder = amount % SCALE;
+    let fractional = remainder * (rate_e7 % SCALE);
+    (amount / SCALE)
+        .checked_mul(rate_e7)?
+        .checked_add(remainder * (rate_e7 / SCALE))?
+        .checked_add(fractional / SCALE + i128::from(fractional % SCALE != 0))
+}
+
 /// Supported DEX protocol types (shared by aggregator + vault).
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]

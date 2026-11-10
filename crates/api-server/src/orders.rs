@@ -364,17 +364,6 @@ fn parse_positive_i128(value: &str, field: &str) -> Result<i128, String> {
     Ok(value)
 }
 
-fn parse_nonnegative_i128(value: &str, field: &str) -> Result<i128, String> {
-    let value: i128 = value
-        .trim()
-        .parse()
-        .map_err(|_| format!("{field} must be a non-negative integer"))?;
-    if value < 0 {
-        return Err(format!("{field} must not be negative"));
-    }
-    Ok(value)
-}
-
 fn validate_create_request(request: &BuildCreateRequest) -> Result<(), String> {
     parse_user(&request.user)?;
     parse_contract(&request.token_in, "token_in")?;
@@ -437,6 +426,9 @@ fn build_create_operation(contract: &str, request: &BuildCreateRequest) -> Resul
     let token_out = parse_contract(&request.token_out, "token_out")?;
     let amount_in = parse_positive_i128(&request.amount_in, "amount_in")?;
     let limit = parse_positive_i128(&request.limit_out_per_in_e7, "limit_out_per_in_e7")?;
+    if lumagg_contract_types::required_min_out(amount_in, limit).is_none() {
+        return Err("minimum output exceeds the supported range".into());
+    }
 
     contract_operation(
         contract,
@@ -475,7 +467,10 @@ fn build_create_dca_operation(contract: &str, request: &BuildCreateDcaRequest) -
     if request.expires_ledger <= request.start_ledger {
         return Err("expires_ledger must follow start_ledger".into());
     }
-    let min_rate = parse_nonnegative_i128(&request.min_out_per_in_e7, "min_out_per_in_e7")?;
+    let min_rate = parse_positive_i128(&request.min_out_per_in_e7, "min_out_per_in_e7")?;
+    if lumagg_contract_types::required_min_out(chunk, min_rate).is_none() {
+        return Err("minimum output per chunk exceeds the supported range".into());
+    }
     contract_operation(
         contract,
         "create_dca",

@@ -34,14 +34,14 @@ build limit /api/v1/orders/build_create \
 
 build dca /api/v1/dca/build_create \
   "$(jq -cn --arg user "$USER_G" --arg token_in "$XLM" --arg token_out "$USDC" \
-    --arg amount_in 500000 --arg chunk_amount 250000 --arg min_out_per_in_e7 0 \
+    --arg amount_in 500000 --arg chunk_amount 250000 --arg min_out_per_in_e7 6000000 \
     --argjson interval_ledgers 10 --argjson start_ledger "$start_ledger" \
     --argjson expires_ledger "$expires_ledger" \
     '{user:$user,token_in:$token_in,token_out:$token_out,amount_in:$amount_in,chunk_amount:$chunk_amount,interval_ledgers:$interval_ledgers,start_ledger:$start_ledger,min_out_per_in_e7:$min_out_per_in_e7,expires_ledger:$expires_ledger}')"
 
 # A past start ledger must remain a structured contract error, not a generic trap.
 invalid_dca_body="$(jq -cn --arg user "$USER_G" --arg token_in "$XLM" --arg token_out "$USDC" \
-  --arg amount_in 500000 --arg chunk_amount 250000 --arg min_out_per_in_e7 0 \
+  --arg amount_in 500000 --arg chunk_amount 250000 --arg min_out_per_in_e7 6000000 \
   --argjson interval_ledgers 10 --argjson start_ledger "$((ledger - 1))" \
   --argjson expires_ledger "$expires_ledger" \
   '{user:$user,token_in:$token_in,token_out:$token_out,amount_in:$amount_in,chunk_amount:$chunk_amount,interval_ledgers:$interval_ledgers,start_ledger:$start_ledger,min_out_per_in_e7:$min_out_per_in_e7,expires_ledger:$expires_ledger}')"

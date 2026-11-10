@@ -224,7 +224,7 @@ or an Escrow instance that includes the upgrade entrypoint from deployment.
 ## Frontend (Phase 3d)
 
 On `/`, switch Order rail to **Limit** or **DCA**. DCA supports a total amount,
-fixed chunk, hourly/6-hour/daily frequency, and an optional minimum execution
+fixed chunk, hourly/6-hour/daily frequency, and a required positive minimum execution
 price. Its API surface is `/api/v1/dca`, `/dca/build_create`, and
 `/dca/build_cancel` under the same `/api/v1` prefix.
 

@@ -100,17 +100,17 @@ export function priceHumanToE7(
   decimalsIn: number,
   decimalsOut: number,
 ): string {
-  const cleaned = priceHuman.trim();
-  if (!cleaned || cleaned === '.') throw new Error('Invalid price');
-  const n = Number(cleaned);
-  if (!Number.isFinite(n) || n <= 0) throw new Error('Price must be positive');
-  // price_human = out_units / in_units (whole tokens).
-  // e7 stores out_stroops * 1e7 / in_stroops for equal-decimal SACs (both 7).
-  // General: out_stroops/in_stroops * 1e7 = price * 10^(decOut-decIn) * 1e7
-  const scale = 10 ** (decimalsOut - decimalsIn);
-  const e7 = Math.round(n * scale * 1e7);
-  if (!Number.isFinite(e7) || e7 <= 0) throw new Error('Price out of range');
-  return String(e7);
+  const match = /^(\d*)(?:\.(\d*))?$/.exec(priceHuman.trim());
+  if (!match || !(match[1] || match[2])) throw new Error('Invalid price');
+  const fraction = match[2] ?? '';
+  const digits = BigInt(match[1] + fraction);
+  if (digits <= BigInt(0)) throw new Error('Price must be positive');
+  const shift = 7 + decimalsOut - decimalsIn - fraction.length;
+  const e7 = shift >= 0
+    ? digits * BigInt(10) ** BigInt(shift)
+    : ceilDiv(digits, BigInt(10) ** BigInt(-shift));
+  if (e7 >= BigInt(2) ** BigInt(127)) throw new Error('Price out of range');
+  return e7.toString();
 }
 
 export function e7ToPriceHuman(e7: string, decimalsIn: number, decimalsOut: number): string {

@@ -10,6 +10,7 @@ name = "limit-keeper"
 path = "src/main.rs"
 
 [dependencies]
+lumagg-contract-types = { path = "../../contracts/shared-types" }
 anyhow.workspace = true
 tokio.workspace = true
 tracing.workspace = true

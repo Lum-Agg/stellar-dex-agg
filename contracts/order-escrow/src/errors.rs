@@ -26,4 +26,5 @@ pub enum EscrowError {
     InvalidMinimumRate = 18,
     ChunkNotDue = 19,
     ArithmeticOverflow = 20,
+    UnexpectedTokenBalance = 21,
 }

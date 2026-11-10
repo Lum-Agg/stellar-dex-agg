@@ -168,7 +168,9 @@ async fn main() -> Result<()> {
             if !is_fillable_for(&order, amount_in, quote.expected_output) {
                 continue;
             }
-            let min_amount_out = fill_min_amount_out(&order, amount_in, &quote);
+            let Some(min_amount_out) = fill_min_amount_out(&order, amount_in, &quote) else {
+                continue;
+            };
             if config.dry_run {
                 info!(
                     order_id = order.order_id,
