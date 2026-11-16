@@ -32,7 +32,7 @@ User → API quote → PathFinder → QuoteEngine (local math + hydration)
 
 ## Production stack (reference)
 
-- API: `88.198.16.144:3100` (systemd `lumagg-api@3100`)
+- API: `https://api.lumagg.xyz` (systemd `lumagg-api@3100` behind Nginx)
 - Worker: `lumagg-worker`
 - Deploy: `./ops/deploy_server.sh [all|api|worker]` (default `all`)
 

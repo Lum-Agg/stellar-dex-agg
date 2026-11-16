@@ -6,6 +6,9 @@
 set -euo pipefail
 
 API_BASE="${API_BASE:-http://127.0.0.1:3100}"
+if [[ -z "${REDIS_URL:-}" && -n "${AGGREGATOR_CONFIG:-}" ]]; then
+  REDIS_URL=$(python3 -c 'import sys, tomllib; print(tomllib.load(sys.stdin.buffer)["redis"]["url"])' < "$AGGREGATOR_CONFIG")
+fi
 REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379/}"
 XLM="CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
 USDC="CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"

@@ -1,8 +1,11 @@
 # Maintainer Deployment Scripts
 
 These scripts are for LumAgg maintainers to deploy the project’s own services.
-They assume access to the production host, private configuration files, and the
-maintainer’s process manager. They are not the recommended self-hosting path.
+The mainnet backend, indexer, and arbitrage scripts default to
+`root@162.245.187.234` (override with `LUMAGG_DEPLOY_SERVER`). They require an
+already configured server and retain its TOML files and systemd units.
+The Limit/DCA testnet script requires an explicit `SERVER` for an isolated host.
+These scripts are not the recommended self-hosting path.
 
 For self-hosting, download the release binaries and follow:
 

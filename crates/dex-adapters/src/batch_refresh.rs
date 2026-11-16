@@ -355,13 +355,15 @@ fn scval_to_u128_vec(val: &xdr::ScVal) -> Option<Vec<u128>> {
 mod tests {
     use super::*;
 
+    fn mainnet_rpc() -> SorobanRpc {
+        let url = std::env::var("MAINNET_RPC_URL").expect("set MAINNET_RPC_URL to run these network tests");
+        SorobanRpc::new(&url, "Public Global Stellar Network ; September 2015")
+    }
+
     #[tokio::test]
     #[ignore] // requires network
     async fn test_batch_refresh_soroswap() {
-        let rpc = SorobanRpc::new(
-            "http://88.198.16.144:8003",
-            "Public Global Stellar Network ; September 2015",
-        );
+        let rpc = mainnet_rpc();
 
         let pools = vec!["CB46LMGJC7SYSH4C7SBNLV635OX5BSNQDGRR32NRXAV7N2AVNZMQUJ3A".to_string()];
 
@@ -377,10 +379,7 @@ mod tests {
     #[tokio::test]
     #[ignore] // requires network
     async fn test_batch_refresh_aquarius() {
-        let rpc = SorobanRpc::new(
-            "http://88.198.16.144:8003",
-            "Public Global Stellar Network ; September 2015",
-        );
+        let rpc = mainnet_rpc();
 
         // USDC/CBVDRT stable pool + XLM/CBVDRT volatile pool from production debugging.
         let pools = vec![

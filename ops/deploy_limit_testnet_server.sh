@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SERVER="${SERVER:-root@88.198.16.144}"
+SERVER="${SERVER:?Set SERVER to an isolated testnet deployment host}"
 REMOTE_SRC="${REMOTE_SRC:-/opt/stellar-dex-aggregator-src}"
 REMOTE_APP_DIR="${REMOTE_APP_DIR:-/opt/stellar-dex-aggregator}"
 ENV_FILE="${ENV_FILE:-$ROOT/deploy/.env.limit-testnet.local}"

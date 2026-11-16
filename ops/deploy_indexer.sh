@@ -8,18 +8,13 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-SERVER="root@88.198.16.144"
+SERVER="${LUMAGG_DEPLOY_SERVER:-root@162.245.187.234}"
 REMOTE_SRC="/opt/stellar-dex-aggregator-src"
 REMOTE_APP_DIR="/opt/stellar-dex-aggregator"
 INDEXER_START_LEDGER="${INDEXER_START_LEDGER:-}"
-PRODUCTION_CONFIG="$ROOT/configs/production-aggregator.toml"
-
-if [[ ! -f "$PRODUCTION_CONFIG" ]]; then
-  echo "ERROR: Missing ${PRODUCTION_CONFIG}; create it from packaging/lumagg-aggregator.toml" >&2
-  exit 1
-fi
-
-echo "=== LumAgg analytics-indexer deploy ==="
+echo "=== LumAgg analytics-indexer deploy on ${SERVER} ==="
+ssh -o BatchMode=yes "$SERVER" \
+  "test -r '${REMOTE_APP_DIR}/deploy/aggregator.toml' && test -r /etc/systemd/system/lumagg-indexer.service"
 
 echo "=== Syncing source code ==="
 rsync -az --delete \
@@ -30,20 +25,16 @@ rsync -az --delete \
   --exclude out \
   --exclude packages/frontend \
   --exclude configs \
+  --exclude /data/ \
   -e "ssh -o StrictHostKeyChecking=no" \
   "$ROOT/" \
   "${SERVER}:${REMOTE_SRC}/"
 
 echo "=== Building analytics-indexer on server ==="
 ssh -o StrictHostKeyChecking=no "$SERVER" \
-  "source ~/.cargo/env && cd ${REMOTE_SRC} && cargo build --release -p analytics-indexer 2>&1 | tail -12"
+  "bash -o pipefail -c 'source ~/.cargo/env && cd ${REMOTE_SRC} && cargo build --release -p analytics-indexer 2>&1 | tail -12'"
 
-echo "=== Uploading private Aggregator TOML ==="
-ssh -o StrictHostKeyChecking=no "$SERVER" "mkdir -p ${REMOTE_APP_DIR}/deploy"
-scp -o StrictHostKeyChecking=no "$PRODUCTION_CONFIG" "${SERVER}:${REMOTE_APP_DIR}/deploy/aggregator.toml"
-ssh -o StrictHostKeyChecking=no "$SERVER" "chmod 600 ${REMOTE_APP_DIR}/deploy/aggregator.toml"
-
-echo "=== Installing binary + systemd unit ==="
+echo "=== Installing binary; retaining server configuration and unit ==="
 ssh -o StrictHostKeyChecking=no "$SERVER" \
   "REMOTE_SRC='${REMOTE_SRC}' REMOTE_APP_DIR='${REMOTE_APP_DIR}' bash -s" <<'REMOTE'
 set -euo pipefail
@@ -62,8 +53,6 @@ fi
 rm -f "${REMOTE_APP_DIR}/target/release/lumagg-analytics-indexer"
 cp "${REMOTE_SRC}/target/release/lumagg-analytics-indexer" \
   "${REMOTE_APP_DIR}/target/release/lumagg-analytics-indexer"
-cp "${REMOTE_SRC}/deploy/lumagg-indexer.service" /etc/systemd/system/lumagg-indexer.service
-systemctl daemon-reload
 systemctl enable lumagg-indexer
 systemctl restart lumagg-indexer
 REMOTE

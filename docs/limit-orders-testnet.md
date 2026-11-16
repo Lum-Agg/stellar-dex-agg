@@ -123,7 +123,7 @@ On the server, copy the generated env to
 start the API and indexer units. The keeper starts in dry-run mode by default:
 
 ```bash
-RESET_TESTNET_DB=1 ./ops/deploy_limit_testnet_server.sh
+SERVER=root@your-testnet-host RESET_TESTNET_DB=1 ./ops/deploy_limit_testnet_server.sh
 ```
 
 The deployment uses separate `*-testnet` binary names, a Soroswap testnet
