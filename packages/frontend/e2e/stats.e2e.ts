@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { NATIVE_CONTRACT, USDC_CONTRACT } from '../src/lib/tokenDisplay';
 
 test('headlines user swaps separately from arbitrage and labels combined volume', async ({
   page,
@@ -23,9 +24,9 @@ test('headlines user swaps separately from arbitrage and labels combined volume'
                 unique_users: 4,
                 total_amount_in: 100,
                 split_swap_count: 1,
-                by_function: { swap: 2, round_trip_swap: 98 },
+                by_function: { swap: 2, round_trip_swap: 97, unknown: 1 },
                 by_dex: {},
-                // Only one surplus record, but 98 successful arbitrage calls.
+                // Only one surplus record, but 97 successful arbitrage calls.
                 round_trip_count: 1,
                 total_amount_in_usd: 10,
                 total_routed_dex_volume_usd: 30,
@@ -41,18 +42,22 @@ test('headlines user swaps separately from arbitrage and labels combined volume'
   const breakdown = page.getByRole('region', { name: 'User swap and arbitrage breakdown' });
   await expect(breakdown).toContainText('User swaps');
   await expect(breakdown).toContainText('2.00% of successful transactions');
-  await expect(breakdown).toContainText('98.00% of successful transactions');
+  await expect(breakdown).toContainText('97.00% of successful transactions');
   await expect(breakdown).toContainText('Arbitrage is not user adoption');
   await expect(
     page.getByRole('heading', { name: 'Daily combined volume (includes arbitrage)' }),
   ).toBeVisible();
-  await page.getByText('Daily rollup', { exact: true }).click();
+  const mix = page.getByRole('region', { name: 'User swaps vs arbitrage over time', exact: true });
+  await expect(mix.getByText('Other', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Daily rollup table' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Other', exact: true })).toHaveCount(0);
   const row = page.getByRole('row').filter({ hasText: '2026-10-28' });
+  await expect(row.getByRole('cell').nth(1)).toHaveText('100');
   await expect(row.getByRole('cell').nth(2)).toHaveText('2');
-  await expect(row.getByRole('cell').nth(3)).toHaveText('98');
+  await expect(row.getByRole('cell').nth(3)).toHaveText('97');
 });
 
-test('unavailable actual routed volume remains unavailable instead of zero', async ({ page }) => {
+test('unavailable USD amounts show zero in Daily rollup but not in summary metrics', async ({ page }) => {
   await page.route('**/*', async (route) => {
     const url = new URL(route.request().url());
     if (url.hostname === '127.0.0.1') return route.continue();
@@ -92,10 +97,84 @@ test('unavailable actual routed volume remains unavailable instead of zero', asy
   await expect(card).toContainText('—');
   await expect(card).toContainText('0% legs priced');
   await expect(card).not.toContainText('$0');
-  await page.getByText('Daily rollup', { exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Daily rollup table' })).toBeVisible();
   const row = page.getByRole('row').filter({ hasText: '2026-10-29' });
-  // Column 7 is routed USD, after date, count, split, callers and notional.
-  await expect(row.getByRole('cell').nth(7)).toHaveText('—');
+  const cells = row.getByRole('cell');
+  await expect(cells.nth(5)).toHaveText('$10');
+  await expect(cells.nth(6)).toHaveText('$0');
+  await expect(cells.nth(7)).toHaveText('$0');
+  await expect(cells.nth(8)).toHaveText('—');
+});
+
+test('chart lines stay solid through zero-filled dates and amounts', async ({
+  page,
+}) => {
+  const daily = Array.from({ length: 7 }, (_, index) => {
+    const failedOnly = index === 1;
+    const usd = failedOnly || index === 3 ? null : 10 + index;
+    return {
+      day: `2026-11-0${index + 1}`,
+      tx_count: failedOnly ? 0 : 1,
+      success_count: failedOnly ? 0 : 1,
+      failed_count: failedOnly ? 12 : 0,
+      unique_users: failedOnly ? 0 : 1,
+      total_amount_in: 0,
+      split_swap_count: 0,
+      by_function: failedOnly ? {} : { round_trip_swap: 1 },
+      by_dex: failedOnly ? {} : { aquarius: 2 },
+      total_amount_in_usd: usd,
+      total_routed_dex_volume_usd: usd,
+      round_trip_gross_surplus_usd: usd,
+      round_trip_by_token: usd === null ? [] : [
+        index < 3
+          ? { base_token: NATIVE_CONTRACT, tx_count: 1, gross_surplus: 1250000 }
+          : { base_token: USDC_CONTRACT, tx_count: 1, gross_surplus: '250000' },
+      ],
+    };
+  }).filter((_, index) => index !== 4);
+  await page.route('**/*', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.hostname === '127.0.0.1') return route.continue();
+    return route.fulfill({
+      json: {
+        success: true,
+        data:
+          url.pathname === '/api/v1/stats'
+            ? { invocation_count: 17, cursor_ledger: 1, oldest_created_at: null, daily }
+            : [],
+      },
+    });
+  });
+  await page.goto('/stats');
+  const continuous = /^M[^ML]*(?:L[^ML]*){6}$/;
+  for (const [title, selector, count] of [
+    ['Daily combined volume (includes arbitrage)', 'path.recharts-area-curve', 2],
+    ['Arbitrage gross surplus', 'path.recharts-area-curve', 1],
+    ['Caller activity', 'path.recharts-line-curve', 1],
+  ] as const) {
+    const chart = page.getByRole('region', { name: `${title} chart`, exact: true });
+    const lines = chart.locator(selector);
+    await expect(lines).toHaveCount(count);
+    for (const line of await lines.all()) {
+      await expect(line).toHaveAttribute('d', continuous);
+      await expect(line).not.toHaveAttribute('stroke-dasharray', /\S/);
+    }
+  }
+  const native = page.getByRole('region', { name: 'Arbitrage gross surplus by token', exact: true });
+  for (const asset of ['XLM', 'USDC']) {
+    const chart = native.getByRole('region', { name: `Arbitrage gross surplus in ${asset} chart` });
+    const surface = chart.locator('svg.recharts-surface');
+    await expect(surface).toBeVisible();
+    await expect(chart.locator('path.recharts-area-curve')).toHaveAttribute('d', continuous);
+    await surface.focus();
+    await surface.press('ArrowRight');
+    await expect(chart.locator('[data-chart-tooltip]')).toContainText(new RegExp(`0(?:\\.\\d+)? ${asset}`));
+  }
+  await expect(page.getByRole('region', { name: 'Daily rollup table' })).toBeVisible();
+  const failedOnlyDay = page.getByRole('row').filter({ hasText: '2026-11-02' });
+  for (const column of [5, 6, 7]) {
+    await expect(failedOnlyDay.getByRole('cell').nth(column)).toHaveText('$0');
+  }
 });
 
 for (const theme of ['light', 'dark']) {
@@ -141,6 +220,11 @@ for (const theme of ['light', 'dark']) {
       });
     });
     await page.goto('/stats');
+    const rollup = page.getByRole('region', { name: 'Daily rollup table' });
+    await expect(rollup).toBeVisible();
+    expect(await rollup.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+    await rollup.evaluate((element) => { element.scrollTop = 100; });
+    expect(await rollup.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
     await expect(page.getByText('30 indexed days', { exact: false })).toBeVisible();
     const range = page.getByRole('group', { name: 'Chart date range' });
     await range.getByRole('button', { name: 'All', exact: true }).click();
@@ -156,6 +240,7 @@ for (const theme of ['light', 'dark']) {
     await surface.press('ArrowRight');
     await expect(mix.locator('[data-chart-tooltip]')).toContainText('Arbitrage');
     await expect(mix.locator('[data-chart-tooltip]')).toContainText('User swaps');
+    await expect(mix.locator('[data-chart-tooltip]')).not.toContainText('Other');
     await range.getByRole('button', { name: '14d', exact: true }).click();
     await expect(page.getByText('14 indexed days', { exact: false })).toBeVisible();
     await expect(range.getByRole('button', { name: '14d', exact: true })).toHaveAttribute(

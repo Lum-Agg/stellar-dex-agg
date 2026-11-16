@@ -25,7 +25,6 @@ import { statsChartData, type StatsChartDay } from '@/lib/stats-chart-data';
 const activityConfig = {
   swaps: { label: 'User swaps', color: 'var(--accent)' },
   arbitrage: { label: 'Arbitrage', color: 'var(--chart-blue)' },
-  other: { label: 'Other', color: 'var(--chart-neutral)' },
 };
 const volumeConfig = {
   routed: { label: 'Routed USD', color: 'var(--accent)' },
@@ -37,6 +36,13 @@ const outcomeConfig = {
 };
 const callersConfig = { callers: { label: 'Caller addresses', color: 'var(--chart-blue)' } };
 const surplusConfig = { surplus: { label: 'Gross surplus USD', color: 'var(--accent)' } };
+const tokenSurplusConfig = {
+  surplusXlm: { label: 'XLM', color: 'var(--accent)' },
+  surplusUsdc: { label: 'USDC', color: 'var(--chart-blue)' },
+};
+const tokenSurplusKeys = ['surplusXlm', 'surplusUsdc'] as const;
+const tokenAmount = new Intl.NumberFormat('en-US', { maximumFractionDigits: 7 });
+const zeroFillNote = 'Unavailable dates or values are shown as zero.';
 
 const axis = { tickLine: false, axisLine: false, tickMargin: 10, fontSize: 11 };
 const margin = { top: 18, right: 12, bottom: 4, left: 0 };
@@ -72,18 +78,18 @@ function ChartCard({
   description,
   config,
   empty,
-  emptyMessage = 'No indexed data for this period',
   children,
   footer,
+  separatePlots = false,
 }: {
   title: string;
   eyebrow: string;
   description: string;
   config: ChartConfig;
   empty: boolean;
-  emptyMessage?: string;
   children: ReactNode;
   footer?: string;
+  separatePlots?: boolean;
 }) {
   return (
     <section
@@ -107,8 +113,10 @@ function ChartCard({
       <div className="px-2 pb-2 pt-4 sm:px-4">
         {empty ? (
           <div className="flex h-[260px] items-center justify-center text-sm text-[var(--text-muted)]">
-            {emptyMessage}
+            No indexed data for this period
           </div>
+        ) : separatePlots ? (
+          children
         ) : (
           <ChartContainer label={`${title} chart`}>{children}</ChartContainer>
         )}
@@ -125,12 +133,12 @@ function ChartCard({
 export function StatsCharts({ days }: { days: StatsChartDay[] }) {
   const data = statsChartData(days);
   const id = useId().replace(/:/g, '');
-  const tooltip = (config: ChartConfig, money = false) => (
+  const tooltip = (config: ChartConfig, formatValue?: (value: number) => string) => (
     <Tooltip
       filterNull={false}
       cursor={{ fill: 'var(--chart-hover)', stroke: 'var(--border-strong)' }}
       content={(props) => (
-        <ChartTooltipContent {...props} config={config} formatValue={money ? usd : undefined} />
+        <ChartTooltipContent {...props} config={config} formatValue={formatValue} />
       )}
     />
   );
@@ -150,7 +158,7 @@ export function StatsCharts({ days }: { days: StatsChartDay[] }) {
       <ChartCard
         title="User swaps vs arbitrage over time"
         eyebrow="01 / Transaction mix"
-        description="Successful indexed transactions, separated by contract function. Counts are not a measure of independent users."
+        description="Successful indexed user swaps and arbitrage transactions. Counts are not a measure of independent users."
         config={activityConfig}
         empty={!data.length}
       >
@@ -171,12 +179,6 @@ export function StatsCharts({ days }: { days: StatsChartDay[] }) {
             fill={activityConfig.arbitrage.color}
             maxBarSize={32}
           />
-          <Bar
-            dataKey="other"
-            stackId="activity"
-            fill={activityConfig.other.color}
-            maxBarSize={32}
-          />
         </BarChart>
       </ChartCard>
 
@@ -185,9 +187,8 @@ export function StatsCharts({ days }: { days: StatsChartDay[] }) {
         eyebrow="02 / Capital routed"
         description="Entry notional and actual DEX-leg input volume, shown on the same USD scale. No transaction-count axis."
         config={volumeConfig}
-        empty={!data.length || !data.some((day) => day.routed !== null || day.notional !== null)}
-        emptyMessage={data.length ? 'No priced volume available for this period' : undefined}
-        footer="Priced subtotals only. Routed volume counts each executed leg, including arbitrage; it is not user-only volume. Gaps mean unavailable data, not zero."
+        empty={!data.length}
+        footer={`Priced subtotals only. Routed volume counts each executed leg, including arbitrage. ${zeroFillNote}`}
       >
         <AreaChart data={data} margin={margin} accessibilityLayer>
           <defs>
@@ -199,11 +200,10 @@ export function StatsCharts({ days }: { days: StatsChartDay[] }) {
           {grid}
           {dates}
           <YAxis {...axis} width={62} tickFormatter={usdTick} />
-          {tooltip(volumeConfig, true)}
+          {tooltip(volumeConfig, usd)}
           <Area
             dataKey="routed"
             type="linear"
-            connectNulls={false}
             stroke="var(--accent)"
             strokeWidth={2}
             fill={`url(#${id}-volume)`}
@@ -213,7 +213,6 @@ export function StatsCharts({ days }: { days: StatsChartDay[] }) {
           <Area
             dataKey="notional"
             type="linear"
-            connectNulls={false}
             stroke="var(--chart-blue)"
             strokeWidth={2}
             fill="transparent"
@@ -246,6 +245,7 @@ export function StatsCharts({ days }: { days: StatsChartDay[] }) {
           description="Daily distinct successful caller addresses, including arbitrage operators. Not verified independent users."
           config={callersConfig}
           empty={!data.length}
+          footer={zeroFillNote}
         >
           <LineChart data={data} margin={margin} accessibilityLayer>
             {grid}
@@ -255,7 +255,6 @@ export function StatsCharts({ days }: { days: StatsChartDay[] }) {
             <Line
               dataKey="callers"
               type="linear"
-              connectNulls={false}
               stroke="var(--chart-blue)"
               strokeWidth={2}
               dot={{ r: data.length <= 2 ? 3 : 0 }}
@@ -270,9 +269,8 @@ export function StatsCharts({ days }: { days: StatsChartDay[] }) {
         eyebrow="05 / Execution surplus"
         description="Daily priced surplus from successful round trips with known return amounts."
         config={surplusConfig}
-        empty={!data.length || !data.some((day) => day.surplus !== null)}
-        emptyMessage={data.length ? 'No priced surplus available for this period' : undefined}
-        footer="Gross surplus excludes transaction fees and is not net P&L. Missing prices or return amounts remain unavailable."
+        empty={!data.length}
+        footer={`Gross surplus excludes transaction fees and is not net P&L. ${zeroFillNote}`}
       >
         <AreaChart data={data} margin={margin} accessibilityLayer>
           <defs>
@@ -285,11 +283,10 @@ export function StatsCharts({ days }: { days: StatsChartDay[] }) {
           {dates}
           <YAxis {...axis} width={62} tickFormatter={usdTick} />
           <ReferenceLine y={0} stroke="var(--border-strong)" />
-          {tooltip(surplusConfig, true)}
+          {tooltip(surplusConfig, usd)}
           <Area
             dataKey="surplus"
             type="linear"
-            connectNulls={false}
             stroke="var(--accent)"
             strokeWidth={2}
             fill={`url(#${id}-surplus)`}
@@ -297,6 +294,46 @@ export function StatsCharts({ days }: { days: StatsChartDay[] }) {
             activeDot={{ r: 4 }}
           />
         </AreaChart>
+      </ChartCard>
+
+      <ChartCard
+        title="Arbitrage gross surplus by token"
+        eyebrow="06 / Token surplus"
+        description="Daily gross surplus in the asset each round trip started and ended with. XLM and USDC use separate scales."
+        config={tokenSurplusConfig}
+        empty={!data.length}
+        footer={`Amounts exclude fees and are not converted to USD. Only known returns contribute. ${zeroFillNote}`}
+        separatePlots
+      >
+        <div className="grid gap-3 sm:grid-cols-2">
+          {tokenSurplusKeys.map((key) => {
+            const { label, color } = tokenSurplusConfig[key];
+            return (
+              <div key={key} className="min-w-0 rounded-xl border border-[var(--border)] pt-3">
+                <h3 className="px-4 text-xs font-medium text-[var(--text-primary)]">{label}</h3>
+                <ChartContainer label={`Arbitrage gross surplus in ${label} chart`}>
+                  <AreaChart data={data} margin={margin} accessibilityLayer>
+                    {grid}
+                    {dates}
+                    <YAxis {...axis} width={62} tickFormatter={tokenAmount.format} />
+                    <ReferenceLine y={0} stroke="var(--border-strong)" />
+                    {tooltip(tokenSurplusConfig, (value) => `${tokenAmount.format(value)} ${label}`)}
+                    <Area
+                      dataKey={key}
+                      type="linear"
+                      stroke={color}
+                      strokeWidth={2}
+                      fill={color}
+                      fillOpacity={0.1}
+                      dot={{ r: data.length <= 2 ? 3 : 0 }}
+                      activeDot={{ r: 4 }}
+                    />
+                  </AreaChart>
+                </ChartContainer>
+              </div>
+            );
+          })}
+        </div>
       </ChartCard>
     </div>
   );

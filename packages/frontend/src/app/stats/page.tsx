@@ -601,7 +601,7 @@ export default function StatsPage() {
             />
           </div>
 
-          <details className="group rounded-xl border border-[var(--border)] bg-[var(--surface)]/50 open:bg-[var(--surface)]/60">
+          <details open className="group rounded-xl border border-[var(--border)] bg-[var(--surface)]/50 open:bg-[var(--surface)]/60">
             <summary className="cursor-pointer list-none px-4 sm:px-5 py-3.5 flex items-center justify-between text-[14px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] [&::-webkit-details-marker]:hidden">
               <span className="font-medium">Daily rollup</span>
               <span className="text-[12px] text-[var(--text-muted)]">
@@ -609,15 +609,19 @@ export default function StatsPage() {
                 <span className="hidden group-open:inline">Hide</span>
               </span>
             </summary>
-            <div className="overflow-x-auto border-t border-[var(--border)]">
+            <div
+              role="region"
+              aria-label="Daily rollup table"
+              tabIndex={0}
+              className="max-h-[min(60vh,28rem)] overflow-auto rounded-b-xl border-t border-[var(--border)]"
+            >
               <table className="w-full text-[12px] text-left">
-                <thead className="bg-[var(--bg-0)]/50 text-[var(--text-muted)]">
+                <thead className="sticky top-0 z-10 bg-[var(--surface)] text-[var(--text-muted)]">
                   <tr>
                     <th className="px-3 py-2 font-medium">Day</th>
                     <th className="px-3 py-2 font-medium">Transactions</th>
                     <th className="px-3 py-2 font-medium">User swaps</th>
                     <th className="px-3 py-2 font-medium">Arbitrage</th>
-                    <th className="px-3 py-2 font-medium">Other</th>
                     <th className="px-3 py-2 font-medium">All caller addresses</th>
                     <th className="px-3 py-2 font-medium">Notional USD</th>
                     <th className="px-3 py-2 font-medium">Routed USD</th>
@@ -628,6 +632,7 @@ export default function StatsPage() {
                 </thead>
                 <tbody className="divide-y divide-[var(--border)]">
                   {[...derived.days].reverse().map((d) => {
+                    const { swaps, arbitrage } = activitySplit(d.by_function, d.tx_count);
                     const notionalUsd = dayNotionalUsd(d);
                     const routedUsd = dayRoutedUsd(d);
                     const grossSurplusUsd = dayGrossSurplusUsd(d);
@@ -636,23 +641,20 @@ export default function StatsPage() {
                         <td className="px-3 py-2 whitespace-nowrap">{d.day}</td>
                         <td className="px-3 py-2">{d.tx_count}</td>
                         <td className="px-3 py-2">
-                          {activitySplit(d.by_function, d.tx_count).swaps}
+                          {swaps}
                         </td>
                         <td className="px-3 py-2">
-                          {activitySplit(d.by_function, d.tx_count).arbitrage}
-                        </td>
-                        <td className="px-3 py-2">
-                          {activitySplit(d.by_function, d.tx_count).other}
+                          {arbitrage}
                         </td>
                         <td className="px-3 py-2">{d.unique_users}</td>
                         <td className="px-3 py-2">
-                          {notionalUsd != null ? formatUsd(notionalUsd) : '—'}
+                          {formatUsd(notionalUsd ?? 0)}
                         </td>
                         <td className="px-3 py-2">
-                          {routedUsd != null ? formatUsd(routedUsd) : '—'}
+                          {formatUsd(routedUsd ?? 0)}
                         </td>
                         <td className="px-3 py-2">
-                          {grossSurplusUsd != null ? formatUsd(grossSurplusUsd) : '—'}
+                          {formatUsd(grossSurplusUsd ?? 0)}
                         </td>
                         <td className="px-3 py-2 tabular-nums">
                           {typeof d.xlm_usd === 'number' ? `$${d.xlm_usd.toFixed(4)}` : '—'}
