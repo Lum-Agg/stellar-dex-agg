@@ -66,6 +66,15 @@ log_filter = "info"
 EOF
 chmod 600 "$INDEXER_CONFIG"
 
+keeper_start_config=""
+if [[ -n "${KEEPER_START_LEDGER:-}" ]]; then
+  if [[ ! "$KEEPER_START_LEDGER" =~ ^[1-9][0-9]{0,9}$ ]]; then
+    echo "ERROR: Invalid KEEPER_START_LEDGER in $ENV_FILE." >&2
+    exit 1
+  fi
+  keeper_start_config="start_ledger = $KEEPER_START_LEDGER"
+fi
+
 cat >"$KEEPER_CONFIG" <<EOF
 rpc_url = "$INDEXER_RPC_URL"
 network = "testnet"
@@ -74,6 +83,7 @@ aggregator_contract = "$AGGREGATOR_CONTRACT"
 quote_api_url = "${QUOTE_API_URL:-http://127.0.0.1:3200}"
 poll_secs = ${KEEPER_POLL_SECS:-15}
 cursor_path = "$REMOTE_APP_DIR/data/limit-keeper-testnet.cursor"
+$keeper_start_config
 dry_run = true
 reclaim = false
 secret_file = "/etc/lumagg/limit-keeper-testnet.secret"
@@ -126,9 +136,7 @@ chmod 600 "$REMOTE_APP_DIR/deploy/limit-keeper-testnet.toml"
 if [[ "$RESET_TESTNET_DB" == "1" ]]; then
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
   db="$REMOTE_APP_DIR/data/analytics-indexer-testnet.db"
-  cursor="$REMOTE_APP_DIR/data/limit-keeper-testnet.cursor"
   [[ ! -f "$db" ]] || mv "$db" "${db}.bak.${stamp}"
-  [[ ! -f "$cursor" ]] || mv "$cursor" "${cursor}.bak.${stamp}"
 fi
 
 install -m 755 "$REMOTE_SRC/target/release/lumagg-api-server" \

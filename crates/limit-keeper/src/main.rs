@@ -7,12 +7,12 @@ use {
     limit_keeper::{
         book::OpenOrderBook,
         config::KeeperConfig,
-        events::parse_escrow_event,
-        execute::{execute_fill, fill_amount, fill_min_amount_out},
-        ledger::{load_checkpoint, save_checkpoint, KeeperCheckpoint},
+        events::apply_escrow_batch,
+        execute::{execute_fill, fill_amount, fill_min_amount_out, VenueChecks},
+        ledger::{checkpoint_path, load_checkpoint, save_checkpoint, KeeperCheckpoint},
         quote::{is_fillable_for, QuoteApiClient},
     },
-    tracing::{info, warn},
+    tracing::{error, info, warn},
     tracing_subscriber::EnvFilter,
 };
 
@@ -48,43 +48,72 @@ async fn main() -> Result<()> {
         Some(path) => KeeperConfig::from_file(path)?,
         None => KeeperConfig::from_env()?,
     };
+    let cursor_path = checkpoint_path(&config.cursor_path, &config.network, &config.escrow_contract)?;
     if check {
         println!("configuration is valid");
         return Ok(());
     }
     let rpc = SorobanRpc::new(&config.rpc_url, &config.network);
     let quote_api = QuoteApiClient::new(&config.quote_api_url);
-    let latest = rpc
-        .get_latest_ledger()
+    let (_, latest) = rpc
+        .get_history_bounds()
         .await
-        .context("get latest ledger at keeper startup")?
-        .sequence;
-    let (mut cursor, mut book) = load_checkpoint(&config.cursor_path)?
-        .map(KeeperCheckpoint::into_parts)
-        .unwrap_or_else(|| {
-            (
-                latest.saturating_sub(MAX_LEDGER_SCAN_PER_REQUEST).max(1),
-                OpenOrderBook::default(),
-            )
-        });
+        .context("read RPC history bounds at keeper startup")?;
+    let (mut cursor, mut book) = match load_checkpoint(&cursor_path)? {
+        Some(checkpoint) => checkpoint.into_parts(),
+        None => {
+            let start = config.start_ledger.unwrap_or_else(|| {
+                warn!("no keeper start_ledger configured; initial scan uses only the recent ledger window");
+                latest.saturating_sub(MAX_LEDGER_SCAN_PER_REQUEST).max(1)
+            });
+            (start, OpenOrderBook::default())
+        }
+    };
     info!(
         dry_run = config.dry_run,
         cursor,
+        checkpoint = %cursor_path.display(),
         open_orders = book.iter().count(),
         escrow = %config.escrow_contract,
         aggregator = %config.aggregator_contract,
         "limit keeper started"
     );
 
-    loop {
-        let latest = match rpc.get_latest_ledger().await {
-            Ok(latest) => latest.sequence,
+    let poll_delay = std::time::Duration::from_secs(config.poll_secs);
+    let gap_delay = std::time::Duration::from_secs(config.poll_secs.max(60));
+    let mut waiting_for_history = false;
+    'poll: loop {
+        let (oldest, latest) = match rpc.get_history_bounds().await {
+            Ok(bounds) => bounds,
             Err(error) => {
-                warn!(%error, "could not read latest ledger");
-                tokio::time::sleep(std::time::Duration::from_secs(config.poll_secs)).await;
+                warn!(%error, "keeper paused: could not read RPC history bounds");
+                tokio::time::sleep(poll_delay).await;
                 continue;
             }
         };
+        if cursor < oldest {
+            if !waiting_for_history {
+                error!(
+                    cursor,
+                    oldest,
+                    latest,
+                    checkpoint = %cursor_path.display(),
+                    "keeper paused: RPC history gap; use an RPC that serves the checkpoint ledger, do not skip ahead"
+                );
+            }
+            waiting_for_history = true;
+            tokio::time::sleep(gap_delay).await;
+            continue;
+        }
+        if cursor > latest {
+            warn!(cursor, latest, "keeper paused: RPC is behind the checkpoint");
+            tokio::time::sleep(poll_delay).await;
+            continue;
+        }
+        if waiting_for_history {
+            info!(cursor, oldest, latest, "keeper history available again; resuming event replay");
+            waiting_for_history = false;
+        }
         while cursor < latest {
             let end = cursor.saturating_add(MAX_LEDGER_SCAN_PER_REQUEST).min(latest);
             let filters = [EventFilterSpec {
@@ -94,22 +123,22 @@ async fn main() -> Result<()> {
             let events = match rpc.get_contract_events(cursor, Some(end), &filters, 1_000).await {
                 Ok(events) => events,
                 Err(error) => {
-                    warn!(%error, cursor, end, "failed to poll escrow events");
-                    break;
+                    warn!(%error, cursor, end, "keeper paused: failed to sync escrow events");
+                    tokio::time::sleep(poll_delay).await;
+                    continue 'poll;
                 }
             };
-            for event in events {
-                match parse_escrow_event(&event) {
-                    Ok(Some(update)) => book.apply(update),
-                    Ok(None) => {}
-                    Err(error) => warn!(%error, event_id = %event.id, "skipping malformed escrow event"),
-                }
+            if let Err(error) = apply_escrow_batch(&mut book, &events) {
+                warn!(error = %format_args!("{error:#}"), cursor, end, "keeper paused: failed to decode escrow event batch");
+                tokio::time::sleep(poll_delay).await;
+                continue 'poll;
             }
             cursor = end;
-            save_checkpoint(&config.cursor_path, &KeeperCheckpoint::capture(cursor, &book))?;
+            save_checkpoint(&cursor_path, &KeeperCheckpoint::capture(cursor, &book))?;
             info!(cursor, open_orders = book.iter().count(), "processed escrow events");
         }
 
+        let mut venues = VenueChecks::new(&rpc, &config.aggregator_contract);
         for order in book.iter().cloned().collect::<Vec<_>>() {
             if latest >= order.expires_ledger {
                 if config.reclaim {
@@ -129,7 +158,7 @@ async fn main() -> Result<()> {
                             Ok(hash) => {
                                 info!(order_id = order.order_id, kind = ?order.kind, %hash, "submitted expired escrow reclaim");
                                 book.apply_expired(order.kind, order.order_id);
-                                save_checkpoint(&config.cursor_path, &KeeperCheckpoint::capture(cursor, &book))?;
+                                save_checkpoint(&cursor_path, &KeeperCheckpoint::capture(cursor, &book))?;
                             }
                             Err(error) => {
                                 warn!(order_id = order.order_id, kind = ?order.kind, %error, "expired escrow reclaim failed")
@@ -167,6 +196,10 @@ async fn main() -> Result<()> {
             let Some(min_amount_out) = fill_min_amount_out(&order, amount_in, &quote) else {
                 continue;
             };
+            if let Err(error) = venues.verify_quote(&quote).await {
+                warn!(order_id = order.order_id, %error, "skipping fill: venue preflight failed");
+                continue;
+            }
             if config.dry_run {
                 info!(
                     order_id = order.order_id,
@@ -192,6 +225,6 @@ async fn main() -> Result<()> {
                 Err(error) => warn!(order_id = order.order_id, kind = ?order.kind, %error, "escrow fill failed"),
             }
         }
-        tokio::time::sleep(std::time::Duration::from_secs(config.poll_secs)).await;
+        tokio::time::sleep(poll_delay).await;
     }
 }

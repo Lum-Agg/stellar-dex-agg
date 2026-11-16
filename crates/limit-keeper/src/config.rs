@@ -16,6 +16,7 @@ pub struct KeeperConfig {
     pub quote_api_url: String,
     pub poll_secs: u64,
     pub cursor_path: String,
+    pub start_ledger: Option<u32>,
     pub dry_run: bool,
     pub max_fill: Option<i128>,
     pub reclaim: bool,
@@ -48,6 +49,7 @@ impl KeeperConfig {
             quote_api_url: required("QUOTE_API_URL")?,
             poll_secs: optional_parse("KEEPER_POLL_SECS")?.unwrap_or(10),
             cursor_path: std::env::var("KEEPER_CURSOR_PATH").unwrap_or_else(|_| "keeper.cursor".into()),
+            start_ledger: optional_parse("KEEPER_START_LEDGER")?,
             dry_run,
             max_fill: optional_parse("KEEPER_MAX_FILL")?,
             reclaim: enabled("KEEPER_RECLAIM"),
@@ -77,6 +79,7 @@ impl KeeperConfig {
             quote_api_url: file.quote_api_url,
             poll_secs: file.poll_secs,
             cursor_path: file.cursor_path,
+            start_ledger: file.start_ledger,
             dry_run,
             max_fill: file.max_fill,
             reclaim: file.reclaim,
@@ -89,6 +92,9 @@ impl KeeperConfig {
         }
         if config.poll_secs == 0 {
             return Err(anyhow!("poll_secs must be greater than zero"));
+        }
+        if config.start_ledger == Some(0) {
+            return Err(anyhow!("keeper start_ledger must be greater than zero"));
         }
         Ok(config)
     }
@@ -105,6 +111,7 @@ struct KeeperFileConfig {
     poll_secs: u64,
     #[serde(default = "default_cursor_path")]
     cursor_path: String,
+    start_ledger: Option<u32>,
     #[serde(default)]
     dry_run: bool,
     #[serde(default)]

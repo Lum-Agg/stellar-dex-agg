@@ -14,15 +14,6 @@ pub use errors::EscrowError;
 
 #[contractclient(name = "AggregatorContractClient")]
 pub trait AggregatorContract {
-    fn swap(
-        env: Env,
-        user: Address,
-        token_in: Address,
-        token_out: Address,
-        sub_routes: Vec<SubRoute>,
-        min_amount_out: i128,
-    ) -> i128;
-
     fn swap_restricted(
         env: Env,
         user: Address,
@@ -43,6 +34,7 @@ pub enum DataKey {
     Order(u64),
     DcaOrder(u64),
     AllowedAsset(Address),
+    Keeper,
 }
 
 const LEDGERS_PER_DAY: u32 = 17_280;
@@ -191,10 +183,11 @@ fn authorize_swap_as_current_contract(
 
 #[contractimpl]
 impl OrderEscrowContract {
-    pub fn __constructor(env: Env, admin: Address, aggregator: Address) {
+    pub fn __constructor(env: Env, admin: Address, aggregator: Address, keeper: Address) {
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Aggregator, &aggregator);
+        env.storage().instance().set(&DataKey::Keeper, &keeper);
         env.storage().instance().set(&DataKey::NextOrderId, &0u64);
         env.storage().instance().set(&DataKey::NextDcaOrderId, &0u64);
     }
@@ -203,6 +196,18 @@ impl OrderEscrowContract {
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
         require_admin(&env);
         env.deployer().update_current_contract_wasm(new_wasm_hash);
+    }
+
+    pub fn keeper(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&DataKey::Keeper)
+            .unwrap_or_else(|| soroban_sdk::panic_with_error!(&env, EscrowError::NotInitialized))
+    }
+
+    pub fn set_keeper(env: Env, new_keeper: Address) {
+        require_admin(&env);
+        env.storage().instance().set(&DataKey::Keeper, &new_keeper);
     }
 
     /// Revoking an asset pauses new orders and fills, but never blocks refunds.
@@ -331,6 +336,7 @@ impl OrderEscrowContract {
     }
 
     pub fn fill(env: Env, order_id: u64, amount_in: i128, sub_routes: Vec<SubRoute>, min_amount_out: i128) -> i128 {
+        Self::keeper(env.clone()).require_auth();
         let key = DataKey::Order(order_id);
         let Some(mut order) = env.storage().persistent().get::<_, LimitOrder>(&key) else {
             soroban_sdk::panic_with_error!(&env, EscrowError::OrderNotFound);
@@ -475,6 +481,7 @@ impl OrderEscrowContract {
     }
 
     pub fn fill_dca(env: Env, order_id: u64, sub_routes: Vec<SubRoute>, min_amount_out: i128) -> i128 {
+        Self::keeper(env.clone()).require_auth();
         let key = DataKey::DcaOrder(order_id);
         let Some(mut order) = env.storage().persistent().get::<_, DcaOrder>(&key) else {
             soroban_sdk::panic_with_error!(&env, EscrowError::OrderNotFound);
@@ -503,9 +510,6 @@ impl OrderEscrowContract {
         }
         if routed_amount != amount_in {
             soroban_sdk::panic_with_error!(&env, EscrowError::InvalidRouteAmount);
-        }
-        if order.min_out_per_in_e7 <= 0 {
-            soroban_sdk::panic_with_error!(&env, EscrowError::InvalidMinimumRate);
         }
         if !required_min_out(amount_in, order.min_out_per_in_e7).is_some_and(|floor| min_amount_out >= floor) {
             soroban_sdk::panic_with_error!(&env, EscrowError::MinimumOutBelowLimit);
@@ -608,9 +612,8 @@ mod tests {
         aggregator_contract::AggregatorContract,
         lumagg_contract_types::{DexType, SubRoute, SwapStep},
         soroban_sdk::{
-            contract, contractimpl,
-            testutils::{Address as _, EnvTestConfig, Events as _, Ledger, LedgerInfo},
-            token, vec, Address, Env, Symbol, TryFromVal, Vec,
+            testutils::{Address as _, EnvTestConfig, Events as _, Ledger, LedgerInfo, MockAuth, MockAuthInvoke},
+            token, vec, Address, Env, IntoVal, Symbol, TryFromVal, Val, Vec,
         },
     };
 
@@ -670,21 +673,22 @@ mod tests {
         }
     }
 
-    #[contract]
-    struct Filler;
-
-    #[contractimpl]
-    impl Filler {
-        pub fn fill(
-            env: Env,
-            escrow: Address,
-            order_id: u64,
-            amount_in: i128,
-            sub_routes: Vec<SubRoute>,
-            min_amount_out: i128,
-        ) -> i128 {
-            OrderEscrowContractClient::new(&env, &escrow).fill(&order_id, &amount_in, &sub_routes, &min_amount_out)
-        }
+    fn mock_fill_auth(
+        env: &Env,
+        escrow: &OrderEscrowContractClient,
+        signer: &Address,
+        name: &str,
+        args: impl IntoVal<Env, Vec<Val>>,
+    ) {
+        env.mock_auths(&[MockAuth {
+            address: signer,
+            invoke: &MockAuthInvoke {
+                contract: &escrow.address,
+                fn_name: name,
+                args: args.into_val(env),
+                sub_invokes: &[],
+            },
+        }]);
     }
 
     #[test]
@@ -702,7 +706,7 @@ mod tests {
     }
 
     fn setup_escrow<'a>(env: &'a Env) -> (Address, OrderEscrowContractClient<'a>) {
-        let escrow_id = env.register(OrderEscrowContract, (gen_addr(env), gen_addr(env)));
+        let escrow_id = env.register(OrderEscrowContract, (gen_addr(env), gen_addr(env), gen_addr(env)));
         let escrow = OrderEscrowContractClient::new(env, &escrow_id);
         (escrow_id, escrow)
     }
@@ -733,7 +737,7 @@ mod tests {
         };
         let aggregator = aggregator_contract::AggregatorContractClient::new(env, &aggregator_id);
 
-        let args = (gen_addr(env), aggregator_id);
+        let args = (gen_addr(env), aggregator_id, gen_addr(env));
         let escrow_id = match wasm {
             Some((_, escrow)) => env.register(escrow, args),
             None => env.register(OrderEscrowContract, args),
@@ -768,12 +772,26 @@ mod tests {
         let limit = escrow.create_limit(&owner, &token_in, &token_out, &5_000, &10_000_000, &100);
         let dca = escrow.create_dca(&owner, &token_in, &token_out, &5_000, &2_000, &10, &10, &10_000_000, &100);
 
-        env.set_auths(&[]);
         env.ledger().set_sequence_number(10);
         let routes = route(&env, &pool_id, &token_in, &token_out, 2_000);
+        let keeper = escrow.keeper();
+        env.set_auths(&[]);
+        assert!(escrow.try_fill(&limit, &2_000, &routes, &2_000).is_err());
+        assert!(escrow.try_fill_dca(&dca, &routes, &2_000).is_err());
+
+        mock_fill_auth(&env, &escrow, &keeper, "fill", (limit, 2_000i128, routes.clone(), 2_001i128));
+        assert!(escrow.try_fill(&limit, &2_000, &routes, &2_001).is_err());
+        assert_eq!(token::Client::new(&env, &token_in).balance(&escrow.address), 10_000);
+        assert_eq!(token::Client::new(&env, &token_in).balance(&pool_id), 0);
+        assert_eq!(token::Client::new(&env, &token_out).balance(&pool_id), 10_000);
+        assert_eq!(order(&env, &escrow.address, limit).amount_in_remaining, 5_000);
+
+        mock_fill_auth(&env, &escrow, &keeper, "fill", (limit, 2_000i128, routes.clone(), 2_000i128));
         assert_eq!(escrow.fill(&limit, &2_000, &routes, &2_000), 2_000);
+        mock_fill_auth(&env, &escrow, &keeper, "fill_dca", (dca, routes.clone(), 2_000i128));
         assert_eq!(escrow.fill_dca(&dca, &routes, &2_000), 2_000);
 
+        env.set_auths(&[]);
         env.ledger().set_sequence_number(100);
         escrow.reclaim_expired(&limit);
         escrow.reclaim_expired_dca(&dca);
@@ -827,8 +845,8 @@ mod tests {
             if contract != *escrow_id || topics.len() < 2 {
                 return false;
             }
-            Symbol::try_from_val(env, &topics.get(0).unwrap()) == Ok(expected_topic.clone())
-                && u64::try_from_val(env, &topics.get(1).unwrap()) == Ok(order_id)
+            Symbol::try_from_val(env, &topics.get(0).unwrap()) == Ok(expected_topic.clone()) &&
+                u64::try_from_val(env, &topics.get(1).unwrap()) == Ok(order_id)
         })
     }
 
@@ -1040,14 +1058,9 @@ mod tests {
         env.mock_all_auths();
         let (owner, escrow, token_in, token_out, _, pool_id) = setup_fill(&env);
         let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000, &10_000_000, &100);
-        env.set_auths(&[]);
-
-        let out = escrow.fill(
-            &order_id,
-            &5_000,
-            &route(&env, &pool_id, &token_in, &token_out, 5_000),
-            &5_000,
-        );
+        let routes = route(&env, &pool_id, &token_in, &token_out, 5_000);
+        mock_fill_auth(&env, &escrow, &escrow.keeper(), "fill", (order_id, 5_000i128, routes.clone(), 5_000i128));
+        let out = escrow.fill(&order_id, &5_000, &routes, &5_000);
 
         assert_eq!(out, 5_000);
         assert_eq!(token::Client::new(&env, &token_out).balance(&owner), 5_000);
@@ -1081,14 +1094,9 @@ mod tests {
         let (owner, escrow, token_in, token_out, _, _) = setup_fill(&env);
         let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000, &10_000_000, &100);
         let unregistered_pool = gen_addr(&env);
-        env.set_auths(&[]);
-
-        let result = escrow.try_fill(
-            &order_id,
-            &5_000,
-            &route(&env, &unregistered_pool, &token_in, &token_out, 5_000),
-            &5_000,
-        );
+        let routes = route(&env, &unregistered_pool, &token_in, &token_out, 5_000);
+        mock_fill_auth(&env, &escrow, &escrow.keeper(), "fill", (order_id, 5_000i128, routes.clone(), 5_000i128));
+        let result = escrow.try_fill(&order_id, &5_000, &routes, &5_000);
 
         assert!(matches!(result, Ok(Err(_)) | Err(_)), "{result:?}");
         assert_eq!(token::Client::new(&env, &token_in).balance(&escrow.address), 5_000);
@@ -1102,14 +1110,10 @@ mod tests {
         let (owner, escrow, token_in, token_out, _, _) = setup_fill(&env);
         let order_id = escrow.create_dca(&owner, &token_in, &token_out, &5_000, &2_000, &10, &10, &9_000_000, &100);
         let unregistered_pool = gen_addr(&env);
-        env.set_auths(&[]);
-
         env.ledger().set_sequence_number(10);
-        let result = escrow.try_fill_dca(
-            &order_id,
-            &route(&env, &unregistered_pool, &token_in, &token_out, 2_000),
-            &2_000,
-        );
+        let routes = route(&env, &unregistered_pool, &token_in, &token_out, 2_000);
+        mock_fill_auth(&env, &escrow, &escrow.keeper(), "fill_dca", (order_id, routes.clone(), 2_000i128));
+        let result = escrow.try_fill_dca(&order_id, &routes, &2_000);
 
         assert!(matches!(result, Ok(Err(_)) | Err(_)), "{result:?}");
         assert_eq!(token::Client::new(&env, &token_in).balance(&escrow.address), 5_000);
@@ -1202,17 +1206,9 @@ mod tests {
         env.mock_all_auths();
         let (owner, escrow, token_in, token_out, _, pool_id) = setup_fill(&env);
         let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000, &10_000_000, &100);
-        env.set_auths(&[]);
-
-        assert_eq!(
-            escrow.fill(
-                &order_id,
-                &2_000,
-                &route(&env, &pool_id, &token_in, &token_out, 2_000),
-                &2_000
-            ),
-            2_000
-        );
+        let routes = route(&env, &pool_id, &token_in, &token_out, 2_000);
+        mock_fill_auth(&env, &escrow, &escrow.keeper(), "fill", (order_id, 2_000i128, routes.clone(), 2_000i128));
+        assert_eq!(escrow.fill(&order_id, &2_000, &routes, &2_000), 2_000);
 
         let order = order(&env, &escrow.address, order_id);
         assert_eq!(order.amount_in_remaining, 3_000);
@@ -1220,26 +1216,35 @@ mod tests {
     }
 
     #[test]
-    fn anyone_can_fill() {
+    fn only_current_keeper_can_fill_either_order_type() {
         let env = test_env();
         env.mock_all_auths();
         let (owner, escrow, token_in, token_out, _, pool_id) = setup_fill(&env);
-        let filler = env.register(Filler, ());
-        assert_ne!(filler, owner);
-        let order_id = escrow.create_limit(&owner, &token_in, &token_out, &5_000, &10_000_000, &100);
+        let limit = escrow.create_limit(&owner, &token_in, &token_out, &5_000, &10_000_000, &100);
+        let dca = escrow.create_dca(&owner, &token_in, &token_out, &5_000, &2_000, &10, &10, &10_000_000, &100);
+        let previous = escrow.keeper();
+        let current = gen_addr(&env);
         env.set_auths(&[]);
+        assert!(escrow.try_set_keeper(&current).is_err());
+        assert_eq!(escrow.keeper(), previous);
+        env.mock_all_auths();
+        escrow.set_keeper(&current);
+        assert_eq!(escrow.keeper(), current);
 
-        assert_eq!(
-            FillerClient::new(&env, &filler).fill(
-                &escrow.address,
-                &order_id,
-                &5_000,
-                &route(&env, &pool_id, &token_in, &token_out, 5_000),
-                &5_000
-            ),
-            5_000
-        );
-        assert_eq!(token::Client::new(&env, &token_out).balance(&owner), 5_000);
+        env.ledger().set_sequence_number(10);
+        let routes = route(&env, &pool_id, &token_in, &token_out, 2_000);
+        for unauthorized in [&owner, &previous] {
+            mock_fill_auth(&env, &escrow, unauthorized, "fill", (limit, 2_000i128, routes.clone(), 2_000i128));
+            assert!(escrow.try_fill(&limit, &2_000, &routes, &2_000).is_err());
+            mock_fill_auth(&env, &escrow, unauthorized, "fill_dca", (dca, routes.clone(), 2_000i128));
+            assert!(escrow.try_fill_dca(&dca, &routes, &2_000).is_err());
+        }
+        assert_eq!(token::Client::new(&env, &token_in).balance(&escrow.address), 10_000);
+        mock_fill_auth(&env, &escrow, &current, "fill", (limit, 2_000i128, routes.clone(), 2_000i128));
+        assert_eq!(escrow.fill(&limit, &2_000, &routes, &2_000), 2_000);
+        mock_fill_auth(&env, &escrow, &current, "fill_dca", (dca, routes.clone(), 2_000i128));
+        assert_eq!(escrow.fill_dca(&dca, &routes, &2_000), 2_000);
+        assert_eq!(token::Client::new(&env, &token_out).balance(&owner), 4_000);
     }
 
     #[test]
@@ -1254,12 +1259,16 @@ mod tests {
         );
         let order_id = escrow.create_dca(&owner, &token_in, &token_out, &5_000, &2_000, &10, &10, &9_000_000, &100);
         assert_eq!(token::Client::new(&env, &token_in).balance(&escrow_id), 5_000);
-        env.set_auths(&[]);
+        let keeper = escrow.keeper();
+        let routes = route(&env, &pool_id, &token_in, &token_out, 2_000);
+        let authorize_chunk = || mock_fill_auth(&env, &escrow, &keeper, "fill_dca", (order_id, routes.clone(), 1_900i128));
+        authorize_chunk();
 
         let early = escrow.try_fill_dca(&order_id, &route(&env, &pool_id, &token_in, &token_out, 2_000), &1_900);
         assert!(matches!(early, Ok(Err(_)) | Err(_)), "{early:?}");
 
         env.ledger().set_sequence_number(10);
+        authorize_chunk();
         assert_eq!(
             escrow.fill_dca(&order_id, &route(&env, &pool_id, &token_in, &token_out, 2_000), &1_900),
             2_000
@@ -1268,13 +1277,17 @@ mod tests {
         assert_eq!(after_first.amount_in_remaining, 3_000);
         assert_eq!(after_first.next_executable_ledger, 20);
 
-        let duplicate = escrow.try_fill_dca(&order_id, &route(&env, &pool_id, &token_in, &token_out, 2_000), &1_900);
+        authorize_chunk();
+        let duplicate = escrow.try_fill_dca(&order_id, &routes, &1_900);
         assert!(matches!(duplicate, Ok(Err(_)) | Err(_)), "{duplicate:?}");
 
         env.ledger().set_sequence_number(20);
+        authorize_chunk();
         escrow.fill_dca(&order_id, &route(&env, &pool_id, &token_in, &token_out, 2_000), &1_900);
         env.ledger().set_sequence_number(30);
-        escrow.fill_dca(&order_id, &route(&env, &pool_id, &token_in, &token_out, 1_000), &900);
+        let remainder_routes = route(&env, &pool_id, &token_in, &token_out, 1_000);
+        mock_fill_auth(&env, &escrow, &keeper, "fill_dca", (order_id, remainder_routes.clone(), 900i128));
+        escrow.fill_dca(&order_id, &remainder_routes, &900);
 
         let completed = dca_order(&env, &escrow_id, order_id);
         assert_eq!(completed.amount_in_remaining, 0);

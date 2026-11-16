@@ -7,7 +7,7 @@ use soroban_sdk::contracterror;
 #[repr(u32)]
 pub enum EscrowError {
     NotInitialized = 1,
-    AlreadyInitialized = 2,
+    // Code 2 was used by the removed initialize entrypoint.
     InvalidAmount = 3,
     InvalidLimit = 4,
     SameToken = 5,

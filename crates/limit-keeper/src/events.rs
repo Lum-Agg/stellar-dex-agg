@@ -1,13 +1,24 @@
 //! Parse order-escrow lifecycle events into order-book updates.
 
 use {
-    crate::book::{OpenOrder, OrderEvent, OrderKind},
+    crate::book::{OpenOrder, OpenOrderBook, OrderEvent, OrderKind},
     anyhow::{anyhow, Context, Result},
     base64::{engine::general_purpose::STANDARD as BASE64, Engine as _},
     dex_adapters::rpc::events::ContractEvent,
     stellar_strkey::{ed25519::PublicKey, Contract},
     stellar_xdr::curr::{self as xdr, Limits, ReadXdr},
 };
+
+pub fn apply_escrow_batch(book: &mut OpenOrderBook, events: &[ContractEvent]) -> Result<()> {
+    let updates = events
+        .iter()
+        .map(|event| parse_escrow_event(event).with_context(|| format!("decode escrow event {}", event.id)))
+        .collect::<Result<Vec<_>>>()?;
+    for update in updates.into_iter().flatten() {
+        book.apply(update);
+    }
+    Ok(())
+}
 
 pub fn parse_escrow_event(event: &ContractEvent) -> Result<Option<OrderEvent>> {
     if event.event_type != "contract" || event.in_successful_contract_call == Some(false) {
@@ -81,14 +92,20 @@ pub fn parse_escrow_event(event: &ContractEvent) -> Result<Option<OrderEvent>> {
                 next_executable_ledger: Some(scval_u32(&fields[4])?),
             }))
         }
-        "dca_cancelled" => Ok(Some(OrderEvent::Cancelled {
-            kind: OrderKind::Dca,
-            order_id,
-        })),
-        "dca_expired" => Ok(Some(OrderEvent::Expired {
-            kind: OrderKind::Dca,
-            order_id,
-        })),
+        "dca_cancelled" => {
+            require_fields(&fields, 2, &kind)?;
+            Ok(Some(OrderEvent::Cancelled {
+                kind: OrderKind::Dca,
+                order_id,
+            }))
+        }
+        "dca_expired" => {
+            require_fields(&fields, 2, &kind)?;
+            Ok(Some(OrderEvent::Expired {
+                kind: OrderKind::Dca,
+                order_id,
+            }))
+        }
         _ => Ok(None),
     }
 }
@@ -97,17 +114,25 @@ fn event_topic(event: &ContractEvent) -> Result<Option<(String, u64)>> {
     let Some(topics) = &event.topic else {
         return Ok(None);
     };
-    if topics.len() < 2 {
+    let Some(first) = topics.first() else {
         return Ok(None);
-    }
-    let kind = match decode_scval(&topics[0])? {
+    };
+    let kind = match decode_scval(first)? {
         xdr::ScVal::Symbol(symbol) => symbol.to_string(),
         _ => return Ok(None),
     };
-    let order_id = match decode_scval(&topics[1])? {
+    if !matches!(
+        kind.as_str(),
+        "order_created" | "order_filled" | "order_cancelled" | "order_expired"
+            | "dca_created" | "dca_filled" | "dca_cancelled" | "dca_expired"
+    ) {
+        return Ok(None);
+    }
+    let id = topics.get(1).ok_or_else(|| anyhow!("{kind} missing order ID topic"))?;
+    let order_id = match decode_scval(id)? {
         xdr::ScVal::U64(value) => value,
         xdr::ScVal::U32(value) => value.into(),
-        _ => return Ok(None),
+        _ => return Err(anyhow!("{kind} has an invalid order ID topic")),
     };
     Ok(Some((kind, order_id)))
 }
@@ -169,7 +194,7 @@ fn scval_u32(value: &xdr::ScVal) -> Result<u32> {
 #[cfg(test)]
 mod tests {
     use {
-        super::parse_escrow_event,
+        super::{apply_escrow_batch, parse_escrow_event},
         crate::book::{OpenOrderBook, OrderKind},
         base64::{engine::general_purpose::STANDARD as BASE64, Engine as _},
         dex_adapters::rpc::events::ContractEvent,
@@ -238,5 +263,24 @@ mod tests {
         assert_eq!(book.get(OrderKind::Limit, 7).unwrap().amount_in_remaining, 300);
         book.apply(parse_escrow_event(&cancelled).unwrap().unwrap());
         assert!(book.get(OrderKind::Limit, 7).is_none());
+    }
+
+    #[test]
+    fn malformed_lifecycle_event_leaves_the_entire_batch_unapplied() {
+        let created = event(
+            "order_created", 7,
+            vec![
+                contract_address(1), contract_address(2), contract_address(3),
+                i128_value(500), i128_value(20_000_000), xdr::ScVal::U32(999),
+            ],
+        );
+        let mut malformed = event("order_cancelled", 7, vec![contract_address(1), i128_value(500)]);
+        malformed.topic.as_mut().unwrap().pop();
+        let mut book = OpenOrderBook::default();
+        let error = apply_escrow_batch(&mut book, &[created.clone(), malformed]).unwrap_err();
+        assert!(error.to_string().contains("order_cancelled-7"));
+        assert!(book.get(OrderKind::Limit, 7).is_none());
+        apply_escrow_batch(&mut book, &[created]).unwrap();
+        assert!(book.get(OrderKind::Limit, 7).is_some());
     }
 }

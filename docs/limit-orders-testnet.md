@@ -8,6 +8,7 @@ Scripts refuse `Public Global Stellar Network` (mainnet) passphrases.
 
 - [stellar CLI](https://developers.stellar.org/docs/tools/cli)
 - Funded testnet identity (Friendbot) registered locally, e.g. `stellar keys add admin --secret-key …`
+- The keeper account's public address, supplied as `KEEPER_G`
 - Working directory: repo root
 
 ## Deploy
@@ -15,16 +16,23 @@ Scripts refuse `Public Global Stellar Network` (mainnet) passphrases.
 One shot (aggregator + escrow + env file):
 
 ```bash
-ADMIN=admin ADMIN_G=G... ./scripts/deploy-limit-testnet.sh
+KEEPER_G=G... ADMIN=admin ADMIN_G=G... ./scripts/deploy-limit-testnet.sh
 ```
 
 Or stepwise:
 
 ```bash
 ADMIN=admin ADMIN_G=G... ./contracts/aggregator/deploy-testnet.sh
-# optional: AGGREGATOR=C... to reuse an existing testnet aggregator
-AGGREGATOR=C... ADMIN=admin ADMIN_G=G... ./contracts/order-escrow/deploy-testnet.sh
+KEEPER_G=G... AGGREGATOR=C... ADMIN=admin ADMIN_G=G... ./contracts/order-escrow/deploy-testnet.sh
 ```
+
+The Aggregator deploy script records the contract ID and hash of its local
+WASM artifact. Escrow deployment verifies the deployed hash and `admin()`
+before creating a contract. To reuse an Aggregator without a matching local
+pin, provide `AGGREGATOR_WASM_HASH` from a trusted release or build artifact,
+not from the contract being checked.
+Deploy and upgrade scripts use only the locked `contract-release` build under
+`out/testnet-contracts`, then optimize that exact artifact.
 
 ### Approve escrow assets and register venues
 
@@ -36,6 +44,10 @@ Deploy a fresh escrow. Set `ESCROW_ASSETS` to a comma-separated list of vetted
 testnet token contract IDs when deploying, or approve them afterward via
 `set_asset --asset C... --allowed true` with the escrow admin. An empty
 allowlist blocks order creation and fills.
+
+The keeper skips a quote if any hop is unregistered or cannot be checked via
+`is_venue`. It does not re-route that quote. The contract still rechecks
+registration during execution.
 
 The patched escrow calls `aggregator.swap_restricted`. Register every pool
 address that the keeper may use, together with its exact `DexType`, before
@@ -87,7 +99,7 @@ The preferred keeper deployment uses a TOML file and a separate secret file:
 cp packaging/lumagg-limit-keeper.toml limit-keeper-testnet.toml
 sed -i 's/network = "public"/network = "testnet"/' limit-keeper-testnet.toml
 sed -i 's#https://your-stellar-rpc.example.com#https://soroban-testnet.stellar.org#' limit-keeper-testnet.toml
-# Set escrow_contract, aggregator_contract, quote_api_url, and cursor_path.
+# Set escrow_contract, aggregator_contract, quote_api_url, cursor_path, and start_ledger.
 ./target/release/limit-keeper --config limit-keeper-testnet.toml
 ```
 
@@ -138,8 +150,11 @@ sudo sh -c 'umask 077; printf "%s\n" \
   > /etc/lumagg/testnet-redis.env'
 ```
 
-`RESET_TESTNET_DB=1` backs up the old testnet database and keeper cursor before
-starting from the newly deployed Escrow. For manual installation:
+`RESET_TESTNET_DB=1` backs up the old testnet indexer database. Keeper
+checkpoints are scoped by network and Escrow ID and are left intact. The
+combined deployment records `KEEPER_START_LEDGER` before creating the Escrow;
+for manual setup, set `start_ledger` to its deployment ledger or earlier.
+For manual installation:
 
 ```bash
 sudo install -m 644 deploy/lumagg-api-testnet.service /etc/systemd/system/
@@ -163,7 +178,9 @@ sudo sh -c 'umask 077; printf "%s\n" \
 sudo systemctl restart lumagg-limit-keeper-testnet
 ```
 
-Never add `KEEPER_SECRET` to the generated shared env or repository.
+The seed must correspond to the on-chain `keeper()` address. To rotate it,
+have the escrow admin call `set_keeper --new-keeper G...`, then update the
+service's secret. Never add `KEEPER_SECRET` to the shared env or repository.
 
 ## Smoke checklist
 

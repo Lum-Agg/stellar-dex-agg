@@ -5,6 +5,7 @@ use {
         quote::{steps_from_api_sub_route, Quote, QuoteStep, QuoteSubRoute},
     },
     anyhow::{anyhow, Context, Result},
+    dex_adapters::SorobanRpc,
     soroban_client::{
         keypair::{Keypair, KeypairBehavior},
         soroban_rpc::{SendTransactionStatus, TransactionStatus},
@@ -12,7 +13,10 @@ use {
         transaction_builder::{TransactionBuilder, TransactionBuilderBehavior, TIMEOUT_INFINITE},
         Options, Server,
     },
-    std::time::Duration,
+    std::{
+        collections::{BTreeSet, HashMap},
+        time::Duration,
+    },
     stellar_strkey::Contract,
     stellar_xdr::curr::{self as xdr, Limits, ReadXdr, WriteXdr},
 };
@@ -179,7 +183,18 @@ fn quote_sub_route_scval(route: &QuoteSubRoute) -> Result<xdr::ScVal> {
 }
 
 fn quote_step_scval(step: &QuoteStep) -> Result<xdr::ScVal> {
-    let dex_type = match step.dex_type.as_str() {
+    map_scval(vec![
+        ("dex_id", contract_scval(&step.pool_address)?),
+        ("dex_type", dex_type_scval(&step.dex_type)?),
+        ("in_idx", xdr::ScVal::U32(step.in_idx)),
+        ("out_idx", xdr::ScVal::U32(step.out_idx)),
+        ("token_in", contract_scval(&step.token_in)?),
+        ("token_out", contract_scval(&step.token_out)?),
+    ])
+}
+
+fn dex_type_scval(dex_type: &str) -> Result<xdr::ScVal> {
+    let name = match dex_type {
         "aquarius" | "aquarius_clmm" => "Aquarius",
         "soroswap" => "SoroswapPair",
         "phoenix" => "Phoenix",
@@ -187,21 +202,68 @@ fn quote_step_scval(step: &QuoteStep) -> Result<xdr::ScVal> {
         "comet" => "CometDex",
         other => return Err(anyhow!("unsupported keeper DEX route type: {other}")),
     };
-    map_scval(vec![
-        ("dex_id", contract_scval(&step.pool_address)?),
-        (
-            "dex_type",
-            xdr::ScVal::Vec(Some(
-                vec![xdr::ScVal::Symbol(xdr::ScSymbol(dex_type.try_into().unwrap()))]
-                    .try_into()
-                    .map_err(|_| anyhow!("DEX enum"))?,
-            )),
-        ),
-        ("in_idx", xdr::ScVal::U32(step.in_idx)),
-        ("out_idx", xdr::ScVal::U32(step.out_idx)),
-        ("token_in", contract_scval(&step.token_in)?),
-        ("token_out", contract_scval(&step.token_out)?),
-    ])
+    Ok(xdr::ScVal::Vec(Some(
+        vec![xdr::ScVal::Symbol(xdr::ScSymbol(name.try_into().unwrap()))]
+            .try_into()
+            .map_err(|_| anyhow!("DEX enum"))?,
+    )))
+}
+
+fn quote_venues(quote: &Quote) -> Result<BTreeSet<(String, String)>> {
+    if quote.sub_routes.is_empty() {
+        return Err(anyhow!("quote has no sub_routes"));
+    }
+    let mut venues = BTreeSet::new();
+    for route in &quote.sub_routes {
+        let steps = steps_from_api_sub_route(route)?;
+        if steps.is_empty() {
+            return Err(anyhow!("quote sub-route has no steps"));
+        }
+        venues.extend(steps.into_iter().map(|step| (step.dex_type, step.pool_address)));
+    }
+    Ok(venues)
+}
+
+/// A short-lived registry cache, recreated each keeper poll.
+pub struct VenueChecks<'a> {
+    rpc: &'a SorobanRpc,
+    aggregator: &'a str,
+    registered: HashMap<(String, String), bool>,
+}
+
+impl<'a> VenueChecks<'a> {
+    pub fn new(rpc: &'a SorobanRpc, aggregator: &'a str) -> Self {
+        Self {
+            rpc,
+            aggregator,
+            registered: HashMap::new(),
+        }
+    }
+
+    pub async fn verify_quote(&mut self, quote: &Quote) -> Result<()> {
+        for venue in quote_venues(quote)? {
+            let (dex_type, pool) = &venue;
+            let allowed = match self.registered.get(&venue) {
+                Some(&allowed) => allowed,
+                None => {
+                    let result = self
+                        .rpc
+                        .simulate_call(self.aggregator, "is_venue", vec![dex_type_scval(dex_type)?, contract_scval(pool)?])
+                        .await
+                        .with_context(|| format!("check registration for {dex_type} pool {pool}"))?;
+                    let xdr::ScVal::Bool(allowed) = result else {
+                        return Err(anyhow!("unexpected is_venue result for {dex_type} pool {pool}"));
+                    };
+                    self.registered.insert(venue.clone(), allowed);
+                    allowed
+                }
+            };
+            if !allowed {
+                return Err(anyhow!("unregistered {dex_type} pool {pool}"));
+            }
+        }
+        Ok(())
+    }
 }
 
 fn map_scval(entries: Vec<(&str, xdr::ScVal)>) -> Result<xdr::ScVal> {
@@ -373,8 +435,8 @@ async fn poll_transaction(rpc_url: &str, hash: &str) -> Result<()> {
 mod tests {
     use crate::{
         book::{OpenOrder, OrderKind},
-        execute::{build_reclaim_operation, fill_amount, fill_min_amount_out},
-        quote::Quote,
+        execute::{build_reclaim_operation, fill_amount, fill_min_amount_out, quote_venues},
+        quote::{Quote, QuoteSubRoute},
     };
 
     fn order() -> OpenOrder {
@@ -402,6 +464,30 @@ mod tests {
 
         assert_eq!(fill_amount(&order(), Some(300)), 300);
         assert_eq!(fill_min_amount_out(&order(), 300, &quote), Some(650));
+    }
+
+    #[test]
+    fn checks_unique_venue_pairs_across_every_split_and_hop() {
+        let route = QuoteSubRoute {
+            path: vec!["a".into(), "b".into(), "c".into()],
+            pool_addresses: vec!["pool-a".into(), "pool-b".into()],
+            dex_types: vec!["aquarius_clmm".into(), "soroswap".into()],
+            in_indices: vec![0, 1],
+            out_indices: vec![1, 0],
+            amount_in: "100".into(),
+            amount_out: "200".into(),
+        };
+        let mut quote = Quote {
+            expected_output: 400,
+            minimum_output: 390,
+            sub_routes: vec![route.clone(), route],
+        };
+        assert_eq!(
+            quote_venues(&quote).unwrap().into_iter().collect::<Vec<_>>(),
+            vec![("aquarius".into(), "pool-a".into()), ("soroswap".into(), "pool-b".into())]
+        );
+        quote.sub_routes[1].dex_types.pop();
+        assert!(quote_venues(&quote).is_err());
     }
 
     #[test]

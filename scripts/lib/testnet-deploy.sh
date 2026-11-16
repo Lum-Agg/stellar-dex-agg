@@ -34,6 +34,47 @@ resolve_admin_g() {
   fi
 }
 
+require_keeper_g() {
+  if [[ ! "${KEEPER_G:-}" =~ ^G[A-Z2-7]{55}$ ]]; then
+    echo "ERROR: Set KEEPER_G to the keeper's public G-address (not its secret)." >&2
+    exit 1
+  fi
+}
+
+verify_testnet_aggregator() {
+  local contract="$1" expected_hash="$2" chain_hash chain_admin
+  if [[ ! "$contract" =~ ^C[A-Z2-7]{55}$ || ! "$expected_hash" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "ERROR: Expected a contract ID and a trusted 64-character lowercase AGGREGATOR_WASM_HASH." >&2
+    return 1
+  fi
+  chain_hash=$(stellar contract info hash --id "$contract" \
+    --rpc-url "$RPC_URL" --network-passphrase "$NETWORK_PASSPHRASE") || return 1
+  if [[ "$chain_hash" != "$expected_hash" ]]; then
+    echo "ERROR: Aggregator WASM hash does not match the expected artifact for $contract." >&2
+    return 1
+  fi
+  chain_admin=$(stellar contract invoke --id "$contract" --source-account "$ADMIN" \
+    --rpc-url "$RPC_URL" --network-passphrase "$NETWORK_PASSPHRASE" --send=no -- admin) || return 1
+  if [[ "$chain_admin" != "$ADMIN_G" && "$chain_admin" != "\"$ADMIN_G\"" ]]; then
+    echo "ERROR: Aggregator admin does not match ADMIN_G for $contract." >&2
+    return 1
+  fi
+}
+
+resolve_aggregator_wasm_hash() {
+  local contract="$1" pin_file="$2" pinned_id="" pinned_hash=""
+  if [[ -z "${AGGREGATOR_WASM_HASH:-}" && -f "$pin_file" ]]; then
+    read -r pinned_id pinned_hash < "$pin_file" || return 1
+    if [[ "$pinned_id" == "$contract" ]]; then
+      AGGREGATOR_WASM_HASH="$pinned_hash"
+    fi
+  fi
+  if [[ ! "${AGGREGATOR_WASM_HASH:-}" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "ERROR: Set AGGREGATOR_WASM_HASH to the trusted build artifact hash for $contract." >&2
+    return 1
+  fi
+}
+
 poll_tx() {
   local tx_hash="$1"
   local deadline=$((SECONDS + TX_POLL_SECS))
@@ -96,58 +137,37 @@ run_stellar_tx() {
   return "$ec"
 }
 
-find_wasm() {
-  local name="$1"
-  local root="$2"
-  local candidate best="" best_mtime=0 mtime
-  for candidate in \
-    "$root/target/wasm32v1-none/contract-release/${name}.wasm" \
-    "$root/target/wasm32v1-none/release/${name}.wasm" \
-    "$root/target/wasm32-unknown-unknown/release/${name}.wasm"
-  do
-    if [[ -f "$candidate" ]]; then
-      mtime=$(stat -c %Y "$candidate" 2>/dev/null || stat -f %m "$candidate")
-      if [[ -z "$best" || "$mtime" -gt "$best_mtime" ]]; then
-        best="$candidate"
-        best_mtime="$mtime"
-      fi
-    fi
-  done
-  if [[ -n "$best" ]]; then
-    printf '%s\n' "$best"
-    return 0
-  fi
-  return 1
-}
-
 build_contract_wasm() {
   local package="$1"
   local wasm_stem="$2"
-  local crate_dir="$3"
-  local root="$4"
+  local root="$3"
+  local target_dir="$root/out/testnet-contracts"
+  local wasm="$target_dir/wasm32v1-none/contract-release/$wasm_stem.wasm"
+  local out="${wasm%.wasm}.optimized.wasm"
 
   echo "=== Building $package WASM (release) ===" >&2
-  (
-    cd "$crate_dir"
-    if ! stellar contract build --optimize 2>/dev/null; then
-      echo "stellar contract build --optimize failed, trying cargo + stellar optimize..." >&2
-      cargo build -p "$package" --target wasm32v1-none --profile contract-release
-      local wasm
-      wasm=$(find_wasm "$wasm_stem" "$root") || {
-        echo "ERROR: Could not find built WASM for $wasm_stem after cargo build." >&2
-        exit 1
-      }
-      stellar contract optimize --wasm "$wasm" --wasm-out "$wasm"
-    fi
-  )
-
-  local out
-  out=$(find_wasm "$wasm_stem" "$root") || {
-    echo "ERROR: WASM not found under target/ for $wasm_stem" >&2
-    exit 1
-  }
+  cargo build --locked --manifest-path "$root/Cargo.toml" --target-dir "$target_dir" \
+    --target wasm32v1-none --profile contract-release -p "$package" >&2 || return 1
+  if [[ ! -s "$wasm" ]]; then
+    echo "ERROR: Expected build artifact not found: $wasm" >&2
+    return 1
+  fi
+  stellar contract optimize --wasm "$wasm" --wasm-out "$out" >&2 || return 1
+  [[ -s "$out" ]] || return 1
   echo "WASM: $out ($(wc -c < "$out") bytes)" >&2
   printf '%s\n' "$out"
+}
+
+latest_testnet_ledger() {
+  local response
+  response=$(curl --fail --silent --show-error --max-time 20 "$RPC_URL" \
+    -H 'Content-Type: application/json' \
+    -d '{"jsonrpc":"2.0","id":1,"method":"getLatestLedger"}') || return 1
+  python3 -c 'import json, sys
+sequence = json.load(sys.stdin).get("result", {}).get("sequence")
+if type(sequence) is not int or not 1 <= sequence <= 4294967295:
+    sys.exit("ERROR: Invalid latest ledger from testnet RPC")
+print(sequence)' <<< "$response"
 }
 
 deploy_wasm() {

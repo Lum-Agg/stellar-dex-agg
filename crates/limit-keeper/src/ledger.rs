@@ -1,9 +1,32 @@
 use {
     crate::book::{OpenOrder, OpenOrderBook},
-    anyhow::{Context, Result},
+    anyhow::{anyhow, Context, Result},
     serde::{Deserialize, Serialize},
-    std::{fs, path::Path},
+    soroban_client::network::{NetworkPassphrase, Networks},
+    std::{
+        fs,
+        path::{Path, PathBuf},
+    },
+    stellar_strkey::Contract,
 };
+
+pub fn checkpoint_path(base: impl AsRef<Path>, network: &str, escrow: &str) -> Result<PathBuf> {
+    let network = if network == Networks::testnet() {
+        "testnet"
+    } else if network == Networks::public() {
+        "public"
+    } else {
+        return Err(anyhow!("unsupported keeper checkpoint network"));
+    };
+    let escrow = Contract::from_string(escrow).context("invalid escrow contract ID for checkpoint")?;
+    let base = base.as_ref();
+    let mut filename = base
+        .file_name()
+        .context("keeper cursor path must include a filename")?
+        .to_os_string();
+    filename.push(format!(".{network}.{escrow}.json"));
+    Ok(base.with_file_name(filename))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct KeeperCheckpoint {
@@ -51,8 +74,10 @@ pub fn save_checkpoint(path: impl AsRef<Path>, checkpoint: &KeeperCheckpoint) ->
 #[cfg(test)]
 mod tests {
     use {
-        super::{load_checkpoint, save_checkpoint, KeeperCheckpoint},
+        super::{checkpoint_path, load_checkpoint, save_checkpoint, KeeperCheckpoint},
         crate::book::{OpenOrder, OpenOrderBook, OrderKind},
+        soroban_client::network::{NetworkPassphrase, Networks},
+        stellar_strkey::Contract,
     };
 
     #[test]
@@ -88,5 +113,19 @@ mod tests {
 
         assert!(result.is_err());
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn checkpoint_files_are_isolated_by_network_and_escrow() {
+        let base = "data/keeper.cursor";
+        let first = Contract([1; 32]).to_string();
+        let second = Contract([2; 32]).to_string();
+        let testnet = checkpoint_path(base, Networks::testnet(), &first).unwrap();
+        let mainnet = checkpoint_path(base, Networks::public(), &first).unwrap();
+        let other = checkpoint_path(base, Networks::testnet(), &second).unwrap();
+        assert_ne!(testnet, mainnet);
+        assert_ne!(testnet, other);
+        assert_eq!(testnet, std::path::PathBuf::from(format!("{base}.testnet.{first}.json")));
+        assert!(checkpoint_path(base, Networks::testnet(), "../invalid").is_err());
     }
 }

@@ -4,8 +4,8 @@
 # Hard rule: refuses mainnet / Public Global passphrase.
 #
 # Usage:
-#   ADMIN=admin ADMIN_G=G... ./scripts/deploy-limit-testnet.sh
-#   AGGREGATOR=C... ./scripts/deploy-limit-testnet.sh   # reuse aggregator, deploy escrow only
+#   KEEPER_G=G... ADMIN=admin ADMIN_G=G... ./scripts/deploy-limit-testnet.sh
+#   KEEPER_G=G... AGGREGATOR=C... ./scripts/deploy-limit-testnet.sh  # reuse aggregator
 
 set -euo pipefail
 
@@ -14,6 +14,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/scripts/lib/testnet-deploy.sh"
 
 set_testnet_defaults
+require_keeper_g
 ADMIN="${ADMIN:-admin}"
 resolve_admin_g
 
@@ -37,7 +38,9 @@ fi
 
 echo ""
 echo "=== 2/2 Order escrow (testnet) ==="
+KEEPER_START_LEDGER=$(latest_testnet_ledger)
 ADMIN="$ADMIN" ADMIN_G="$ADMIN_G" AGGREGATOR="$AGGREGATOR" \
+  KEEPER_G="$KEEPER_G" \
   ESCROW_ASSETS="${ESCROW_ASSETS:-}" \
   NETWORK_PASSPHRASE="$NETWORK_PASSPHRASE" RPC_URL="$RPC_URL" \
   bash "$ESCROW_SCRIPT"
@@ -61,6 +64,7 @@ KEEPER_NETWORK=testnet
 KEEPER_DRY_RUN=1
 KEEPER_POLL_SECS=15
 KEEPER_CURSOR_PATH=./data/limit-keeper-testnet.cursor
+KEEPER_START_LEDGER=$KEEPER_START_LEDGER
 QUOTE_API_URL=http://127.0.0.1:3200
 SOROSWAP_FACTORY_CONTRACT=CDP3HMUH6SMS3S7NPGNDJLULCOXXEPSHY4JKUKMBNQMATHDHWXRRJTBY
 ENABLED_DEX_SOURCES=soroswap

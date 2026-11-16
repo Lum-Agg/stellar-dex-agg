@@ -1,4 +1,5 @@
 target
+/out/testnet-contracts/
 .env
 *.wasm
 .ssl/
@@ -14,6 +15,7 @@ justfile
 data
 contracts/vault/.mainnet-vault-id
 contracts/aggregator/.testnet-aggregator-id
+contracts/aggregator/.testnet-aggregator-pin
 contracts/order-escrow/.testnet-escrow-id
 scripts/telegram.env.local
 scripts/arb.env.local

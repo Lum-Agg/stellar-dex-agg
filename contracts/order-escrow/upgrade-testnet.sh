@@ -18,11 +18,12 @@ if [[ ! "$ESCROW" =~ ^C[A-Z2-7]{55}$ ]]; then
 fi
 
 WASM=$(build_contract_wasm "order-escrow-contract" "order_escrow_contract" \
-  "$ROOT/contracts/order-escrow" "$ROOT")
+  "$ROOT")
 WASM_HASH=$(openssl dgst -sha256 "$WASM" | awk '{print $2}')
 echo "WASM hash: $WASM_HASH"
 
 stellar contract upload \
+  --optimize=false \
   --rpc-url "$RPC_URL" \
   --network-passphrase "$NETWORK_PASSPHRASE" \
   --source-account "$ADMIN" \

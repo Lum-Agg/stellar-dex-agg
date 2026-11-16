@@ -1,15 +1,22 @@
 # Order escrow
 
-`order-escrow` holds a user's input token for a limit order and permits anyone
+`order-escrow` holds a user's input token for a limit order and permits the configured keeper
 to fill it through the aggregator's restricted route. The contract is the custodian of the
 unfilled input; it is not an order book or a price oracle.
 
 ## ABI
 
-### `__constructor(admin, aggregator)`
+### `__constructor(admin, aggregator, keeper)`
 
 Initializes the contract in the deployment transaction. `admin` must authorize.
 `aggregator` must be a trusted, already initialized LumAgg aggregator.
+`keeper` is the account authorized to fill Limit and DCA orders.
+
+### `keeper()` and `set_keeper(new_keeper)`
+
+Anyone can read the current keeper address. Only the admin can replace it.
+The previous keeper immediately loses fill authorization. Rotation does not
+change owner cancellation or permissionless expiry refunds.
 
 ### `upgrade(new_wasm_hash)`
 
@@ -35,14 +42,14 @@ and status (`Open`, `Filled`, `Cancelled`, or `Expired`).
 
 Fills use `aggregator.swap_restricted`, not the public open-routing `swap`
 entrypoint. Every `(DexType, dex_id)` in a limit/DCA route must first be
-registered by the aggregator administrator with `set_venue`; this prevents a
-permissionless filler from substituting an arbitrary ABI-compatible contract.
+registered by the aggregator administrator with `set_venue`; this prevents
+the keeper from selecting unregistered contracts.
 Public `swap` remains open-routed for ordinary user-directed swaps.
 
 ### `fill(order_id, amount_in, sub_routes, min_amount_out) -> amount_out`
 
-Fills all or part of an open, unexpired order. This entrypoint is
-permissionless: callers do not need the owner's authorization.
+Fills all or part of an open, unexpired order. Requires the configured keeper's
+authorization, not the owner's.
 
 `amount_in` must be positive and no greater than the remaining input. The sum
 of all `sub_routes[].amount_in` values must equal `amount_in`, and
@@ -95,8 +102,8 @@ authorization cannot be hidden by permissive test helpers.
 **Testnet only** (scripts refuse mainnet):
 
 ```bash
-ADMIN=admin ADMIN_G=G... ./scripts/deploy-limit-testnet.sh
-# or: ./contracts/order-escrow/deploy-testnet.sh  # requires AGGREGATOR=C...
+KEEPER_G=G... ADMIN=admin ADMIN_G=G... ./scripts/deploy-limit-testnet.sh
+# or: KEEPER_G=G... AGGREGATOR=C... ./contracts/order-escrow/deploy-testnet.sh
 ```
 
 Smoke checklist: [docs/limit-orders-testnet.md](../../docs/limit-orders-testnet.md).
@@ -114,7 +121,7 @@ RPC cannot include restoration in the invocation.
 next executable ledger, mandatory positive E7 price floor, and expiry.
 The earliest possible final chunk must fall strictly before expiry; execution
 can still be delayed by market conditions.
-`fill_dca` is permissionless and executes at most one
+`fill_dca` requires the configured keeper's authorization and executes at most one
 chunk after the due ledger; the final fill uses the remaining amount when it is
 smaller than the configured chunk.
 
