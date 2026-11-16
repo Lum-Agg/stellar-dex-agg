@@ -1,19 +1,21 @@
 //! Chain-result accounting and bounded recovery of accepted submissions.
 
-use crate::{
-    prepare::rpc_server,
-    profit::ProfitBook,
-    runtime::SharedRuntime,
-    stats::ArbStats,
-    submission_ledger::{unix_seconds, PendingSubmission, SubmissionLedger},
+use {
+    crate::{
+        prepare::rpc_server,
+        profit::ProfitBook,
+        runtime::SharedRuntime,
+        stats::ArbStats,
+        submission_ledger::{unix_seconds, PendingSubmission, SubmissionLedger},
+    },
+    anyhow::Result,
+    soroban_client::{
+        soroban_rpc::{GetTransactionResponse, TransactionStatus},
+        xdr::ScVal,
+    },
+    std::{sync::atomic::Ordering, time::Duration},
+    tracing::{info, warn},
 };
-use anyhow::Result;
-use soroban_client::{
-    soroban_rpc::{GetTransactionResponse, TransactionStatus},
-    xdr::ScVal,
-};
-use std::{sync::atomic::Ordering, time::Duration};
-use tracing::{info, warn};
 
 #[derive(Debug)]
 pub struct Settlement {
@@ -180,11 +182,13 @@ async fn reconcile_pending(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use serde_json::{json, Value};
-    use soroban_client::xdr::{
-        Int128Parts, Limits, SorobanTransactionMeta, SorobanTransactionMetaV2, TransactionMeta, TransactionMetaV3,
-        TransactionMetaV4, TransactionResult, WriteXdr,
+    use {
+        super::*,
+        serde_json::{json, Value},
+        soroban_client::xdr::{
+            Int128Parts, Limits, SorobanTransactionMeta, SorobanTransactionMetaV2, TransactionMeta, TransactionMetaV3,
+            TransactionMetaV4, TransactionResult, WriteXdr,
+        },
     };
 
     fn response_value(status: &str, version: u32, value: ScVal) -> Value {

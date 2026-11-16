@@ -7,8 +7,10 @@ use {
     },
     anyhow::{anyhow, Result},
     serde::Deserialize,
-    std::sync::atomic::{AtomicU64, Ordering},
-    std::time::Duration,
+    std::{
+        sync::atomic::{AtomicU64, Ordering},
+        time::Duration,
+    },
     tracing::{info, warn},
 };
 

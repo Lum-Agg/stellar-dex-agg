@@ -1,8 +1,11 @@
 //! Historical XLM/USD for analytics stats (day-level).
 
 use {
-    analytics_indexer::export::DailyStats, reqwest::Client, serde::Deserialize, std::collections::HashMap,
-    std::time::Duration, tracing::warn,
+    analytics_indexer::export::DailyStats,
+    reqwest::Client,
+    serde::Deserialize,
+    std::{collections::HashMap, time::Duration},
+    tracing::warn,
 };
 
 /// Well-known mainnet SAC → USD price source for stats enrichment.

@@ -37,8 +37,7 @@ mod types;
 #[cfg(test)]
 mod tests;
 
-pub use errors::VaultError;
-pub use types::AggregatorContract;
+pub use {errors::VaultError, types::AggregatorContract};
 use {
     lumagg_contract_types::SubRoute,
     soroban_sdk::{contract, contractimpl, Address, BytesN, Env, Vec},

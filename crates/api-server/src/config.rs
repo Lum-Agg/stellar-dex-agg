@@ -130,8 +130,8 @@ impl Default for AppConfig {
 impl AppConfig {
     /// Return the network name used by API clients and diagnostics.
     pub fn network_name(&self) -> &'static str {
-        if self.network_passphrase == "Test SDF Network ; September 2015"
-            || self.network_passphrase.eq_ignore_ascii_case("testnet")
+        if self.network_passphrase == "Test SDF Network ; September 2015" ||
+            self.network_passphrase.eq_ignore_ascii_case("testnet")
         {
             "testnet"
         } else {

@@ -135,11 +135,11 @@ pub(crate) fn decode_failure_diagnostics(events: Option<Vec<soroban_client::xdr:
     for event in events.unwrap_or_default() {
         let text = format!("{event:?}");
         let lower = text.to_ascii_lowercase();
-        if lower.contains("stringm(error)")
-            || lower.contains("error(contract, #")
-            || lower.contains("unreachablecodereached")
-            || lower.contains("invalidaction")
-            || lower.contains("exceededlimit")
+        if lower.contains("stringm(error)") ||
+            lower.contains("error(contract, #") ||
+            lower.contains("unreachablecodereached") ||
+            lower.contains("invalidaction") ||
+            lower.contains("exceededlimit")
         {
             messages.push(text);
         }
@@ -297,16 +297,18 @@ mod tests {
 
     #[tokio::test]
     async fn transport_error_keeps_the_signed_hash_for_recovery() {
-        use crate::{
-            execute::PreparedArbTx, keypair::ExecutorKeypair, profit::ProfitBook, stats::ArbStats,
-            submission_ledger::SubmissionLedger,
+        use {
+            crate::{
+                execute::PreparedArbTx, keypair::ExecutorKeypair, profit::ProfitBook, stats::ArbStats,
+                submission_ledger::SubmissionLedger,
+            },
+            soroban_client::{
+                account::{Account, AccountBehavior},
+                keypair::{Keypair, KeypairBehavior},
+                transaction_builder::{TransactionBuilder, TransactionBuilderBehavior, TIMEOUT_INFINITE},
+            },
+            std::sync::Arc,
         };
-        use soroban_client::{
-            account::{Account, AccountBehavior},
-            keypair::{Keypair, KeypairBehavior},
-            transaction_builder::{TransactionBuilder, TransactionBuilderBehavior, TIMEOUT_INFINITE},
-        };
-        use std::sync::Arc;
 
         let key = ExecutorKeypair::new(Keypair::from_raw_ed25519_seed(&[7; 32]).unwrap());
         let mut account = Account::new(&key.public_key(), "1").unwrap();

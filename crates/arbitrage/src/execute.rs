@@ -504,9 +504,9 @@ pub async fn try_execute_opportunity(
         .as_ref()
         .err()
         .is_some_and(|e| e.is::<crate::submit::BroadcastUncertain>());
-    let should_cooldown = submit_result.is_ok()
-        || uncertain
-        || submit_result
+    let should_cooldown = submit_result.is_ok() ||
+        uncertain ||
+        submit_result
             .as_ref()
             .err()
             .is_some_and(|e| e.to_string().contains("TRY_AGAIN_LATER"));
@@ -528,12 +528,12 @@ pub async fn try_execute_opportunity(
 /// quote envelope is wasted work).
 fn is_structural_sim_failure(err: &str) -> bool {
     let e = err.to_ascii_lowercase();
-    e.contains("invalidaction")
-        || e.contains("unreachablecodereached")
-        || (e.contains("vm call trapped") && e.contains("hosterror"))
-        || e.contains("outside of the footprint")
-        || e.contains("exceededlimit")
-        || (e.contains("footprint") && (e.contains("hosterror") || e.contains("trapped")))
+    e.contains("invalidaction") ||
+        e.contains("unreachablecodereached") ||
+        (e.contains("vm call trapped") && e.contains("hosterror")) ||
+        e.contains("outside of the footprint") ||
+        e.contains("exceededlimit") ||
+        (e.contains("footprint") && (e.contains("hosterror") || e.contains("trapped")))
 }
 
 const SIM_ERROR_SUMMARY_LIMIT: usize = 256;

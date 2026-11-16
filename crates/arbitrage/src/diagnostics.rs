@@ -1,21 +1,23 @@
 //! Bounded, best-effort simulation diagnostics. Never used for trade decisions.
 
-use crate::{
-    bridge::RoundTripQuote,
-    runtime::SharedRuntime,
-    submission_ledger::{unix_seconds, SubmissionLedger},
-};
-use anyhow::Result;
-use rusqlite::{params, Connection, OpenFlags};
-use serde::Serialize;
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    path::Path,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Mutex,
+use {
+    crate::{
+        bridge::RoundTripQuote,
+        runtime::SharedRuntime,
+        submission_ledger::{unix_seconds, SubmissionLedger},
     },
-    time::Duration,
+    anyhow::Result,
+    rusqlite::{params, Connection, OpenFlags},
+    serde::Serialize,
+    std::{
+        collections::{BTreeMap, BTreeSet},
+        path::Path,
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Mutex,
+        },
+        time::Duration,
+    },
 };
 
 const MAX_PENDING: usize = 4096;
@@ -415,9 +417,11 @@ fn read_scope(connection: &Connection, since: i64, scope: &str) -> Result<Vec<Di
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{invoke::ArbSwapStep, quote_client::LegQuote};
-    use router_engine::{OptimalRoute, TokenId};
+    use {
+        super::*,
+        crate::{invoke::ArbSwapStep, quote_client::LegQuote},
+        router_engine::{OptimalRoute, TokenId},
+    };
 
     fn quote(amount: u128) -> RoundTripQuote {
         let leg = LegQuote {

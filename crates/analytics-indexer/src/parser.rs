@@ -112,10 +112,10 @@ const TESTNET_AGGREGATOR_HASH_HEX: &str = "1a51af0ee587183fd50206e1e690d62f760de
 
 fn classify_diagnostic_text(diagnostic_text: &str, fallback: &str) -> String {
     let lower = diagnostic_text.to_ascii_lowercase();
-    let is_aggregator = lower.contains(&MAINNET_AGGREGATOR_CONTRACT.to_ascii_lowercase())
-        || lower.contains(&TESTNET_AGGREGATOR_CONTRACT.to_ascii_lowercase())
-        || lower.contains(MAINNET_AGGREGATOR_HASH_HEX)
-        || lower.contains(TESTNET_AGGREGATOR_HASH_HEX);
+    let is_aggregator = lower.contains(&MAINNET_AGGREGATOR_CONTRACT.to_ascii_lowercase()) ||
+        lower.contains(&TESTNET_AGGREGATOR_CONTRACT.to_ascii_lowercase()) ||
+        lower.contains(MAINNET_AGGREGATOR_HASH_HEX) ||
+        lower.contains(TESTNET_AGGREGATOR_HASH_HEX);
     if is_aggregator {
         for (code, classified) in [
             (1, "AGGREGATOR_INVALID_AMOUNT"),
@@ -130,8 +130,8 @@ fn classify_diagnostic_text(diagnostic_text: &str, fallback: &str) -> String {
             (10, "AGGREGATOR_ARITHMETIC_OVERFLOW"),
             (11, "AGGREGATOR_NOT_INITIALIZED"),
         ] {
-            if lower.contains(&format!("error(contract, #{code})"))
-                || lower.contains(&format!("error(contract({code}))"))
+            if lower.contains(&format!("error(contract, #{code})")) ||
+                lower.contains(&format!("error(contract({code}))"))
             {
                 return classified.to_string();
             }

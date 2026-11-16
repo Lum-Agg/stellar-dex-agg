@@ -12,8 +12,8 @@ pub(crate) fn soroswap_fee(amount_in: i128) -> i128 {
     amount_in
         .checked_mul(3)
         .and_then(|value| value.checked_add(999))
-        .unwrap_or(i128::MAX)
-        / 1000
+        .unwrap_or(i128::MAX) /
+        1000
 }
 
 /// Soroswap library `get_amount_out` (floor division on output).
@@ -60,8 +60,8 @@ pub(crate) fn scale_sub_routes_to_total(env: &Env, routes: &Vec<SubRoute>, targe
             let scaled = sr
                 .amount_in
                 .checked_mul(target_total)
-                .unwrap_or_else(|| soroban_sdk::panic_with_error!(env, AggregatorError::ArithmeticOverflow))
-                / weight_sum;
+                .unwrap_or_else(|| soroban_sdk::panic_with_error!(env, AggregatorError::ArithmeticOverflow)) /
+                weight_sum;
             allocated = allocated
                 .checked_add(scaled)
                 .unwrap_or_else(|| soroban_sdk::panic_with_error!(env, AggregatorError::ArithmeticOverflow));
