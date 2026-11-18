@@ -471,10 +471,6 @@ Brent tolerance defaults to `0.0001` (0.01%) with up to 18 iterations — simila
 | [`contracts/vault/README.md`](contracts/vault/README.md) | Vault API, fund flow, Soroban auth notes |
 | [`docs/arb-executor.md`](docs/arb-executor.md) | Historical naming → vault + `round_trip_swap` |
 
-## Contract integration tests
-
-The [Kanatoko tests](integration-tests/soroswap/README.md) show how the first leg changes the price of the second when both use the same Soroswap pair.
-
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
