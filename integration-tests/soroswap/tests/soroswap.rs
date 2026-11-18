@@ -6,7 +6,9 @@ use kanatoko::{mainnet, AutoRunner, ScenarioFork};
 #[allow(clippy::too_many_arguments)]
 mod aggregator {
     use kanatoko::soroban_sdk;
-    soroban_sdk::contractimport!(file = "wasm/aggregator_contract.wasm");
+    soroban_sdk::contractimport!(
+        file = "target/wasm32v1-none/contract-release/aggregator_contract.wasm"
+    );
 }
 
 const ROUTER: &str = "CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH";
@@ -14,14 +16,12 @@ const XLM: &str = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";
 const USDC: &str = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75";
 
 fn runner(name: &str) -> AutoRunner {
-    let runner = mainnet().cache(format!(
-        "{}/fixtures/{name}.json",
-        env!("CARGO_MANIFEST_DIR")
-    ));
-    match std::env::var("KANATOKO_CAPTURE_RPC") {
-        Ok(url) => runner.rpc_url(url).rpc_rate_limit(1).refresh(),
-        Err(_) => runner.offline(),
-    }
+    mainnet()
+        .cache(format!(
+            "{}/fixtures/{name}.json",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .offline()
 }
 
 struct Setup {

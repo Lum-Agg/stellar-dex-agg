@@ -473,7 +473,7 @@ Brent tolerance defaults to `0.0001` (0.01%) with up to 18 iterations — simila
 
 ## Contract integration tests
 
-[Offline Soroswap regressions](integration-tests/soroswap/README.md) exercise the current aggregator against captured mainnet contracts, including shared-pair split execution and aggregate-minimum rollback.
+The [Kanatoko tests](integration-tests/soroswap/README.md) show how the first leg changes the price of the second when both use the same Soroswap pair.
 
 ## License
 
